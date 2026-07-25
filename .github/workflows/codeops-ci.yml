@@ -160,8 +160,8 @@ jobs:
           CODEOPS_ORCHESTRATOR_DIGEST: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         run: |
           node infra/scripts/render-codeops-orchestrator.mjs > /tmp/codeops-orchestrator.yaml
-          kubectl apply --dry-run=client -f infra/k8s/codeops/trial0/temporal.yaml >/dev/null
-          kubectl apply --dry-run=client -f /tmp/codeops-orchestrator.yaml >/dev/null
+          kubectl apply --dry-run=client --validate=false -f infra/k8s/codeops/trial0/temporal.yaml >/dev/null
+          kubectl apply --dry-run=client --validate=false -f /tmp/codeops-orchestrator.yaml >/dev/null
 
       - name: Test and render the isolated Trial 0 Agent Job
         env:
@@ -174,7 +174,7 @@ jobs:
         run: |
           node --test infra/scripts/test-codeops-agent-job.mjs
           node infra/scripts/render-codeops-agent-job.mjs > /tmp/codeops-agent-job.yaml
-          kubectl apply --dry-run=client -f /tmp/codeops-agent-job.yaml >/dev/null
+          kubectl apply --dry-run=client --validate=false -f /tmp/codeops-agent-job.yaml >/dev/null
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD

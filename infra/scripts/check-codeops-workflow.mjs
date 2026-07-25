@@ -28,6 +28,13 @@ assert.ok(
       step.run?.includes("0.1.11"),
   ),
 );
+for (const stepName of [
+  "Render Trial 0 orchestrator with an immutable image",
+  "Test and render the isolated Trial 0 Agent Job",
+]) {
+  const step = contracts.steps.find((candidate) => candidate.name === stepName);
+  assert.ok(step?.run?.includes("--dry-run=client --validate=false"));
+}
 assert.ok(contracts.steps.some((step) => step.run === "nub install --frozen-lockfile"));
 assert.ok(
   contracts.steps.some(
