@@ -10,16 +10,18 @@ The trusted external supervisor must:
 1. derive the disposable namespace from the exact candidate SHA;
 2. label the admitted worker `renoconcierge.ca/codeops=true` only after the live
    capacity gate passes;
-3. create the five referenced Secrets in that namespace without writing their
+3. copy the `ghcr-renoconcierge` image-pull Secret into the disposable
+   namespace without exposing its contents;
+4. create the five referenced Plane Secrets in that namespace without writing their
    values to Git, logs, workflow inputs, Plane, or Temporal history;
-4. copy `renoconcierge-preview-wildcard-tls` into the disposable namespace;
-5. replace `plane-candidate.preview.renoconcierge.ca` with
+5. copy `renoconcierge-preview-wildcard-tls` into the disposable namespace;
+6. replace `plane-candidate.preview.renoconcierge.ca` with
    `plane-<candidate-sha-prefix>.preview.renoconcierge.ca`;
-6. resolve every image in the rendered chart to an immutable registry digest
+7. resolve every image in the rendered chart to an immutable registry digest
    and attest that every source tag still matches `plane-images.lock.json`;
-7. apply `plane-limit-range.yaml`, then install the pinned, digest-rewritten
+8. apply `plane-limit-range.yaml`, then install the pinned, digest-rewritten
    chart with `plane-values.yaml`;
-8. independently verify every Deployment, StatefulSet, PVC, Ingress, and
+9. independently verify every Deployment, StatefulSet, PVC, Ingress, and
    required API operation before accepting the Plane portion of Trial 0.
 
 Required Secret names and keys:
@@ -32,8 +34,8 @@ Required Secret names and keys:
   `MINIO_ROOT_USER`, `MINIO_ROOT_PASSWORD`, `AWS_ACCESS_KEY_ID`,
   `AWS_SECRET_ACCESS_KEY`, `AWS_S3_ENDPOINT_URL`, `AWS_S3_BUCKET_NAME`,
   `FILE_SIZE_LIMIT`;
-- `codeops-plane-app`: `SECRET_KEY`, `REDIS_URL`, `DATABASE_URL`,
-  `AMQP_URL`;
+- `codeops-plane-app`: `SECRET_KEY`, `LIVE_SERVER_SECRET_KEY`, `REDIS_URL`,
+  `DATABASE_URL`, `AMQP_URL`;
 - `codeops-plane-live`: `REDIS_URL`.
 
 The candidate has no Kubernetes credential. Cleanup must remove the Helm

@@ -21,6 +21,8 @@ spec:
     spec:
       serviceAccountName: codeops-orchestrator
       automountServiceAccountToken: false
+      imagePullSecrets:
+        - name: ghcr-renoconcierge
       nodeSelector:
         renoconcierge.ca/codeops: "true"
       securityContext:

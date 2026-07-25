@@ -29,6 +29,8 @@ spec:
       serviceAccountName: codeops-agent-CODEOPS_RUN_SUFFIX
       automountServiceAccountToken: false
       enableServiceLinks: false
+      imagePullSecrets:
+        - name: ghcr-renoconcierge
       nodeSelector:
         renoconcierge.ca/codeops: "true"
       securityContext:

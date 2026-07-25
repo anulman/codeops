@@ -35,6 +35,7 @@ test("renders one tokenless, bounded, ephemeral Agent Job", () => {
   assert.equal(job.spec.ttlSecondsAfterFinished, 3600);
   assert.equal(pod.automountServiceAccountToken, false);
   assert.equal(pod.enableServiceLinks, false);
+  assert.deepEqual(pod.imagePullSecrets, [{ name: "ghcr-renoconcierge" }]);
   assert.deepEqual(pod.nodeSelector, { "renoconcierge.ca/codeops": "true" });
   assert.equal(pod.volumes.every((volume) => volume.emptyDir), true);
   assert.equal(rendered.includes("hostPath"), false);

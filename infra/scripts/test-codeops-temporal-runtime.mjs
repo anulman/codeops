@@ -80,7 +80,13 @@ test("allows Temporal gRPC only from the orchestrator", () => {
 test("renders exactly one immutable orchestrator image", () => {
   const digest = `sha256:${"a".repeat(64)}`;
   const rendered = renderOrchestratorManifest(template, digest);
+  const deployment = parseAllDocuments(rendered)
+    .map((document) => document.toJS())
+    .find((resource) => resource.kind === "Deployment");
   assert.equal(rendered.includes("CODEOPS_ORCHESTRATOR_DIGEST"), false);
+  assert.deepEqual(deployment.spec.template.spec.imagePullSecrets, [
+    { name: "ghcr-renoconcierge" },
+  ]);
   assert.ok(
     rendered.includes(
       `ghcr.io/anulman/renoconcierge-codeops-orchestrator@${digest}`,
