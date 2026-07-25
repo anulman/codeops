@@ -19,6 +19,15 @@ assert.deepEqual(contracts.steps[0]?.with, {
   "fetch-depth": 2,
   "persist-credentials": false,
 });
+assert.ok(
+  contracts.steps.some(
+    (step) =>
+      step.name === "Install Nub" &&
+      step.env?.GITHUB_TOKEN === "${{ github.token }}" &&
+      step.run?.includes("https://nubjs.com/install.sh") &&
+      step.run?.includes("0.1.11"),
+  ),
+);
 assert.ok(contracts.steps.some((step) => step.run === "nub install --frozen-lockfile"));
 assert.ok(
   contracts.steps.some(
@@ -61,4 +70,4 @@ function inspect(value, path = []) {
 
 inspect(workflow);
 
-console.log(`${path} is valid, read-only, and secret-free.`);
+console.log(`${path} is valid, read-only, and uses no privileged secrets.`);

@@ -40,7 +40,13 @@ jobs:
           node-version: "24"
 
       - name: Install Nub
-        run: npm install --global nub@0.1.11
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://nubjs.com/install.sh | bash -s -- 0.1.11
+          echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
 
       - name: Install frozen dependencies
         run: nub install --frozen-lockfile
