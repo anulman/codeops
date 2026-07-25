@@ -8,7 +8,34 @@ const lock = JSON.parse(
 );
 
 function manifestsFor(images = Object.keys(lock)) {
-  return images
+  const publicOrigin = `apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: plane-app-vars
+  labels:
+    app.kubernetes.io/name: plane-ce
+data:
+  WEB_URL: http://plane.example.com
+  CORS_ALLOWED_ORIGINS: http://plane.example.com,https://plane.example.com
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: plane-ingress
+  labels:
+    app.kubernetes.io/name: plane-ce
+spec:
+  rules:
+    - host: plane.example.com
+  tls:
+    - hosts:
+        - plane.example.com
+      secretName: plane-tls
+---
+`;
+  return (
+    publicOrigin +
+    images
     .map(
       (image, index) => `apiVersion: v1
 kind: Pod
@@ -20,7 +47,8 @@ spec:
       image: ${image}
 `,
     )
-    .join("---\n");
+    .join("---\n")
+  );
 }
 
 test("rewrites every pinned Plane image to an immutable digest", () => {
@@ -30,6 +58,19 @@ test("rewrites every pinned Plane image to an immutable digest", () => {
   assert.equal(result.manifests.includes(":latest"), false);
   assert.equal(result.manifests.includes(":v1.3.1"), false);
   assert.match(result.manifests, /@sha256:[0-9a-f]{64}/);
+  assert.match(result.manifests, /WEB_URL: https:\/\/plane\.example\.com/);
+  assert.match(
+    result.manifests,
+    /CORS_ALLOWED_ORIGINS: https:\/\/plane\.example\.com/,
+  );
+  assert.match(
+    result.manifests,
+    /nginx\.ingress\.kubernetes\.io\/proxy-redirect-from: http:\/\/plane\.example\.com:3000\//,
+  );
+  assert.match(
+    result.manifests,
+    /nginx\.ingress\.kubernetes\.io\/proxy-redirect-to: https:\/\/plane\.example\.com\//,
+  );
 });
 
 test("fails closed when the rendered chart adds an image", () => {
@@ -67,4 +108,30 @@ test("rejects a valid digest for a different repository", () => {
 
 test("rejects empty rendered input", () => {
   assert.throws(() => rewritePlaneImages("", lock), /contain no images/);
+});
+
+test("fails closed without an exact TLS public origin", () => {
+  const manifests = manifestsFor().replace(
+    `    - hosts:
+        - plane.example.com
+      secretName: plane-tls`,
+    `    - hosts:
+        - other.example.com
+      secretName: plane-tls`,
+  );
+  assert.throws(
+    () => rewritePlaneImages(manifests, lock),
+    /must terminate TLS for its primary host/,
+  );
+});
+
+test("fails closed when WEB_URL drifts from the ingress host", () => {
+  const manifests = manifestsFor().replace(
+    "WEB_URL: http://plane.example.com",
+    "WEB_URL: http://other.example.com",
+  );
+  assert.throws(
+    () => rewritePlaneImages(manifests, lock),
+    /WEB_URL does not match/,
+  );
 });
