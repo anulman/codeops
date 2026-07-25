@@ -11,4 +11,3 @@ const plan = JSON.parse(await readFile(process.argv[planIndex + 1], "utf8"));
 const result = evaluateBootstrapDeployPlan(plan);
 console.log(JSON.stringify(result, null, 2));
 if (!result.ok) process.exit(1);
-
