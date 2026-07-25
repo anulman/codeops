@@ -70,9 +70,9 @@ test("uses an exact source SHA and only immutable images", () => {
     (container) => container.image,
   );
   assert.deepEqual(images, [
-    `ghcr.io/anulman/renoconcierge-codeops-agent@${input.agentDigest}`,
-    `ghcr.io/anulman/renoconcierge-codeops-session-gateway@${input.sessionGatewayDigest}`,
-    `ghcr.io/anulman/renoconcierge-codeops-agent@${input.agentDigest}`,
+    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@${input.agentDigest}`,
+    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-gateway@${input.sessionGatewayDigest}`,
+    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@${input.agentDigest}`,
   ]);
 });
 

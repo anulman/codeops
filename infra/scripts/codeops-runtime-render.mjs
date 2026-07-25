@@ -17,7 +17,7 @@ export function renderOrchestratorManifest(template, digest) {
     rendered.includes(TOKEN) ||
     images.length !== 1 ||
     images[0] !==
-      `ghcr.io/anulman/renoconcierge-codeops-orchestrator@${digest}`
+      `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-orchestrator@${digest}`
   ) {
     throw new Error("mutable or unresolved orchestrator image survived rendering");
   }

@@ -89,7 +89,7 @@ test("renders exactly one immutable orchestrator image", () => {
   ]);
   assert.ok(
     rendered.includes(
-      `ghcr.io/anulman/renoconcierge-codeops-orchestrator@${digest}`,
+      `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-orchestrator@${digest}`,
     ),
   );
 });

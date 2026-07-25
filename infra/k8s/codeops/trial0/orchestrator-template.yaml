@@ -33,7 +33,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: orchestrator
-          image: ghcr.io/anulman/renoconcierge-codeops-orchestrator@CODEOPS_ORCHESTRATOR_DIGEST
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-orchestrator@CODEOPS_ORCHESTRATOR_DIGEST
           imagePullPolicy: IfNotPresent
           env:
             - name: CODEOPS_TEMPORAL_ADDRESS

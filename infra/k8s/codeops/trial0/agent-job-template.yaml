@@ -42,7 +42,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: workspace-builder
-          image: ghcr.io/anulman/renoconcierge-codeops-agent@CODEOPS_AGENT_DIGEST
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@CODEOPS_AGENT_DIGEST
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -84,7 +84,7 @@ spec:
               mountPath: /workspace
       containers:
         - name: session-gateway
-          image: ghcr.io/anulman/renoconcierge-codeops-session-gateway@CODEOPS_SESSION_GATEWAY_DIGEST
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-gateway@CODEOPS_SESSION_GATEWAY_DIGEST
           imagePullPolicy: IfNotPresent
           env:
             - name: CODEOPS_RUN_ID
@@ -121,7 +121,7 @@ spec:
             - name: temp
               mountPath: /tmp
         - name: coding-agent
-          image: ghcr.io/anulman/renoconcierge-codeops-agent@CODEOPS_AGENT_DIGEST
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@CODEOPS_AGENT_DIGEST
           imagePullPolicy: IfNotPresent
           env:
             - name: CODEOPS_RUN_ID
