@@ -45,6 +45,16 @@ assert.ok(
   ),
 );
 assert.ok(contracts.steps.some((step) => step.run === "git diff --check HEAD^ HEAD"));
+assert.ok(
+  contracts.steps.some(
+    (step) => step.run === "node --test infra/scripts/test-codeops-capacity.mjs",
+  ),
+);
+assert.ok(
+  contracts.steps.some(
+    (step) => step.run === "node --test infra/scripts/test-codeops-bootstrap-policy.mjs",
+  ),
+);
 
 function inspect(value, path = []) {
   if (typeof value === "string") {

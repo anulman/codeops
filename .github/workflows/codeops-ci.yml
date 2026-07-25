@@ -10,6 +10,9 @@ on:
       - "infra/scripts/codeops-capacity.mjs"
       - "infra/scripts/check-codeops-capacity.mjs"
       - "infra/scripts/test-codeops-capacity.mjs"
+      - "infra/scripts/codeops-bootstrap-policy.mjs"
+      - "infra/scripts/check-codeops-bootstrap-plan.mjs"
+      - "infra/scripts/test-codeops-bootstrap-policy.mjs"
       - "package.json"
       - "lock.yaml"
   push:
@@ -23,6 +26,9 @@ on:
       - "infra/scripts/codeops-capacity.mjs"
       - "infra/scripts/check-codeops-capacity.mjs"
       - "infra/scripts/test-codeops-capacity.mjs"
+      - "infra/scripts/codeops-bootstrap-policy.mjs"
+      - "infra/scripts/check-codeops-bootstrap-plan.mjs"
+      - "infra/scripts/test-codeops-bootstrap-policy.mjs"
       - "package.json"
       - "lock.yaml"
 
@@ -73,6 +79,9 @@ jobs:
 
       - name: Test Trial 0 capacity gate
         run: node --test infra/scripts/test-codeops-capacity.mjs
+
+      - name: Test Trial 0 bootstrap deployment policy
+        run: node --test infra/scripts/test-codeops-bootstrap-policy.mjs
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD
