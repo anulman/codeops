@@ -12,6 +12,7 @@ on:
       - "infra/docker/codeops-*.Dockerfile"
       - "infra/docker/codeops-*.Dockerfile.dockerignore"
       - "infra/scripts/check-codeops-workflow.mjs"
+      - "infra/scripts/check-codeops-manifests.mjs"
       - "infra/scripts/codeops-capacity.mjs"
       - "infra/scripts/check-codeops-capacity.mjs"
       - "infra/scripts/test-codeops-capacity.mjs"
@@ -45,6 +46,7 @@ on:
       - "infra/docker/codeops-*.Dockerfile"
       - "infra/docker/codeops-*.Dockerfile.dockerignore"
       - "infra/scripts/check-codeops-workflow.mjs"
+      - "infra/scripts/check-codeops-manifests.mjs"
       - "infra/scripts/codeops-capacity.mjs"
       - "infra/scripts/check-codeops-capacity.mjs"
       - "infra/scripts/test-codeops-capacity.mjs"
@@ -160,8 +162,9 @@ jobs:
           CODEOPS_ORCHESTRATOR_DIGEST: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
         run: |
           node infra/scripts/render-codeops-orchestrator.mjs > /tmp/codeops-orchestrator.yaml
-          kubectl apply --dry-run=client --validate=false -f infra/k8s/codeops/trial0/temporal.yaml >/dev/null
-          kubectl apply --dry-run=client --validate=false -f /tmp/codeops-orchestrator.yaml >/dev/null
+          node infra/scripts/check-codeops-manifests.mjs \
+            infra/k8s/codeops/trial0/temporal.yaml \
+            /tmp/codeops-orchestrator.yaml
 
       - name: Test and render the isolated Trial 0 Agent Job
         env:
@@ -174,7 +177,7 @@ jobs:
         run: |
           node --test infra/scripts/test-codeops-agent-job.mjs
           node infra/scripts/render-codeops-agent-job.mjs > /tmp/codeops-agent-job.yaml
-          kubectl apply --dry-run=client --validate=false -f /tmp/codeops-agent-job.yaml >/dev/null
+          node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-agent-job.yaml
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD

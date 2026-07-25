@@ -110,7 +110,9 @@ captures a bounded binary Git patch, and atomically checkpoints the response,
 event ledger, patch digest, and any failure before stopping the sidecar.
 
 CI independently installs both npm locks, tests and typechecks the gateway,
-builds both runtime images, exercises the fail-closed Job renderer, and performs
-a Kubernetes client dry-run. The trusted supervisor must push the exact
-candidate images, substitute their registry digests, and retain the checkpoint
-before the routing-matrix workload can count as executed.
+builds both runtime images, exercises the fail-closed Job renderer, and parses
+every rendered resource without requiring cluster discovery. The trusted
+supervisor separately performs Kubernetes client dry-runs against the real
+cluster API, pushes the exact candidate images, substitutes their registry
+digests, and retains the checkpoint before the routing-matrix workload can
+count as executed.

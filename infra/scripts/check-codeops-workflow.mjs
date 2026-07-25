@@ -33,7 +33,8 @@ for (const stepName of [
   "Test and render the isolated Trial 0 Agent Job",
 ]) {
   const step = contracts.steps.find((candidate) => candidate.name === stepName);
-  assert.ok(step?.run?.includes("--dry-run=client --validate=false"));
+  assert.ok(step?.run?.includes("infra/scripts/check-codeops-manifests.mjs"));
+  assert.equal(step?.run?.includes("kubectl"), false);
 }
 assert.ok(contracts.steps.some((step) => step.run === "nub install --frozen-lockfile"));
 assert.ok(
