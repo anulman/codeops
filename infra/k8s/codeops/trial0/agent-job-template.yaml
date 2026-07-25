@@ -1,0 +1,197 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codeops-agent-CODEOPS_RUN_SUFFIX
+  labels:
+    codeops.renoconcierge.ca/run-id: CODEOPS_RUN_ID
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: codeops-agent-CODEOPS_RUN_SUFFIX
+  labels:
+    app.kubernetes.io/name: codeops-agent
+    app.kubernetes.io/part-of: codeops-trial0
+    codeops.renoconcierge.ca/run-id: CODEOPS_RUN_ID
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: codeops-agent
+        app.kubernetes.io/part-of: codeops-trial0
+        codeops.renoconcierge.ca/run-id: CODEOPS_RUN_ID
+    spec:
+      restartPolicy: Never
+      serviceAccountName: codeops-agent-CODEOPS_RUN_SUFFIX
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        renoconcierge.ca/codeops: "true"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: workspace-builder
+          image: ghcr.io/anulman/renoconcierge-codeops-agent@CODEOPS_AGENT_DIGEST
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+            - |
+              test "$(git -C /opt/codeops/repository rev-parse HEAD)" = "$CODEOPS_BASE_SHA"
+              cp -a /opt/codeops/repository/. /workspace/
+              test "$(git -C /workspace rev-parse HEAD)" = "$CODEOPS_BASE_SHA"
+          env:
+            - name: CODEOPS_BASE_SHA
+              value: CODEOPS_BASE_SHA
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+      containers:
+        - name: session-gateway
+          image: ghcr.io/anulman/renoconcierge-codeops-session-gateway@CODEOPS_SESSION_GATEWAY_DIGEST
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CODEOPS_RUN_ID
+              value: CODEOPS_RUN_ID
+            - name: CODEOPS_BASE_SHA
+              value: CODEOPS_BASE_SHA
+            - name: CODEOPS_ACP_SOCKET
+              value: /run/codeops/agent.sock
+            - name: CODEOPS_CHECKPOINT_DIR
+              value: /checkpoint
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: session
+              mountPath: /run/codeops
+            - name: checkpoint
+              mountPath: /checkpoint
+            - name: temp
+              mountPath: /tmp
+        - name: coding-agent
+          image: ghcr.io/anulman/renoconcierge-codeops-agent@CODEOPS_AGENT_DIGEST
+          imagePullPolicy: IfNotPresent
+          args:
+            - codeops-agent
+            - acp
+            - --socket
+            - /run/codeops/agent.sock
+            - --workspace
+            - /workspace
+          env:
+            - name: CODEOPS_RUN_ID
+              value: CODEOPS_RUN_ID
+            - name: CODEOPS_BASE_SHA
+              value: CODEOPS_BASE_SHA
+            - name: CODEOPS_REPOSITORY
+              value: CODEOPS_REPOSITORY
+            - name: CODEOPS_MODEL_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codeops-run-CODEOPS_RUN_SUFFIX
+                  key: model-api-key
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 6Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: session
+              mountPath: /run/codeops
+            - name: checkpoint
+              mountPath: /checkpoint
+            - name: temp
+              mountPath: /tmp
+      volumes:
+        - name: workspace
+          emptyDir: {}
+        - name: session
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: checkpoint
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: temp
+          emptyDir:
+            sizeLimit: 256Mi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codeops-agent-CODEOPS_RUN_SUFFIX
+  labels:
+    codeops.renoconcierge.ca/run-id: CODEOPS_RUN_ID
+spec:
+  podSelector:
+    matchLabels:
+      codeops.renoconcierge.ca/run-id: CODEOPS_RUN_ID
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+      ports:
+        - { protocol: TCP, port: 443 }

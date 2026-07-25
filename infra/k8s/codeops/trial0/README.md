@@ -89,3 +89,17 @@ CODEOPS_ORCHESTRATOR_DIGEST=sha256:<64-lowercase-hex> \
 
 Rendering rejects missing, mutable, malformed, or duplicated image
 substitutions. The candidate still receives no Kubernetes credential.
+
+## Agent Job boundary
+
+`agent-job-template.yaml` is rendered and applied only by the trusted external
+supervisor. Candidate code does not receive Kubernetes credentials and cannot
+create this Job itself. The rendered run uses an exact source SHA, digest-only
+images, a tokenless service account, an ephemeral workspace and checkpoint, a
+memory-backed pod-local ACP socket, a one-hour deadline, and a NetworkPolicy
+that denies all ingress and private-network egress. The only injected secret is
+the named run-scoped model credential.
+
+The actual ACP adapter and agent images remain a separate fail-closed
+prerequisite before workload dispatch. Rendering this boundary does not count
+as a coding run.

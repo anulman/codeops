@@ -22,6 +22,9 @@ on:
       - "infra/scripts/codeops-runtime-render.mjs"
       - "infra/scripts/render-codeops-orchestrator.mjs"
       - "infra/scripts/test-codeops-temporal-runtime.mjs"
+      - "infra/scripts/codeops-agent-job-render.mjs"
+      - "infra/scripts/render-codeops-agent-job.mjs"
+      - "infra/scripts/test-codeops-agent-job.mjs"
       - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
@@ -48,6 +51,9 @@ on:
       - "infra/scripts/codeops-runtime-render.mjs"
       - "infra/scripts/render-codeops-orchestrator.mjs"
       - "infra/scripts/test-codeops-temporal-runtime.mjs"
+      - "infra/scripts/codeops-agent-job-render.mjs"
+      - "infra/scripts/render-codeops-agent-job.mjs"
+      - "infra/scripts/test-codeops-agent-job.mjs"
       - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
@@ -128,6 +134,18 @@ jobs:
           node infra/scripts/render-codeops-orchestrator.mjs > /tmp/codeops-orchestrator.yaml
           kubectl apply --dry-run=client -f infra/k8s/codeops/trial0/temporal.yaml >/dev/null
           kubectl apply --dry-run=client -f /tmp/codeops-orchestrator.yaml >/dev/null
+
+      - name: Test and render the isolated Trial 0 Agent Job
+        env:
+          CODEOPS_RUN_ID: routing-matrix-2fdebb4c
+          CODEOPS_BASE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          CODEOPS_REPOSITORY: https://github.com/anulman/renoconcierge
+          CODEOPS_AGENT_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          CODEOPS_SESSION_GATEWAY_DIGEST: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+        run: |
+          node --test infra/scripts/test-codeops-agent-job.mjs
+          node infra/scripts/render-codeops-agent-job.mjs > /tmp/codeops-agent-job.yaml
+          kubectl apply --dry-run=client -f /tmp/codeops-agent-job.yaml >/dev/null
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD
