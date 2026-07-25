@@ -6,6 +6,7 @@ on:
       - ".github/workflows/codeops-ci.yml"
       - "Dockerfile"
       - "packages/codeops-contracts/**"
+      - "services/codeops-orchestrator/**"
       - "infra/scripts/check-codeops-workflow.mjs"
       - "infra/scripts/codeops-capacity.mjs"
       - "infra/scripts/check-codeops-capacity.mjs"
@@ -18,6 +19,9 @@ on:
       - "infra/scripts/rewrite-codeops-plane-images.mjs"
       - "infra/scripts/test-codeops-plane-images.mjs"
       - "infra/scripts/check-codeops-plane-render.sh"
+      - "infra/scripts/codeops-runtime-render.mjs"
+      - "infra/scripts/render-codeops-orchestrator.mjs"
+      - "infra/scripts/test-codeops-temporal-runtime.mjs"
       - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
@@ -28,6 +32,7 @@ on:
       - ".github/workflows/codeops-ci.yml"
       - "Dockerfile"
       - "packages/codeops-contracts/**"
+      - "services/codeops-orchestrator/**"
       - "infra/scripts/check-codeops-workflow.mjs"
       - "infra/scripts/codeops-capacity.mjs"
       - "infra/scripts/check-codeops-capacity.mjs"
@@ -40,6 +45,9 @@ on:
       - "infra/scripts/rewrite-codeops-plane-images.mjs"
       - "infra/scripts/test-codeops-plane-images.mjs"
       - "infra/scripts/check-codeops-plane-render.sh"
+      - "infra/scripts/codeops-runtime-render.mjs"
+      - "infra/scripts/render-codeops-orchestrator.mjs"
+      - "infra/scripts/test-codeops-temporal-runtime.mjs"
       - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
@@ -86,6 +94,12 @@ jobs:
       - name: Build contracts
         run: nub run --filter @renoconcierge/codeops-contracts build
 
+      - name: Test and bundle Temporal orchestrator
+        run: npm ci --workspaces=false --prefix services/codeops-orchestrator && npm test --prefix services/codeops-orchestrator
+
+      - name: Typecheck Temporal orchestrator
+        run: npm run typecheck --prefix services/codeops-orchestrator
+
       - name: Validate workflow syntax
         run: node infra/scripts/check-codeops-workflow.mjs
 
@@ -103,6 +117,17 @@ jobs:
 
       - name: Render pinned Trial 0 Plane chart with immutable images
         run: bash infra/scripts/check-codeops-plane-render.sh
+
+      - name: Test Trial 0 Temporal and orchestrator runtime
+        run: node --test infra/scripts/test-codeops-temporal-runtime.mjs
+
+      - name: Render Trial 0 orchestrator with an immutable image
+        env:
+          CODEOPS_ORCHESTRATOR_DIGEST: sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+        run: |
+          node infra/scripts/render-codeops-orchestrator.mjs > /tmp/codeops-orchestrator.yaml
+          kubectl apply --dry-run=client -f infra/k8s/codeops/trial0/temporal.yaml >/dev/null
+          kubectl apply --dry-run=client -f /tmp/codeops-orchestrator.yaml >/dev/null
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD

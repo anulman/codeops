@@ -1,0 +1,9 @@
+{
+  "repository": "docker.io/temporalio/admin-tools",
+  "tag": "1.31.2",
+  "platform": "linux/amd64",
+  "digest": "sha256:7e5820112475b3490f011b28d86ca9fd8348f1640b8dd04c62adb906e6b28cb2",
+  "cliVersion": "1.7.3",
+  "serverVersion": "1.31.2",
+  "uiVersion": "2.49.1"
+}

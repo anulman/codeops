@@ -1,4 +1,4 @@
-# Trial 0 Plane
+# Trial 0 Plane, Temporal, and orchestrator
 
 Trial 0 uses Plane Community Edition as the human-visible work-item and status
 ledger. The chart and application versions are pinned in
@@ -55,3 +55,37 @@ helm template codeops-plane makeplane/plane-ce \
 The rewrite fails if the chart adds or removes an image, a lock entry is not a
 SHA-256 digest for the same repository, no images are rendered, or any mutable
 tag survives.
+
+## Temporal and orchestrator
+
+Trial 0 runs a real Temporal development server from the official
+`temporalio/admin-tools` image pinned in `temporal-image.lock.json`. Its SQLite
+store is persisted on a bounded Cinder PVC, and the `codeops` namespace is
+created at startup. This is deliberately a single-node non-production server;
+it proves durable workflow mechanics for the disposable trial but is not a
+production topology.
+
+`temporal.yaml` keeps both the Temporal UI and gRPC service cluster-internal.
+The gRPC port is admitted only from the orchestrator pod; an operator may reach
+the UI temporarily through an authenticated local port-forward, but there is no
+public Temporal ingress. Both workloads use the CodeOps-only node selector,
+explicit resources, non-root containers, and service accounts with token
+mounting disabled.
+
+The orchestrator implements the authoritative Trial 0 lifecycle through plan
+approval, execution dispatch, and an externally reported independent acceptance
+verdict. Its Agent Job activity currently fails closed. It does not simulate a
+coding run; the isolated Job/session-gateway adapter must be installed before
+the routing-matrix workload can be dispatched.
+
+The trusted supervisor builds the `codeops-orchestrator-runtime` Docker target,
+records its registry digest, and renders the deployment:
+
+```bash
+CODEOPS_ORCHESTRATOR_DIGEST=sha256:<64-lowercase-hex> \
+  node infra/scripts/render-codeops-orchestrator.mjs \
+  > "$CODEOPS_ORCHESTRATOR_MANIFEST"
+```
+
+Rendering rejects missing, mutable, malformed, or duplicated image
+substitutions. The candidate still receives no Kubernetes credential.
