@@ -29,6 +29,87 @@ function visit(value, callback) {
   }
 }
 
+const REQUEST_IDLE_CALLBACK_POLYFILL =
+  "<script>window.requestIdleCallback=window.requestIdleCallback||function(c,o){var s=Date.now();return setTimeout(function(){c({didTimeout:false,timeRemaining:function(){return Math.max(0,50-(Date.now()-s));}})},o&&o.timeout?Math.min(o.timeout,1):1)};window.cancelIdleCallback=window.cancelIdleCallback||function(i){clearTimeout(i)};</script>";
+const REQUEST_IDLE_CALLBACK_SED_REPLACEMENT =
+  REQUEST_IDLE_CALLBACK_POLYFILL.replaceAll("&", "\\&");
+
+function hardenWebKitCompatibility(values) {
+  const webDeployments = values.filter(
+    (value) =>
+      value.kind === "Deployment" &&
+      value.metadata?.labels?.["app.kubernetes.io/name"] === "plane-ce" &&
+      value.metadata?.name?.endsWith("-web-wl"),
+  );
+  if (webDeployments.length !== 1) {
+    throw new Error(
+      `expected exactly one Plane web deployment, found ${webDeployments.length}`,
+    );
+  }
+
+  const deployment = webDeployments[0];
+  const podSpec = deployment.spec?.template?.spec;
+  const containers = podSpec?.containers || [];
+  if (containers.length !== 1 || !containers[0].name?.endsWith("-web")) {
+    throw new Error("Plane web deployment must contain exactly one web container");
+  }
+  if (
+    (podSpec.volumes || []).some((volume) => volume.name === "plane-web-assets") ||
+    (podSpec.initContainers || []).some(
+      (container) => container.name === "plane-webkit-compat",
+    ) ||
+    (containers[0].volumeMounts || []).some(
+      (mount) => mount.mountPath === "/usr/share/nginx/html",
+    )
+  ) {
+    throw new Error("Plane web compatibility boundary collides with rendered chart");
+  }
+
+  const patchScript = `set -eu
+cp -a /usr/share/nginx/html/. /patched/
+index=/patched/index.html
+test -s "$index"
+grep -Fq '</head><body>' "$index"
+sed -i 's#</head><body>#${REQUEST_IDLE_CALLBACK_SED_REPLACEMENT}</head><body>#' "$index"
+grep -Fq 'window.requestIdleCallback' "$index"
+`;
+
+  podSpec.volumes ||= [];
+  podSpec.volumes.push({
+    name: "plane-web-assets",
+    emptyDir: {},
+  });
+  podSpec.initContainers ||= [];
+  podSpec.initContainers.push({
+    name: "plane-webkit-compat",
+    image: containers[0].image,
+    command: ["/bin/sh", "-ec"],
+    args: [patchScript],
+    resources: {
+      requests: {
+        cpu: "10m",
+        memory: "16Mi",
+      },
+      limits: {
+        cpu: "100m",
+        memory: "128Mi",
+      },
+    },
+    volumeMounts: [
+      {
+        name: "plane-web-assets",
+        mountPath: "/patched",
+      },
+    ],
+  });
+  containers[0].volumeMounts ||= [];
+  containers[0].volumeMounts.push({
+    name: "plane-web-assets",
+    mountPath: "/usr/share/nginx/html",
+    readOnly: true,
+  });
+}
+
 function hardenPublicOrigin(values) {
   const planeIngresses = values.filter(
     (value) =>
@@ -109,6 +190,12 @@ export function rewritePlaneImages(manifests, imageLock) {
       if (document.errors.length > 0) throw document.errors[0];
       return document.toJS();
     });
+
+  if (values.length === 0) {
+    throw new Error("rendered Plane manifests contain no images");
+  }
+
+  hardenWebKitCompatibility(values);
 
   let replacements = 0;
   const seen = new Set();

@@ -1,7 +1,14 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
+import { parseAllDocuments } from "yaml";
 import { rewritePlaneImages } from "./codeops-plane-images.mjs";
+
+const execFileAsync = promisify(execFile);
 
 const lock = JSON.parse(
   await readFile("infra/k8s/codeops/trial0/plane-images.lock.json", "utf8"),
@@ -32,6 +39,19 @@ spec:
         - plane.example.com
       secretName: plane-tls
 ---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: plane-web-wl
+  labels:
+    app.kubernetes.io/name: plane-ce
+spec:
+  template:
+    spec:
+      containers:
+        - name: plane-web
+          image: artifacts.plane.so/makeplane/plane-frontend:v1.3.1
+---
 `;
   return (
     publicOrigin +
@@ -53,7 +73,7 @@ spec:
 
 test("rewrites every pinned Plane image to an immutable digest", () => {
   const result = rewritePlaneImages(manifestsFor(), lock);
-  assert.equal(result.replacements, Object.keys(lock).length);
+  assert.equal(result.replacements, Object.keys(lock).length + 2);
   assert.deepEqual(result.images, Object.keys(lock).sort());
   assert.equal(result.manifests.includes(":latest"), false);
   assert.equal(result.manifests.includes(":v1.3.1"), false);
@@ -71,6 +91,43 @@ test("rewrites every pinned Plane image to an immutable digest", () => {
     result.manifests,
     /nginx\.ingress\.kubernetes\.io\/proxy-redirect-to: https:\/\/plane\.example\.com\//,
   );
+  assert.match(result.manifests, /name: plane-webkit-compat/);
+  assert.match(result.manifests, /name: plane-web-assets/);
+  assert.match(result.manifests, /mountPath: \/usr\/share\/nginx\/html/);
+  assert.match(result.manifests, /window\.requestIdleCallback/);
+  assert.match(result.manifests, /window\.cancelIdleCallback/);
+  assert.match(result.manifests, /o\\&\\&o\.timeout/);
+  assert.match(result.manifests, /cpu: 100m/);
+  assert.match(result.manifests, /memory: 128Mi/);
+});
+
+test("the WebKit compatibility init script produces valid JavaScript", async () => {
+  const result = rewritePlaneImages(manifestsFor(), lock);
+  const deployment = parseAllDocuments(result.manifests)
+    .map((document) => document.toJS())
+    .find((value) => value.kind === "Deployment");
+  const sourceScript = deployment.spec.template.spec.initContainers[0].args[0];
+  const workDir = await mkdtemp(join(tmpdir(), "plane-webkit-compat-"));
+  const sourceDir = join(workDir, "source");
+  const patchedDir = join(workDir, "patched");
+
+  try {
+    await mkdir(sourceDir);
+    await mkdir(patchedDir);
+    await writeFile(
+      join(sourceDir, "index.html"),
+      "<html><head></head><body>Plane</body></html>",
+    );
+    const script = sourceScript
+      .replaceAll("/usr/share/nginx/html", sourceDir)
+      .replaceAll("/patched", patchedDir);
+    await execFileAsync("/bin/sh", ["-ec", script]);
+    const html = await readFile(join(patchedDir, "index.html"), "utf8");
+    assert.match(html, /o&&o\.timeout/);
+    assert.doesNotMatch(html, /<body><\/head><body>/);
+  } finally {
+    await rm(workDir, { recursive: true, force: true });
+  }
 });
 
 test("fails closed when the rendered chart adds an image", () => {
@@ -89,19 +146,21 @@ test("fails closed when the lock contains an unused image", () => {
 
 test("rejects a tag or malformed digest in the lock", () => {
   const source = Object.keys(lock)[0];
+  const malformedLock = { ...lock, [source]: source };
   assert.throws(
-    () => rewritePlaneImages(manifestsFor([source]), { [source]: source }),
+    () => rewritePlaneImages(manifestsFor(), malformedLock),
     /invalid digest reference/,
   );
 });
 
 test("rejects a valid digest for a different repository", () => {
   const source = Object.keys(lock)[0];
+  const mismatchedLock = {
+    ...lock,
+    [source]: `docker.io/library/busybox@sha256:${"a".repeat(64)}`,
+  };
   assert.throws(
-    () =>
-      rewritePlaneImages(manifestsFor([source]), {
-        [source]: `docker.io/library/busybox@sha256:${"a".repeat(64)}`,
-      }),
+    () => rewritePlaneImages(manifestsFor(), mismatchedLock),
     /repository mismatch/,
   );
 });
