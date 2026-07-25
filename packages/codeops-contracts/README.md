@@ -10,6 +10,9 @@ providers.
 - Parse untrusted input with the exported Zod schemas before use.
 - Treat contract-version changes as compatibility changes.
 - Carry secret references, never secret values.
+- Redact and classify free-text fields at ingress. Structural schemas reject
+  secret-bearing fields, but cannot prove that arbitrary human text contains no
+  pasted credential.
 - Keep transcripts and workspace contents in evidence storage, not events or
   commands.
 - Use `createTransitionId` and `createEventId` for retry/replay-safe logical

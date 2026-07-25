@@ -148,7 +148,13 @@ test("rejects unknown versions, fields, states, commands, and malformed identifi
   assert.throws(() => workItemRequestSchema.parse({ ...workItem, version: "codeops.work-item/v2" }));
   assert.throws(() => workItemRequestSchema.parse({ ...workItem, transcript: "raw transcript" }));
   assert.throws(() => workItemRequestSchema.parse({ ...workItem, baseSha: "8f3d2c0" }));
-  assert.throws(() => workItemRequestSchema.parse({ ...workItem, branch: "../main" }));
+  for (const branch of ["../main", ".", "-bad", "good/.hidden", "good.", "good.lock", "HEAD"]) {
+    assert.throws(() => workItemRequestSchema.parse({ ...workItem, branch }));
+  }
+  assert.equal(
+    workItemRequestSchema.parse({ ...workItem, branch: "release/v1.2.3" }).branch,
+    "release/v1.2.3",
+  );
   assert.throws(() => workItemRequestSchema.parse({ ...workItem, runId: "../run" }));
   assert.throws(() => workflowStateSchema.parse("running"));
   assert.throws(() => controlCommandSchema.parse(command("deploy", {})));

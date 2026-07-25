@@ -25,7 +25,16 @@ const branchName = z
   .string()
   .min(1)
   .max(200)
-  .regex(/^(?!\/|.*(?:\/\/|@\{|\\|\.\.))(?!.*\/$)[a-zA-Z0-9._/-]+$/);
+  .regex(/^(?!\/|.*(?:\/\/|@\{|\\|\.\.))(?!.*\/$)[a-zA-Z0-9._/-]+$/)
+  .refine(
+    (value) =>
+      value !== "HEAD" &&
+      !value.startsWith("-") &&
+      !value.endsWith(".") &&
+      !value.endsWith(".lock") &&
+      value.split("/").every((component) => !component.startsWith(".")),
+    "invalid Git branch name",
+  );
 const repository = z
   .object({
     owner: z.string().min(1).max(100).regex(/^[a-zA-Z0-9](?:[a-zA-Z0-9-]*[a-zA-Z0-9])?$/),
