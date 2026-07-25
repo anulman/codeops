@@ -7,6 +7,7 @@ const root = new URL("../k8s/codeops/trial0/", import.meta.url);
 const lock = JSON.parse(await readFile(new URL("plane-chart.lock.json", root), "utf8"));
 const valuesText = await readFile(new URL("plane-values.yaml", root), "utf8");
 const values = parse(valuesText);
+const readme = await readFile(new URL("README.md", root), "utf8");
 const limitRange = parse(
   await readFile(new URL("plane-limit-range.yaml", root), "utf8"),
 );
@@ -81,6 +82,10 @@ test("references externally generated secrets without literal secret values", ()
   ]) {
     assert.equal(valuesText.includes(forbidden), false, `literal ${forbidden}`);
   }
+  assert.match(
+    readme,
+    /`codeops-plane-live`: `REDIS_URL`, `LIVE_SERVER_SECRET_KEY`/,
+  );
 });
 
 test("defaults resources for chart workloads that expose no resource values", () => {

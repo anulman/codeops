@@ -36,7 +36,7 @@ Required Secret names and keys:
   `FILE_SIZE_LIMIT`;
 - `codeops-plane-app`: `SECRET_KEY`, `LIVE_SERVER_SECRET_KEY`, `REDIS_URL`,
   `DATABASE_URL`, `AMQP_URL`;
-- `codeops-plane-live`: `REDIS_URL`.
+- `codeops-plane-live`: `REDIS_URL`, `LIVE_SERVER_SECRET_KEY`.
 
 The candidate has no Kubernetes credential. Cleanup must remove the Helm
 release, namespace, PVCs, copied TLS material, generated Secrets, node label,
