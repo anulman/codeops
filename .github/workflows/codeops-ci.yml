@@ -11,6 +11,9 @@ on:
       - "services/codeops-agent/**"
       - "infra/docker/codeops-*.Dockerfile"
       - "infra/docker/codeops-*.Dockerfile.dockerignore"
+      - "infra/ci/images.json"
+      - "infra/scripts/ci-image-plan.mjs"
+      - "infra/scripts/test-ci-image-plan.mjs"
       - "infra/scripts/check-codeops-workflow.mjs"
       - "infra/scripts/check-codeops-manifests.mjs"
       - "infra/scripts/codeops-capacity.mjs"
@@ -45,6 +48,9 @@ on:
       - "services/codeops-agent/**"
       - "infra/docker/codeops-*.Dockerfile"
       - "infra/docker/codeops-*.Dockerfile.dockerignore"
+      - "infra/ci/images.json"
+      - "infra/scripts/ci-image-plan.mjs"
+      - "infra/scripts/test-ci-image-plan.mjs"
       - "infra/scripts/check-codeops-workflow.mjs"
       - "infra/scripts/check-codeops-manifests.mjs"
       - "infra/scripts/codeops-capacity.mjs"
@@ -135,6 +141,9 @@ jobs:
             --file infra/docker/codeops-session-gateway.Dockerfile \
             --tag codeops-session-gateway:ci \
             .
+
+      - name: Verify trusted release image plan
+        run: node infra/scripts/test-ci-image-plan.mjs
 
       - name: Validate workflow syntax
         run: node infra/scripts/check-codeops-workflow.mjs

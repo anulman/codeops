@@ -28,6 +28,13 @@ assert.ok(
       step.run?.includes("0.1.11"),
   ),
 );
+assert.ok(
+  contracts.steps.some(
+    (step) =>
+      step.name === "Verify trusted release image plan" &&
+      step.run === "node infra/scripts/test-ci-image-plan.mjs",
+  ),
+);
 for (const stepName of [
   "Render Trial 0 orchestrator with an immutable image",
   "Test and render the isolated Trial 0 Agent Job",
