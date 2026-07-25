@@ -1,0 +1,77 @@
+planeVersion: v1.3.1
+
+ingress:
+  enabled: true
+  appHost: plane-candidate.preview.renoconcierge.ca
+  ingressClass: nginx
+  ingress_annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: 20m
+
+ssl:
+  tls_secret_name: renoconcierge-preview-wildcard-tls
+  createIssuer: false
+  generateCerts: false
+
+redis:
+  local_setup: true
+  storageClass: csi-cinder-high-speed
+  volumeSize: 1Gi
+  pullPolicy: IfNotPresent
+  nodeSelector: &codeopsNode
+    renoconcierge.ca/codeops: "true"
+
+postgres:
+  local_setup: true
+  storageClass: csi-cinder-high-speed
+  volumeSize: 2Gi
+  pullPolicy: IfNotPresent
+  nodeSelector: *codeopsNode
+
+rabbitmq:
+  local_setup: true
+  storageClass: csi-cinder-high-speed
+  volumeSize: 1Gi
+  pullPolicy: IfNotPresent
+  nodeSelector: *codeopsNode
+
+minio:
+  local_setup: true
+  storageClass: csi-cinder-high-speed
+  volumeSize: 2Gi
+  pullPolicy: IfNotPresent
+  nodeSelector: *codeopsNode
+
+web:
+  pullPolicy: IfNotPresent
+  nodeSelector: *codeopsNode
+
+space:
+  pullPolicy: IfNotPresent
+  nodeSelector: *codeopsNode
+
+admin:
+  pullPolicy: IfNotPresent
+  nodeSelector: *codeopsNode
+
+live:
+  pullPolicy: IfNotPresent
+  nodeSelector: *codeopsNode
+
+api:
+  pullPolicy: IfNotPresent
+  nodeSelector: *codeopsNode
+
+worker:
+  pullPolicy: IfNotPresent
+  nodeSelector: *codeopsNode
+
+beatworker:
+  pullPolicy: IfNotPresent
+  nodeSelector: *codeopsNode
+
+external_secrets:
+  rabbitmq_existingSecret: codeops-plane-rabbitmq
+  pgdb_existingSecret: codeops-plane-postgres
+  doc_store_existingSecret: codeops-plane-object-store
+  app_env_existingSecret: codeops-plane-app
+  live_env_existingSecret: codeops-plane-live

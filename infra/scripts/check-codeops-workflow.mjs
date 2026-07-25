@@ -55,6 +55,11 @@ assert.ok(
     (step) => step.run === "node --test infra/scripts/test-codeops-bootstrap-policy.mjs",
   ),
 );
+assert.ok(
+  contracts.steps.some(
+    (step) => step.run === "node --test infra/scripts/test-codeops-plane-chart.mjs",
+  ),
+);
 
 function inspect(value, path = []) {
   if (typeof value === "string") {

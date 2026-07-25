@@ -13,6 +13,8 @@ on:
       - "infra/scripts/codeops-bootstrap-policy.mjs"
       - "infra/scripts/check-codeops-bootstrap-plan.mjs"
       - "infra/scripts/test-codeops-bootstrap-policy.mjs"
+      - "infra/scripts/test-codeops-plane-chart.mjs"
+      - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
   push:
@@ -29,6 +31,8 @@ on:
       - "infra/scripts/codeops-bootstrap-policy.mjs"
       - "infra/scripts/check-codeops-bootstrap-plan.mjs"
       - "infra/scripts/test-codeops-bootstrap-policy.mjs"
+      - "infra/scripts/test-codeops-plane-chart.mjs"
+      - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
 
@@ -82,6 +86,9 @@ jobs:
 
       - name: Test Trial 0 bootstrap deployment policy
         run: node --test infra/scripts/test-codeops-bootstrap-policy.mjs
+
+      - name: Test Trial 0 Plane chart contract
+        run: node --test infra/scripts/test-codeops-plane-chart.mjs
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD
