@@ -1,0 +1,61 @@
+name: CodeOps CI
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/codeops-ci.yml"
+      - "packages/codeops-contracts/**"
+      - "infra/scripts/check-codeops-workflow.mjs"
+      - "package.json"
+      - "lock.yaml"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/codeops-ci.yml"
+      - "packages/codeops-contracts/**"
+      - "infra/scripts/check-codeops-workflow.mjs"
+      - "package.json"
+      - "lock.yaml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: codeops-ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contracts:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install Nub
+        run: npm install --global nub@0.1.11
+
+      - name: Install frozen dependencies
+        run: nub install --frozen-lockfile
+
+      - name: Test contracts
+        run: nub run --filter @renoconcierge/codeops-contracts test
+
+      - name: Typecheck contracts
+        run: nub run --filter @renoconcierge/codeops-contracts typecheck
+
+      - name: Build contracts
+        run: nub run --filter @renoconcierge/codeops-contracts build
+
+      - name: Validate workflow syntax
+        run: node infra/scripts/check-codeops-workflow.mjs
+
+      - name: Check whitespace
+        run: git diff --check HEAD^ HEAD
