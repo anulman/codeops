@@ -10,6 +10,7 @@ process.stdout.write(
   renderAgentJobManifest(template, {
     runId: process.env.CODEOPS_RUN_ID ?? "",
     baseSha: process.env.CODEOPS_BASE_SHA ?? "",
+    prompt: process.env.CODEOPS_PROMPT ?? "",
     repository: process.env.CODEOPS_REPOSITORY ?? "",
     agentDigest: process.env.CODEOPS_AGENT_DIGEST ?? "",
     sessionGatewayDigest: process.env.CODEOPS_SESSION_GATEWAY_DIGEST ?? "",

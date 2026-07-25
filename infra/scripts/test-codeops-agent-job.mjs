@@ -11,6 +11,7 @@ const template = await readFile(
 const input = {
   runId: "routing-matrix-2fdebb4c",
   baseSha: "a".repeat(40),
+  prompt: "Inspect the routing matrix and propose a bounded implementation plan.",
   repository: "https://github.com/anulman/renoconcierge",
   agentDigest: `sha256:${"b".repeat(64)}`,
   sessionGatewayDigest: `sha256:${"c".repeat(64)}`,
@@ -31,7 +32,7 @@ test("renders one tokenless, bounded, ephemeral Agent Job", () => {
   const pod = job.spec.template.spec;
   assert.equal(job.spec.backoffLimit, 0);
   assert.equal(job.spec.activeDeadlineSeconds, 3600);
-  assert.equal(job.spec.ttlSecondsAfterFinished, 600);
+  assert.equal(job.spec.ttlSecondsAfterFinished, 3600);
   assert.equal(pod.automountServiceAccountToken, false);
   assert.equal(pod.enableServiceLinks, false);
   assert.deepEqual(pod.nodeSelector, { "renoconcierge.ca/codeops": "true" });
@@ -52,7 +53,7 @@ test("keeps ACP pod-local and exposes no Service or Ingress", () => {
       .value,
     "/run/codeops/agent.sock",
   );
-  assert.ok(pod.containers[1].args.includes("/run/codeops/agent.sock"));
+  assert.equal(pod.containers[1].args, undefined);
   assert.equal(
     manifests.some((resource) => ["Service", "Ingress"].includes(resource.kind)),
     false,
@@ -74,18 +75,43 @@ test("uses an exact source SHA and only immutable images", () => {
   ]);
 });
 
-test("injects only the named run-scoped model secret", () => {
+test("scopes repository-read and model secrets to separate containers", () => {
   const job = resources()[1];
+  const builder = job.spec.template.spec.initContainers[0];
   const agent = job.spec.template.spec.containers.find(
     (container) => container.name === "coding-agent",
   );
+  const gateway = job.spec.template.spec.containers.find(
+    (container) => container.name === "session-gateway",
+  );
   const secret = agent.env.find(
-    (entry) => entry.name === "CODEOPS_MODEL_API_KEY",
+    (entry) => entry.name === "CODEX_API_KEY",
   );
   assert.deepEqual(secret.valueFrom.secretKeyRef, {
     name: "codeops-run-routing-matrix-2fdebb4c",
     key: "model-api-key",
   });
+  assert.deepEqual(
+    builder.env.find(
+      (entry) => entry.name === "CODEOPS_REPOSITORY_READ_TOKEN",
+    ).valueFrom.secretKeyRef,
+    {
+      name: "codeops-run-routing-matrix-2fdebb4c",
+      key: "repository-read-token",
+    },
+  );
+  assert.equal(
+    agent.env.some((entry) => entry.name === "CODEOPS_REPOSITORY_READ_TOKEN"),
+    false,
+  );
+  assert.equal(
+    gateway.env.some((entry) => entry.name === "DEFAULT_AUTH_REQUEST"),
+    false,
+  );
+  assert.equal(
+    agent.env.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST").value,
+    '{"methodId":"api-key"}',
+  );
   assert.equal(JSON.stringify(job).includes("value: sk-"), false);
 });
 
@@ -108,6 +134,7 @@ test("fails closed on malformed identity, source, image, or template drift", () 
     { runId: "-bad" },
     { baseSha: "abc" },
     { repository: "git@github.com:anulman/renoconcierge.git" },
+    { prompt: "" },
     { agentDigest: "latest" },
     { sessionGatewayDigest: `sha256:${"C".repeat(64)}` },
   ]) {

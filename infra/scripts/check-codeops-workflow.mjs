@@ -70,6 +70,46 @@ assert.ok(
     (step) => step.run === "bash infra/scripts/check-codeops-plane-render.sh",
   ),
 );
+assert.ok(
+  workflow.on.pull_request.paths.includes("services/codeops-session-gateway/**"),
+);
+assert.ok(workflow.on.pull_request.paths.includes("services/codeops-agent/**"));
+assert.ok(
+  contracts.steps.some(
+    (step) =>
+      step.name === "Test and typecheck ACP session gateway" &&
+      step.run?.includes(
+        "npm ci --workspaces=false --prefix services/codeops-session-gateway",
+      ) &&
+      step.run?.includes("npm test --prefix services/codeops-session-gateway") &&
+      step.run?.includes(
+        "npm run typecheck --prefix services/codeops-session-gateway",
+      ),
+  ),
+);
+assert.ok(
+  contracts.steps.some(
+    (step) =>
+      step.name === "Verify pinned ACP agent adapter" &&
+      step.run === "npm ci --workspaces=false --prefix services/codeops-agent",
+  ),
+);
+assert.ok(
+  contracts.steps.some(
+    (step) =>
+      step.name === "Build isolated ACP runtime images" &&
+      step.run?.includes("infra/docker/codeops-agent.Dockerfile") &&
+      step.run?.includes("infra/docker/codeops-session-gateway.Dockerfile"),
+  ),
+);
+assert.ok(
+  contracts.steps.some(
+    (step) =>
+      step.name === "Test and render the isolated Trial 0 Agent Job" &&
+      step.env?.CODEOPS_PROMPT ===
+        "Inspect the exact candidate and return an implementation plan.",
+  ),
+);
 
 function inspect(value, path = []) {
   if (typeof value === "string") {

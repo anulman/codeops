@@ -9,7 +9,8 @@ const REPOSITORY =
 const TOKENS = {
   CODEOPS_AGENT_DIGEST: "agentDigest",
   CODEOPS_BASE_SHA: "baseSha",
-  CODEOPS_REPOSITORY: "repository",
+  CODEOPS_PROMPT_B64: "promptBase64",
+  CODEOPS_REPOSITORY_URL: "repository",
   CODEOPS_RUN_ID: "runId",
   CODEOPS_RUN_SUFFIX: "runSuffix",
   CODEOPS_SESSION_GATEWAY_DIGEST: "sessionGatewayDigest",
@@ -32,6 +33,13 @@ export function renderAgentJobManifest(template, input) {
   }
 
   const values = { ...input, runSuffix: input.runId };
+  values.promptBase64 = Buffer.from(input.prompt ?? "", "utf8").toString("base64");
+  if (
+    Buffer.byteLength(input.prompt ?? "", "utf8") < 1 ||
+    Buffer.byteLength(input.prompt ?? "", "utf8") > 100_000
+  ) {
+    throw new Error("prompt must contain 1 to 100000 UTF-8 bytes");
+  }
   let rendered = template;
   for (const [token, key] of Object.entries(TOKENS)) {
     const occurrences = rendered.split(token).length - 1;

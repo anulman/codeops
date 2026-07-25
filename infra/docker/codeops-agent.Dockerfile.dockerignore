@@ -1,0 +1,5 @@
+**
+!services/
+services/*
+!services/codeops-agent/
+!services/codeops-agent/**

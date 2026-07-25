@@ -17,7 +17,7 @@ metadata:
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 3600
-  ttlSecondsAfterFinished: 600
+  ttlSecondsAfterFinished: 3600
   template:
     metadata:
       labels:
@@ -46,12 +46,25 @@ spec:
             - /bin/sh
             - -ceu
             - |
-              test "$(git -C /opt/codeops/repository rev-parse HEAD)" = "$CODEOPS_BASE_SHA"
-              cp -a /opt/codeops/repository/. /workspace/
+              auth="$(printf 'x-access-token:%s' "$CODEOPS_REPOSITORY_READ_TOKEN" | base64 | tr -d '\n')"
+              git init /workspace
+              git -C /workspace remote add origin "$CODEOPS_REPOSITORY"
+              git -C /workspace -c "http.extraHeader=Authorization: Basic $auth" \
+                fetch --depth=1 origin "$CODEOPS_BASE_SHA"
+              unset auth CODEOPS_REPOSITORY_READ_TOKEN
+              git -C /workspace checkout --detach FETCH_HEAD
+              git -C /workspace remote remove origin
               test "$(git -C /workspace rev-parse HEAD)" = "$CODEOPS_BASE_SHA"
           env:
             - name: CODEOPS_BASE_SHA
               value: CODEOPS_BASE_SHA
+            - name: CODEOPS_REPOSITORY
+              value: CODEOPS_REPOSITORY_URL
+            - name: CODEOPS_REPOSITORY_READ_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: codeops-run-CODEOPS_RUN_SUFFIX
+                  key: repository-read-token
           resources:
             requests:
               cpu: 100m
@@ -80,6 +93,10 @@ spec:
               value: /run/codeops/agent.sock
             - name: CODEOPS_CHECKPOINT_DIR
               value: /checkpoint
+            - name: CODEOPS_WORKSPACE
+              value: /workspace
+            - name: CODEOPS_PROMPT_B64
+              value: CODEOPS_PROMPT_B64
           resources:
             requests:
               cpu: 100m
@@ -104,25 +121,22 @@ spec:
         - name: coding-agent
           image: ghcr.io/anulman/renoconcierge-codeops-agent@CODEOPS_AGENT_DIGEST
           imagePullPolicy: IfNotPresent
-          args:
-            - codeops-agent
-            - acp
-            - --socket
-            - /run/codeops/agent.sock
-            - --workspace
-            - /workspace
           env:
             - name: CODEOPS_RUN_ID
               value: CODEOPS_RUN_ID
             - name: CODEOPS_BASE_SHA
               value: CODEOPS_BASE_SHA
             - name: CODEOPS_REPOSITORY
-              value: CODEOPS_REPOSITORY
-            - name: CODEOPS_MODEL_API_KEY
+              value: CODEOPS_REPOSITORY_URL
+            - name: CODEX_API_KEY
               valueFrom:
                 secretKeyRef:
                   name: codeops-run-CODEOPS_RUN_SUFFIX
                   key: model-api-key
+            - name: DEFAULT_AUTH_REQUEST
+              value: '{"methodId":"api-key"}'
+            - name: CODEOPS_ACP_SOCKET
+              value: /run/codeops/agent.sock
           resources:
             requests:
               cpu: 500m

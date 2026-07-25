@@ -1,0 +1,11 @@
+**
+!tsconfig.json
+!services/
+services/*
+!services/codeops-session-gateway/
+!services/codeops-session-gateway/package.json
+!services/codeops-session-gateway/package-lock.json
+!services/codeops-session-gateway/tsconfig.json
+!services/codeops-session-gateway/tsconfig.build.json
+!services/codeops-session-gateway/src/
+!services/codeops-session-gateway/src/**

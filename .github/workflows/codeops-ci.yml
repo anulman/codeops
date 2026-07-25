@@ -7,6 +7,10 @@ on:
       - "Dockerfile"
       - "packages/codeops-contracts/**"
       - "services/codeops-orchestrator/**"
+      - "services/codeops-session-gateway/**"
+      - "services/codeops-agent/**"
+      - "infra/docker/codeops-*.Dockerfile"
+      - "infra/docker/codeops-*.Dockerfile.dockerignore"
       - "infra/scripts/check-codeops-workflow.mjs"
       - "infra/scripts/codeops-capacity.mjs"
       - "infra/scripts/check-codeops-capacity.mjs"
@@ -36,6 +40,10 @@ on:
       - "Dockerfile"
       - "packages/codeops-contracts/**"
       - "services/codeops-orchestrator/**"
+      - "services/codeops-session-gateway/**"
+      - "services/codeops-agent/**"
+      - "infra/docker/codeops-*.Dockerfile"
+      - "infra/docker/codeops-*.Dockerfile.dockerignore"
       - "infra/scripts/check-codeops-workflow.mjs"
       - "infra/scripts/codeops-capacity.mjs"
       - "infra/scripts/check-codeops-capacity.mjs"
@@ -106,6 +114,26 @@ jobs:
       - name: Typecheck Temporal orchestrator
         run: npm run typecheck --prefix services/codeops-orchestrator
 
+      - name: Test and typecheck ACP session gateway
+        run: |
+          npm ci --workspaces=false --prefix services/codeops-session-gateway
+          npm test --prefix services/codeops-session-gateway
+          npm run typecheck --prefix services/codeops-session-gateway
+
+      - name: Verify pinned ACP agent adapter
+        run: npm ci --workspaces=false --prefix services/codeops-agent
+
+      - name: Build isolated ACP runtime images
+        run: |
+          docker build \
+            --file infra/docker/codeops-agent.Dockerfile \
+            --tag codeops-agent:ci \
+            .
+          docker build \
+            --file infra/docker/codeops-session-gateway.Dockerfile \
+            --tag codeops-session-gateway:ci \
+            .
+
       - name: Validate workflow syntax
         run: node infra/scripts/check-codeops-workflow.mjs
 
@@ -142,6 +170,7 @@ jobs:
           CODEOPS_REPOSITORY: https://github.com/anulman/renoconcierge
           CODEOPS_AGENT_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           CODEOPS_SESSION_GATEWAY_DIGEST: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+          CODEOPS_PROMPT: Inspect the exact candidate and return an implementation plan.
         run: |
           node --test infra/scripts/test-codeops-agent-job.mjs
           node infra/scripts/render-codeops-agent-job.mjs > /tmp/codeops-agent-job.yaml
