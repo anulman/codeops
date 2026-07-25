@@ -7,6 +7,9 @@ on:
       - "Dockerfile"
       - "packages/codeops-contracts/**"
       - "infra/scripts/check-codeops-workflow.mjs"
+      - "infra/scripts/codeops-capacity.mjs"
+      - "infra/scripts/check-codeops-capacity.mjs"
+      - "infra/scripts/test-codeops-capacity.mjs"
       - "package.json"
       - "lock.yaml"
   push:
@@ -17,6 +20,9 @@ on:
       - "Dockerfile"
       - "packages/codeops-contracts/**"
       - "infra/scripts/check-codeops-workflow.mjs"
+      - "infra/scripts/codeops-capacity.mjs"
+      - "infra/scripts/check-codeops-capacity.mjs"
+      - "infra/scripts/test-codeops-capacity.mjs"
       - "package.json"
       - "lock.yaml"
 
@@ -64,6 +70,9 @@ jobs:
 
       - name: Validate workflow syntax
         run: node infra/scripts/check-codeops-workflow.mjs
+
+      - name: Test Trial 0 capacity gate
+        run: node --test infra/scripts/test-codeops-capacity.mjs
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD
