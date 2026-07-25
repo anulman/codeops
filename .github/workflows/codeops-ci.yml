@@ -14,6 +14,10 @@ on:
       - "infra/scripts/check-codeops-bootstrap-plan.mjs"
       - "infra/scripts/test-codeops-bootstrap-policy.mjs"
       - "infra/scripts/test-codeops-plane-chart.mjs"
+      - "infra/scripts/codeops-plane-images.mjs"
+      - "infra/scripts/rewrite-codeops-plane-images.mjs"
+      - "infra/scripts/test-codeops-plane-images.mjs"
+      - "infra/scripts/check-codeops-plane-render.sh"
       - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
@@ -32,6 +36,10 @@ on:
       - "infra/scripts/check-codeops-bootstrap-plan.mjs"
       - "infra/scripts/test-codeops-bootstrap-policy.mjs"
       - "infra/scripts/test-codeops-plane-chart.mjs"
+      - "infra/scripts/codeops-plane-images.mjs"
+      - "infra/scripts/rewrite-codeops-plane-images.mjs"
+      - "infra/scripts/test-codeops-plane-images.mjs"
+      - "infra/scripts/check-codeops-plane-render.sh"
       - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
@@ -89,6 +97,12 @@ jobs:
 
       - name: Test Trial 0 Plane chart contract
         run: node --test infra/scripts/test-codeops-plane-chart.mjs
+
+      - name: Test Trial 0 Plane immutable image rewrite
+        run: node --test infra/scripts/test-codeops-plane-images.mjs
+
+      - name: Render pinned Trial 0 Plane chart with immutable images
+        run: bash infra/scripts/check-codeops-plane-render.sh
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD

@@ -60,6 +60,16 @@ assert.ok(
     (step) => step.run === "node --test infra/scripts/test-codeops-plane-chart.mjs",
   ),
 );
+assert.ok(
+  contracts.steps.some(
+    (step) => step.run === "node --test infra/scripts/test-codeops-plane-images.mjs",
+  ),
+);
+assert.ok(
+  contracts.steps.some(
+    (step) => step.run === "bash infra/scripts/check-codeops-plane-render.sh",
+  ),
+);
 
 function inspect(value, path = []) {
   if (typeof value === "string") {

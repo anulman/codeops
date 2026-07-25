@@ -16,7 +16,7 @@ The trusted external supervisor must:
 5. replace `plane-candidate.preview.renoconcierge.ca` with
    `plane-<candidate-sha-prefix>.preview.renoconcierge.ca`;
 6. resolve every image in the rendered chart to an immutable registry digest
-   and reject the deployment if any tag remains;
+   and attest that every source tag still matches `plane-images.lock.json`;
 7. apply `plane-limit-range.yaml`, then install the pinned, digest-rewritten
    chart with `plane-values.yaml`;
 8. independently verify every Deployment, StatefulSet, PVC, Ingress, and
@@ -39,3 +39,19 @@ Required Secret names and keys:
 The candidate has no Kubernetes credential. Cleanup must remove the Helm
 release, namespace, PVCs, copied TLS material, generated Secrets, node label,
 and any external DNS record within the bootstrap plan's 24-hour deadline.
+
+Render and rewrite without contacting the cluster:
+
+```bash
+helm template codeops-plane makeplane/plane-ce \
+  --version 1.6.0 \
+  --namespace "$CODEOPS_NAMESPACE" \
+  -f infra/k8s/codeops/trial0/plane-values.yaml \
+  --set "ingress.appHost=$CODEOPS_PLANE_HOST" \
+  | node infra/scripts/rewrite-codeops-plane-images.mjs \
+  > "$CODEOPS_RENDERED_MANIFEST"
+```
+
+The rewrite fails if the chart adds or removes an image, a lock entry is not a
+SHA-256 digest for the same repository, no images are rendered, or any mutable
+tag survives.
