@@ -10,6 +10,9 @@ This service owns the privileged Plane integration boundary. It implements:
 - bind the request to the exact source SHA and a digest of the Plane revision;
 - deduplicate retries with Plane's stable `event_id`, not its per-attempt
   `delivery_id`.
+- persist event and request deduplication on a private durable volume with
+  payload-digest collision checks, bounded processing leases, crash recovery,
+  attempt counts, and explicit terminal outcomes;
 - preflight an entire proposed mutation batch before the first write;
 - apply only comments, logical-label operations, project/ticket content edits,
   and same-project ticket creation;
@@ -24,6 +27,7 @@ This service owns the privileged Plane integration boundary. It implements:
   before network I/O.
 
 The QA Contract Researcher never receives the Plane webhook secret or API
-credential. Durable deduplication, runtime packaging, and deployment remain
+credential. The file ledger is a controller-owned primitive and must be mounted
+on a single-writer durable volume; runtime packaging and deployment remain
 separate fail-closed slices. Until those exist, commenting `/research` must not
 be advertised as live.

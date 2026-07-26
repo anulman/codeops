@@ -21,6 +21,12 @@ export {
   createPlaneApiClient,
   type PlaneApiClientConfig,
 } from "./plane-api.js";
+export {
+  createFileResearchDedupLedger,
+  type DedupClaim,
+  type FileResearchDedupLedgerConfig,
+  type ResearchDedupLedger,
+} from "./dedup-ledger.js";
 
 const uuid = z.string().uuid();
 const gitSha = z.string().regex(/^[0-9a-f]{40}$/);
