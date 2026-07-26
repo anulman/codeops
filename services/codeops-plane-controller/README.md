@@ -13,6 +13,9 @@ This service owns the privileged Plane integration boundary. It implements:
 - persist event and request deduplication on a private durable volume with
   payload-digest collision checks, bounded processing leases, crash recovery,
   attempt counts, and explicit terminal outcomes;
+- claim both stable identities before enqueue, use the research request ID as
+  the deterministic workflow ID, reconcile an already-enqueued request after a
+  crash, and persist `request-enqueued` before acknowledging a retry;
 - preflight an entire proposed mutation batch before the first write;
 - apply only comments, logical-label operations, project/ticket content edits,
   and same-project ticket creation;
@@ -28,6 +31,8 @@ This service owns the privileged Plane integration boundary. It implements:
 
 The QA Contract Researcher never receives the Plane webhook secret or API
 credential. The file ledger is a controller-owned primitive and must be mounted
-on a single-writer durable volume; runtime packaging and deployment remain
-separate fail-closed slices. Until those exist, commenting `/research` must not
-be advertised as live.
+on a single-writer durable volume. The enqueue callback must map
+`already started` from Temporal to `already-enqueued`; every other Temporal
+error fails both held claims for a bounded retry. HTTP/runtime packaging and
+deployment remain separate fail-closed slices. Until those exist, commenting
+`/research` must not be advertised as live.

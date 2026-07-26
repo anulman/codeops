@@ -98,9 +98,25 @@ export type PlaneSourceSnapshot = Readonly<{
 }>;
 
 export type ResearchAdmission = Readonly<{
+  eventId: string;
   request: ResearchRequest;
   planeRevisionDigest: string;
 }>;
+
+export type ResearchRequestEnqueueResult = "enqueued" | "already-enqueued";
+
+export type ResearchWebhookProcessingResult =
+  | Readonly<{ status: "ignored" }>
+  | Readonly<{
+      status: "busy";
+      scope: "event" | "request";
+      leaseExpiresAt: string;
+    }>
+  | Readonly<{
+      status: "enqueued";
+      requestId: string;
+      duplicate: boolean;
+    }>;
 
 export async function admitPlaneResearchComment(input: {
   rawBody: Buffer;
@@ -221,5 +237,166 @@ export async function admitPlaneResearchComment(input: {
   if (request === null) {
     throw new Error("admitted Plane research event did not produce a request");
   }
-  return { request, planeRevisionDigest };
+  return {
+    eventId: payload.event_id,
+    request,
+    planeRevisionDigest,
+  };
+}
+
+function researchRequestDigest(request: ResearchRequest): string {
+  const { requestedAt: _receivedAt, ...stableRequest } = request;
+  return `sha256:${createHash("sha256")
+    .update(canonicalSerialize(stableRequest))
+    .digest("hex")}`;
+}
+
+export async function processPlaneResearchWebhook(
+  input: Parameters<typeof admitPlaneResearchComment>[0] & {
+    ledger: import("./dedup-ledger.js").ResearchDedupLedger;
+    enqueue: (input: {
+      workflowId: string;
+      request: ResearchRequest;
+    }) => Promise<ResearchRequestEnqueueResult>;
+    now?: () => string;
+  },
+): Promise<ResearchWebhookProcessingResult> {
+  const admission = await admitPlaneResearchComment(input);
+  if (admission === null) return { status: "ignored" };
+
+  const now = input.now ?? (() => new Date().toISOString());
+  const payloadDigest = researchRequestDigest(admission.request);
+  let eventClaim:
+    | Extract<
+        import("./dedup-ledger.js").DedupClaim,
+        { status: "acquired" }
+      >
+    | undefined;
+  let requestClaim:
+    | Extract<
+        import("./dedup-ledger.js").DedupClaim,
+        { status: "acquired" }
+      >
+    | undefined;
+
+  const claimedEvent = await input.ledger.claim({
+    kind: "event",
+    stableId: admission.eventId,
+    payloadDigest,
+    now: now(),
+  });
+  if (claimedEvent.status === "busy") {
+    return {
+      status: "busy",
+      scope: "event",
+      leaseExpiresAt: claimedEvent.leaseExpiresAt,
+    };
+  }
+  if (claimedEvent.status === "complete") {
+    if (claimedEvent.outcome === "request-enqueued") {
+      return {
+        status: "enqueued",
+        requestId: admission.request.requestId,
+        duplicate: true,
+      };
+    }
+    if (claimedEvent.outcome !== "request-created") {
+      throw new Error(
+        `completed research event has unexpected outcome ${claimedEvent.outcome}`,
+      );
+    }
+  } else {
+    eventClaim = claimedEvent;
+  }
+
+  try {
+    const claimedRequest = await input.ledger.claim({
+      kind: "request",
+      stableId: admission.request.requestId,
+      payloadDigest,
+      now: now(),
+    });
+    if (claimedRequest.status === "busy") {
+      if (eventClaim !== undefined) {
+        await input.ledger.fail({
+          claim: eventClaim,
+          failure: "matching research request is already processing",
+          now: now(),
+        });
+      }
+      return {
+        status: "busy",
+        scope: "request",
+        leaseExpiresAt: claimedRequest.leaseExpiresAt,
+      };
+    }
+    if (claimedRequest.status === "complete") {
+      if (claimedRequest.outcome !== "request-enqueued") {
+        throw new Error(
+          `completed research request has unexpected outcome ${claimedRequest.outcome}`,
+        );
+      }
+      if (eventClaim !== undefined) {
+        await input.ledger.complete({
+          claim: eventClaim,
+          outcome: "request-enqueued",
+          now: now(),
+        });
+      }
+      return {
+        status: "enqueued",
+        requestId: admission.request.requestId,
+        duplicate: true,
+      };
+    }
+    requestClaim = claimedRequest;
+
+    const enqueueResult = await input.enqueue({
+      workflowId: admission.request.requestId,
+      request: admission.request,
+    });
+    if (
+      enqueueResult !== "enqueued" &&
+      enqueueResult !== "already-enqueued"
+    ) {
+      throw new Error("research enqueuer returned an invalid outcome");
+    }
+
+    await input.ledger.complete({
+      claim: requestClaim,
+      outcome: "request-enqueued",
+      now: now(),
+    });
+    requestClaim = undefined;
+    if (eventClaim !== undefined) {
+      await input.ledger.complete({
+        claim: eventClaim,
+        outcome: "request-enqueued",
+        now: now(),
+      });
+      eventClaim = undefined;
+    }
+    return {
+      status: "enqueued",
+      requestId: admission.request.requestId,
+      duplicate: enqueueResult === "already-enqueued",
+    };
+  } catch (error) {
+    const failure = "research webhook processing failed";
+    if (requestClaim !== undefined) {
+      await input.ledger.fail({
+        claim: requestClaim,
+        failure,
+        now: now(),
+      });
+    }
+    if (eventClaim !== undefined) {
+      await input.ledger.fail({
+        claim: eventClaim,
+        failure,
+        now: now(),
+      });
+    }
+    throw error;
+  }
 }
