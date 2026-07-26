@@ -38,6 +38,7 @@ assert.ok(
 for (const stepName of [
   "Render Trial 0 orchestrator with an immutable image",
   "Test and render the Trial 0 Plane controller",
+  "Test and render the scoped cluster-native image path",
   "Test and render the isolated Trial 0 Agent Job",
 ]) {
   const step = contracts.steps.find((candidate) => candidate.name === stepName);
@@ -48,6 +49,19 @@ assert.ok(contracts.steps.some((step) => step.run === "nub install --frozen-lock
 assert.ok(
   contracts.steps.some(
     (step) => step.run === "nub run --filter @renoconcierge/codeops-contracts test",
+  ),
+);
+assert.ok(
+  contracts.steps.some(
+    (step) =>
+      step.name === "Test and render the scoped cluster-native image path" &&
+      step.run?.includes("infra/scripts/test-codeops-cluster-build.mjs") &&
+      step.run?.includes("infra/scripts/render-codeops-cluster-registry.mjs") &&
+      step.run?.includes(
+        "infra/scripts/render-codeops-cluster-image-builder.mjs",
+      ) &&
+      step.env?.CODEOPS_REGISTRY_HOST ===
+        "registry-bbbbbbbbbbbb.preview.renoconcierge.ca",
   ),
 );
 assert.ok(

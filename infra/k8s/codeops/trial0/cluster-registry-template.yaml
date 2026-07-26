@@ -1,0 +1,181 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codeops-registry
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: codeops-registry-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: csi-cinder-high-speed
+  resources:
+    requests:
+      storage: 8Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codeops-registry
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: codeops-registry
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: codeops-registry
+        app.kubernetes.io/part-of: codeops-trial0
+    spec:
+      serviceAccountName: codeops-registry
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      nodeSelector:
+        renoconcierge.ca/codeops: "true"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: registry
+          image: docker.io/library/registry@sha256:46faa9a1ae6813194b53921a370f2f4f8c5e1aae228a89bceafef5847a6a3278
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: REGISTRY_HTTP_ADDR
+              value: 0.0.0.0:5000
+            - name: REGISTRY_AUTH
+              value: htpasswd
+            - name: REGISTRY_AUTH_HTPASSWD_REALM
+              value: CodeOps Trial 0
+            - name: REGISTRY_AUTH_HTPASSWD_PATH
+              value: /var/run/secrets/codeops/htpasswd
+            - name: REGISTRY_STORAGE_FILESYSTEM_ROOTDIRECTORY
+              value: /var/lib/registry
+          ports:
+            - name: registry
+              containerPort: 5000
+          startupProbe:
+            tcpSocket:
+              port: registry
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: registry
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: registry
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop:
+                - ALL
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/registry
+            - name: auth
+              mountPath: /var/run/secrets/codeops
+              readOnly: true
+            - name: temp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          persistentVolumeClaim:
+            claimName: codeops-registry-data
+        - name: auth
+          secret:
+            secretName: codeops-registry-auth
+            defaultMode: 288
+            items:
+              - key: htpasswd
+                path: htpasswd
+        - name: temp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: codeops-registry
+spec:
+  selector:
+    app.kubernetes.io/name: codeops-registry
+  ports:
+    - name: registry
+      port: 5000
+      targetPort: registry
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: codeops-registry
+  annotations:
+    nginx.ingress.kubernetes.io/proxy-body-size: "0"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "600"
+    nginx.ingress.kubernetes.io/proxy-send-timeout: "600"
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - __CODEOPS_REGISTRY_HOST__
+      secretName: renoconcierge-preview-wildcard-tls
+  rules:
+    - host: __CODEOPS_REGISTRY_HOST__
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: codeops-registry
+                port:
+                  name: registry
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codeops-registry
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: codeops-registry
+  policyTypes:
+    - Ingress
+    - Egress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 5000
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-image-builder
+      ports:
+        - protocol: TCP
+          port: 5000
+  egress: []

@@ -126,6 +126,58 @@ webhook path, and restart-persistent deduplication before configuring Plane.
 The controller credential is never mounted into the orchestrator or an Agent
 Job.
 
+## Scoped cluster-native image path
+
+Disposable Trial 0 runtime images are built inside isolated Kubernetes Jobs and
+stored in an authenticated registry backed by an 8 GiB `ReadWriteOnce` claim.
+This replaces dependence on GitHub-hosted runner admission without turning the
+old unbounded `rc-image-stage-*` registry into shared infrastructure.
+
+The registry, rootless BuildKit, and source Git images are locked to verified
+linux/amd64 platform digests in `cluster-build-images.lock.json`. The registry
+has one `Recreate` replica, no service-account token, htpasswd authentication,
+a cluster-internal Service, and a SHA-bound TLS pull endpoint. Network policy
+admits only ingress-nginx and the exact builder label.
+
+Each externally rendered builder Job:
+
+- checks out exactly one 40-character candidate SHA with a run-scoped
+  repository-read credential visible only to the init container;
+- removes the Git remote before the build;
+- receives no Kubernetes token, host path, Docker socket, Role, or RoleBinding;
+- runs rootless BuildKit with a read-only source mount, bounded ephemeral
+  storage, one-hour deadline, no retry, and only DNS, registry, and public-HTTPS
+  egress;
+- builds exactly `codeops-orchestrator-runtime` or the standalone Plane
+  controller Dockerfile and pushes a SHA-bound candidate tag to the private
+  registry.
+
+Rootless BuildKit requires unconfined seccomp/AppArmor and
+`--oci-worker-no-process-sandbox`; this exception is explicit and isolated by
+the tokenless account, no host mounts/capabilities, strict network policy, and
+disposable namespace. The trusted supervisor must resolve the pushed manifest
+to an immutable digest before rendering any runtime workload.
+
+```bash
+CODEOPS_BASE_SHA=<40-lowercase-hex> \
+CODEOPS_REGISTRY_HOST=registry-<first-12-sha>.preview.renoconcierge.ca \
+  node infra/scripts/render-codeops-cluster-registry.mjs \
+  > "$CODEOPS_REGISTRY_MANIFEST"
+
+CODEOPS_BASE_SHA=<40-lowercase-hex> \
+CODEOPS_IMAGE_KIND=plane-controller \
+CODEOPS_BUILD_ID=build-plane-controller-<first-12-sha> \
+  node infra/scripts/render-codeops-cluster-image-builder.mjs \
+  > "$CODEOPS_IMAGE_BUILDER_MANIFEST"
+```
+
+The external supervisor creates three credentials without logging their
+contents: `codeops-registry-auth` (`htpasswd`),
+`codeops-registry-push` (`config.json` for the internal Service), and
+`codeops-registry-pull` (a Kubernetes pull Secret for the exact TLS host).
+Builder-specific `codeops-build-<build-id>` Secrets contain only a
+run-scoped repository-read token and are deleted with the Job.
+
 ## Agent Job boundary
 
 `agent-job-template.yaml` is rendered and applied only by the trusted external

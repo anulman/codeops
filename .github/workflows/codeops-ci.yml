@@ -31,6 +31,10 @@ on:
       - "infra/scripts/codeops-runtime-render.mjs"
       - "infra/scripts/render-codeops-orchestrator.mjs"
       - "infra/scripts/test-codeops-temporal-runtime.mjs"
+      - "infra/scripts/codeops-cluster-build-render.mjs"
+      - "infra/scripts/render-codeops-cluster-registry.mjs"
+      - "infra/scripts/render-codeops-cluster-image-builder.mjs"
+      - "infra/scripts/test-codeops-cluster-build.mjs"
       - "infra/scripts/codeops-agent-job-render.mjs"
       - "infra/scripts/render-codeops-agent-job.mjs"
       - "infra/scripts/test-codeops-agent-job.mjs"
@@ -69,6 +73,10 @@ on:
       - "infra/scripts/codeops-runtime-render.mjs"
       - "infra/scripts/render-codeops-orchestrator.mjs"
       - "infra/scripts/test-codeops-temporal-runtime.mjs"
+      - "infra/scripts/codeops-cluster-build-render.mjs"
+      - "infra/scripts/render-codeops-cluster-registry.mjs"
+      - "infra/scripts/render-codeops-cluster-image-builder.mjs"
+      - "infra/scripts/test-codeops-cluster-build.mjs"
       - "infra/scripts/codeops-agent-job-render.mjs"
       - "infra/scripts/render-codeops-agent-job.mjs"
       - "infra/scripts/test-codeops-agent-job.mjs"
@@ -201,6 +209,24 @@ jobs:
           node --test infra/scripts/test-codeops-plane-controller.mjs
           node infra/scripts/render-codeops-plane-controller.mjs > /tmp/codeops-plane-controller.yaml
           node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-plane-controller.yaml
+
+      - name: Test and render the scoped cluster-native image path
+        env:
+          CODEOPS_BASE_SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          CODEOPS_REGISTRY_HOST: registry-bbbbbbbbbbbb.preview.renoconcierge.ca
+        run: |
+          node --test infra/scripts/test-codeops-cluster-build.mjs
+          node infra/scripts/render-codeops-cluster-registry.mjs > /tmp/codeops-cluster-registry.yaml
+          CODEOPS_IMAGE_KIND=orchestrator \
+          CODEOPS_BUILD_ID=build-orchestrator-bbbbbbbbbbbb \
+            node infra/scripts/render-codeops-cluster-image-builder.mjs > /tmp/codeops-build-orchestrator.yaml
+          CODEOPS_IMAGE_KIND=plane-controller \
+          CODEOPS_BUILD_ID=build-plane-controller-bbbbbbbbbbbb \
+            node infra/scripts/render-codeops-cluster-image-builder.mjs > /tmp/codeops-build-plane-controller.yaml
+          node infra/scripts/check-codeops-manifests.mjs \
+            /tmp/codeops-cluster-registry.yaml \
+            /tmp/codeops-build-orchestrator.yaml \
+            /tmp/codeops-build-plane-controller.yaml
 
       - name: Test and render the isolated Trial 0 Agent Job
         env:
