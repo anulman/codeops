@@ -202,6 +202,10 @@ The trusted renderer requires an explicit `CODEOPS_AGENT_ROLE`. A
 `coding-agent` receives a writable ephemeral source mount. The
 `qa-contract-researcher` receives the same exact-SHA source mount read-only,
 records its role in checkpoint schema v2, and fails if any source patch exists.
+One human-authored research comment may tag multiple registered `@ai-*`
+personas. Temporal dispatches one isolated researcher Job per persona
+sequentially, preserving the strict Trial 0 one-Job concurrency cap, and the
+research packet must record one explicit terminal perspective for each tag.
 Neither role receives a Plane credential. Research packets and proposed Plane
 mutations must cross the separate controller boundary and satisfy the
 `@renoconcierge/codeops-contracts` schemas before application; lifecycle state

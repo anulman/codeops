@@ -280,7 +280,8 @@ const planeCommentEvent = {
     id: "16c61a3a-512a-48ac-b0be-b6b46fe6f430",
     kind: "human",
   },
-  comment: "/research",
+  comment:
+    "@ai-security @ai-web @ai-database Research the canonical auth state matrix.",
   occurredAt: now,
 };
 
@@ -288,15 +289,22 @@ const researchSource = {
   repository: { owner: "anulman", name: "renoconcierge" },
   baseSha: sha,
   planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+  defaultBrief: "Inventory canonical auth states from the Plane ticket.",
 };
 
-test("admits only an exact human-authored research command on comment creation", () => {
+test("admits registered persona mentions only from a new human comment", () => {
   const request = createResearchRequestFromPlaneComment(
     planeCommentEvent,
     researchSource,
   );
   assert.equal(request.workItemId, planeCommentEvent.workItemId);
   assert.equal(request.requestedBy, planeCommentEvent.actor.id);
+  assert.deepEqual(request.personas, [
+    "@ai-security",
+    "@ai-web",
+    "@ai-database",
+  ]);
+  assert.equal(request.brief, "Research the canonical auth state matrix.");
   assert.equal(
     createResearchRequestFromPlaneComment(
       {
@@ -309,10 +317,37 @@ test("admits only an exact human-authored research command on comment creation",
   );
   assert.equal(
     createResearchRequestFromPlaneComment(
-      { ...planeCommentEvent, comment: "Please /research this" },
+      { ...planeCommentEvent, comment: "/research" },
       researchSource,
     ),
     null,
+  );
+  assert.equal(
+    createResearchRequestFromPlaneComment(
+      { ...planeCommentEvent, comment: "@ai-unknown investigate this" },
+      researchSource,
+    ),
+    null,
+  );
+  assert.deepEqual(
+    createResearchRequestFromPlaneComment(
+      {
+        ...planeCommentEvent,
+        comment: "@ai-web @ai-web",
+      },
+      researchSource,
+    ).personas,
+    ["@ai-web"],
+  );
+  assert.equal(
+    createResearchRequestFromPlaneComment(
+      {
+        ...planeCommentEvent,
+        comment: "@ai-product",
+      },
+      researchSource,
+    ).brief,
+    researchSource.defaultBrief,
   );
   assert.equal(
     createResearchRequestFromPlaneComment(
@@ -429,7 +464,16 @@ test("research packets bind evidence and mutations to one source request", () =>
   );
   const packet = {
     version: contractVersions.researchPacket,
-    persona: "qa-contract-researcher/v1",
+    personas: request.personas,
+    perspectives: request.personas.map((persona) => ({
+      persona,
+      outcome:
+        persona === "@ai-database" ? "no-additional-findings" : "findings",
+      summary:
+        persona === "@ai-database"
+          ? "No database findings beyond the shared inventory."
+          : `${persona} completed its bounded review.`,
+    })),
     requestId: request.requestId,
     projectId: request.projectId,
     workItemId: request.workItemId,
@@ -463,6 +507,12 @@ test("research packets bind evidence and mutations to one source request", () =>
         ...proposedMutations,
         sourceWorkItemId: "acba7524-61e7-41a7-a2f6-083667016d3f",
       },
+    }),
+  );
+  assert.throws(() =>
+    researchPacketSchema.parse({
+      ...packet,
+      perspectives: packet.perspectives.slice(1),
     }),
   );
 });

@@ -11,7 +11,8 @@
   "dependencies": {
     "@renoconcierge/codeops-contracts": "file:../../packages/codeops-contracts",
     "@temporalio/worker": "1.21.1",
-    "@temporalio/workflow": "1.21.1"
+    "@temporalio/workflow": "1.21.1",
+    "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/node": "25.7.0",

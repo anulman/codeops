@@ -5,7 +5,10 @@ import {
   proxyActivities,
   setHandler,
 } from "@temporalio/workflow";
-import type { ResearchRequest } from "@renoconcierge/codeops-contracts";
+import type {
+  ResearchPersonaHandle,
+  ResearchRequest,
+} from "@renoconcierge/codeops-contracts";
 import type { DispatchResult } from "./activities.js";
 import {
   transition,
@@ -28,6 +31,12 @@ export type WorkItemInput =
       readonly researchRequest: ResearchRequest;
     });
 
+export type AgentJobDispatchInput =
+  | Extract<WorkItemInput, { readonly role: "coding-agent" }>
+  | (Extract<WorkItemInput, { readonly role: "qa-contract-researcher" }> & {
+      readonly researchPersona: ResearchPersonaHandle;
+    });
+
 export interface AcceptanceResult {
   readonly passed: boolean;
   readonly summary: string;
@@ -38,7 +47,7 @@ interface Activities {
     workItem: WorkItemInput,
     snapshot: WorkflowSnapshot,
   ): Promise<void>;
-  dispatchAgentJob(workItem: WorkItemInput): Promise<DispatchResult>;
+  dispatchAgentJob(workItem: AgentJobDispatchInput): Promise<DispatchResult>;
 }
 
 const { dispatchAgentJob, recordTransition } = proxyActivities<Activities>({
@@ -111,9 +120,22 @@ export async function workItemWorkflow(
   }
 
   await move("executing", "Dispatching the isolated Agent Job");
-  let dispatch: DispatchResult;
+  const dispatches: DispatchResult[] = [];
   try {
-    dispatch = await dispatchAgentJob(workItem);
+    if (workItem.role === "coding-agent") {
+      dispatches.push(await dispatchAgentJob(workItem));
+    } else {
+      // Preserve the strict one-Agent-Job Trial 0 concurrency cap while still
+      // giving every tagged persona an isolated, terminal execution.
+      for (const persona of workItem.researchRequest.personas) {
+        dispatches.push(
+          await dispatchAgentJob({
+            ...workItem,
+            researchPersona: persona,
+          }),
+        );
+      }
+    }
   } catch {
     await move(
       "failed",
@@ -121,7 +143,12 @@ export async function workItemWorkflow(
     );
     return snapshot;
   }
-  await move("evidence_ready", `Checkpoint ready at ${dispatch.checkpointUri}`);
+  await move(
+    "evidence_ready",
+    `Checkpoints ready at ${dispatches
+      .map((dispatch) => dispatch.checkpointUri)
+      .join(", ")}`,
+  );
   await move("validating", "Waiting for independent acceptance");
   await condition(
     () => external.acceptance !== null || cancellation.length > 0,

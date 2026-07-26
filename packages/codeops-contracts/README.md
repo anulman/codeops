@@ -22,10 +22,14 @@ providers.
 
 ## QA Contract Researcher
 
-The only automated research trigger is an exact, human-authored `/research`
-comment delivered through a signature-verified Plane webhook. Ordinary
-comments, edited comments, deleted comments, and service-authored comments are
-context only and must not start a run.
+The only automated research trigger is a new human-authored comment containing
+one or more registered persona mentions delivered through a signature-verified
+Plane webhook. The v2 registry is `@ai-web`, `@ai-security`, `@ai-database`,
+`@ai-infra`, `@ai-design`, `@ai-product`, and `@ai-ml`. Text after the mentions
+is the bounded round brief; a mention-only comment uses the bound ticket title
+and description. Ordinary comments, edited comments, deleted comments,
+unregistered `@ai-*` text, and service-authored comments are context only and
+must not start a run.
 
 `qaContractResearcherPolicy` and the research mutation schemas enforce a
 content-only capability envelope. The researcher may propose or apply comments,
@@ -38,11 +42,13 @@ prove it belongs to the request's project before applying a mutation. It must
 snapshot the exact Plane revision and repository SHA at admission and preserve
 the triggering actor/comment IDs. The researcher receives no Plane credential.
 
-A research packet contains current and expected behavior, fixture/evidence
-references when available, blocking decisions, and proposed mutations. A
-canonical video is strongly encouraged for user-visible behavior, but its
-absence does not by itself invalidate a packet. Video is human evidence, not
-the acceptance oracle.
+A research packet contains exactly one terminal perspective for every requested
+persona, including an explicit `no-additional-findings` outcome when
+appropriate, plus the synthesized current and expected behavior,
+fixture/evidence references when available, blocking decisions, and proposed
+mutations. A canonical video is strongly encouraged for user-visible behavior,
+but its absence does not by itself invalidate a packet. Video is human
+evidence, not the acceptance oracle.
 
 `readinessGateSchema` keeps one Plane `Ready` state while compiling a
 ticket-specific set of criteria under `qa-ticket-readiness/v1`. Each criterion

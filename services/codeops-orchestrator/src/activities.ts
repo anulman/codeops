@@ -1,5 +1,8 @@
 import type { WorkflowSnapshot } from "./model.js";
-import type { WorkItemInput } from "./workflow.js";
+import type {
+  AgentJobDispatchInput,
+  WorkItemInput,
+} from "./workflow.js";
 
 export interface DispatchResult {
   readonly checkpointUri: string;
@@ -22,7 +25,7 @@ export async function recordTransition(
 }
 
 export async function dispatchAgentJob(
-  _workItem: WorkItemInput,
+  _workItem: AgentJobDispatchInput,
 ): Promise<DispatchResult> {
   throw new Error(
     "CodeOps Agent Job adapter is not configured; refusing to simulate execution",

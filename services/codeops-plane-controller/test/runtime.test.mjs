@@ -9,7 +9,7 @@ import {
 } from "../dist/index.js";
 
 const request = {
-  version: "codeops.research-request/v1",
+  version: "codeops.research-request/v2",
   requestId: `research-request:${"a".repeat(64)}`,
   projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
   workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
@@ -18,6 +18,8 @@ const request = {
   repository: { owner: "anulman", name: "renoconcierge" },
   baseSha: "8f3d2c033f70be04b4b2dc8a005683806e84e209",
   planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+  personas: ["@ai-security", "@ai-web"],
+  brief: "Cross-check the auth boundary and route guards.",
   requestedAt: "2026-07-26T18:50:00.000Z",
 };
 
@@ -45,6 +47,7 @@ test("starts the researcher workflow with the request ID and full bound request"
   assert.equal(starts[0][1].workflowIdConflictPolicy, "FAIL");
   assert.equal(starts[0][1].workflowRunTimeout, "1 hour");
   assert.equal(starts[0][1].args[0].role, "qa-contract-researcher");
+  assert.match(starts[0][1].args[0].summary, /@ai-security, @ai-web/);
   assert.deepEqual(starts[0][1].args[0].researchRequest, request);
 });
 

@@ -3,6 +3,7 @@ import {
   canonicalSerialize,
   contractVersions,
   createResearchRequestFromPlaneComment,
+  parseResearchPersonaRound,
   type ResearchRequest,
   verifyPlaneWebhookSignature,
 } from "@renoconcierge/codeops-contracts";
@@ -71,6 +72,7 @@ const workItemSnapshotSchema = z
     workspace: uuid,
     name: z.string(),
     description_html: z.string().nullable().optional(),
+    description_stripped: z.string().max(50_000).nullable().optional(),
     priority: z.string(),
     state: uuid,
     labels: z.array(uuid),
@@ -164,9 +166,12 @@ export async function admitPlaneResearchComment(input: {
   }
 
   const comment = payload.data.comment.comment_stripped.trim();
-  if (comment !== "/research") return null;
+  if (parseResearchPersonaRound(comment) === null) return null;
   if (!input.allowedHumanActorIds.has(payload.data.comment.actor_id)) {
-    throw new Error("Plane webhook actor is not an admitted human researcher");
+    // Controller/persona-authored replies may quote or mention persona handles.
+    // Ignoring every non-admitted actor prevents recursive dispatch without
+    // weakening the positive human allowlist.
+    return null;
   }
 
   const source = await input.loadSource({
@@ -237,6 +242,10 @@ export async function admitPlaneResearchComment(input: {
       repository: input.repository,
       baseSha: gitSha.parse(input.baseSha),
       planeRevisionDigest,
+      defaultBrief: [workItem.name, workItem.description_stripped ?? ""]
+        .filter((value) => value.trim().length > 0)
+        .join("\n\n")
+        .slice(0, 8_000),
     },
   );
   if (request === null) {

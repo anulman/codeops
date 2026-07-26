@@ -13,8 +13,8 @@ const VERSION = {
   evidence: "codeops.evidence/v1",
   secretReference: "codeops.secret-reference/v1",
   planeCommentEvent: "codeops.plane-comment-event/v1",
-  researchRequest: "codeops.research-request/v1",
-  researchPacket: "codeops.research-packet/v1",
+  researchRequest: "codeops.research-request/v2",
+  researchPacket: "codeops.research-packet/v2",
   researchMutationBatch: "codeops.research-mutation-batch/v1",
   readinessGate: "codeops.readiness-gate/v1",
 } as const;
@@ -304,6 +304,27 @@ export const planeCommentEventSchema = z
   })
   .strict();
 
+export const researchPersonaHandles = [
+  "@ai-web",
+  "@ai-security",
+  "@ai-database",
+  "@ai-infra",
+  "@ai-design",
+  "@ai-product",
+  "@ai-ml",
+] as const;
+
+export const researchPersonaHandleSchema = z.enum(researchPersonaHandles);
+
+const researchPersonasSchema = z
+  .array(researchPersonaHandleSchema)
+  .min(1)
+  .max(researchPersonaHandles.length)
+  .refine(
+    (personas) => new Set(personas).size === personas.length,
+    "research persona handles must be unique",
+  );
+
 export const researchRequestSchema = z
   .object({
     version: z.literal(VERSION.researchRequest),
@@ -315,6 +336,8 @@ export const researchRequestSchema = z
     repository,
     baseSha: gitSha,
     planeRevisionDigest: sha256Digest,
+    personas: researchPersonasSchema,
+    brief: safeText(8_000),
     requestedAt: isoDateTime,
   })
   .strict();
@@ -409,7 +432,19 @@ export const researchMutationBatchSchema = z
 export const researchPacketSchema = z
   .object({
     version: z.literal(VERSION.researchPacket),
-    persona: z.literal("qa-contract-researcher/v1"),
+    personas: researchPersonasSchema,
+    perspectives: z
+      .array(
+        z
+          .object({
+            persona: researchPersonaHandleSchema,
+            outcome: z.enum(["findings", "no-additional-findings"]),
+            summary: safeText(2_000),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(researchPersonaHandles.length),
     requestId: identifier,
     projectId: uuid,
     workItemId: uuid,
@@ -460,6 +495,23 @@ export const researchPacketSchema = z
         code: z.ZodIssueCode.custom,
         path: ["proposedMutations"],
         message: "research mutation batch does not match the source request",
+      });
+    }
+    const requested = new Set(packet.personas);
+    const reported = new Set(
+      packet.perspectives.map((perspective) => perspective.persona),
+    );
+    if (
+      requested.size !== packet.personas.length ||
+      reported.size !== packet.perspectives.length ||
+      requested.size !== reported.size ||
+      [...requested].some((persona) => !reported.has(persona))
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["perspectives"],
+        message:
+          "research packet must report one terminal perspective for every requested persona",
       });
     }
   });
@@ -557,8 +609,9 @@ export const readinessGateSchema = z
   });
 
 export const qaContractResearcherPolicy = Object.freeze({
-  persona: "qa-contract-researcher/v1",
-  trigger: "/research",
+  persona: "qa-contract-researcher/v2",
+  trigger: "human-authored registered @ai-* persona mention",
+  personaHandles: Object.freeze(researchPersonaHandles),
   allowedMutationTypes: Object.freeze([
     "comment.create",
     "label.upsert",
@@ -576,6 +629,38 @@ export const qaContractResearcherPolicy = Object.freeze({
     "project.delete",
   ]),
 } as const);
+
+function personaMentionPattern(): RegExp {
+  return /(^|[\s([{:;,])(@ai-[a-z][a-z0-9-]*)(?=$|[\s)\]}:;,!.?])/g;
+}
+
+export function parseResearchPersonaRound(
+  comment: string,
+): Readonly<{ personas: ResearchPersonaHandle[]; brief: string }> | null {
+  const personas: ResearchPersonaHandle[] = [];
+  const seen = new Set<ResearchPersonaHandle>();
+  const registered = new Set<string>(researchPersonaHandles);
+  const matcher = personaMentionPattern();
+  let match: RegExpExecArray | null;
+  while ((match = matcher.exec(comment)) !== null) {
+    const handle = match[2];
+    if (
+      handle !== undefined &&
+      registered.has(handle) &&
+      !seen.has(handle as ResearchPersonaHandle)
+    ) {
+      seen.add(handle as ResearchPersonaHandle);
+      personas.push(handle as ResearchPersonaHandle);
+    }
+  }
+  if (personas.length === 0) return null;
+
+  const brief = comment
+    .replace(personaMentionPattern(), "$1")
+    .replace(/\s+/g, " ")
+    .trim();
+  return { personas, brief };
+}
 
 export function createResearchRequestId(input: {
   eventId: string;
@@ -596,13 +681,15 @@ export function createResearchRequestFromPlaneComment(
     repository: z.infer<typeof repository>;
     baseSha: string;
     planeRevisionDigest: string;
+    defaultBrief: string;
   },
 ): ResearchRequest | null {
   const event = planeCommentEventSchema.parse(input);
+  const round = parseResearchPersonaRound(event.comment);
   if (
     event.action !== "create" ||
     event.actor.kind !== "human" ||
-    event.comment.trim() !== qaContractResearcherPolicy.trigger
+    round === null
   ) {
     return null;
   }
@@ -621,6 +708,8 @@ export function createResearchRequestFromPlaneComment(
     repository: source.repository,
     baseSha: source.baseSha,
     planeRevisionDigest: source.planeRevisionDigest,
+    personas: round.personas,
+    brief: round.brief || source.defaultBrief,
     requestedAt: event.occurredAt,
   });
 }
@@ -650,6 +739,7 @@ export type ControlCommand = z.infer<typeof controlCommandSchema>;
 export type ControlResult = z.infer<typeof controlResultSchema>;
 export type PlaneCommentEvent = z.infer<typeof planeCommentEventSchema>;
 export type ResearchRequest = z.infer<typeof researchRequestSchema>;
+export type ResearchPersonaHandle = z.infer<typeof researchPersonaHandleSchema>;
 export type ResearchPlaneMutation = z.infer<typeof researchPlaneMutationSchema>;
 export type ResearchMutationBatch = z.infer<typeof researchMutationBatchSchema>;
 export type ResearchPacket = z.infer<typeof researchPacketSchema>;

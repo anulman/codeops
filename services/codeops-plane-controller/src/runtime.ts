@@ -34,7 +34,7 @@ export function createTemporalResearchEnqueuer(input: {
             workItemId: request.workItemId,
             workflowId,
             baseSha: request.baseSha,
-            summary: `Research Plane work item ${request.workItemId}`,
+            summary: `Research Plane work item ${request.workItemId} with ${request.personas.join(", ")}`,
             role: "qa-contract-researcher",
             researchRequest: request,
           },

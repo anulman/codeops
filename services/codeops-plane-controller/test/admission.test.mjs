@@ -22,7 +22,8 @@ const payload = {
       actor_id: actorId,
       issue_id: "088a83b9-a53f-4dda-b2bc-c860cf455997",
       edited_at: null,
-      comment_stripped: "/research",
+      comment_stripped:
+        "@ai-security @ai-web Cross-check auth boundaries and route guards.",
     },
   },
   previous_attributes: {},
@@ -37,6 +38,7 @@ const source = {
     workspace: payload.workspace_id,
     name: "Inventory canonical auth states",
     description_html: "<p>Map the current behavior.</p>",
+    description_stripped: "Map the current behavior.",
     priority: "none",
     state: "067b88e5-304b-4221-ba09-94340dcc36e5",
     labels: [],
@@ -74,11 +76,16 @@ function signedInput(overrides = {}) {
   };
 }
 
-test("admits an exact signed human /research comment and binds live source", async () => {
+test("admits signed human persona mentions and binds the bounded round", async () => {
   const admission = await admitPlaneResearchComment(signedInput());
   assert.equal(admission.request.workItemId, payload.entity_id);
   assert.equal(admission.request.projectId, payload.data.project_id);
   assert.equal(admission.request.requestedBy, actorId);
+  assert.deepEqual(admission.request.personas, ["@ai-security", "@ai-web"]);
+  assert.equal(
+    admission.request.brief,
+    "Cross-check auth boundaries and route guards.",
+  );
   assert.match(admission.planeRevisionDigest, /^sha256:[0-9a-f]{64}$/);
 });
 
@@ -94,7 +101,7 @@ test("deduplicates retries by Plane event ID rather than delivery ID", async () 
   assert.equal(first.request.requestId, retry.request.requestId);
 });
 
-test("ignores non-command comments without loading mutable source", async () => {
+test("ignores comments without a registered persona without loading mutable source", async () => {
   let loads = 0;
   const input = signedInput({
     payload: {
@@ -103,7 +110,7 @@ test("ignores non-command comments without loading mutable source", async () => 
         ...payload.data,
         comment: {
           ...payload.data.comment,
-          comment_stripped: "Please investigate this.",
+          comment_stripped: "/research @ai-unknown Please investigate this.",
         },
       },
     },
@@ -116,7 +123,28 @@ test("ignores non-command comments without loading mutable source", async () => 
   assert.equal(loads, 0);
 });
 
-test("fails closed on signature, header, actor, and scope mismatch", async () => {
+test("uses the bound ticket as the brief when a persona mention stands alone", async () => {
+  const input = signedInput({
+    payload: {
+      ...payload,
+      data: {
+        ...payload.data,
+        comment: {
+          ...payload.data.comment,
+          comment_stripped: "@ai-database",
+        },
+      },
+    },
+  });
+  const admission = await admitPlaneResearchComment(input);
+  assert.equal(
+    admission.request.brief,
+    "Inventory canonical auth states\n\nMap the current behavior.",
+  );
+  assert.deepEqual(admission.request.personas, ["@ai-database"]);
+});
+
+test("fails closed on signature, header, and scope mismatch", async () => {
   await assert.rejects(
     admitPlaneResearchComment({
       ...signedInput(),
@@ -131,12 +159,12 @@ test("fails closed on signature, header, actor, and scope mismatch", async () =>
     }),
     /headers/,
   );
-  await assert.rejects(
-    admitPlaneResearchComment({
+  assert.equal(
+    await admitPlaneResearchComment({
       ...signedInput(),
       allowedHumanActorIds: new Set(),
     }),
-    /actor/,
+    null,
   );
   await assert.rejects(
     admitPlaneResearchComment({
