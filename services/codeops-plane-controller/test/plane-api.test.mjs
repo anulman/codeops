@@ -5,6 +5,8 @@ import { createPlaneApiClient } from "../dist/index.js";
 const projectId = "45b87d89-0ce0-4d6f-8903-4070f1c67f1b";
 const workItemId = "088a83b9-a53f-4dda-b2bc-c860cf455997";
 const labelId = "a6f8e562-49d2-4c19-bc4b-2bcb9d4f6a03";
+const doneStateId = "067b88e5-304b-4221-ba09-94340dcc36e5";
+const cancelledStateId = "ed9ac67c-2b96-4f8f-87a2-1f219147fe27";
 const apiKey = "plane_api_test-only-key";
 
 function jsonResponse(value, status = 200) {
@@ -25,7 +27,24 @@ function recordingFetch() {
     };
     calls.push(call);
     if (call.url.endsWith(`/work-items/${workItemId}/`)) {
+      if (call.method === "PATCH") return jsonResponse(undefined, 204);
       return jsonResponse({ id: workItemId, project: projectId, labels: [] });
+    }
+    if (call.url.endsWith("/states/")) {
+      return jsonResponse([
+        {
+          id: doneStateId,
+          name: "Done",
+          group: "completed",
+          project: projectId,
+        },
+        {
+          id: cancelledStateId,
+          name: "Cancelled",
+          group: "cancelled",
+          project: projectId,
+        },
+      ]);
     }
     if (call.url.includes("/labels/")) {
       if (call.method === "GET") {
@@ -89,6 +108,16 @@ test("maps the content-only client to Plane work-item endpoints", async () => {
     name: "Follow-up",
     labels: [labelId],
   });
+  await client.transitionWorkItemToTerminalState(
+    projectId,
+    workItemId,
+    "completed",
+  );
+  await client.transitionWorkItemToTerminalState(
+    projectId,
+    workItemId,
+    "cancelled",
+  );
 
   assert.ok(
     recorder.calls.every(
@@ -106,11 +135,16 @@ test("maps the content-only client to Plane work-item endpoints", async () => {
         call.body.external_id === "deterministic-id",
     ),
   );
-  assert.equal(
-    recorder.calls.some((call) =>
-      Object.prototype.hasOwnProperty.call(call.body ?? {}, "state"),
-    ),
-    false,
+  assert.deepEqual(
+    recorder.calls
+      .filter(
+        (call) =>
+          call.method === "PATCH" &&
+          call.url.endsWith(`/work-items/${workItemId}/`) &&
+          call.body.state !== undefined,
+      )
+      .map((call) => call.body),
+    [{ state: doneStateId }, { state: cancelledStateId }],
   );
 });
 
@@ -139,6 +173,46 @@ test("fails closed on unsafe origins, lifecycle fields, and API failures", async
     /lifecycle field/,
   );
   assert.deepEqual(recorder.calls, []);
+
+  const ambiguous = recordingFetch();
+  ambiguous.fetch = async (url, init) => {
+    const call = {
+      url: String(url),
+      method: init.method,
+      headers: Object.fromEntries(new Headers(init.headers)),
+      body: init.body === undefined ? undefined : JSON.parse(init.body),
+    };
+    ambiguous.calls.push(call);
+    if (call.url.endsWith("/states/")) {
+      return jsonResponse([
+        {
+          id: doneStateId,
+          name: "Completed",
+          group: "completed",
+          project: projectId,
+        },
+      ]);
+    }
+    return jsonResponse(undefined, 204);
+  };
+  const ambiguousClient = createPlaneApiClient({
+    baseUrl: "https://plane.example.test",
+    workspaceSlug: "codeops",
+    apiKey,
+    fetch: ambiguous.fetch,
+  });
+  await assert.rejects(
+    ambiguousClient.transitionWorkItemToTerminalState(
+      projectId,
+      workItemId,
+      "completed",
+    ),
+    /exactly one Done state/,
+  );
+  assert.equal(
+    ambiguous.calls.some((call) => call.method === "PATCH"),
+    false,
+  );
 
   const failing = createPlaneApiClient({
     baseUrl: "https://plane.example.test",

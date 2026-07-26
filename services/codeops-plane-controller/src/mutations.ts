@@ -1,6 +1,7 @@
 import {
   canonicalSerialize,
   researchMutationBatchSchema,
+  type EvidenceReference,
   type ResearchMutationBatch,
 } from "@renoconcierge/codeops-contracts";
 import { createHash } from "node:crypto";
@@ -17,6 +18,8 @@ export type PlaneLabelRecord = Readonly<{
   color: string;
   description: string;
 }>;
+
+export type PlaneTerminalState = "cancelled" | "completed";
 
 export type PlaneWorkItemContentPatch = Readonly<{
   name?: string;
@@ -67,6 +70,15 @@ export interface PlaneContentClient {
     projectId: string,
     input: PlaneWorkItemContentPatch & Readonly<{ name: string }>,
   ): Promise<PlaneWorkItemRecord>;
+  transitionWorkItemToTerminalState(
+    projectId: string,
+    workItemId: string,
+    terminalState: PlaneTerminalState,
+  ): Promise<void>;
+  assertTerminalStateAvailable(
+    projectId: string,
+    terminalState: PlaneTerminalState,
+  ): Promise<void>;
 }
 
 export type MutationResult = Readonly<{
@@ -129,14 +141,9 @@ function assertSafeContentHtml(value: string): void {
   }
 }
 
-function attachmentReferencesHtml(
-  attachments: Extract<
-    ResearchMutationBatch["mutations"][number],
-    { type: "comment.create" }
-  >["attachments"],
-): string {
-  if (attachments.length === 0) return "";
-  const items = attachments.map((attachment) => {
+function evidenceReferencesHtml(evidence: readonly EvidenceReference[]): string {
+  if (evidence.length === 0) return "";
+  const items = evidence.map((attachment) => {
     const label = `${attachment.kind} · ${attachment.digest} · ${attachment.mediaType}`;
     if (attachment.uri.startsWith("https://")) {
       return `<li><a href="${escapeHtml(attachment.uri)}">${escapeHtml(label)}</a></li>`;
@@ -249,14 +256,27 @@ async function preflightMutationBatch(
       }
       case "label.attach":
       case "label.detach":
-      case "ticket.update":
-      case "ticket.cancel-proposal":
+      case "ticket.update": {
         await assertSameProject(
           client,
           batch.projectId,
           mutation.targetWorkItemId,
         );
         break;
+      }
+      case "ticket.cancel":
+      case "ticket.complete": {
+        await assertSameProject(
+          client,
+          batch.projectId,
+          mutation.targetWorkItemId,
+        );
+        await client.assertTerminalStateAvailable(
+          batch.projectId,
+          mutation.type === "ticket.cancel" ? "cancelled" : "completed",
+        );
+        break;
+      }
       case "label.upsert":
         if (upsertedLabelKeys.has(mutation.key)) {
           throw new Error(`duplicate label upsert for key ${mutation.key}`);
@@ -271,6 +291,19 @@ async function preflightMutationBatch(
         break;
     }
 
+    if (
+      mutation.type === "ticket.cancel" &&
+      mutation.supersededByWorkItemId !== undefined
+    ) {
+      await assertSameProject(
+        client,
+        batch.projectId,
+        mutation.supersededByWorkItemId,
+      );
+      if (mutation.supersededByWorkItemId === mutation.targetWorkItemId) {
+        throw new Error("a work item cannot supersede itself");
+      }
+    }
     if (
       mutation.type === "ticket.update" &&
       mutation.changes.parentId !== undefined &&
@@ -384,7 +417,7 @@ export async function applyResearchMutationBatch(input: {
           batch.projectId,
           mutation.targetWorkItemId,
           {
-            comment_html: `${mutation.bodyHtml}${attachmentReferencesHtml(mutation.attachments)}`,
+            comment_html: `${mutation.bodyHtml}${evidenceReferencesHtml(mutation.attachments)}`,
             external_source: "codeops",
             external_id: externalId(batch.requestId, index, mutation.type),
           },
@@ -485,29 +518,46 @@ export async function applyResearchMutationBatch(input: {
         results.push({ index, type: mutation.type, targetId: created.id });
         break;
       }
-      case "ticket.cancel-proposal": {
-        const label = await upsertLabel(input.client, batch.projectId, {
-          key: "codeops-cancel-proposed",
-          name: "Cancellation proposed",
-          color: "#D97706",
-          description:
-            "Research proposes cancellation; lifecycle state requires human or trusted projector approval.",
-        });
-        await setLabelAttached({
-          client: input.client,
-          projectId: batch.projectId,
-          workItemId: mutation.targetWorkItemId,
-          label,
-          attached: true,
-        });
+      case "ticket.cancel": {
+        const replacement =
+          mutation.supersededByWorkItemId === undefined
+            ? ""
+            : `<p><strong>Canonical replacement:</strong> <code>${escapeHtml(mutation.supersededByWorkItemId)}</code></p>`;
         await input.client.createComment(
           batch.projectId,
           mutation.targetWorkItemId,
           {
-            comment_html: `<p><strong>Cancellation proposed:</strong> ${escapeHtml(mutation.reason)}</p><p>No lifecycle state was changed.</p>`,
+            comment_html: `<p><strong>Cancelled by QA Contract Researcher</strong></p><p><strong>Basis:</strong> ${escapeHtml(mutation.basis)}</p><p>${escapeHtml(mutation.reason)}</p>${replacement}${evidenceReferencesHtml(mutation.evidence)}`,
             external_source: "codeops",
             external_id: externalId(batch.requestId, index, mutation.type),
           },
+        );
+        await input.client.transitionWorkItemToTerminalState(
+          batch.projectId,
+          mutation.targetWorkItemId,
+          "cancelled",
+        );
+        results.push({
+          index,
+          type: mutation.type,
+          targetId: mutation.targetWorkItemId,
+        });
+        break;
+      }
+      case "ticket.complete": {
+        await input.client.createComment(
+          batch.projectId,
+          mutation.targetWorkItemId,
+          {
+            comment_html: `<p><strong>Completed by QA Contract Researcher</strong></p><p>${escapeHtml(mutation.reason)}</p>${evidenceReferencesHtml(mutation.evidence)}`,
+            external_source: "codeops",
+            external_id: externalId(batch.requestId, index, mutation.type),
+          },
+        );
+        await input.client.transitionWorkItemToTerminalState(
+          batch.projectId,
+          mutation.targetWorkItemId,
+          "completed",
         );
         results.push({
           index,

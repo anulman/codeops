@@ -339,7 +339,7 @@ const projectChangesSchema = z
   .strict()
   .refine((changes) => Object.keys(changes).length > 0, "project update is empty");
 
-export const researchPlaneMutationSchema = z.discriminatedUnion("type", [
+export const researchPlaneMutationSchema = z.union([
   z
     .object({
       type: z.literal("comment.create"),
@@ -389,9 +389,37 @@ export const researchPlaneMutationSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
-      type: z.literal("ticket.cancel-proposal"),
+      type: z.literal("ticket.cancel"),
+      targetWorkItemId: uuid,
+      basis: z.enum([
+        "obsolete",
+        "duplicate",
+        "superseded",
+        "no-longer-needed",
+      ]),
+      reason: safeText(2_000),
+      supersededByWorkItemId: uuid.optional(),
+      evidence: z.array(evidenceReferenceSchema).max(16).default([]),
+    })
+    .strict()
+    .superRefine((mutation, context) => {
+      const needsReplacement =
+        mutation.basis === "duplicate" || mutation.basis === "superseded";
+      if (needsReplacement && mutation.supersededByWorkItemId === undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["supersededByWorkItemId"],
+          message:
+            "duplicate or superseded cancellation requires the canonical replacement work item",
+        });
+      }
+    }),
+  z
+    .object({
+      type: z.literal("ticket.complete"),
       targetWorkItemId: uuid,
       reason: safeText(2_000),
+      evidence: z.array(evidenceReferenceSchema).min(1).max(16),
     })
     .strict(),
 ]);
@@ -567,11 +595,14 @@ export const qaContractResearcherPolicy = Object.freeze({
     "project.update",
     "ticket.update",
     "ticket.create",
-    "ticket.cancel-proposal",
+    "ticket.cancel",
+    "ticket.complete",
   ]),
   forbiddenMutationTypes: Object.freeze([
     "state.update",
-    "ticket.cancel",
+    "ticket.start",
+    "ticket.ready",
+    "ticket.fail",
     "ticket.delete",
     "project.delete",
   ]),
