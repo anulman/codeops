@@ -90,7 +90,7 @@ Research comments are already human approval for the bounded read-only run;
 coding-agent workflows continue to wait for a separate Ready/approval signal.
 
 The gateway mounts the externally created
-`codeops-agent-runtime-credentials` Secret (`repository-read-token` and
+`codeops-agent-source-credentials` Secret (`repository-read-token` and
 `model-api-key`) and may create/delete, but never read or list, one immutable
 request-digest-derived run Secret. Its namespace Role may create/get/delete
 only the fixed ServiceAccount, Job, and NetworkPolicy resources plus read the

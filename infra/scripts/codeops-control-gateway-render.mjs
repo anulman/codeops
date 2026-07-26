@@ -58,9 +58,20 @@ export function renderControlGatewayManifest(template, input) {
   const deployment = resources.find(
     (resource) => resource.kind === "Deployment",
   );
+  const runtimeCredentials = deployment.spec.template.spec.volumes.find(
+    (volume) => volume.name === "runtime-credentials",
+  );
   const image = deployment.spec.template.spec.containers[0].image;
   if (!/@sha256:[0-9a-f]{64}$/.test(image)) {
     throw new Error("control gateway image must be immutable");
+  }
+  if (
+    runtimeCredentials?.secret?.secretName !==
+      "codeops-agent-source-credentials" ||
+    runtimeCredentials.secret.items?.map((item) => item.key).sort().join(",") !==
+      "model-api-key,repository-read-token"
+  ) {
+    throw new Error("control gateway runtime credential binding drifted");
   }
   const serialized = JSON.stringify(resources);
   if (serialized.includes("ClusterRole") || serialized.includes("hostPath")) {

@@ -38,7 +38,7 @@ test("renders one namespace-scoped authenticated gateway", () => {
     `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-control-gateway@${input.controlGatewayDigest}`,
   );
   assert.equal(
-    JSON.stringify(deployment).includes("codeops-agent-runtime-credentials"),
+    JSON.stringify(deployment).includes("codeops-agent-source-credentials"),
     true,
   );
 });

@@ -164,7 +164,7 @@ spec:
                 path: token
         - name: runtime-credentials
           secret:
-            secretName: codeops-agent-runtime-credentials
+            secretName: codeops-agent-source-credentials
             defaultMode: 256
             items:
               - key: repository-read-token
