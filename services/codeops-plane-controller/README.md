@@ -16,6 +16,12 @@ This service owns the privileged Plane integration boundary. It implements:
 - claim both stable identities before enqueue, use the research request ID as
   the deterministic workflow ID, reconcile an already-enqueued request after a
   crash, and persist `request-enqueued` before acknowledging a retry;
+- accept only raw JSON `POST /webhooks/plane` requests using Plane's documented
+  delivery, event, and signature headers, with a 1 MiB body limit and a
+  separate credential-free `/healthz` liveness route;
+- start the exact `workItemWorkflow` on the configured Temporal task queue with
+  duplicate reuse rejected, running-workflow conflicts rejected, a one-hour
+  bound, the researcher role, and the complete bound research request;
 - preflight an entire proposed mutation batch before the first write;
 - apply only comments, logical-label operations, project/ticket content edits,
   and same-project ticket creation;
@@ -30,9 +36,10 @@ This service owns the privileged Plane integration boundary. It implements:
   before network I/O.
 
 The QA Contract Researcher never receives the Plane webhook secret or API
-credential. The file ledger is a controller-owned primitive and must be mounted
-on a single-writer durable volume. The enqueue callback must map
-`already started` from Temporal to `already-enqueued`; every other Temporal
-error fails both held claims for a bounded retry. HTTP/runtime packaging and
-deployment remain separate fail-closed slices. Until those exist, commenting
-`/research` must not be advertised as live.
+credential. The controller reads both credentials from mounted files; only
+their paths are configured through environment variables. The file ledger is a
+controller-owned primitive and must be mounted on a single-writer durable
+volume. Temporal `already started` maps to `already-enqueued`; every other
+Temporal error fails both held claims for a bounded retry. Immutable image and
+Kubernetes packaging plus deployment remain separate fail-closed slices. Until
+those exist, commenting `/research` must not be advertised as live.

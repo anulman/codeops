@@ -5,18 +5,28 @@ import {
   proxyActivities,
   setHandler,
 } from "@temporalio/workflow";
+import type { ResearchRequest } from "@renoconcierge/codeops-contracts";
 import type { DispatchResult } from "./activities.js";
 import {
   transition,
   type WorkflowSnapshot,
 } from "./model.js";
 
-export interface WorkItemInput {
+interface WorkItemInputBase {
   readonly workItemId: string;
   readonly workflowId: string;
   readonly baseSha: string;
   readonly summary: string;
 }
+
+export type WorkItemInput =
+  | (WorkItemInputBase & {
+      readonly role: "coding-agent";
+    })
+  | (WorkItemInputBase & {
+      readonly role: "qa-contract-researcher";
+      readonly researchRequest: ResearchRequest;
+    });
 
 export interface AcceptanceResult {
   readonly passed: boolean;

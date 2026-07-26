@@ -27,6 +27,9 @@ function recordingFetch() {
     if (call.url.endsWith(`/work-items/${workItemId}/`)) {
       return jsonResponse({ id: workItemId, project: projectId, labels: [] });
     }
+    if (call.url.endsWith(`/projects/${projectId}/`)) {
+      return jsonResponse({ id: projectId, name: "Onboarding Auth QA" });
+    }
     if (call.url.includes("/labels/")) {
       if (call.method === "GET") {
         return jsonResponse({
@@ -72,6 +75,11 @@ test("maps the content-only client to Plane work-item endpoints", async () => {
   });
 
   assert.equal((await client.getWorkItem(projectId, workItemId)).id, workItemId);
+  assert.equal(
+    (await client.getWorkItemSnapshot(projectId, workItemId)).id,
+    workItemId,
+  );
+  assert.equal((await client.getProjectSnapshot(projectId)).id, projectId);
   assert.equal((await client.listLabels(projectId))[0].id, labelId);
   await client.createComment(projectId, workItemId, {
     comment_html: "<p>Research complete.</p>",

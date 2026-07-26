@@ -43,6 +43,14 @@ export type PlaneApiClientConfig = Readonly<{
   fetch?: typeof fetch;
 }>;
 
+export interface PlaneApiClient extends PlaneContentClient {
+  getProjectSnapshot(projectId: string): Promise<unknown>;
+  getWorkItemSnapshot(
+    projectId: string,
+    workItemId: string,
+  ): Promise<unknown>;
+}
+
 function planeOrigin(value: string): URL {
   const url = new URL(value);
   if (
@@ -68,7 +76,7 @@ function assertNoLifecycleState(body: Readonly<Record<string, unknown>>): void {
 
 export function createPlaneApiClient(
   config: PlaneApiClientConfig,
-): PlaneContentClient {
+): PlaneApiClient {
   const origin = planeOrigin(config.baseUrl);
   const slug = workspaceSlug.parse(config.workspaceSlug);
   if (config.apiKey.length < 16 || /\s/.test(config.apiKey)) {
@@ -108,6 +116,20 @@ export function createPlaneApiClient(
   }
 
   return {
+    async getProjectSnapshot(projectId: string): Promise<unknown> {
+      return request("GET", `${projectPath(projectId)}/`);
+    },
+
+    async getWorkItemSnapshot(
+      projectId: string,
+      workItemId: string,
+    ): Promise<unknown> {
+      return request(
+        "GET",
+        `${projectPath(projectId)}/work-items/${encodeURIComponent(uuid.parse(workItemId))}/`,
+      );
+    },
+
     async getWorkItem(
       projectId: string,
       workItemId: string,

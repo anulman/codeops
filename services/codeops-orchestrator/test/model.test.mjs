@@ -54,6 +54,7 @@ test("the Agent Job boundary refuses to simulate execution", async () => {
       workflowId: "workflow-1",
       baseSha: "a".repeat(40),
       summary: "Routing matrix",
+      role: "coding-agent",
     }),
     /refusing to simulate execution/,
   );

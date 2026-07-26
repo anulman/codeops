@@ -11,11 +11,13 @@
   },
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/runtime-main.js",
     "test": "tsc -p tsconfig.build.json && node --test test/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
     "@renoconcierge/codeops-contracts": "file:../../packages/codeops-contracts",
+    "@temporalio/client": "1.21.1",
     "zod": "3.25.76"
   },
   "devDependencies": {

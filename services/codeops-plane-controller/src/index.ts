@@ -19,6 +19,7 @@ export {
 } from "./mutations.js";
 export {
   createPlaneApiClient,
+  type PlaneApiClient,
   type PlaneApiClientConfig,
 } from "./plane-api.js";
 export {
@@ -27,6 +28,10 @@ export {
   type FileResearchDedupLedgerConfig,
   type ResearchDedupLedger,
 } from "./dedup-ledger.js";
+export {
+  createPlaneWebhookRequestListener,
+  createTemporalResearchEnqueuer,
+} from "./runtime.js";
 
 const uuid = z.string().uuid();
 const gitSha = z.string().regex(/^[0-9a-f]{40}$/);

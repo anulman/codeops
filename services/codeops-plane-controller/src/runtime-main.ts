@@ -1,0 +1,125 @@
+import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { Client, Connection } from "@temporalio/client";
+import {
+  createFileResearchDedupLedger,
+  createPlaneApiClient,
+  processPlaneResearchWebhook,
+} from "./index.js";
+import {
+  createPlaneWebhookRequestListener,
+  createTemporalResearchEnqueuer,
+} from "./runtime.js";
+
+function required(name: string): string {
+  const value = process.env[name];
+  if (value === undefined || value.trim() === "") {
+    throw new Error(`${name} is required`);
+  }
+  return value.trim();
+}
+
+async function secretFile(name: string): Promise<string> {
+  const value = (await readFile(required(name), "utf8")).trim();
+  if (value.length === 0) throw new Error(`${name} is empty`);
+  return value;
+}
+
+const temporalConnection = await Connection.connect({
+  address: required("CODEOPS_TEMPORAL_ADDRESS"),
+});
+const temporalClient = new Client({
+  connection: temporalConnection,
+  namespace: process.env.CODEOPS_TEMPORAL_NAMESPACE ?? "codeops",
+});
+const planeClient = createPlaneApiClient({
+  baseUrl: required("CODEOPS_PLANE_API_ORIGIN"),
+  workspaceSlug: required("CODEOPS_PLANE_WORKSPACE_SLUG"),
+  apiKey: await secretFile("CODEOPS_PLANE_API_KEY_FILE"),
+});
+const webhookSecret = await secretFile("CODEOPS_PLANE_WEBHOOK_SECRET_FILE");
+const allowedHumanActorIds = new Set(
+  required("CODEOPS_ALLOWED_HUMAN_ACTOR_IDS")
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean),
+);
+if (
+  allowedHumanActorIds.size === 0 ||
+  [...allowedHumanActorIds].some(
+    (value) =>
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        value,
+      ),
+  )
+) {
+  throw new Error("CODEOPS_ALLOWED_HUMAN_ACTOR_IDS must contain UUIDs");
+}
+const repository = {
+  owner: required("CODEOPS_REPOSITORY_OWNER"),
+  name: required("CODEOPS_REPOSITORY_NAME"),
+};
+if (
+  !/^[A-Za-z0-9_.-]{1,100}$/.test(repository.owner) ||
+  !/^[A-Za-z0-9_.-]{1,100}$/.test(repository.name)
+) {
+  throw new Error("CodeOps repository identity is invalid");
+}
+const baseSha = required("CODEOPS_BASE_SHA");
+if (!/^[0-9a-f]{40}$/.test(baseSha)) {
+  throw new Error("CODEOPS_BASE_SHA must be an exact lowercase Git SHA");
+}
+const ledger = createFileResearchDedupLedger({
+  rootDirectory: required("CODEOPS_DEDUP_ROOT"),
+  leaseDurationMs: 5 * 60 * 1_000,
+});
+const enqueue = createTemporalResearchEnqueuer({
+  client: temporalClient,
+  taskQueue: process.env.CODEOPS_TEMPORAL_TASK_QUEUE ?? "codeops-trial0",
+});
+
+const listener = createPlaneWebhookRequestListener({
+  process: ({ rawBody, headers }) =>
+    processPlaneResearchWebhook({
+      rawBody,
+      headers,
+      webhookSecret,
+      allowedHumanActorIds,
+      repository,
+      baseSha,
+      receivedAt: new Date().toISOString(),
+      loadSource: async ({ projectId, workItemId }) => {
+        if (projectId === undefined) {
+          throw new Error("Plane research event omitted project identity");
+        }
+        return {
+          project: await planeClient.getProjectSnapshot(projectId),
+          workItem: await planeClient.getWorkItemSnapshot(
+            projectId,
+            workItemId,
+          ),
+        };
+      },
+      ledger,
+      enqueue,
+    }),
+});
+
+const port = Number(process.env.CODEOPS_HTTP_PORT ?? "8080");
+if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+  throw new Error("CODEOPS_HTTP_PORT must be a valid TCP port");
+}
+const server = createServer((request, response) => {
+  void listener(request, response);
+});
+server.listen(port, process.env.CODEOPS_HTTP_HOST ?? "0.0.0.0");
+
+async function shutdown(): Promise<void> {
+  await new Promise<void>((resolve, reject) => {
+    server.close((error) => (error ? reject(error) : resolve()));
+  });
+  await temporalConnection.close();
+}
+
+process.once("SIGTERM", () => void shutdown());
+process.once("SIGINT", () => void shutdown());
