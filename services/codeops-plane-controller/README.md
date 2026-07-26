@@ -17,8 +17,13 @@ This service owns the privileged Plane integration boundary. It implements:
   changing lifecycle state;
 - preserve evidence references in controller-authored comments and reject
   active or malformed HTML.
+- call Plane's current `/work-items/` external API through a fixed,
+  credential-free HTTPS origin and workspace slug;
+- send the API key only in `X-API-Key`, reject redirects, validate returned
+  identities, bound label pagination, and reject any lifecycle-shaped write
+  before network I/O.
 
 The QA Contract Researcher never receives the Plane webhook secret or API
-credential. A real Plane API adapter, durable deduplication, runtime packaging,
-and deployment remain separate fail-closed slices. Until those exist,
-commenting `/research` must not be advertised as live.
+credential. Durable deduplication, runtime packaging, and deployment remain
+separate fail-closed slices. Until those exist, commenting `/research` must not
+be advertised as live.

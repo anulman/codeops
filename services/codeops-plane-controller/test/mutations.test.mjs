@@ -132,7 +132,7 @@ test("applies every approved content mutation without a lifecycle-state field", 
       },
       {
         type: "project.update",
-        changes: { descriptionHtml: "<p>Canonical auth QA project.</p>" },
+        changes: { description: "Canonical auth QA project." },
       },
       {
         type: "ticket.update",

@@ -334,7 +334,7 @@ const ticketChangesSchema = z
 const projectChangesSchema = z
   .object({
     name: safeText(255).optional(),
-    descriptionHtml: safeText(50_000).optional(),
+    description: safeText(50_000).optional(),
   })
   .strict()
   .refine((changes) => Object.keys(changes).length > 0, "project update is empty");

@@ -17,6 +17,10 @@ export {
   type PlaneWorkItemContentPatch,
   type PlaneWorkItemRecord,
 } from "./mutations.js";
+export {
+  createPlaneApiClient,
+  type PlaneApiClientConfig,
+} from "./plane-api.js";
 
 const uuid = z.string().uuid();
 const gitSha = z.string().regex(/^[0-9a-f]{40}$/);

@@ -30,7 +30,7 @@ export type PlaneWorkItemContentPatch = Readonly<{
 
 export type PlaneProjectContentPatch = Readonly<{
   name?: string;
-  description_html?: string;
+  description?: string;
 }>;
 
 export interface PlaneContentClient {
@@ -265,9 +265,6 @@ async function preflightMutationBatch(
         availableLabelKeys.add(mutation.key);
         break;
       case "project.update":
-        if (mutation.changes.descriptionHtml !== undefined) {
-          assertSafeContentHtml(mutation.changes.descriptionHtml);
-        }
         break;
       case "ticket.create":
         assertSafeContentHtml(mutation.descriptionHtml);
@@ -430,9 +427,9 @@ export async function applyResearchMutationBatch(input: {
           ...(mutation.changes.name === undefined
             ? {}
             : { name: mutation.changes.name }),
-          ...(mutation.changes.descriptionHtml === undefined
+          ...(mutation.changes.description === undefined
             ? {}
-            : { description_html: mutation.changes.descriptionHtml }),
+            : { description: mutation.changes.description }),
         });
         results.push({ index, type: mutation.type, targetId: batch.projectId });
         break;
