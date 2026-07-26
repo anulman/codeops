@@ -359,7 +359,7 @@ test("verifies Plane webhook signatures over the exact raw body", () => {
   );
 });
 
-test("the research mutation contract exposes only evidence-bound terminal transitions", () => {
+test("the research mutation contract cannot express lifecycle state changes", () => {
   const comment = {
     type: "comment.create",
     targetWorkItemId: planeCommentEvent.workItemId,
@@ -369,40 +369,11 @@ test("the research mutation contract exposes only evidence-bound terminal transi
   assert.deepEqual(researchPlaneMutationSchema.parse(comment), comment);
   assert.equal(
     researchPlaneMutationSchema.parse({
-      type: "ticket.cancel",
+      type: "ticket.cancel-proposal",
       targetWorkItemId: planeCommentEvent.workItemId,
-      basis: "superseded",
       reason: "Superseded by the canonical matrix item.",
-      supersededByWorkItemId: "cc8562ab-79c7-4f1c-b4a2-1ed51dfcd6aa",
-      evidence: [],
     }).type,
-    "ticket.cancel",
-  );
-  assert.equal(
-    researchPlaneMutationSchema.parse({
-      type: "ticket.complete",
-      targetWorkItemId: planeCommentEvent.workItemId,
-      reason: "The exact outcome is already present.",
-      evidence: [evidence],
-    }).type,
-    "ticket.complete",
-  );
-  assert.throws(() =>
-    researchPlaneMutationSchema.parse({
-      type: "ticket.complete",
-      targetWorkItemId: planeCommentEvent.workItemId,
-      reason: "Old ticket.",
-      evidence: [],
-    }),
-  );
-  assert.throws(() =>
-    researchPlaneMutationSchema.parse({
-      type: "ticket.cancel",
-      targetWorkItemId: planeCommentEvent.workItemId,
-      basis: "duplicate",
-      reason: "Duplicate.",
-      evidence: [],
-    }),
+    "ticket.cancel-proposal",
   );
   assert.throws(() =>
     researchPlaneMutationSchema.parse({
@@ -420,7 +391,7 @@ test("the research mutation contract exposes only evidence-bound terminal transi
   );
   assert.throws(() =>
     researchPlaneMutationSchema.parse({
-      type: "ticket.ready",
+      type: "ticket.cancel",
       targetWorkItemId: planeCommentEvent.workItemId,
     }),
   );

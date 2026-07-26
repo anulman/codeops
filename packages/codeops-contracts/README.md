@@ -28,13 +28,10 @@ comments, edited comments, deleted comments, and service-authored comments are
 context only and must not start a run.
 
 `qaContractResearcherPolicy` and the research mutation schemas enforce a
-content-and-terminal capability envelope. The researcher may apply comments,
-labels, project/ticket edits, and same-project ticket creation. It has exactly
-two lifecycle exceptions: `ticket.cancel` for obsolete, duplicate, superseded,
-or no-longer-needed work; and `ticket.complete` when cited evidence proves the
-requested outcome was already achieved. Age, inactivity, or priority alone do
-not establish completion. Ready, In Progress, Needs attention, Failed, ticket
-deletion, project deletion, and arbitrary state IDs are not representable.
+content-only capability envelope. The researcher may propose or apply comments,
+labels, project/ticket edits, and same-project ticket creation. Cancellation is
+represented only as `ticket.cancel-proposal`; lifecycle state changes, ticket
+deletion, and project deletion are not representable.
 
 The trusted controller must additionally resolve every referenced ticket and
 prove it belongs to the request's project before applying a mutation. It must

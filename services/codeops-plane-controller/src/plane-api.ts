@@ -3,7 +3,6 @@ import type {
   PlaneContentClient,
   PlaneLabelRecord,
   PlaneProjectContentPatch,
-  PlaneTerminalState,
   PlaneWorkItemContentPatch,
   PlaneWorkItemRecord,
 } from "./mutations.js";
@@ -26,18 +25,6 @@ const workItemSchema = z
   })
   .passthrough();
 const commentSchema = z.object({ id: uuid }).passthrough();
-const stateSchema = z
-  .object({
-    id: uuid,
-    name: z.string(),
-    group: z.enum(["backlog", "unstarted", "started", "completed", "cancelled"]),
-    project: uuid,
-  })
-  .passthrough();
-const statePageSchema = z.union([
-  z.array(stateSchema),
-  z.object({ results: z.array(stateSchema) }).passthrough(),
-]);
 const labelPageSchema = z.union([
   z.array(labelSchema),
   z
@@ -94,24 +81,11 @@ export function createPlaneApiClient(
     method: "GET" | "POST" | "PATCH",
     path: string,
     body?: Readonly<Record<string, unknown>>,
-    terminalTransition = false,
   ): Promise<unknown> {
     if (!path.startsWith(`${workspacePath}/`)) {
       throw new Error("Plane API request escaped the configured workspace");
     }
-    if (body !== undefined) {
-      if (terminalTransition) {
-        if (
-          method !== "PATCH" ||
-          Object.keys(body).length !== 1 ||
-          !uuid.safeParse(body.state).success
-        ) {
-          throw new Error("invalid scoped terminal lifecycle transition");
-        }
-      } else {
-        assertNoLifecycleState(body);
-      }
-    }
+    if (body !== undefined) assertNoLifecycleState(body);
     const response = await requestFetch(new URL(path, origin), {
       method,
       redirect: "error",
@@ -127,43 +101,6 @@ export function createPlaneApiClient(
     }
     if (response.status === 204) return undefined;
     return response.json();
-  }
-
-  async function resolveTerminalState(
-    projectId: string,
-    terminalState: PlaneTerminalState,
-  ): Promise<string> {
-    const parsed = statePageSchema.parse(
-      await request("GET", `${projectPath(projectId)}/states/`),
-    );
-    const states = Array.isArray(parsed) ? parsed : parsed.results;
-    const expectedName = terminalState === "cancelled" ? "Cancelled" : "Done";
-    const matches = states.filter(
-      (state) =>
-        state.project === projectId &&
-        state.group === terminalState &&
-        state.name === expectedName,
-    );
-    if (matches.length !== 1) {
-      throw new Error(
-        `Plane project must have exactly one ${expectedName} state in group ${terminalState}`,
-      );
-    }
-    return matches[0]!.id;
-  }
-
-  async function transitionToTerminalState(
-    projectId: string,
-    workItemId: string,
-    terminalState: PlaneTerminalState,
-  ): Promise<void> {
-    const stateId = await resolveTerminalState(projectId, terminalState);
-    await request(
-      "PATCH",
-      `${projectPath(projectId)}/work-items/${encodeURIComponent(uuid.parse(workItemId))}/`,
-      { state: stateId },
-      true,
-    );
   }
 
   function projectPath(projectId: string): string {
@@ -257,11 +194,6 @@ export function createPlaneApiClient(
       return workItemSchema.parse(
         await request("POST", `${projectPath(projectId)}/work-items/`, input),
       );
-    },
-
-    transitionWorkItemToTerminalState: transitionToTerminalState,
-    async assertTerminalStateAvailable(projectId, terminalState): Promise<void> {
-      await resolveTerminalState(projectId, terminalState);
     },
   };
 }

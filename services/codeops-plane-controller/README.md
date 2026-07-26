@@ -11,13 +11,10 @@ This service owns the privileged Plane integration boundary. It implements:
 - deduplicate retries with Plane's stable `event_id`, not its per-attempt
   `delivery_id`.
 - preflight an entire proposed mutation batch before the first write;
-- apply comments, logical-label operations, project/ticket content edits, and
-  same-project ticket creation;
-- expose exactly two terminal lifecycle transitions: cancellation for
-  obsolete/duplicate/superseded/no-longer-needed work, and completion only
-  with cited evidence that the requested outcome already exists;
-- resolve only the exact project-local `Cancelled`/cancelled and
-  `Done`/completed state pairs; arbitrary state IDs remain unrepresentable;
+- apply only comments, logical-label operations, project/ticket content edits,
+  and same-project ticket creation;
+- turn cancellation into a comment plus `Cancellation proposed` label without
+  changing lifecycle state;
 - preserve evidence references in controller-authored comments and reject
   active or malformed HTML.
 - call Plane's current `/work-items/` external API through a fixed,

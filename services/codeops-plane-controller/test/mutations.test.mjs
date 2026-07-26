@@ -12,7 +12,6 @@ const requestId = "research-request:4d819f3d58afe8a9";
 
 function fakeClient() {
   const writes = [];
-  const terminalChecks = [];
   const labels = [
     {
       id: "a6f8e562-49d2-4c19-bc4b-2bcb9d4f6a03",
@@ -29,7 +28,6 @@ function fakeClient() {
   );
   return {
     writes,
-    terminalChecks,
     labels,
     items,
     async getWorkItem(_projectId, workItemId) {
@@ -79,20 +77,6 @@ function fakeClient() {
       writes.push({ operation: "ticket.create", input });
       return created;
     },
-    async transitionWorkItemToTerminalState(
-      _projectId,
-      workItemId,
-      terminalState,
-    ) {
-      writes.push({
-        operation: "ticket.terminal-transition",
-        workItemId,
-        terminalState,
-      });
-    },
-    async assertTerminalStateAvailable(_projectId, terminalState) {
-      terminalChecks.push(terminalState);
-    },
   };
 }
 
@@ -107,16 +91,8 @@ function batch(mutations) {
 }
 
 const expected = { requestId, projectId, sourceWorkItemId };
-const completionEvidence = {
-  version: "codeops.evidence/v1",
-  kind: "test-report",
-  uri: "https://evidence.example.test/runs/research/completion.json",
-  digest: `sha256:${"b".repeat(64)}`,
-  sizeBytes: 2048,
-  mediaType: "application/json",
-};
 
-test("applies approved content mutations and only evidence-bound terminal transitions", async () => {
+test("applies every approved content mutation without a lifecycle-state field", async () => {
   const client = fakeClient();
   const results = await applyResearchMutationBatch({
     expected,
@@ -175,23 +151,14 @@ test("applies approved content mutations and only evidence-bound terminal transi
         labelKeys: ["auth"],
       },
       {
-        type: "ticket.cancel",
+        type: "ticket.cancel-proposal",
         targetWorkItemId: relatedWorkItemId,
-        basis: "superseded",
         reason: "Superseded by <QANBRDAUTH-7>.",
-        supersededByWorkItemId: parentWorkItemId,
-        evidence: [],
-      },
-      {
-        type: "ticket.complete",
-        targetWorkItemId: parentWorkItemId,
-        reason: "Existing candidate already satisfies the requested outcome.",
-        evidence: [completionEvidence],
       },
     ]),
   });
 
-  assert.equal(results.length, 9);
+  assert.equal(results.length, 8);
   assert.ok(client.writes.some((write) => write.operation === "project.update"));
   assert.ok(client.writes.some((write) => write.operation === "ticket.create"));
   assert.ok(client.writes.some((write) => write.operation === "comment.create"));
@@ -212,6 +179,13 @@ test("applies approved content mutations and only evidence-bound terminal transi
         write.input.description.includes("[codeops-key:qa-reviewed]"),
     ),
   );
+  assert.ok(
+    client.writes.some(
+      (write) =>
+        write.operation === "label.create" &&
+        write.input.description.includes("[codeops-key:codeops-cancel-proposed]"),
+    ),
+  );
   assert.equal(
     client.writes.some((write) =>
       Object.prototype.hasOwnProperty.call(write.input ?? {}, "state"),
@@ -221,26 +195,10 @@ test("applies approved content mutations and only evidence-bound terminal transi
   const cancellation = client.writes.find(
     (write) =>
       write.operation === "comment.create" &&
-      write.input.comment_html.includes("Cancelled by QA Contract Researcher"),
+      write.input.comment_html.includes("Cancellation proposed"),
   );
   assert.match(cancellation.input.comment_html, /&lt;QANBRDAUTH-7&gt;/);
-  assert.match(cancellation.input.comment_html, new RegExp(parentWorkItemId));
-  assert.deepEqual(
-    client.writes
-      .filter((write) => write.operation === "ticket.terminal-transition")
-      .map(({ workItemId, terminalState }) => ({ workItemId, terminalState })),
-    [
-      { workItemId: relatedWorkItemId, terminalState: "cancelled" },
-      { workItemId: parentWorkItemId, terminalState: "completed" },
-    ],
-  );
-  assert.deepEqual(client.terminalChecks, ["cancelled", "completed"]);
-  const completion = client.writes.find(
-    (write) =>
-      write.operation === "comment.create" &&
-      write.input.comment_html.includes("Completed by QA Contract Researcher"),
-  );
-  assert.match(completion.input.comment_html, new RegExp(completionEvidence.digest));
+  assert.match(cancellation.input.comment_html, /No lifecycle state was changed/);
 });
 
 test("rejects a source or target outside the admitted project before writing", async () => {
@@ -264,35 +222,6 @@ test("rejects a source or target outside the admitted project before writing", a
       ]),
     }),
     /outside project/,
-  );
-  assert.deepEqual(client.writes, []);
-});
-
-test("preflights terminal-state availability before the first write", async () => {
-  const client = fakeClient();
-  client.assertTerminalStateAvailable = async () => {
-    throw new Error("Plane project must have exactly one Done state");
-  };
-  await assert.rejects(
-    applyResearchMutationBatch({
-      expected,
-      client,
-      batch: batch([
-        {
-          type: "comment.create",
-          targetWorkItemId: sourceWorkItemId,
-          bodyHtml: "<p>This must not be written.</p>",
-          attachments: [],
-        },
-        {
-          type: "ticket.complete",
-          targetWorkItemId: relatedWorkItemId,
-          reason: "Existing outcome.",
-          evidence: [completionEvidence],
-        },
-      ]),
-    }),
-    /exactly one Done state/,
   );
   assert.deepEqual(client.writes, []);
 });
