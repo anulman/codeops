@@ -32,6 +32,14 @@ export interface WorkflowSnapshot {
   readonly summary: string;
 }
 
+export type PlanDecision = "approved" | "rejected" | null;
+
+export function initialPlanDecision(
+  role: "coding-agent" | "qa-contract-researcher",
+): PlanDecision {
+  return role === "qa-contract-researcher" ? "approved" : null;
+}
+
 export function transition(
   snapshot: WorkflowSnapshot,
   nextState: WorkflowState,

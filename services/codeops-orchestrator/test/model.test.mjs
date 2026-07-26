@@ -3,7 +3,12 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { bundleWorkflowCode } from "@temporalio/worker";
 import { dispatchAgentJob } from "../dist/activities.js";
-import { transition } from "../dist/model.js";
+import { initialPlanDecision, transition } from "../dist/model.js";
+
+test("an admitted persona comment approves only the research run", () => {
+  assert.equal(initialPlanDecision("qa-contract-researcher"), "approved");
+  assert.equal(initialPlanDecision("coding-agent"), null);
+});
 
 test("accepts only the reviewed Trial 0 lifecycle", () => {
   let snapshot = {

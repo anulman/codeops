@@ -11,6 +11,7 @@ import type {
 } from "@renoconcierge/codeops-contracts";
 import type { DispatchResult } from "./activities.js";
 import {
+  initialPlanDecision,
   transition,
   type WorkflowSnapshot,
 } from "./model.js";
@@ -73,7 +74,9 @@ export async function workItemWorkflow(
     sequence: 0,
     summary: workItem.summary,
   };
-  let planDecision: "approved" | "rejected" | null = null;
+  // A human-authored, admitted persona mention is the bounded research
+  // approval. Coding work still requires a separate Ready/approval signal.
+  let planDecision = initialPlanDecision(workItem.role);
   let planRejection = "";
   let cancellation = "";
   const external = {
@@ -110,7 +113,12 @@ export async function workItemWorkflow(
 
   await move("started", "Temporal accepted the work item");
   await move("planning", "Preparing the implementation plan");
-  await move("approval_required", "Plan review is required before execution");
+  await move(
+    "approval_required",
+    workItem.role === "qa-contract-researcher"
+      ? "The admitted human persona request authorizes research execution"
+      : "Plan review is required before execution",
+  );
   await condition(() => planDecision !== null || cancellation.length > 0);
 
   if (await cancelIfRequested()) return snapshot;
