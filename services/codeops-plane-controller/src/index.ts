@@ -8,6 +8,16 @@ import {
 } from "@renoconcierge/codeops-contracts";
 import { z } from "zod";
 
+export {
+  applyResearchMutationBatch,
+  type MutationResult,
+  type PlaneContentClient,
+  type PlaneLabelRecord,
+  type PlaneProjectContentPatch,
+  type PlaneWorkItemContentPatch,
+  type PlaneWorkItemRecord,
+} from "./mutations.js";
+
 const uuid = z.string().uuid();
 const gitSha = z.string().regex(/^[0-9a-f]{40}$/);
 
