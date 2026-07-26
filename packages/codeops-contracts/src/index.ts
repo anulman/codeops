@@ -287,6 +287,7 @@ export const planeCommentEventSchema = z
   .object({
     version: z.literal(VERSION.planeCommentEvent),
     deliveryId: uuid,
+    eventId: uuid,
     action: z.enum(["create", "update", "delete"]),
     workspaceId: uuid,
     projectId: uuid,
@@ -551,13 +552,13 @@ export const qaContractResearcherPolicy = Object.freeze({
 } as const);
 
 export function createResearchRequestId(input: {
-  deliveryId: string;
+  eventId: string;
   commentId: string;
   planeRevisionDigest: string;
 }): string {
   return logicalId("research-request", {
     version: VERSION.researchRequest,
-    deliveryId: uuid.parse(input.deliveryId),
+    eventId: uuid.parse(input.eventId),
     commentId: uuid.parse(input.commentId),
     planeRevisionDigest: sha256Digest.parse(input.planeRevisionDigest),
   });
@@ -583,7 +584,7 @@ export function createResearchRequestFromPlaneComment(
   return researchRequestSchema.parse({
     version: VERSION.researchRequest,
     requestId: createResearchRequestId({
-      deliveryId: event.deliveryId,
+      eventId: event.eventId,
       commentId: event.commentId,
       planeRevisionDigest: source.planeRevisionDigest,
     }),

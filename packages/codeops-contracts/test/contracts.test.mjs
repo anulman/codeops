@@ -270,6 +270,7 @@ test("rejects event IDs that do not match the logical transition", () => {
 const planeCommentEvent = {
   version: contractVersions.planeCommentEvent,
   deliveryId: "f819eff4-cd50-4987-bc97-e5be1e04c94f",
+  eventId: "0afa042d-92a9-4326-bdca-5ff5490dbf09",
   action: "create",
   workspaceId: "d2d97c94-a6ad-4012-b526-5577c0d7c769",
   projectId: "b32e004b-3638-4bd3-972f-c5d3fac53dd3",
@@ -296,6 +297,16 @@ test("admits only an exact human-authored research command on comment creation",
   );
   assert.equal(request.workItemId, planeCommentEvent.workItemId);
   assert.equal(request.requestedBy, planeCommentEvent.actor.id);
+  assert.equal(
+    createResearchRequestFromPlaneComment(
+      {
+        ...planeCommentEvent,
+        deliveryId: "01ab9316-f978-4449-bad6-dce958be8454",
+      },
+      researchSource,
+    ).requestId,
+    request.requestId,
+  );
   assert.equal(
     createResearchRequestFromPlaneComment(
       { ...planeCommentEvent, comment: "Please /research this" },

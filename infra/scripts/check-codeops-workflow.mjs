@@ -88,6 +88,9 @@ assert.ok(
 assert.ok(
   workflow.on.pull_request.paths.includes("services/codeops-session-gateway/**"),
 );
+assert.ok(
+  workflow.on.pull_request.paths.includes("services/codeops-plane-controller/**"),
+);
 assert.ok(workflow.on.pull_request.paths.includes("services/codeops-agent/**"));
 assert.ok(
   contracts.steps.some(
@@ -99,6 +102,19 @@ assert.ok(
       step.run?.includes("npm test --prefix services/codeops-session-gateway") &&
       step.run?.includes(
         "npm run typecheck --prefix services/codeops-session-gateway",
+      ),
+  ),
+);
+assert.ok(
+  contracts.steps.some(
+    (step) =>
+      step.name === "Test and typecheck Plane research admission controller" &&
+      step.run?.includes(
+        "npm ci --workspaces=false --prefix services/codeops-plane-controller",
+      ) &&
+      step.run?.includes("npm test --prefix services/codeops-plane-controller") &&
+      step.run?.includes(
+        "npm run typecheck --prefix services/codeops-plane-controller",
       ),
   ),
 );

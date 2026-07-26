@@ -8,6 +8,7 @@ on:
       - "packages/codeops-contracts/**"
       - "services/codeops-orchestrator/**"
       - "services/codeops-session-gateway/**"
+      - "services/codeops-plane-controller/**"
       - "services/codeops-agent/**"
       - "infra/docker/codeops-*.Dockerfile"
       - "infra/docker/codeops-*.Dockerfile.dockerignore"
@@ -45,6 +46,7 @@ on:
       - "packages/codeops-contracts/**"
       - "services/codeops-orchestrator/**"
       - "services/codeops-session-gateway/**"
+      - "services/codeops-plane-controller/**"
       - "services/codeops-agent/**"
       - "infra/docker/codeops-*.Dockerfile"
       - "infra/docker/codeops-*.Dockerfile.dockerignore"
@@ -127,6 +129,12 @@ jobs:
           npm ci --workspaces=false --prefix services/codeops-session-gateway
           npm test --prefix services/codeops-session-gateway
           npm run typecheck --prefix services/codeops-session-gateway
+
+      - name: Test and typecheck Plane research admission controller
+        run: |
+          npm ci --workspaces=false --prefix services/codeops-plane-controller
+          npm test --prefix services/codeops-plane-controller
+          npm run typecheck --prefix services/codeops-plane-controller
 
       - name: Verify pinned ACP agent adapter
         run: npm ci --workspaces=false --prefix services/codeops-agent
