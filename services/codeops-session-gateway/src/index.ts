@@ -42,6 +42,20 @@ interface Checkpoint {
   readonly error?: string;
 }
 
+export function createCheckpointLogRecord(checkpoint: Checkpoint): Readonly<{
+  type: "codeops.checkpoint";
+  checkpointDigest: string;
+  checkpoint: Checkpoint;
+}> {
+  return {
+    type: "codeops.checkpoint",
+    checkpointDigest: `sha256:${createHash("sha256")
+      .update(JSON.stringify(checkpoint))
+      .digest("hex")}`,
+    checkpoint,
+  };
+}
+
 function getPrompt(): string {
   const encoded = process.env.CODEOPS_PROMPT_B64;
   if (!encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
@@ -101,29 +115,27 @@ async function writeCheckpoint(
   checkpointDirectory: string,
   checkpoint: Omit<Checkpoint, "patch">,
   patch: Uint8Array,
-): Promise<void> {
+): Promise<Checkpoint> {
   await mkdir(checkpointDirectory, { recursive: true });
   const patchPath = path.join(checkpointDirectory, "changes.patch");
   const checkpointPath = path.join(checkpointDirectory, "checkpoint.json");
   const temporaryPath = `${checkpointPath}.tmp`;
   await writeFile(patchPath, patch, { mode: 0o600 });
+  const completedCheckpoint = {
+    ...checkpoint,
+    patch: {
+      path: "changes.patch" as const,
+      sha256: createHash("sha256").update(patch).digest("hex"),
+      bytes: patch.length,
+    },
+  } satisfies Checkpoint;
   await writeFile(
     temporaryPath,
-    `${JSON.stringify(
-      {
-        ...checkpoint,
-        patch: {
-          path: "changes.patch",
-          sha256: createHash("sha256").update(patch).digest("hex"),
-          bytes: patch.length,
-        },
-      } satisfies Checkpoint,
-      null,
-      2,
-    )}\n`,
+    `${JSON.stringify(completedCheckpoint, null, 2)}\n`,
     { mode: 0o600 },
   );
   await rename(temporaryPath, checkpointPath);
+  return completedCheckpoint;
 }
 
 export async function runGateway(): Promise<void> {
@@ -207,7 +219,7 @@ export async function runGateway(): Promise<void> {
       2_000,
     );
   }
-  await writeCheckpoint(
+  const checkpoint = await writeCheckpoint(
     checkpointDirectory,
     {
       schemaVersion: 2,
@@ -222,6 +234,7 @@ export async function runGateway(): Promise<void> {
     },
     patch,
   );
+  console.log(JSON.stringify(createCheckpointLogRecord(checkpoint)));
   await writeFile(path.dirname(socketPath) + "/done", "", { mode: 0o600 });
   if (failure) throw new Error(failure);
 }

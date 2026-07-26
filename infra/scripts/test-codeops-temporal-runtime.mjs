@@ -97,6 +97,36 @@ test("renders exactly one immutable orchestrator image", () => {
       `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-orchestrator@${digest}`,
     ),
   );
+  const pod = deployment.spec.template.spec;
+  const dispatchOrigin = pod.containers[0].env.find(
+    (entry) => entry.name === "CODEOPS_AGENT_DISPATCH_ORIGIN",
+  );
+  assert.equal(dispatchOrigin.value, "http://codeops-control-gateway:8080");
+  assert.deepEqual(pod.volumes, [
+    {
+      name: "dispatch-auth",
+      secret: {
+        secretName: "codeops-agent-dispatch-auth",
+        defaultMode: 256,
+      },
+    },
+  ]);
+});
+
+test("allows the tokenless orchestrator to reach only Temporal and the control gateway", () => {
+  const rendered = renderOrchestratorManifest(
+    template,
+    `sha256:${"a".repeat(64)}`,
+  );
+  const policy = parseAllDocuments(rendered)
+    .map((document) => document.toJS())
+    .find((resource) => resource.kind === "NetworkPolicy");
+  assert.deepEqual(
+    policy.spec.egress
+      .flatMap((rule) => rule.ports.map((port) => port.port))
+      .sort((a, b) => Number(a) - Number(b)),
+    [53, 53, 7233, 8080],
+  );
 });
 
 test("rejects missing, mutable, malformed, or ambiguous orchestrator images", () => {

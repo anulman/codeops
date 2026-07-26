@@ -79,6 +79,16 @@ approval, execution dispatch, and an externally reported independent acceptance
 verdict. The trusted supervisor renders and applies the isolated Agent Job; the
 candidate never receives deployment authority.
 
+The tokenless orchestrator authenticates to a separately reviewed
+`codeops-control-gateway` through the file-mounted
+`codeops-agent-dispatch-auth` Secret. The gateway—not the orchestrator or
+candidate Agent Job—holds the namespace-scoped Kubernetes identity. It accepts
+only the fixed Trial 0 research dispatch shape, creates the bounded tokenless
+Job, reconciles its terminal pod, validates the digest-bound checkpoint record,
+and persists that checkpoint before acknowledging the Temporal activity.
+Research comments are already human approval for the bounded read-only run;
+coding-agent workflows continue to wait for a separate Ready/approval signal.
+
 The trusted supervisor builds the `codeops-orchestrator-runtime` Docker target,
 records its registry digest, and renders the deployment:
 
@@ -196,7 +206,9 @@ is exposed to the session gateway.
 the pod-local Unix socket. `codeops-session-gateway` speaks ACP, allows only
 single-use tool permissions, retains bounded and redacted event metadata,
 captures a bounded binary Git patch, and atomically checkpoints the response,
-event ledger, patch digest, and any failure before stopping the sidecar.
+event ledger, patch digest, and any failure before stopping the sidecar. It
+also emits exactly one digest-bound checkpoint record to its own pod log so the
+trusted gateway can retain evidence without exec access to the Agent Job.
 
 The trusted renderer requires an explicit `CODEOPS_AGENT_ROLE`. A
 `coding-agent` receives a writable ephemeral source mount. The

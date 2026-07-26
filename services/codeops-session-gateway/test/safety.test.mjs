@@ -7,6 +7,7 @@ import {
   requireLowerHex,
   requireRunId,
 } from "../dist/safety.js";
+import { createCheckpointLogRecord } from "../dist/index.js";
 
 test("redacts common API and bearer credential shapes", () => {
   assert.equal(
@@ -42,4 +43,25 @@ test("validates run and immutable source identities", () => {
   for (const role of ["", "researcher", "admin", undefined]) {
     assert.throws(() => requireAgentRole(role));
   }
+});
+
+test("emits one digest-bound checkpoint record for trusted reconciliation", () => {
+  const checkpoint = {
+    schemaVersion: 2,
+    runId: "research-1",
+    agentRole: "qa-contract-researcher",
+    baseSha: "a".repeat(40),
+    response: "research result",
+    events: [],
+    patch: {
+      path: "changes.patch",
+      sha256:
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      bytes: 0,
+    },
+  };
+  const record = createCheckpointLogRecord(checkpoint);
+  assert.equal(record.type, "codeops.checkpoint");
+  assert.match(record.checkpointDigest, /^sha256:[0-9a-f]{64}$/);
+  assert.deepEqual(record.checkpoint, checkpoint);
 });

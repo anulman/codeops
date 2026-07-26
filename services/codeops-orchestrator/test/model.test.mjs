@@ -1,4 +1,7 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { bundleWorkflowCode } from "@temporalio/worker";
@@ -52,7 +55,9 @@ test("terminal states and skipped gates fail closed", () => {
   );
 });
 
-test("the Agent Job boundary refuses to simulate execution", async () => {
+test("the Agent Job boundary fails closed without its trusted dispatcher", async () => {
+  const previousOrigin = process.env.CODEOPS_AGENT_DISPATCH_ORIGIN;
+  delete process.env.CODEOPS_AGENT_DISPATCH_ORIGIN;
   await assert.rejects(
     dispatchAgentJob({
       workItemId: "work-1",
@@ -61,8 +66,74 @@ test("the Agent Job boundary refuses to simulate execution", async () => {
       summary: "Routing matrix",
       role: "coding-agent",
     }),
-    /refusing to simulate execution/,
+    /CODEOPS_AGENT_DISPATCH_ORIGIN is required/,
   );
+  if (previousOrigin !== undefined) {
+    process.env.CODEOPS_AGENT_DISPATCH_ORIGIN = previousOrigin;
+  }
+});
+
+test("the Agent Job boundary authenticates and validates the dispatcher result", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-dispatch-"));
+  const tokenPath = path.join(directory, "token");
+  const token = "t".repeat(64);
+  await writeFile(tokenPath, token);
+  const previous = {
+    fetch: globalThis.fetch,
+    origin: process.env.CODEOPS_AGENT_DISPATCH_ORIGIN,
+    tokenPath: process.env.CODEOPS_AGENT_DISPATCH_TOKEN_FILE,
+  };
+  process.env.CODEOPS_AGENT_DISPATCH_ORIGIN = "http://codeops-control-gateway";
+  process.env.CODEOPS_AGENT_DISPATCH_TOKEN_FILE = tokenPath;
+  globalThis.fetch = async (url, init) => {
+    assert.equal(String(url), "http://codeops-control-gateway/v1/agent-jobs");
+    assert.equal(init.headers.Authorization, `Bearer ${token}`);
+    const body = JSON.parse(init.body);
+    assert.equal(body.role, "qa-contract-researcher");
+    assert.equal(body.researchPersona, "@ai-security");
+    return new Response(
+      JSON.stringify({
+        checkpointUri: "k8s://trial/run/checkpoint.json",
+        checkpointDigest: `sha256:${"a".repeat(64)}`,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+  try {
+    const result = await dispatchAgentJob({
+      workItemId: "work-1",
+      workflowId: "workflow-1",
+      baseSha: "a".repeat(40),
+      summary: "Research routing matrix",
+      role: "qa-contract-researcher",
+      researchPersona: "@ai-security",
+      researchRequest: {
+        version: "codeops.research-request/v1",
+        requestId: "research-request-1",
+        projectId: "11111111-1111-4111-8111-111111111111",
+        workItemId: "22222222-2222-4222-8222-222222222222",
+        triggerCommentId: "33333333-3333-4333-8333-333333333333",
+        requestedBy: "44444444-4444-4444-8444-444444444444",
+        repository: { owner: "anulman", name: "renoconcierge" },
+        baseSha: "a".repeat(40),
+        planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+        personas: ["@ai-security"],
+        brief: "Research authentication boundaries",
+        requestedAt: "2026-07-26T00:00:00.000Z",
+      },
+    });
+    assert.equal(result.checkpointDigest, `sha256:${"a".repeat(64)}`);
+  } finally {
+    globalThis.fetch = previous.fetch;
+    if (previous.origin === undefined) delete process.env.CODEOPS_AGENT_DISPATCH_ORIGIN;
+    else process.env.CODEOPS_AGENT_DISPATCH_ORIGIN = previous.origin;
+    if (previous.tokenPath === undefined) {
+      delete process.env.CODEOPS_AGENT_DISPATCH_TOKEN_FILE;
+    } else {
+      process.env.CODEOPS_AGENT_DISPATCH_TOKEN_FILE = previous.tokenPath;
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("Temporal can bundle the workflow in its deterministic sandbox", async () => {

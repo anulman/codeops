@@ -42,6 +42,10 @@ spec:
               value: codeops
             - name: CODEOPS_TEMPORAL_TASK_QUEUE
               value: codeops-trial0
+            - name: CODEOPS_AGENT_DISPATCH_ORIGIN
+              value: http://codeops-control-gateway:8080
+            - name: CODEOPS_AGENT_DISPATCH_TOKEN_FILE
+              value: /var/run/codeops-dispatch/token
           resources:
             requests:
               cpu: 100m
@@ -55,6 +59,15 @@ spec:
             capabilities:
               drop:
                 - ALL
+          volumeMounts:
+            - name: dispatch-auth
+              mountPath: /var/run/codeops-dispatch
+              readOnly: true
+      volumes:
+        - name: dispatch-auth
+          secret:
+            secretName: codeops-agent-dispatch-auth
+            defaultMode: 256
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -76,6 +89,13 @@ spec:
       ports:
         - protocol: TCP
           port: 7233
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-control-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
     - to:
         - namespaceSelector:
             matchLabels:

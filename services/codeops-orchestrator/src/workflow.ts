@@ -51,10 +51,21 @@ interface Activities {
   dispatchAgentJob(workItem: AgentJobDispatchInput): Promise<DispatchResult>;
 }
 
-const { dispatchAgentJob, recordTransition } = proxyActivities<Activities>({
+const { recordTransition } = proxyActivities<
+  Pick<Activities, "recordTransition">
+>({
   startToCloseTimeout: "5 minutes",
   retry: {
     initialInterval: "1 second",
+    maximumAttempts: 3,
+  },
+});
+const { dispatchAgentJob } = proxyActivities<
+  Pick<Activities, "dispatchAgentJob">
+>({
+  startToCloseTimeout: "70 minutes",
+  retry: {
+    initialInterval: "5 seconds",
     maximumAttempts: 3,
   },
 });
