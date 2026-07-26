@@ -62,7 +62,7 @@ test("places and bounds the Temporal process on the admitted CodeOps node", () =
   });
 });
 
-test("allows Temporal gRPC only from the orchestrator", () => {
+test("allows Temporal gRPC only from the orchestrator and Plane controller", () => {
   const policy = byKind("NetworkPolicy")[0];
   assert.equal(policy.spec.ingress.length, 1);
   const grpcRule = policy.spec.ingress.find((rule) =>
@@ -72,6 +72,11 @@ test("allows Temporal gRPC only from the orchestrator", () => {
     {
       podSelector: {
         matchLabels: { "app.kubernetes.io/name": "codeops-orchestrator" },
+      },
+    },
+    {
+      podSelector: {
+        matchLabels: { "app.kubernetes.io/name": "codeops-plane-controller" },
       },
     },
   ]);

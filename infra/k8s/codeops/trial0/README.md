@@ -91,6 +91,41 @@ CODEOPS_ORCHESTRATOR_DIGEST=sha256:<64-lowercase-hex> \
 Rendering rejects missing, mutable, malformed, or duplicated image
 substitutions. The candidate still receives no Kubernetes credential.
 
+## Plane research controller
+
+The privileged Plane controller is packaged separately from Agent Jobs. It
+receives no Kubernetes service-account token, reads the Plane API key and
+webhook HMAC secret only from files in the externally created
+`codeops-plane-controller-secrets` Secret, and persists its event/request
+deduplication ledger on a single bounded `ReadWriteOnce` claim. The Deployment
+uses `Recreate` with one replica so two writers cannot mount or update the
+ledger concurrently.
+
+Only the exact SHA-bound
+`https://research-<sha-prefix>.preview.renoconcierge.ca/webhooks/plane`
+endpoint is public. `/healthz` remains pod-local. Network policy admits ingress
+only from ingress-nginx and egress only to Temporal, cluster DNS, and public
+HTTPS for the fixed Plane API origin. The controller image, base SHA, Plane
+workspace, admitted human actor IDs, and exact webhook host are validated by
+the trusted renderer:
+
+```bash
+CODEOPS_PLANE_CONTROLLER_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_BASE_SHA=<40-lowercase-hex> \
+CODEOPS_PLANE_CONTROLLER_HOST=research-<first-12-sha>.preview.renoconcierge.ca \
+CODEOPS_PLANE_WORKSPACE_SLUG=<workspace-slug> \
+CODEOPS_ALLOWED_HUMAN_ACTOR_IDS=<comma-separated-lowercase-uuids> \
+  node infra/scripts/render-codeops-plane-controller.mjs \
+  > "$CODEOPS_PLANE_CONTROLLER_MANIFEST"
+```
+
+The trusted supervisor must create the Secret without logging either value,
+copy the preview wildcard TLS Secret, render and server-dry-run the exact
+manifest, and verify the PVC, rollout, private health route, public signed
+webhook path, and restart-persistent deduplication before configuring Plane.
+The controller credential is never mounted into the orchestrator or an Agent
+Job.
+
 ## Agent Job boundary
 
 `agent-job-template.yaml` is rendered and applied only by the trusted external

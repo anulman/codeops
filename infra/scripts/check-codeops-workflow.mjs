@@ -37,6 +37,7 @@ assert.ok(
 );
 for (const stepName of [
   "Render Trial 0 orchestrator with an immutable image",
+  "Test and render the Trial 0 Plane controller",
   "Test and render the isolated Trial 0 Agent Job",
 ]) {
   const step = contracts.steps.find((candidate) => candidate.name === stepName);
@@ -47,6 +48,23 @@ assert.ok(contracts.steps.some((step) => step.run === "nub install --frozen-lock
 assert.ok(
   contracts.steps.some(
     (step) => step.run === "nub run --filter @renoconcierge/codeops-contracts test",
+  ),
+);
+assert.ok(
+  contracts.steps.some(
+    (step) =>
+      step.name === "Build privileged Plane controller image" &&
+      step.run?.includes("infra/docker/codeops-plane-controller.Dockerfile"),
+  ),
+);
+assert.ok(
+  contracts.steps.some(
+    (step) =>
+      step.name === "Test and render the Trial 0 Plane controller" &&
+      step.run?.includes("infra/scripts/test-codeops-plane-controller.mjs") &&
+      step.run?.includes("infra/scripts/render-codeops-plane-controller.mjs") &&
+      step.env?.CODEOPS_PLANE_CONTROLLER_HOST ===
+        "research-bbbbbbbbbbbb.preview.renoconcierge.ca",
   ),
 );
 assert.ok(

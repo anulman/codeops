@@ -140,6 +140,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: codeops-orchestrator
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-plane-controller
       ports:
         - protocol: TCP
           port: 7233
