@@ -6,15 +6,19 @@ import {
   setHandler,
 } from "@temporalio/workflow";
 import type {
-  ResearchPersonaHandle,
+  AgentJobDispatchRequest,
   ResearchRequest,
 } from "@renoconcierge/codeops-contracts";
-import type { DispatchResult } from "./activities.js";
+import type {
+  DispatchResult,
+  ResearchProjectionResult,
+} from "./activities.js";
 import {
   initialPlanDecision,
   transition,
   type WorkflowSnapshot,
 } from "./model.js";
+import { buildResearchPacket } from "./research.js";
 
 interface WorkItemInputBase {
   readonly workItemId: string;
@@ -32,11 +36,7 @@ export type WorkItemInput =
       readonly researchRequest: ResearchRequest;
     });
 
-export type AgentJobDispatchInput =
-  | Extract<WorkItemInput, { readonly role: "coding-agent" }>
-  | (Extract<WorkItemInput, { readonly role: "qa-contract-researcher" }> & {
-      readonly researchPersona: ResearchPersonaHandle;
-    });
+export type AgentJobDispatchInput = AgentJobDispatchRequest;
 
 export interface AcceptanceResult {
   readonly passed: boolean;
@@ -49,6 +49,9 @@ interface Activities {
     snapshot: WorkflowSnapshot,
   ): Promise<void>;
   dispatchAgentJob(workItem: AgentJobDispatchInput): Promise<DispatchResult>;
+  publishResearchPacket(
+    packet: ReturnType<typeof buildResearchPacket>,
+  ): Promise<ResearchProjectionResult>;
 }
 
 const { recordTransition } = proxyActivities<
@@ -66,6 +69,15 @@ const { dispatchAgentJob } = proxyActivities<
   startToCloseTimeout: "70 minutes",
   retry: {
     initialInterval: "5 seconds",
+    maximumAttempts: 3,
+  },
+});
+const { publishResearchPacket } = proxyActivities<
+  Pick<Activities, "publishResearchPacket">
+>({
+  startToCloseTimeout: "5 minutes",
+  retry: {
+    initialInterval: "2 seconds",
     maximumAttempts: 3,
   },
 });
@@ -142,13 +154,19 @@ export async function workItemWorkflow(
   const dispatches: DispatchResult[] = [];
   try {
     if (workItem.role === "coding-agent") {
-      dispatches.push(await dispatchAgentJob(workItem));
+      dispatches.push(
+        await dispatchAgentJob({
+          version: "codeops.agent-job-dispatch/v1",
+          ...workItem,
+        }),
+      );
     } else {
       // Preserve the strict one-Agent-Job Trial 0 concurrency cap while still
       // giving every tagged persona an isolated, terminal execution.
       for (const persona of workItem.researchRequest.personas) {
         dispatches.push(
           await dispatchAgentJob({
+            version: "codeops.agent-job-dispatch/v1",
             ...workItem,
             researchPersona: persona,
           }),
@@ -168,6 +186,32 @@ export async function workItemWorkflow(
       .map((dispatch) => dispatch.checkpointUri)
       .join(", ")}`,
   );
+  if (await cancelIfRequested()) return snapshot;
+  if (workItem.role === "qa-contract-researcher") {
+    let projection: ResearchProjectionResult;
+    try {
+      projection = await publishResearchPacket(
+        buildResearchPacket({
+          request: workItem.researchRequest,
+          dispatches,
+          createdAt: new Date().toISOString(),
+        }),
+      );
+    } catch {
+      await move(
+        "failed",
+        "Research evidence failed closed before Plane projection",
+      );
+      return snapshot;
+    }
+    await move("validating", "Validating trusted Plane research projection");
+    if (projection.passed) {
+      await move("completed", projection.summary);
+    } else {
+      await move("failed", projection.summary);
+    }
+    return snapshot;
+  }
   await move("validating", "Waiting for independent acceptance");
   await condition(
     () => external.acceptance !== null || cancellation.length > 0,

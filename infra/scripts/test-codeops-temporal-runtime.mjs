@@ -102,6 +102,12 @@ test("renders exactly one immutable orchestrator image", () => {
     (entry) => entry.name === "CODEOPS_AGENT_DISPATCH_ORIGIN",
   );
   assert.equal(dispatchOrigin.value, "http://codeops-control-gateway:8080");
+  assert.equal(
+    pod.containers[0].env.find(
+      (entry) => entry.name === "CODEOPS_RESEARCH_PROJECTION_ORIGIN",
+    ).value,
+    "http://codeops-plane-controller:8080",
+  );
   assert.deepEqual(pod.volumes, [
     {
       name: "dispatch-auth",
@@ -110,10 +116,17 @@ test("renders exactly one immutable orchestrator image", () => {
         defaultMode: 256,
       },
     },
+    {
+      name: "projection-auth",
+      secret: {
+        secretName: "codeops-research-projection-auth",
+        defaultMode: 256,
+      },
+    },
   ]);
 });
 
-test("allows the tokenless orchestrator to reach only Temporal and the control gateway", () => {
+test("allows the tokenless orchestrator to reach only Temporal, gateway, controller, and DNS", () => {
   const rendered = renderOrchestratorManifest(
     template,
     `sha256:${"a".repeat(64)}`,
@@ -125,7 +138,7 @@ test("allows the tokenless orchestrator to reach only Temporal and the control g
     policy.spec.egress
       .flatMap((rule) => rule.ports.map((port) => port.port))
       .sort((a, b) => Number(a) - Number(b)),
-    [53, 53, 7233, 8080],
+    [53, 53, 7233, 8080, 8080],
   );
 });
 

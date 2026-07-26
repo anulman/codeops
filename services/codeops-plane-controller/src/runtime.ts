@@ -1,4 +1,5 @@
 import type { IncomingMessage, ServerResponse } from "node:http";
+import { timingSafeEqual } from "node:crypto";
 import {
   WorkflowExecutionAlreadyStartedError,
   type Client,
@@ -8,6 +9,7 @@ import type {
   ResearchRequestEnqueueResult,
   ResearchWebhookProcessingResult,
 } from "./index.js";
+import type { ResearchProjectionResult } from "./projection.js";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 
@@ -89,6 +91,20 @@ function json(
   response.end(encoded);
 }
 
+function authenticateBearer(
+  authorization: string | undefined,
+  expectedToken: string,
+): boolean {
+  if (!authorization?.startsWith("Bearer ")) return false;
+  const received = Buffer.from(authorization.slice("Bearer ".length));
+  const expected = Buffer.from(expectedToken);
+  return (
+    received.length === expected.length &&
+    received.length > 0 &&
+    timingSafeEqual(received, expected)
+  );
+}
+
 export function createPlaneWebhookRequestListener(input: {
   process: (input: {
     rawBody: Buffer;
@@ -98,10 +114,57 @@ export function createPlaneWebhookRequestListener(input: {
       signature: string;
     };
   }) => Promise<ResearchWebhookProcessingResult>;
+  projection?: {
+    token: string;
+    process: (packet: unknown) => Promise<ResearchProjectionResult>;
+  };
 }): (request: IncomingMessage, response: ServerResponse) => Promise<void> {
   return async (request, response) => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    if (request.method === "POST" && request.url === "/v1/research-packets") {
+      if (
+        input.projection === undefined ||
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          input.projection.token,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      if (!request.headers["content-type"]?.startsWith("application/json")) {
+        json(response, 415, { status: "unsupported-media-type" });
+        return;
+      }
+      try {
+        const result = await input.projection.process(
+          JSON.parse((await readRawBody(request)).toString("utf8")) as unknown,
+        );
+        if (result.status === "busy") {
+          const seconds = Math.max(
+            1,
+            Math.ceil((Date.parse(result.leaseExpiresAt) - Date.now()) / 1_000),
+          );
+          json(
+            response,
+            409,
+            { status: "busy", requestId: result.requestId },
+            { "Retry-After": String(seconds) },
+          );
+          return;
+        }
+        json(response, 200, {
+          version: "codeops.research-projection-result/v1",
+          ...result,
+        });
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
       return;
     }
     if (request.method !== "POST" || request.url !== "/webhooks/plane") {

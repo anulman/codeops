@@ -103,6 +103,8 @@ export function renderPlaneControllerManifest(template, input) {
     CODEOPS_PLANE_API_ORIGIN: "https://work.renoconcierge.ca",
     CODEOPS_PLANE_WEBHOOK_SECRET_FILE:
       "/var/run/secrets/codeops/webhook-secret",
+    CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE:
+      "/var/run/codeops-projection/token",
     CODEOPS_PLANE_WORKSPACE_SLUG: input.workspaceSlug,
     CODEOPS_REPOSITORY_NAME: "renoconcierge",
     CODEOPS_REPOSITORY_OWNER: "anulman",
@@ -147,10 +149,16 @@ export function renderPlaneControllerManifest(template, input) {
     (volume) => volume.name === "controller-secrets",
   );
   const ledgerVolume = pod.volumes.find((volume) => volume.name === "ledger");
+  const projectionVolume = pod.volumes.find(
+    (volume) => volume.name === "projection-auth",
+  );
   if (
     secretVolume?.secret?.secretName !== "codeops-plane-controller-secrets" ||
     secretVolume.secret.defaultMode !== 288 ||
     secretVolume.secret.items?.length !== 2 ||
+    projectionVolume?.secret?.secretName !==
+      "codeops-research-projection-auth" ||
+    projectionVolume.secret.defaultMode !== 256 ||
     ledgerVolume?.persistentVolumeClaim?.claimName !==
       "codeops-plane-controller-ledger"
   ) {
@@ -176,7 +184,14 @@ export function renderPlaneControllerManifest(template, input) {
   }
   if (
     policy.spec.policyTypes.join(",") !== "Ingress,Egress" ||
-    policy.spec.ingress.length !== 1 ||
+    policy.spec.ingress.length !== 2 ||
+    !policy.spec.ingress.some((rule) =>
+      rule.from?.some(
+        (source) =>
+          source.podSelector?.matchLabels?.["app.kubernetes.io/name"] ===
+          "codeops-orchestrator",
+      ),
+    ) ||
     !policy.spec.egress.some((rule) =>
       rule.ports?.some((port) => port.port === 7233),
     ) ||

@@ -82,6 +82,17 @@ test("keeps credentials in mounted files and the ledger on a private RWO claim",
     ).value,
     "/var/run/secrets/codeops/plane-api-key",
   );
+  assert.equal(
+    container.env.find(
+      (entry) => entry.name === "CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE",
+    ).value,
+    "/var/run/codeops-projection/token",
+  );
+  assert.equal(
+    pod.volumes.find((volume) => volume.name === "projection-auth").secret
+      .secretName,
+    "codeops-research-projection-auth",
+  );
   assert.equal(container.env.some((entry) => entry.valueFrom), false);
   assert.equal(JSON.stringify(manifests).includes("value: sk-"), false);
 });
@@ -102,7 +113,7 @@ test("exposes only the exact signed webhook and keeps liveness private", () => {
   assert.equal(JSON.stringify(ingress).includes("/healthz"), false);
 });
 
-test("allows only ingress-nginx, Temporal, DNS, and public HTTPS", () => {
+test("allows only ingress-nginx/orchestrator, Temporal, DNS, and public HTTPS", () => {
   const policy = resources().find(
     (resource) => resource.kind === "NetworkPolicy",
   );
@@ -112,6 +123,12 @@ test("allows only ingress-nginx, Temporal, DNS, and public HTTPS", () => {
       "kubernetes.io/metadata.name"
     ],
     "ingress-nginx",
+  );
+  assert.equal(
+    policy.spec.ingress[1].from[0].podSelector.matchLabels[
+      "app.kubernetes.io/name"
+    ],
+    "codeops-orchestrator",
   );
   const publicHttps = policy.spec.egress.find((rule) =>
     rule.ports?.some((port) => port.port === 443),

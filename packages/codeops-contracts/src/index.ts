@@ -14,9 +14,12 @@ const VERSION = {
   secretReference: "codeops.secret-reference/v1",
   planeCommentEvent: "codeops.plane-comment-event/v1",
   researchRequest: "codeops.research-request/v2",
+  researchPersonaReport: "codeops.research-persona-report/v1",
   researchPacket: "codeops.research-packet/v2",
   researchMutationBatch: "codeops.research-mutation-batch/v1",
   readinessGate: "codeops.readiness-gate/v1",
+  agentJobDispatch: "codeops.agent-job-dispatch/v1",
+  agentJobDispatchResult: "codeops.agent-job-dispatch-result/v1",
 } as const;
 
 const identifier = z
@@ -341,6 +344,102 @@ export const researchRequestSchema = z
     requestedAt: isoDateTime,
   })
   .strict();
+
+export const researchPersonaReportSchema = z
+  .object({
+    version: z.literal(VERSION.researchPersonaReport),
+    requestId: identifier,
+    persona: researchPersonaHandleSchema,
+    outcome: z.enum(["findings", "no-additional-findings"]),
+    summary: safeText(2_000),
+    currentBehavior: z.array(safeText(4_000)).max(50),
+    expectedBehavior: z.array(safeText(4_000)).max(50),
+    decisions: z
+      .array(
+        z
+          .object({
+            question: safeText(2_000),
+            blocking: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(25),
+  })
+  .strict();
+
+const agentJobBaseSchema = z
+  .object({
+    workItemId: identifier,
+    workflowId: identifier,
+    baseSha: gitSha,
+    summary: safeText(500),
+  })
+  .strict();
+
+export const agentJobDispatchRequestSchema = z
+  .discriminatedUnion("role", [
+    agentJobBaseSchema
+      .extend({
+        version: z.literal(VERSION.agentJobDispatch),
+        role: z.literal("coding-agent"),
+      })
+      .strict(),
+    agentJobBaseSchema
+      .extend({
+        version: z.literal(VERSION.agentJobDispatch),
+        role: z.literal("qa-contract-researcher"),
+        researchRequest: researchRequestSchema,
+        researchPersona: researchPersonaHandleSchema,
+      })
+      .strict(),
+  ])
+  .superRefine((value, context) => {
+    if (value.role !== "qa-contract-researcher") return;
+    if (!value.researchRequest.personas.includes(value.researchPersona)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["researchPersona"],
+        message: "research persona was not requested",
+      });
+    }
+    if (
+      value.workItemId !== value.researchRequest.workItemId ||
+      value.workflowId !== value.researchRequest.requestId ||
+      value.baseSha !== value.researchRequest.baseSha
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["researchRequest"],
+        message: "research dispatch identity does not match its request",
+      });
+    }
+  });
+
+const agentJobDispatchResultBaseSchema = z
+  .object({
+    version: z.literal(VERSION.agentJobDispatchResult),
+    runId: workflowRunIdentifier,
+    checkpointUri: z
+      .string()
+      .regex(/^artifact:\/\/\/agent-runs\/[a-z0-9-]+\/checkpoint\.json$/),
+    checkpointDigest: sha256Digest,
+    checkpointSizeBytes: z.number().int().positive().max(25_000_000),
+  })
+  .strict();
+
+export const agentJobDispatchResultSchema = z.discriminatedUnion("role", [
+  agentJobDispatchResultBaseSchema
+    .extend({
+      role: z.literal("coding-agent"),
+    })
+    .strict(),
+  agentJobDispatchResultBaseSchema
+    .extend({
+      role: z.literal("qa-contract-researcher"),
+      researchReport: researchPersonaReportSchema,
+    })
+    .strict(),
+]);
 
 const ticketChangesSchema = z
   .object({
@@ -739,6 +838,15 @@ export type ControlCommand = z.infer<typeof controlCommandSchema>;
 export type ControlResult = z.infer<typeof controlResultSchema>;
 export type PlaneCommentEvent = z.infer<typeof planeCommentEventSchema>;
 export type ResearchRequest = z.infer<typeof researchRequestSchema>;
+export type ResearchPersonaReport = z.infer<
+  typeof researchPersonaReportSchema
+>;
+export type AgentJobDispatchRequest = z.infer<
+  typeof agentJobDispatchRequestSchema
+>;
+export type AgentJobDispatchResult = z.infer<
+  typeof agentJobDispatchResultSchema
+>;
 export type ResearchPersonaHandle = z.infer<typeof researchPersonaHandleSchema>;
 export type ResearchPlaneMutation = z.infer<typeof researchPlaneMutationSchema>;
 export type ResearchMutationBatch = z.infer<typeof researchMutationBatchSchema>;

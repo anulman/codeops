@@ -5,8 +5,42 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { bundleWorkflowCode } from "@temporalio/worker";
-import { dispatchAgentJob } from "../dist/activities.js";
+import {
+  dispatchAgentJob,
+  publishResearchPacket,
+} from "../dist/activities.js";
 import { initialPlanDecision, transition } from "../dist/model.js";
+
+const projectionPacket = {
+  version: "codeops.research-packet/v2",
+  personas: ["@ai-security"],
+  perspectives: [
+    {
+      persona: "@ai-security",
+      outcome: "findings",
+      summary: "Authentication boundaries need qualification.",
+    },
+  ],
+  requestId: "research-request-1",
+  projectId: "11111111-1111-4111-8111-111111111111",
+  workItemId: "22222222-2222-4222-8222-222222222222",
+  baseSha: "a".repeat(40),
+  planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+  summary: "Authentication boundaries need qualification.",
+  currentBehavior: ["The current matrix is incomplete."],
+  expectedBehavior: ["Every route has an explicit contract."],
+  evidence: [],
+  videoNotApplicableReason: "This is a repository-contract review.",
+  decisions: [],
+  proposedMutations: {
+    version: "codeops.research-mutation-batch/v1",
+    requestId: "research-request-1",
+    projectId: "11111111-1111-4111-8111-111111111111",
+    sourceWorkItemId: "22222222-2222-4222-8222-222222222222",
+    mutations: [],
+  },
+  createdAt: "2026-07-26T00:00:00.000Z",
+};
 
 test("an admitted persona comment approves only the research run", () => {
   assert.equal(initialPlanDecision("qa-contract-researcher"), "approved");
@@ -60,8 +94,9 @@ test("the Agent Job boundary fails closed without its trusted dispatcher", async
   delete process.env.CODEOPS_AGENT_DISPATCH_ORIGIN;
   await assert.rejects(
     dispatchAgentJob({
-      workItemId: "work-1",
-      workflowId: "workflow-1",
+      version: "codeops.agent-job-dispatch/v1",
+      workItemId: "22222222-2222-4222-8222-222222222222",
+      workflowId: "research-request-1",
       baseSha: "a".repeat(40),
       summary: "Routing matrix",
       role: "coding-agent",
@@ -93,22 +128,38 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
     assert.equal(body.researchPersona, "@ai-security");
     return new Response(
       JSON.stringify({
-        checkpointUri: "k8s://trial/run/checkpoint.json",
+        version: "codeops.agent-job-dispatch-result/v1",
+        role: "qa-contract-researcher",
+        runId: "research-test",
+        checkpointUri:
+          "artifact:///agent-runs/research-test/checkpoint.json",
         checkpointDigest: `sha256:${"a".repeat(64)}`,
+        checkpointSizeBytes: 123,
+        researchReport: {
+          version: "codeops.research-persona-report/v1",
+          requestId: "research-request-1",
+          persona: "@ai-security",
+          outcome: "findings",
+          summary: "Authentication boundaries need qualification.",
+          currentBehavior: ["The current matrix is incomplete."],
+          expectedBehavior: ["Every route has an explicit contract."],
+          decisions: [],
+        },
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
     );
   };
   try {
     const result = await dispatchAgentJob({
-      workItemId: "work-1",
-      workflowId: "workflow-1",
+      version: "codeops.agent-job-dispatch/v1",
+      workItemId: "22222222-2222-4222-8222-222222222222",
+      workflowId: "research-request-1",
       baseSha: "a".repeat(40),
       summary: "Research routing matrix",
       role: "qa-contract-researcher",
       researchPersona: "@ai-security",
       researchRequest: {
-        version: "codeops.research-request/v1",
+        version: "codeops.research-request/v2",
         requestId: "research-request-1",
         projectId: "11111111-1111-4111-8111-111111111111",
         workItemId: "22222222-2222-4222-8222-222222222222",
@@ -131,6 +182,70 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
       delete process.env.CODEOPS_AGENT_DISPATCH_TOKEN_FILE;
     } else {
       process.env.CODEOPS_AGENT_DISPATCH_TOKEN_FILE = previous.tokenPath;
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("research completion fails closed without the trusted Plane projection boundary", async () => {
+  const previousOrigin = process.env.CODEOPS_RESEARCH_PROJECTION_ORIGIN;
+  delete process.env.CODEOPS_RESEARCH_PROJECTION_ORIGIN;
+  await assert.rejects(
+    publishResearchPacket(projectionPacket),
+    /CODEOPS_RESEARCH_PROJECTION_ORIGIN is required/,
+  );
+  if (previousOrigin !== undefined) {
+    process.env.CODEOPS_RESEARCH_PROJECTION_ORIGIN = previousOrigin;
+  }
+});
+
+test("the Plane projection activity authenticates and binds the response identity", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-projection-"));
+  const tokenPath = path.join(directory, "token");
+  const token = "p".repeat(64);
+  await writeFile(tokenPath, token);
+  const previous = {
+    fetch: globalThis.fetch,
+    origin: process.env.CODEOPS_RESEARCH_PROJECTION_ORIGIN,
+    tokenPath: process.env.CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE,
+  };
+  process.env.CODEOPS_RESEARCH_PROJECTION_ORIGIN =
+    "http://codeops-plane-controller:8080";
+  process.env.CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE = tokenPath;
+  globalThis.fetch = async (url, init) => {
+    assert.equal(
+      String(url),
+      "http://codeops-plane-controller:8080/v1/research-packets",
+    );
+    assert.equal(init.headers.Authorization, `Bearer ${token}`);
+    assert.equal(JSON.parse(init.body).requestId, projectionPacket.requestId);
+    return new Response(
+      JSON.stringify({
+        version: "codeops.research-projection-result/v1",
+        requestId: projectionPacket.requestId,
+        status: "applied",
+        mutationCount: 1,
+      }),
+      { status: 200, headers: { "Content-Type": "application/json" } },
+    );
+  };
+  try {
+    assert.deepEqual(await publishResearchPacket(projectionPacket), {
+      passed: true,
+      summary:
+        "Plane research packet applied with 1 content mutation(s)",
+    });
+  } finally {
+    globalThis.fetch = previous.fetch;
+    if (previous.origin === undefined) {
+      delete process.env.CODEOPS_RESEARCH_PROJECTION_ORIGIN;
+    } else {
+      process.env.CODEOPS_RESEARCH_PROJECTION_ORIGIN = previous.origin;
+    }
+    if (previous.tokenPath === undefined) {
+      delete process.env.CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE;
+    } else {
+      process.env.CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE = previous.tokenPath;
     }
     await rm(directory, { recursive: true, force: true });
   }

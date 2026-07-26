@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { test } from "node:test";
 import {
+  agentJobDispatchRequestSchema,
+  agentJobDispatchResultSchema,
   canonicalSerialize,
   contractVersions,
   controlCommandSchema,
@@ -365,6 +367,62 @@ test("admits registered persona mentions only from a new human comment", () => {
   );
   assert.throws(() =>
     planeCommentEventSchema.parse({ ...planeCommentEvent, actor: { kind: "human" } }),
+  );
+});
+
+test("binds strict Agent Job dispatch and result identities", () => {
+  const request = createResearchRequestFromPlaneComment(
+    planeCommentEvent,
+    researchSource,
+  );
+  const dispatch = {
+    version: contractVersions.agentJobDispatch,
+    workItemId: request.workItemId,
+    workflowId: request.requestId,
+    baseSha: request.baseSha,
+    summary: "Research the canonical authentication matrix.",
+    role: "qa-contract-researcher",
+    researchRequest: request,
+    researchPersona: "@ai-security",
+  };
+  assert.deepEqual(agentJobDispatchRequestSchema.parse(dispatch), dispatch);
+  assert.throws(() =>
+    agentJobDispatchRequestSchema.parse({
+      ...dispatch,
+      researchPersona: "@ai-ml",
+    }),
+  );
+  assert.throws(() =>
+    agentJobDispatchRequestSchema.parse({
+      ...dispatch,
+      baseSha: "a".repeat(40),
+    }),
+  );
+  const result = {
+    version: contractVersions.agentJobDispatchResult,
+    role: "qa-contract-researcher",
+    runId: "research-123",
+    checkpointUri:
+      "artifact:///agent-runs/research-123/checkpoint.json",
+    checkpointDigest: `sha256:${"c".repeat(64)}`,
+    checkpointSizeBytes: 123,
+    researchReport: {
+      version: contractVersions.researchPersonaReport,
+      requestId: request.requestId,
+      persona: "@ai-security",
+      outcome: "findings",
+      summary: "Authentication boundaries need qualification.",
+      currentBehavior: ["The current matrix is incomplete."],
+      expectedBehavior: ["Every route has an explicit contract."],
+      decisions: [],
+    },
+  };
+  assert.deepEqual(agentJobDispatchResultSchema.parse(result), result);
+  assert.throws(() =>
+    agentJobDispatchResultSchema.parse({
+      ...result,
+      checkpointUri: "file:///checkpoint.json",
+    }),
   );
 });
 

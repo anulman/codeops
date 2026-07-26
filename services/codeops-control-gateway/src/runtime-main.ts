@@ -1,0 +1,121 @@
+import { readFile } from "node:fs/promises";
+import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import {
+  authenticateBearer,
+  parseDispatchRequest,
+} from "./core.js";
+import { loadInClusterKubernetesClient } from "./kubernetes.js";
+import { createAgentJobRunner } from "./runtime.js";
+
+const MAX_BODY_BYTES = 1024 * 1024;
+
+function required(name: string): string {
+  const value = process.env[name]?.trim();
+  if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+async function secretFile(name: string): Promise<string> {
+  const value = (await readFile(required(name), "utf8")).trim();
+  if (!value) throw new Error(`${name} is empty`);
+  return value;
+}
+
+function requireDigestImage(name: string): string {
+  const value = required(name);
+  if (!/^.+@sha256:[0-9a-f]{64}$/.test(value)) {
+    throw new Error(`${name} must be an immutable digest image`);
+  }
+  return value;
+}
+
+async function readJson(request: IncomingMessage): Promise<unknown> {
+  const chunks: Buffer[] = [];
+  let bytes = 0;
+  for await (const chunk of request) {
+    const buffer = Buffer.from(chunk);
+    bytes += buffer.length;
+    if (bytes > MAX_BODY_BYTES) throw new Error("dispatch body exceeds 1 MiB");
+    chunks.push(buffer);
+  }
+  if (bytes === 0) throw new Error("dispatch body is empty");
+  return JSON.parse(Buffer.concat(chunks).toString("utf8"));
+}
+
+function json(
+  response: ServerResponse,
+  status: number,
+  body: Readonly<Record<string, unknown>>,
+): void {
+  const encoded = Buffer.from(`${JSON.stringify(body)}\n`);
+  response.writeHead(status, {
+    "Cache-Control": "no-store",
+    "Content-Type": "application/json",
+    "Content-Length": String(encoded.length),
+  });
+  response.end(encoded);
+}
+
+const namespace = required("CODEOPS_NAMESPACE");
+const token = await secretFile("CODEOPS_DISPATCH_TOKEN_FILE");
+if (token.length < 32 || token.length > 4_096) {
+  throw new Error("dispatch token length is invalid");
+}
+const kubernetes = await loadInClusterKubernetesClient(namespace);
+const run = createAgentJobRunner({
+  kubernetes,
+  config: {
+    namespace,
+    repositoryUrl: required("CODEOPS_REPOSITORY_URL"),
+    agentImage: requireDigestImage("CODEOPS_AGENT_IMAGE"),
+    sessionGatewayImage: requireDigestImage("CODEOPS_SESSION_GATEWAY_IMAGE"),
+    repositoryReadToken: await secretFile(
+      "CODEOPS_REPOSITORY_READ_TOKEN_FILE",
+    ),
+    modelApiKey: await secretFile("CODEOPS_MODEL_API_KEY_FILE"),
+    evidenceRoot: required("CODEOPS_EVIDENCE_ROOT"),
+  },
+});
+
+let serial: Promise<unknown> = Promise.resolve();
+const server = createServer((request, response) => {
+  void (async () => {
+    if (request.method === "GET" && request.url === "/healthz") {
+      json(response, 200, { status: "ok" });
+      return;
+    }
+    if (request.method !== "POST" || request.url !== "/v1/agent-jobs") {
+      json(response, 404, { status: "not-found" });
+      return;
+    }
+    if (
+      !authenticateBearer(
+        typeof request.headers.authorization === "string"
+          ? request.headers.authorization
+          : undefined,
+        token,
+      )
+    ) {
+      json(response, 401, { status: "unauthorized" });
+      return;
+    }
+    if (!request.headers["content-type"]?.startsWith("application/json")) {
+      json(response, 415, { status: "unsupported-media-type" });
+      return;
+    }
+    try {
+      const dispatch = parseDispatchRequest(await readJson(request));
+      const result = serial.then(() => run(dispatch));
+      serial = result.catch(() => undefined);
+      json(response, 200, await result);
+    } catch {
+      json(response, 503, { status: "unavailable" });
+    }
+  })();
+});
+
+const port = Number(process.env.CODEOPS_HTTP_PORT ?? "8080");
+if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
+  throw new Error("CODEOPS_HTTP_PORT must be valid");
+}
+server.listen(port, process.env.CODEOPS_HTTP_HOST ?? "0.0.0.0");

@@ -4,6 +4,7 @@ import { Client, Connection } from "@temporalio/client";
 import {
   createFileResearchDedupLedger,
   createPlaneApiClient,
+  projectResearchPacket,
   processPlaneResearchWebhook,
 } from "./index.js";
 import {
@@ -38,6 +39,12 @@ const planeClient = createPlaneApiClient({
   apiKey: await secretFile("CODEOPS_PLANE_API_KEY_FILE"),
 });
 const webhookSecret = await secretFile("CODEOPS_PLANE_WEBHOOK_SECRET_FILE");
+const projectionToken = await secretFile(
+  "CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE",
+);
+if (projectionToken.length < 32 || projectionToken.length > 4_096) {
+  throw new Error("CodeOps research projection token is invalid");
+}
 const allowedHumanActorIds = new Set(
   required("CODEOPS_ALLOWED_HUMAN_ACTOR_IDS")
     .split(",")
@@ -79,6 +86,15 @@ const enqueue = createTemporalResearchEnqueuer({
 });
 
 const listener = createPlaneWebhookRequestListener({
+  projection: {
+    token: projectionToken,
+    process: (packet) =>
+      projectResearchPacket({
+        packet,
+        ledger,
+        client: planeClient,
+      }),
+  },
   process: ({ rawBody, headers }) =>
     processPlaneResearchWebhook({
       rawBody,

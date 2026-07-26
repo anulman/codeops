@@ -46,6 +46,10 @@ spec:
               value: http://codeops-control-gateway:8080
             - name: CODEOPS_AGENT_DISPATCH_TOKEN_FILE
               value: /var/run/codeops-dispatch/token
+            - name: CODEOPS_RESEARCH_PROJECTION_ORIGIN
+              value: http://codeops-plane-controller:8080
+            - name: CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE
+              value: /var/run/codeops-projection/token
           resources:
             requests:
               cpu: 100m
@@ -63,10 +67,17 @@ spec:
             - name: dispatch-auth
               mountPath: /var/run/codeops-dispatch
               readOnly: true
+            - name: projection-auth
+              mountPath: /var/run/codeops-projection
+              readOnly: true
       volumes:
         - name: dispatch-auth
           secret:
             secretName: codeops-agent-dispatch-auth
+            defaultMode: 256
+        - name: projection-auth
+          secret:
+            secretName: codeops-research-projection-auth
             defaultMode: 256
 ---
 apiVersion: networking.k8s.io/v1
@@ -93,6 +104,13 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: codeops-control-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-plane-controller
       ports:
         - protocol: TCP
           port: 8080

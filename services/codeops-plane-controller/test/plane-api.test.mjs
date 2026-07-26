@@ -51,7 +51,10 @@ function recordingFetch() {
         description: call.body.description,
       });
     }
-    if (call.url.endsWith("/comments/")) {
+    if (call.url.includes("/comments/")) {
+      if (call.method === "GET") {
+        return jsonResponse({ results: [] });
+      }
       return jsonResponse({ id: "f3e29f26-708d-40f0-9209-7e0de44abc49" }, 201);
     }
     if (call.method === "POST" && call.url.endsWith("/work-items/")) {
@@ -109,6 +112,7 @@ test("maps the content-only client to Plane work-item endpoints", async () => {
   assert.ok(
     recorder.calls.some(
       (call) =>
+        call.method === "POST" &&
         call.url.endsWith(`/work-items/${workItemId}/comments/`) &&
         call.body.access === "INTERNAL" &&
         call.body.external_id === "deterministic-id",
@@ -158,4 +162,37 @@ test("fails closed on unsafe origins, lifecycle fields, and API failures", async
     failing.getWorkItem(projectId, workItemId),
     /failed with 403/,
   );
+});
+
+test("reconciles a previously created external comment before retrying POST", async () => {
+  const calls = [];
+  const commentId = "f3e29f26-708d-40f0-9209-7e0de44abc49";
+  const client = createPlaneApiClient({
+    baseUrl: "https://plane.example.test",
+    workspaceSlug: "codeops",
+    apiKey,
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), method: init.method });
+      return jsonResponse({
+        results: [
+          {
+            id: commentId,
+            external_source: "codeops",
+            external_id: "deterministic-id",
+          },
+        ],
+      });
+    },
+  });
+  assert.equal(
+    (
+      await client.createComment(projectId, workItemId, {
+        comment_html: "<p>Research complete.</p>",
+        external_source: "codeops",
+        external_id: "deterministic-id",
+      })
+    ).id,
+    commentId,
+  );
+  assert.deepEqual(calls.map((call) => call.method), ["GET"]);
 });

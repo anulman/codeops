@@ -67,6 +67,8 @@ spec:
               value: /var/run/secrets/codeops/plane-api-key
             - name: CODEOPS_PLANE_WEBHOOK_SECRET_FILE
               value: /var/run/secrets/codeops/webhook-secret
+            - name: CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE
+              value: /var/run/codeops-projection/token
             - name: CODEOPS_ALLOWED_HUMAN_ACTOR_IDS
               value: __CODEOPS_ALLOWED_HUMAN_ACTOR_IDS__
             - name: CODEOPS_REPOSITORY_OWNER
@@ -126,6 +128,9 @@ spec:
             - name: controller-secrets
               mountPath: /var/run/secrets/codeops
               readOnly: true
+            - name: projection-auth
+              mountPath: /var/run/codeops-projection
+              readOnly: true
             - name: temp
               mountPath: /tmp
       volumes:
@@ -141,6 +146,10 @@ spec:
                 path: plane-api-key
               - key: webhook-secret
                 path: webhook-secret
+        - name: projection-auth
+          secret:
+            secretName: codeops-research-projection-auth
+            defaultMode: 256
         - name: temp
           emptyDir:
             sizeLimit: 64Mi
@@ -195,6 +204,13 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - protocol: TCP
+          port: 8080
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-orchestrator
       ports:
         - protocol: TCP
           port: 8080

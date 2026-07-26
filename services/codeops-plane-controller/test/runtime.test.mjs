@@ -181,3 +181,61 @@ test("returns retry guidance for busy claims and hides processing failures", asy
     }
   }
 });
+
+test("keeps research projection internal and exact-bearer authenticated", async () => {
+  const packets = [];
+  const token = "p".repeat(64);
+  const listener = createPlaneWebhookRequestListener({
+    process: async () => ({ status: "ignored" }),
+    projection: {
+      token,
+      process: async (packet) => {
+        packets.push(packet);
+        return {
+          status: "applied",
+          requestId: "research-request-1",
+          mutationCount: 1,
+        };
+      },
+    },
+  });
+  const server = createServer((incoming, response) => {
+    void listener(incoming, response);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const address = server.address();
+    const url = `http://127.0.0.1:${address.port}/v1/research-packets`;
+    const denied = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${"x".repeat(64)}`,
+        "Content-Type": "application/json",
+      },
+      body: "{}",
+    });
+    assert.equal(denied.status, 401);
+    assert.equal(packets.length, 0);
+
+    const accepted = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: '{"requestId":"research-request-1"}',
+    });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await accepted.json(), {
+      version: "codeops.research-projection-result/v1",
+      status: "applied",
+      requestId: "research-request-1",
+      mutationCount: 1,
+    });
+    assert.deepEqual(packets, [{ requestId: "research-request-1" }]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});

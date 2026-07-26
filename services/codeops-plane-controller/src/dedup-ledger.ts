@@ -12,7 +12,7 @@ import {
 import path from "node:path";
 import { z } from "zod";
 
-const ledgerKindSchema = z.enum(["event", "request"]);
+const ledgerKindSchema = z.enum(["event", "request", "projection"]);
 const stableIdSchema = z
   .string()
   .regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/);

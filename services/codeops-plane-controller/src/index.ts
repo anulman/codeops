@@ -30,6 +30,10 @@ export {
   type ResearchDedupLedger,
 } from "./dedup-ledger.js";
 export {
+  projectResearchPacket,
+  type ResearchProjectionResult,
+} from "./projection.js";
+export {
   createPlaneWebhookRequestListener,
   createTemporalResearchEnqueuer,
 } from "./runtime.js";

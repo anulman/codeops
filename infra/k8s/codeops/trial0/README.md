@@ -89,6 +89,24 @@ and persists that checkpoint before acknowledging the Temporal activity.
 Research comments are already human approval for the bounded read-only run;
 coding-agent workflows continue to wait for a separate Ready/approval signal.
 
+The gateway mounts the externally created
+`codeops-agent-runtime-credentials` Secret (`repository-read-token` and
+`model-api-key`) and may create/delete, but never read or list, one immutable
+request-digest-derived run Secret. Its namespace Role may create/get/delete
+only the fixed ServiceAccount, Job, and NetworkPolicy resources plus read the
+terminal pod and session-gateway log. The trusted renderer requires the exact
+Kubernetes API Service address as a `/32`; no broad private-network egress is
+accepted.
+
+```bash
+CODEOPS_CONTROL_GATEWAY_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_AGENT_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_SESSION_GATEWAY_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_KUBERNETES_API_CIDR=<api-service-ip>/32 \
+  node infra/scripts/render-codeops-control-gateway.mjs \
+  > "$CODEOPS_CONTROL_GATEWAY_MANIFEST"
+```
+
 The trusted supervisor builds the `codeops-orchestrator-runtime` Docker target,
 records its registry digest, and renders the deployment:
 
@@ -135,6 +153,17 @@ manifest, and verify the PVC, rollout, private health route, public signed
 webhook path, and restart-persistent deduplication before configuring Plane.
 The controller credential is never mounted into the orchestrator or an Agent
 Job.
+
+The externally created `codeops-research-projection-auth` Secret contains only
+the `token` key and is mounted by the orchestrator and controller. The
+orchestrator posts the schema-validated packet to the cluster-internal exact
+`/v1/research-packets` route. Network policy admits that route only from the
+orchestrator; the public Ingress still exposes only `/webhooks/plane`.
+The controller durably claims the packet identity before applying exactly one
+source-ticket findings comment, reconciles an existing deterministic
+`external_source`/`external_id` comment after a crash, and records
+`mutations-applied` before acknowledging Temporal. No lifecycle mutation is
+representable or admitted.
 
 ## Scoped cluster-native image path
 

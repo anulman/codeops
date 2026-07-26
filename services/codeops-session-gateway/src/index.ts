@@ -16,6 +16,7 @@ import {
 const execFileAsync = promisify(execFile);
 const MAX_PROMPT_BYTES = 100_000;
 const MAX_PATCH_BYTES = 2_000_000;
+const PATCH_LOG_CHUNK_BYTES = 48_000;
 
 interface SafeEvent {
   readonly sequence: number;
@@ -54,6 +55,34 @@ export function createCheckpointLogRecord(checkpoint: Checkpoint): Readonly<{
       .digest("hex")}`,
     checkpoint,
   };
+}
+
+export function createPatchLogRecords(
+  runId: string,
+  patch: Uint8Array,
+): readonly Readonly<{
+  type: "codeops.patch-chunk";
+  runId: string;
+  sequence: number;
+  total: number;
+  patchDigest: string;
+  dataBase64: string;
+}>[] {
+  const digest = createHash("sha256").update(patch).digest("hex");
+  const total = Math.max(1, Math.ceil(patch.length / PATCH_LOG_CHUNK_BYTES));
+  return Array.from({ length: total }, (_, index) => ({
+    type: "codeops.patch-chunk" as const,
+    runId,
+    sequence: index + 1,
+    total,
+    patchDigest: `sha256:${digest}`,
+    dataBase64: Buffer.from(
+      patch.subarray(
+        index * PATCH_LOG_CHUNK_BYTES,
+        Math.min((index + 1) * PATCH_LOG_CHUNK_BYTES, patch.length),
+      ),
+    ).toString("base64"),
+  }));
 }
 
 function getPrompt(): string {
@@ -234,6 +263,9 @@ export async function runGateway(): Promise<void> {
     },
     patch,
   );
+  for (const record of createPatchLogRecords(runId, patch)) {
+    console.log(JSON.stringify(record));
+  }
   console.log(JSON.stringify(createCheckpointLogRecord(checkpoint)));
   await writeFile(path.dirname(socketPath) + "/done", "", { mode: 0o600 });
   if (failure) throw new Error(failure);

@@ -1,20 +1,30 @@
 import { readFile } from "node:fs/promises";
+import {
+  agentJobDispatchRequestSchema,
+  agentJobDispatchResultSchema,
+  type AgentJobDispatchRequest,
+  type AgentJobDispatchResult,
+  researchPacketSchema,
+  type ResearchPacket,
+} from "@renoconcierge/codeops-contracts";
 import { z } from "zod";
 import type { WorkflowSnapshot } from "./model.js";
 import type {
-  AgentJobDispatchInput,
   WorkItemInput,
 } from "./workflow.js";
 
-export interface DispatchResult {
-  readonly checkpointUri: string;
-  readonly checkpointDigest: string;
-}
+export type DispatchResult = AgentJobDispatchResult;
+export type ResearchProjectionResult = Readonly<{
+  passed: boolean;
+  summary: string;
+}>;
 
-const dispatchResultSchema = z
+const researchProjectionResultSchema = z
   .object({
-    checkpointUri: z.string().min(1).max(2_000),
-    checkpointDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+    version: z.literal("codeops.research-projection-result/v1"),
+    requestId: z.string().min(1).max(128),
+    status: z.enum(["applied", "duplicate"]),
+    mutationCount: z.number().int().nonnegative().max(100),
   })
   .strict();
 
@@ -40,7 +50,7 @@ export async function recordTransition(
 }
 
 export async function dispatchAgentJob(
-  workItem: AgentJobDispatchInput,
+  workItem: AgentJobDispatchRequest,
 ): Promise<DispatchResult> {
   const endpoint = new URL("/v1/agent-jobs", required("CODEOPS_AGENT_DISPATCH_ORIGIN"));
   if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
@@ -59,11 +69,52 @@ export async function dispatchAgentJob(
       Authorization: `Bearer ${token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(workItem),
+    body: JSON.stringify(agentJobDispatchRequestSchema.parse(workItem)),
     signal: AbortSignal.timeout(65 * 60 * 1_000),
   });
   if (!response.ok) {
     throw new Error(`CodeOps Agent Job dispatch failed with status ${response.status}`);
   }
-  return dispatchResultSchema.parse(await response.json());
+  return agentJobDispatchResultSchema.parse(await response.json());
+}
+
+export async function publishResearchPacket(
+  packet: ResearchPacket,
+): Promise<ResearchProjectionResult> {
+  const endpoint = new URL(
+    "/v1/research-packets",
+    required("CODEOPS_RESEARCH_PROJECTION_ORIGIN"),
+  );
+  if (endpoint.protocol !== "http:" && endpoint.protocol !== "https:") {
+    throw new Error("CodeOps research projection origin must use HTTP or HTTPS");
+  }
+  const token = (
+    await readFile(required("CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE"), "utf8")
+  ).trim();
+  if (token.length < 32 || token.length > 4_096) {
+    throw new Error("CodeOps research projection token is invalid");
+  }
+  const boundPacket = researchPacketSchema.parse(packet);
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(boundPacket),
+    signal: AbortSignal.timeout(2 * 60 * 1_000),
+  });
+  if (!response.ok) {
+    throw new Error(
+      `CodeOps research projection failed with status ${response.status}`,
+    );
+  }
+  const result = researchProjectionResultSchema.parse(await response.json());
+  if (result.requestId !== boundPacket.requestId) {
+    throw new Error("CodeOps research projection identity mismatch");
+  }
+  return {
+    passed: true,
+    summary: `Plane research packet ${result.status} with ${result.mutationCount} content mutation(s)`,
+  };
 }

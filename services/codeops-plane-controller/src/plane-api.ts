@@ -24,7 +24,23 @@ const workItemSchema = z
     labels: z.array(uuid),
   })
   .passthrough();
-const commentSchema = z.object({ id: uuid }).passthrough();
+const commentSchema = z
+  .object({
+    id: uuid,
+    external_source: z.string().optional(),
+    external_id: z.string().optional(),
+  })
+  .passthrough();
+const commentPageSchema = z.union([
+  z.array(commentSchema),
+  z
+    .object({
+      results: z.array(commentSchema),
+      next_cursor: z.string().optional(),
+      next_page_results: z.boolean().optional(),
+    })
+    .passthrough(),
+]);
 const labelPageSchema = z.union([
   z.array(labelSchema),
   z
@@ -184,10 +200,49 @@ export function createPlaneApiClient(
     },
 
     async createComment(projectId, workItemId, input) {
+      const commentsPath = `${projectPath(projectId)}/work-items/${encodeURIComponent(
+        uuid.parse(workItemId),
+      )}/comments/`;
+      const comments: z.infer<typeof commentSchema>[] = [];
+      let cursor: string | undefined;
+      for (let page = 0; page < 100; page += 1) {
+        const query =
+          cursor === undefined
+            ? "?per_page=100"
+            : `?per_page=100&cursor=${encodeURIComponent(cursor)}`;
+        const listed = commentPageSchema.parse(
+          await request("GET", `${commentsPath}${query}`),
+        );
+        if (Array.isArray(listed)) {
+          comments.push(...listed);
+          break;
+        }
+        comments.push(...listed.results);
+        if (
+          listed.next_page_results !== true ||
+          listed.next_cursor === undefined ||
+          listed.next_cursor === ""
+        ) {
+          break;
+        }
+        cursor = listed.next_cursor;
+        if (page === 99) {
+          throw new Error("Plane comment pagination exceeded 100 pages");
+        }
+      }
+      const matches = comments.filter(
+        (comment) =>
+          comment.external_source === input.external_source &&
+          comment.external_id === input.external_id,
+      );
+      if (matches.length > 1) {
+        throw new Error("duplicate Plane comments share the CodeOps identity");
+      }
+      if (matches.length === 1) return matches[0]!;
       return commentSchema.parse(
         await request(
           "POST",
-          `${projectPath(projectId)}/work-items/${encodeURIComponent(uuid.parse(workItemId))}/comments/`,
+          commentsPath,
           { ...input, access: "INTERNAL" },
         ),
       );

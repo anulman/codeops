@@ -7,7 +7,10 @@ import {
   requireLowerHex,
   requireRunId,
 } from "../dist/safety.js";
-import { createCheckpointLogRecord } from "../dist/index.js";
+import {
+  createCheckpointLogRecord,
+  createPatchLogRecords,
+} from "../dist/index.js";
 
 test("redacts common API and bearer credential shapes", () => {
   assert.equal(
@@ -64,4 +67,31 @@ test("emits one digest-bound checkpoint record for trusted reconciliation", () =
   assert.equal(record.type, "codeops.checkpoint");
   assert.match(record.checkpointDigest, /^sha256:[0-9a-f]{64}$/);
   assert.deepEqual(record.checkpoint, checkpoint);
+});
+
+test("emits ordered digest-bound patch chunks including an empty patch", () => {
+  const empty = createPatchLogRecords("research-1", new Uint8Array());
+  assert.equal(empty.length, 1);
+  assert.equal(empty[0].sequence, 1);
+  assert.equal(empty[0].total, 1);
+  assert.equal(empty[0].dataBase64, "");
+  assert.equal(
+    empty[0].patchDigest,
+    "sha256:e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+  );
+
+  const patch = Buffer.alloc(96_001, 0x61);
+  const records = createPatchLogRecords("coding-1", patch);
+  assert.equal(records.length, 3);
+  assert.deepEqual(
+    records.map((record) => record.sequence),
+    [1, 2, 3],
+  );
+  assert.equal(
+    Buffer.concat(records.map((record) => Buffer.from(record.dataBase64, "base64"))).equals(
+      patch,
+    ),
+    true,
+  );
+  assert.equal(new Set(records.map((record) => record.patchDigest)).size, 1);
 });
