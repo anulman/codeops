@@ -9,6 +9,7 @@ const template = await readFile(
 process.stdout.write(
   renderAgentJobManifest(template, {
     runId: process.env.CODEOPS_RUN_ID ?? "",
+    role: process.env.CODEOPS_AGENT_ROLE ?? "",
     baseSha: process.env.CODEOPS_BASE_SHA ?? "",
     prompt: process.env.CODEOPS_PROMPT ?? "",
     repository: process.env.CODEOPS_REPOSITORY ?? "",

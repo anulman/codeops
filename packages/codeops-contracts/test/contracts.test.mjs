@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { test } from "node:test";
 import {
   canonicalSerialize,
@@ -6,9 +7,17 @@ import {
   controlCommandSchema,
   controlResultSchema,
   createEventId,
+  createResearchRequestFromPlaneComment,
   createTransitionId,
   evidenceReferenceSchema,
+  planeCommentEventSchema,
+  qaContractResearcherPolicy,
+  readinessGateSchema,
+  researchMutationBatchSchema,
+  researchPacketSchema,
+  researchPlaneMutationSchema,
   secretReferenceSchema,
+  verifyPlaneWebhookSignature,
   workflowEventSchema,
   workflowStateSchema,
   workItemRequestSchema,
@@ -254,6 +263,295 @@ test("rejects event IDs that do not match the logical transition", () => {
       occurredAt: now,
       summary: "Complete.",
       evidence: [],
+    }),
+  );
+});
+
+const planeCommentEvent = {
+  version: contractVersions.planeCommentEvent,
+  deliveryId: "f819eff4-cd50-4987-bc97-e5be1e04c94f",
+  action: "create",
+  workspaceId: "d2d97c94-a6ad-4012-b526-5577c0d7c769",
+  projectId: "b32e004b-3638-4bd3-972f-c5d3fac53dd3",
+  workItemId: "e1c25c66-5bb8-465e-a818-92a483423443",
+  commentId: "f3e29f26-708d-40f0-9209-7e0de44abc49",
+  actor: {
+    id: "16c61a3a-512a-48ac-b0be-b6b46fe6f430",
+    kind: "human",
+  },
+  comment: "/research",
+  occurredAt: now,
+};
+
+const researchSource = {
+  repository: { owner: "anulman", name: "renoconcierge" },
+  baseSha: sha,
+  planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+};
+
+test("admits only an exact human-authored research command on comment creation", () => {
+  const request = createResearchRequestFromPlaneComment(
+    planeCommentEvent,
+    researchSource,
+  );
+  assert.equal(request.workItemId, planeCommentEvent.workItemId);
+  assert.equal(request.requestedBy, planeCommentEvent.actor.id);
+  assert.equal(
+    createResearchRequestFromPlaneComment(
+      { ...planeCommentEvent, comment: "Please /research this" },
+      researchSource,
+    ),
+    null,
+  );
+  assert.equal(
+    createResearchRequestFromPlaneComment(
+      { ...planeCommentEvent, action: "update" },
+      researchSource,
+    ),
+    null,
+  );
+  assert.equal(
+    createResearchRequestFromPlaneComment(
+      { ...planeCommentEvent, actor: { ...planeCommentEvent.actor, kind: "service" } },
+      researchSource,
+    ),
+    null,
+  );
+  assert.throws(() =>
+    planeCommentEventSchema.parse({ ...planeCommentEvent, actor: { kind: "human" } }),
+  );
+});
+
+test("verifies Plane webhook signatures over the exact raw body", () => {
+  const secret = "plane-webhook-secret";
+  const rawBody = JSON.stringify({ event: "issue_comment", action: "create" });
+  const signature = createHmac("sha256", secret).update(rawBody).digest("hex");
+  assert.equal(
+    verifyPlaneWebhookSignature({ secret, rawBody, signature }),
+    true,
+  );
+  assert.equal(
+    verifyPlaneWebhookSignature({
+      secret,
+      rawBody: `${rawBody}\n`,
+      signature,
+    }),
+    false,
+  );
+  assert.equal(
+    verifyPlaneWebhookSignature({ secret: "", rawBody, signature }),
+    false,
+  );
+  assert.equal(
+    verifyPlaneWebhookSignature({ secret, rawBody, signature: "invalid" }),
+    false,
+  );
+});
+
+test("the research mutation contract cannot express lifecycle state changes", () => {
+  const comment = {
+    type: "comment.create",
+    targetWorkItemId: planeCommentEvent.workItemId,
+    bodyHtml: "<p>Research packet ready.</p>",
+    attachments: [],
+  };
+  assert.deepEqual(researchPlaneMutationSchema.parse(comment), comment);
+  assert.equal(
+    researchPlaneMutationSchema.parse({
+      type: "ticket.cancel-proposal",
+      targetWorkItemId: planeCommentEvent.workItemId,
+      reason: "Superseded by the canonical matrix item.",
+    }).type,
+    "ticket.cancel-proposal",
+  );
+  assert.throws(() =>
+    researchPlaneMutationSchema.parse({
+      type: "ticket.update",
+      targetWorkItemId: planeCommentEvent.workItemId,
+      changes: { stateId: "cc8562ab-79c7-4f1c-b4a2-1ed51dfcd6aa" },
+    }),
+  );
+  assert.throws(() =>
+    researchPlaneMutationSchema.parse({
+      type: "state.update",
+      targetWorkItemId: planeCommentEvent.workItemId,
+      state: "Ready",
+    }),
+  );
+  assert.throws(() =>
+    researchPlaneMutationSchema.parse({
+      type: "ticket.cancel",
+      targetWorkItemId: planeCommentEvent.workItemId,
+    }),
+  );
+  assert.ok(qaContractResearcherPolicy.forbiddenMutationTypes.includes("state.update"));
+});
+
+test("research packets bind evidence and mutations to one source request", () => {
+  const request = createResearchRequestFromPlaneComment(
+    planeCommentEvent,
+    researchSource,
+  );
+  const video = {
+    ...evidence,
+    kind: "video",
+    uri: "artifact:///runs/research-1/current-behavior.mp4",
+    mediaType: "video/mp4",
+  };
+  const proposedMutations = {
+    version: contractVersions.researchMutationBatch,
+    requestId: request.requestId,
+    projectId: request.projectId,
+    sourceWorkItemId: request.workItemId,
+    mutations: [
+      {
+        type: "comment.create",
+        targetWorkItemId: request.workItemId,
+        bodyHtml: "<p>Research packet v1</p>",
+        attachments: [video],
+      },
+    ],
+  };
+  assert.deepEqual(
+    researchMutationBatchSchema.parse(proposedMutations),
+    proposedMutations,
+  );
+  const packet = {
+    version: contractVersions.researchPacket,
+    persona: "qa-contract-researcher/v1",
+    requestId: request.requestId,
+    projectId: request.projectId,
+    workItemId: request.workItemId,
+    baseSha: request.baseSha,
+    planeRevisionDigest: request.planeRevisionDigest,
+    summary: "Current and expected routing behavior are documented.",
+    currentBehavior: ["Wrong-file cookies reach the public claim route."],
+    expectedBehavior: ["Wrong-file cookies reveal no private file state."],
+    evidence: [video],
+    decisions: [],
+    proposedMutations,
+    createdAt: now,
+  };
+  assert.deepEqual(researchPacketSchema.parse(packet), packet);
+  assert.throws(() =>
+    researchPacketSchema.parse({ ...packet, evidence: [] }),
+  );
+  assert.equal(
+    researchPacketSchema.parse({
+      ...packet,
+      evidence: [],
+      videoNotApplicableReason: "This ticket changes only a schema contract.",
+    }).videoNotApplicableReason,
+    "This ticket changes only a schema contract.",
+  );
+  assert.throws(() =>
+    researchPacketSchema.parse({
+      ...packet,
+      proposedMutations: {
+        ...proposedMutations,
+        sourceWorkItemId: "acba7524-61e7-41a7-a2f6-083667016d3f",
+      },
+    }),
+  );
+});
+
+test("compiles type-aware readiness gates without adding Plane lifecycle states", () => {
+  const identity = {
+    version: contractVersions.readinessGate,
+    projectId: planeCommentEvent.projectId,
+    workItemId: planeCommentEvent.workItemId,
+    repository: researchSource.repository,
+    baseSha: researchSource.baseSha,
+    planeRevisionDigest: researchSource.planeRevisionDigest,
+    evaluatedAt: now,
+  };
+  assert.equal(
+    readinessGateSchema.parse({
+      ...identity,
+      profile: "research",
+      researchQuestion:
+        "What canonical file, route, credential, and authorization states exist?",
+      authoritativeSources: [
+        "Database constraints and migrations",
+        "Route guards and server functions",
+      ],
+      requiredOutputs: [
+        "Versioned readable matrix",
+        "Machine-readable evidence index",
+      ],
+      capabilities: [
+        "repository.read",
+        "public-docs.read",
+        "nonproduction.read",
+        "browser.record",
+      ],
+      stopConditions: [
+        "Stop when a product-stage choice cannot be derived from authoritative state.",
+      ],
+      productDecisionEscalation:
+        "Post one blocking decision with observed alternatives and evidence.",
+    }).profile,
+    "research",
+  );
+  const artifact = {
+    ...evidence,
+    kind: "artifact",
+    uri: "artifact:///runs/readiness/contract.json",
+    mediaType: "application/json",
+  };
+  assert.equal(
+    readinessGateSchema.parse({
+      ...identity,
+      profile: "implementation",
+      currentBehaviorEvidence: {
+        ...evidence,
+        kind: "video",
+        uri: "artifact:///runs/readiness/current.mp4",
+        mediaType: "video/mp4",
+      },
+      fixtureManifest: artifact,
+      expectedFlow: artifact,
+      oracleContract: artifact,
+      cleanupPlan: artifact,
+      blockingProductDecisions: 0,
+    }).profile,
+    "implementation",
+  );
+  assert.equal(
+    readinessGateSchema.parse({
+      ...identity,
+      profile: "qualification",
+      candidateManifest: artifact,
+      coverageManifest: artifact,
+      independentEvaluator: "auth-qa-independent-evaluator",
+      retentionPlan: artifact,
+      cleanupPlan: artifact,
+      blockingProductDecisions: 0,
+    }).profile,
+    "qualification",
+  );
+  assert.throws(() =>
+    readinessGateSchema.parse({
+      ...identity,
+      profile: "implementation",
+      currentBehaviorEvidence: artifact,
+      fixtureManifest: artifact,
+      expectedFlow: artifact,
+      oracleContract: artifact,
+      cleanupPlan: artifact,
+      blockingProductDecisions: 1,
+    }),
+  );
+  assert.throws(() =>
+    readinessGateSchema.parse({
+      ...identity,
+      profile: "research",
+      researchQuestion: "Inspect the code.",
+      authoritativeSources: [],
+      requiredOutputs: ["A result."],
+      capabilities: ["repository.write"],
+      stopConditions: ["Stop when complete."],
+      productDecisionEscalation: "Ask a human.",
     }),
   );
 });

@@ -10,6 +10,7 @@ const template = await readFile(
 );
 const input = {
   runId: "routing-matrix-2fdebb4c",
+  role: "coding-agent",
   baseSha: "a".repeat(40),
   prompt: "Inspect the routing matrix and propose a bounded implementation plan.",
   repository: "https://github.com/anulman/renoconcierge",
@@ -61,11 +62,66 @@ test("keeps ACP pod-local and exposes no Service or Ingress", () => {
   );
 });
 
+test("mounts the source read-only for the QA Contract Researcher", () => {
+  const rendered = renderAgentJobManifest(template, {
+    ...input,
+    runId: "research-qanbrdauth-1",
+    role: "qa-contract-researcher",
+  });
+  const manifests = resources(rendered);
+  const job = manifests[1];
+  assert.equal(
+    job.metadata.labels["codeops.renoconcierge.ca/agent-role"],
+    "qa-contract-researcher",
+  );
+  for (const container of job.spec.template.spec.containers) {
+    assert.equal(
+      container.env.find((entry) => entry.name === "CODEOPS_AGENT_ROLE").value,
+      "qa-contract-researcher",
+    );
+    assert.equal(
+      container.volumeMounts.find((mount) => mount.name === "workspace").readOnly,
+      true,
+    );
+  }
+  const builder =
+    job.spec.template.spec.initContainers.find(
+      (container) => container.name === "workspace-builder",
+    );
+  assert.equal(
+    builder.volumeMounts.find((mount) => mount.name === "workspace").readOnly,
+    undefined,
+  );
+});
+
 test("uses an exact source SHA and only immutable images", () => {
   const rendered = renderAgentJobManifest(template, input);
   assert.equal(rendered.includes(input.baseSha), true);
   assert.equal(rendered.includes(input.repository), true);
   const pod = resources(rendered)[1].spec.template.spec;
+  const builder = pod.initContainers.find(
+    (container) => container.name === "workspace-builder",
+  );
+  const gateway = pod.containers.find(
+    (container) => container.name === "session-gateway",
+  );
+  const agent = pod.containers.find(
+    (container) => container.name === "coding-agent",
+  );
+  assert.equal(
+    builder.env.find((entry) => entry.name === "CODEOPS_BASE_SHA").value,
+    input.baseSha,
+  );
+  for (const container of [gateway, agent]) {
+    assert.equal(
+      container.env.find((entry) => entry.name === "CODEOPS_RUN_ID").value,
+      input.runId,
+    );
+    assert.equal(
+      container.env.find((entry) => entry.name === "CODEOPS_BASE_SHA").value,
+      input.baseSha,
+    );
+  }
   const images = [...pod.initContainers, ...pod.containers].map(
     (container) => container.image,
   );
@@ -133,6 +189,7 @@ test("fails closed on malformed identity, source, image, or template drift", () 
   for (const patch of [
     { runId: "UPPER" },
     { runId: "-bad" },
+    { role: "administrator" },
     { baseSha: "abc" },
     { repository: "git@github.com:anulman/renoconcierge.git" },
     { prompt: "" },

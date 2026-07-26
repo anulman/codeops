@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import { Readable, Writable } from "node:stream";
 import {
   boundedText,
+  requireAgentRole,
   requireLowerHex,
   requireRunId,
 } from "./safety.js";
@@ -25,8 +26,9 @@ interface SafeEvent {
 }
 
 interface Checkpoint {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
   readonly runId: string;
+  readonly agentRole: "coding-agent" | "qa-contract-researcher";
   readonly baseSha: string;
   readonly sessionId?: string;
   readonly stopReason?: string;
@@ -126,6 +128,7 @@ async function writeCheckpoint(
 
 export async function runGateway(): Promise<void> {
   const runId = requireRunId(process.env.CODEOPS_RUN_ID);
+  const agentRole = requireAgentRole(process.env.CODEOPS_AGENT_ROLE);
   const baseSha = requireLowerHex("CODEOPS_BASE_SHA", process.env.CODEOPS_BASE_SHA, 40);
   const workspace = process.env.CODEOPS_WORKSPACE ?? "/workspace";
   const checkpointDirectory =
@@ -195,6 +198,9 @@ export async function runGateway(): Promise<void> {
   let patch: Uint8Array = new Uint8Array();
   try {
     patch = await capturePatch(workspace);
+    if (agentRole === "qa-contract-researcher" && patch.length !== 0) {
+      failure ??= "QA Contract Researcher must leave the source workspace unchanged";
+    }
   } catch (error) {
     failure ??= boundedText(
       error instanceof Error ? error.message : String(error),
@@ -204,8 +210,9 @@ export async function runGateway(): Promise<void> {
   await writeCheckpoint(
     checkpointDirectory,
     {
-      schemaVersion: 1,
+      schemaVersion: 2,
       runId,
+      agentRole,
       baseSha,
       ...(sessionId ? { sessionId } : {}),
       ...(stopReason ? { stopReason } : {}),

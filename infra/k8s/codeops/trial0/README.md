@@ -111,6 +111,15 @@ single-use tool permissions, retains bounded and redacted event metadata,
 captures a bounded binary Git patch, and atomically checkpoints the response,
 event ledger, patch digest, and any failure before stopping the sidecar.
 
+The trusted renderer requires an explicit `CODEOPS_AGENT_ROLE`. A
+`coding-agent` receives a writable ephemeral source mount. The
+`qa-contract-researcher` receives the same exact-SHA source mount read-only,
+records its role in checkpoint schema v2, and fails if any source patch exists.
+Neither role receives a Plane credential. Research packets and proposed Plane
+mutations must cross the separate controller boundary and satisfy the
+`@renoconcierge/codeops-contracts` schemas before application; lifecycle state
+changes are not representable for the researcher.
+
 CI independently installs both npm locks, tests and typechecks the gateway,
 builds both runtime images, exercises the fail-closed Job renderer, and parses
 every rendered resource without requiring cluster discovery. The trusted

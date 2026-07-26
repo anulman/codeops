@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   boundedText,
   redactSecrets,
+  requireAgentRole,
   requireLowerHex,
   requireRunId,
 } from "../dist/safety.js";
@@ -32,5 +33,13 @@ test("validates run and immutable source identities", () => {
   }
   for (const sha of ["", "abc", "A".repeat(40), "a".repeat(39)]) {
     assert.throws(() => requireLowerHex("base", sha, 40));
+  }
+  assert.equal(requireAgentRole("coding-agent"), "coding-agent");
+  assert.equal(
+    requireAgentRole("qa-contract-researcher"),
+    "qa-contract-researcher",
+  );
+  for (const role of ["", "researcher", "admin", undefined]) {
+    assert.throws(() => requireAgentRole(role));
   }
 });

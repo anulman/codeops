@@ -35,3 +35,14 @@ export function requireRunId(value: string | undefined): string {
   }
   return value;
 }
+
+export type AgentRole = "coding-agent" | "qa-contract-researcher";
+
+export function requireAgentRole(value: string | undefined): AgentRole {
+  if (value !== "coding-agent" && value !== "qa-contract-researcher") {
+    throw new Error(
+      "CODEOPS_AGENT_ROLE must be coding-agent or qa-contract-researcher",
+    );
+  }
+  return value;
+}

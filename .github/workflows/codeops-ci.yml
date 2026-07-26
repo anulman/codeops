@@ -178,6 +178,7 @@ jobs:
       - name: Test and render the isolated Trial 0 Agent Job
         env:
           CODEOPS_RUN_ID: routing-matrix-2fdebb4c
+          CODEOPS_AGENT_ROLE: coding-agent
           CODEOPS_BASE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
           CODEOPS_REPOSITORY: https://github.com/anulman/renoconcierge
           CODEOPS_AGENT_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

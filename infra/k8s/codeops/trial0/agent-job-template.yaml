@@ -1,19 +1,21 @@
 apiVersion: v1
 kind: ServiceAccount
 metadata:
-  name: codeops-agent-CODEOPS_RUN_SUFFIX
+  name: codeops-agent-__CODEOPS_RUN_SUFFIX__
   labels:
-    codeops.renoconcierge.ca/run-id: CODEOPS_RUN_ID
+    codeops.renoconcierge.ca/run-id: __CODEOPS_RUN_ID__
+    codeops.renoconcierge.ca/agent-role: __CODEOPS_AGENT_ROLE__
 automountServiceAccountToken: false
 ---
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: codeops-agent-CODEOPS_RUN_SUFFIX
+  name: codeops-agent-__CODEOPS_RUN_SUFFIX__
   labels:
     app.kubernetes.io/name: codeops-agent
     app.kubernetes.io/part-of: codeops-trial0
-    codeops.renoconcierge.ca/run-id: CODEOPS_RUN_ID
+    codeops.renoconcierge.ca/run-id: __CODEOPS_RUN_ID__
+    codeops.renoconcierge.ca/agent-role: __CODEOPS_AGENT_ROLE__
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 3600
@@ -23,10 +25,11 @@ spec:
       labels:
         app.kubernetes.io/name: codeops-agent
         app.kubernetes.io/part-of: codeops-trial0
-        codeops.renoconcierge.ca/run-id: CODEOPS_RUN_ID
+        codeops.renoconcierge.ca/run-id: __CODEOPS_RUN_ID__
+        codeops.renoconcierge.ca/agent-role: __CODEOPS_AGENT_ROLE__
     spec:
       restartPolicy: Never
-      serviceAccountName: codeops-agent-CODEOPS_RUN_SUFFIX
+      serviceAccountName: codeops-agent-__CODEOPS_RUN_SUFFIX__
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
@@ -42,7 +45,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: workspace-builder
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@CODEOPS_AGENT_DIGEST
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -59,13 +62,15 @@ spec:
               test "$(git -C /workspace rev-parse HEAD)" = "$CODEOPS_BASE_SHA"
           env:
             - name: CODEOPS_BASE_SHA
-              value: CODEOPS_BASE_SHA
+              value: __CODEOPS_BASE_SHA__
+            - name: CODEOPS_AGENT_ROLE
+              value: __CODEOPS_AGENT_ROLE__
             - name: CODEOPS_REPOSITORY
-              value: CODEOPS_REPOSITORY_URL
+              value: __CODEOPS_REPOSITORY_URL__
             - name: CODEOPS_REPOSITORY_READ_TOKEN
               valueFrom:
                 secretKeyRef:
-                  name: codeops-run-CODEOPS_RUN_SUFFIX
+                  name: codeops-run-__CODEOPS_RUN_SUFFIX__
                   key: repository-read-token
           resources:
             requests:
@@ -84,13 +89,15 @@ spec:
               mountPath: /workspace
       containers:
         - name: session-gateway
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-gateway@CODEOPS_SESSION_GATEWAY_DIGEST
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-gateway@__CODEOPS_SESSION_GATEWAY_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - name: CODEOPS_RUN_ID
-              value: CODEOPS_RUN_ID
+              value: __CODEOPS_RUN_ID__
             - name: CODEOPS_BASE_SHA
-              value: CODEOPS_BASE_SHA
+              value: __CODEOPS_BASE_SHA__
+            - name: CODEOPS_AGENT_ROLE
+              value: __CODEOPS_AGENT_ROLE__
             - name: CODEOPS_ACP_SOCKET
               value: /run/codeops/agent.sock
             - name: CODEOPS_CHECKPOINT_DIR
@@ -98,7 +105,7 @@ spec:
             - name: CODEOPS_WORKSPACE
               value: /workspace
             - name: CODEOPS_PROMPT_B64
-              value: CODEOPS_PROMPT_B64
+              value: __CODEOPS_PROMPT_B64__
           resources:
             requests:
               cpu: 100m
@@ -114,6 +121,7 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+              readOnly: __CODEOPS_WORKSPACE_READ_ONLY__
             - name: session
               mountPath: /run/codeops
             - name: checkpoint
@@ -121,19 +129,21 @@ spec:
             - name: temp
               mountPath: /tmp
         - name: coding-agent
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@CODEOPS_AGENT_DIGEST
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - name: CODEOPS_RUN_ID
-              value: CODEOPS_RUN_ID
+              value: __CODEOPS_RUN_ID__
             - name: CODEOPS_BASE_SHA
-              value: CODEOPS_BASE_SHA
+              value: __CODEOPS_BASE_SHA__
+            - name: CODEOPS_AGENT_ROLE
+              value: __CODEOPS_AGENT_ROLE__
             - name: CODEOPS_REPOSITORY
-              value: CODEOPS_REPOSITORY_URL
+              value: __CODEOPS_REPOSITORY_URL__
             - name: CODEX_API_KEY
               valueFrom:
                 secretKeyRef:
-                  name: codeops-run-CODEOPS_RUN_SUFFIX
+                  name: codeops-run-__CODEOPS_RUN_SUFFIX__
                   key: model-api-key
             - name: DEFAULT_AUTH_REQUEST
               value: '{"methodId":"api-key"}'
@@ -154,6 +164,7 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+              readOnly: __CODEOPS_WORKSPACE_READ_ONLY__
             - name: session
               mountPath: /run/codeops
             - name: checkpoint
@@ -177,13 +188,14 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: codeops-agent-CODEOPS_RUN_SUFFIX
+  name: codeops-agent-__CODEOPS_RUN_SUFFIX__
   labels:
-    codeops.renoconcierge.ca/run-id: CODEOPS_RUN_ID
+    codeops.renoconcierge.ca/run-id: __CODEOPS_RUN_ID__
+    codeops.renoconcierge.ca/agent-role: __CODEOPS_AGENT_ROLE__
 spec:
   podSelector:
     matchLabels:
-      codeops.renoconcierge.ca/run-id: CODEOPS_RUN_ID
+      codeops.renoconcierge.ca/run-id: __CODEOPS_RUN_ID__
   policyTypes: [Ingress, Egress]
   ingress: []
   egress:
