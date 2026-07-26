@@ -444,13 +444,6 @@ export const researchPacketSchema = z
         message: "research packet may include at most one canonical video",
       });
     }
-    if (videos.length === 0 && packet.videoNotApplicableReason === undefined) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["videoNotApplicableReason"],
-        message: "research packet requires a canonical video or an explicit rationale",
-      });
-    }
     if (videos.length === 1 && packet.videoNotApplicableReason !== undefined) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -481,54 +474,87 @@ const readinessIdentity = {
   evaluatedAt: isoDateTime,
 };
 
-export const readinessGateSchema = z.discriminatedUnion("profile", [
-  z
-    .object({
-      ...readinessIdentity,
-      profile: z.literal("research"),
-      researchQuestion: safeText(4_000),
-      authoritativeSources: z.array(safeText(2_000)).min(1).max(100),
-      requiredOutputs: z.array(safeText(2_000)).min(1).max(100),
-      capabilities: z
-        .array(
-          z.enum([
-            "repository.read",
-            "public-docs.read",
-            "nonproduction.read",
-            "browser.record",
-          ]),
-        )
-        .min(1)
-        .max(4),
-      stopConditions: z.array(safeText(2_000)).min(1).max(50),
-      productDecisionEscalation: safeText(2_000),
-    })
-    .strict(),
-  z
-    .object({
-      ...readinessIdentity,
-      profile: z.literal("implementation"),
-      currentBehaviorEvidence: evidenceReferenceSchema,
-      fixtureManifest: evidenceReferenceSchema,
-      expectedFlow: evidenceReferenceSchema,
-      oracleContract: evidenceReferenceSchema,
-      cleanupPlan: evidenceReferenceSchema,
-      blockingProductDecisions: z.literal(0),
-    })
-    .strict(),
-  z
-    .object({
-      ...readinessIdentity,
-      profile: z.literal("qualification"),
-      candidateManifest: evidenceReferenceSchema,
-      coverageManifest: evidenceReferenceSchema,
-      independentEvaluator: identifier,
-      retentionPlan: evidenceReferenceSchema,
-      cleanupPlan: evidenceReferenceSchema,
-      blockingProductDecisions: z.literal(0),
-    })
-    .strict(),
-]);
+const readinessCriterionSchema = z
+  .object({
+    id: identifier,
+    category: z.enum([
+      "intent",
+      "source",
+      "current-behavior",
+      "reproduction",
+      "expected-behavior",
+      "fixture",
+      "oracle",
+      "cleanup",
+      "provenance",
+      "coverage",
+      "independence",
+      "retention",
+      "video",
+      "decision",
+      "other",
+    ]),
+    requirement: z.enum(["required", "recommended"]),
+    applicability: z.enum(["applicable", "not-applicable"]),
+    status: z.enum(["satisfied", "missing", "not-applicable"]),
+    rationale: safeText(2_000),
+    evidence: z.array(evidenceReferenceSchema).max(8).default([]),
+  })
+  .strict()
+  .superRefine((criterion, context) => {
+    const statusIsNotApplicable = criterion.status === "not-applicable";
+    const criterionIsNotApplicable = criterion.applicability === "not-applicable";
+    if (statusIsNotApplicable !== criterionIsNotApplicable) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["status"],
+        message: "criterion status must agree with applicability",
+      });
+    }
+  });
+
+export const readinessGateSchema = z
+  .object({
+    ...readinessIdentity,
+    policy: z.literal("qa-ticket-readiness/v1"),
+    profile: z.enum(["research", "implementation", "qualification"]),
+    objective: safeText(4_000),
+    expectedOutcome: safeText(4_000),
+    criteria: z.array(readinessCriterionSchema).min(1).max(100),
+    blockingProductDecisions: z.number().int().nonnegative().max(100),
+    ready: z.boolean(),
+  })
+  .strict()
+  .superRefine((gate, context) => {
+    const criterionIds = new Set<string>();
+    for (const [index, criterion] of gate.criteria.entries()) {
+      if (criterionIds.has(criterion.id)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["criteria", index, "id"],
+          message: "readiness criterion ids must be unique",
+        });
+      }
+      criterionIds.add(criterion.id);
+    }
+
+    const hasMissingRequiredCriterion = gate.criteria.some(
+      (criterion) =>
+        criterion.requirement === "required" &&
+        criterion.applicability === "applicable" &&
+        criterion.status === "missing",
+    );
+    const computedReady =
+      gate.blockingProductDecisions === 0 && !hasMissingRequiredCriterion;
+    if (gate.ready !== computedReady) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ready"],
+        message:
+          "ready must be derived from applicable required criteria and blocking product decisions",
+      });
+    }
+  });
 
 export const qaContractResearcherPolicy = Object.freeze({
   persona: "qa-contract-researcher/v1",

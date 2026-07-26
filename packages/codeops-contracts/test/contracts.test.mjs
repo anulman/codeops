@@ -444,8 +444,9 @@ test("research packets bind evidence and mutations to one source request", () =>
     createdAt: now,
   };
   assert.deepEqual(researchPacketSchema.parse(packet), packet);
-  assert.throws(() =>
-    researchPacketSchema.parse({ ...packet, evidence: [] }),
+  assert.deepEqual(
+    researchPacketSchema.parse({ ...packet, evidence: [] }).evidence,
+    [],
   );
   assert.equal(
     researchPacketSchema.parse({
@@ -466,7 +467,7 @@ test("research packets bind evidence and mutations to one source request", () =>
   );
 });
 
-test("compiles type-aware readiness gates without adding Plane lifecycle states", () => {
+test("compiles applicability-aware readiness gates without adding Plane lifecycle states", () => {
   const identity = {
     version: contractVersions.readinessGate,
     projectId: planeCommentEvent.projectId,
@@ -475,32 +476,46 @@ test("compiles type-aware readiness gates without adding Plane lifecycle states"
     baseSha: researchSource.baseSha,
     planeRevisionDigest: researchSource.planeRevisionDigest,
     evaluatedAt: now,
+    policy: "qa-ticket-readiness/v1",
+    objective: "Establish the contract needed to perform the work.",
+    expectedOutcome: "The ticket is actionable without inventing product behavior.",
+  };
+  const requiredSatisfied = {
+    id: "intent-and-outcome",
+    category: "intent",
+    requirement: "required",
+    applicability: "applicable",
+    status: "satisfied",
+    rationale: "Every ticket needs a bounded objective and expected outcome.",
+    evidence: [],
   };
   assert.equal(
     readinessGateSchema.parse({
       ...identity,
       profile: "research",
-      researchQuestion:
-        "What canonical file, route, credential, and authorization states exist?",
-      authoritativeSources: [
-        "Database constraints and migrations",
-        "Route guards and server functions",
+      criteria: [
+        requiredSatisfied,
+        {
+          id: "authoritative-sources",
+          category: "source",
+          requirement: "required",
+          applicability: "applicable",
+          status: "satisfied",
+          rationale: "The research question depends on repository sources.",
+          evidence: [],
+        },
+        {
+          id: "canonical-video",
+          category: "video",
+          requirement: "recommended",
+          applicability: "applicable",
+          status: "missing",
+          rationale: "A video would help a human review the flow but is not an admission blocker.",
+          evidence: [],
+        },
       ],
-      requiredOutputs: [
-        "Versioned readable matrix",
-        "Machine-readable evidence index",
-      ],
-      capabilities: [
-        "repository.read",
-        "public-docs.read",
-        "nonproduction.read",
-        "browser.record",
-      ],
-      stopConditions: [
-        "Stop when a product-stage choice cannot be derived from authoritative state.",
-      ],
-      productDecisionEscalation:
-        "Post one blocking decision with observed alternatives and evidence.",
+      blockingProductDecisions: 0,
+      ready: true,
     }).profile,
     "research",
   );
@@ -514,17 +529,29 @@ test("compiles type-aware readiness gates without adding Plane lifecycle states"
     readinessGateSchema.parse({
       ...identity,
       profile: "implementation",
-      currentBehaviorEvidence: {
-        ...evidence,
-        kind: "video",
-        uri: "artifact:///runs/readiness/current.mp4",
-        mediaType: "video/mp4",
-      },
-      fixtureManifest: artifact,
-      expectedFlow: artifact,
-      oracleContract: artifact,
-      cleanupPlan: artifact,
+      criteria: [
+        requiredSatisfied,
+        {
+          id: "reproduction",
+          category: "reproduction",
+          requirement: "recommended",
+          applicability: "not-applicable",
+          status: "not-applicable",
+          rationale: "This is a new capability, not a defect claim.",
+          evidence: [],
+        },
+        {
+          id: "fixture",
+          category: "fixture",
+          requirement: "recommended",
+          applicability: "applicable",
+          status: "missing",
+          rationale: "A fixture would improve repeatability, but this documentation-only change does not depend on controlled state.",
+          evidence: [],
+        },
+      ],
       blockingProductDecisions: 0,
+      ready: true,
     }).profile,
     "implementation",
   );
@@ -532,12 +559,20 @@ test("compiles type-aware readiness gates without adding Plane lifecycle states"
     readinessGateSchema.parse({
       ...identity,
       profile: "qualification",
-      candidateManifest: artifact,
-      coverageManifest: artifact,
-      independentEvaluator: "auth-qa-independent-evaluator",
-      retentionPlan: artifact,
-      cleanupPlan: artifact,
+      criteria: [
+        requiredSatisfied,
+        {
+          id: "candidate-provenance",
+          category: "provenance",
+          requirement: "required",
+          applicability: "applicable",
+          status: "satisfied",
+          rationale: "The qualification verdict must bind an exact candidate.",
+          evidence: [artifact],
+        },
+      ],
       blockingProductDecisions: 0,
+      ready: true,
     }).profile,
     "qualification",
   );
@@ -545,24 +580,49 @@ test("compiles type-aware readiness gates without adding Plane lifecycle states"
     readinessGateSchema.parse({
       ...identity,
       profile: "implementation",
-      currentBehaviorEvidence: artifact,
-      fixtureManifest: artifact,
-      expectedFlow: artifact,
-      oracleContract: artifact,
-      cleanupPlan: artifact,
+      criteria: [requiredSatisfied],
       blockingProductDecisions: 1,
+      ready: true,
     }),
   );
   assert.throws(() =>
     readinessGateSchema.parse({
       ...identity,
-      profile: "research",
-      researchQuestion: "Inspect the code.",
-      authoritativeSources: [],
-      requiredOutputs: ["A result."],
-      capabilities: ["repository.write"],
-      stopConditions: ["Stop when complete."],
-      productDecisionEscalation: "Ask a human.",
+      profile: "implementation",
+      criteria: [
+        requiredSatisfied,
+        {
+          id: "expected-flow",
+          category: "expected-behavior",
+          requirement: "required",
+          applicability: "applicable",
+          status: "missing",
+          rationale: "The implementation would otherwise invent product behavior.",
+          evidence: [],
+        },
+      ],
+      blockingProductDecisions: 0,
+      ready: true,
+    }),
+  );
+  assert.throws(() =>
+    readinessGateSchema.parse({
+      ...identity,
+      profile: "implementation",
+      criteria: [
+        requiredSatisfied,
+        {
+          id: "reproduction",
+          category: "reproduction",
+          requirement: "recommended",
+          applicability: "not-applicable",
+          status: "missing",
+          rationale: "Applicability and status disagree.",
+          evidence: [],
+        },
+      ],
+      blockingProductDecisions: 0,
+      ready: true,
     }),
   );
 });
