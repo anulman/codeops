@@ -12,7 +12,7 @@ export function redactSecrets(value: string): string {
   );
 }
 
-export function boundedText(value: string, maximum = 20_000): string {
+export function boundedText(value: string, maximum = 128_000): string {
   const redacted = redactSecrets(value);
   if (redacted.length <= maximum) return redacted;
   const marker = "\n[TRUNCATED]";

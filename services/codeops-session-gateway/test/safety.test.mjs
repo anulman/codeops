@@ -59,6 +59,8 @@ test("bounds retained agent text after redaction", () => {
   assert.equal(boundedText("abcdef", 3), "\n[T");
   assert.equal(boundedText("a".repeat(501), 500).length, 500);
   assert.equal(boundedText("a".repeat(2_001), 2_000).length, 2_000);
+  assert.equal(boundedText("a".repeat(20_001)).length, 20_001);
+  assert.equal(boundedText("a".repeat(128_001)).length, 128_000);
 });
 
 test("captures the exact checkout patch through an explicit safe-directory binding", async () => {
