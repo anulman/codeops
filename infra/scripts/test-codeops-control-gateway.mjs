@@ -70,6 +70,10 @@ test("admits only the orchestrator and exact API /32", () => {
     "codeops-orchestrator",
   );
   assert.equal(policy.spec.egress[0].to[0].ipBlock.cidr, "10.3.0.1/32");
+  assert.deepEqual(policy.spec.egress[0].ports, [
+    { protocol: "TCP", port: 443 },
+    { protocol: "TCP", port: 6443 },
+  ]);
 });
 
 test("fails closed on mutable images, broad API CIDRs, or template drift", () => {
