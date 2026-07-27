@@ -53,9 +53,24 @@ function recordingFetch() {
     }
     if (call.url.includes("/comments/")) {
       if (call.method === "GET") {
-        return jsonResponse({ results: [] });
+        return jsonResponse({
+          results: [
+            {
+              id: "4933ed92-5aac-43da-b87d-c439ea2eb957",
+              external_source: null,
+              external_id: null,
+            },
+          ],
+        });
       }
-      return jsonResponse({ id: "f3e29f26-708d-40f0-9209-7e0de44abc49" }, 201);
+      return jsonResponse(
+        {
+          id: "f3e29f26-708d-40f0-9209-7e0de44abc49",
+          external_source: call.body.external_source,
+          external_id: call.body.external_id,
+        },
+        201,
+      );
     }
     if (call.method === "POST" && call.url.endsWith("/work-items/")) {
       return jsonResponse(

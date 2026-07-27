@@ -27,8 +27,8 @@ const workItemSchema = z
 const commentSchema = z
   .object({
     id: uuid,
-    external_source: z.string().optional(),
-    external_id: z.string().optional(),
+    external_source: z.string().nullable().optional(),
+    external_id: z.string().nullable().optional(),
   })
   .passthrough();
 const commentPageSchema = z.union([
