@@ -4,6 +4,8 @@ import { createPlaneApiClient } from "../dist/index.js";
 
 const projectId = "45b87d89-0ce0-4d6f-8903-4070f1c67f1b";
 const workItemId = "088a83b9-a53f-4dda-b2bc-c860cf455997";
+const workspaceId = "d250cd44-fa71-42c2-b2b5-3c73227288fc";
+const stateId = "067b88e5-304b-4221-ba09-94340dcc36e5";
 const apiKey = "plane_api_test-only-key";
 
 function jsonResponse(value, status = 200) {
@@ -38,9 +40,14 @@ function recordingFetch() {
           {
             id: workItemId,
             project: projectId,
+            workspace: workspaceId,
             labels: [],
+            assignees: [],
             name: "Source ticket",
             description_html: "<p>Source.</p>",
+            priority: "none",
+            state: stateId,
+            updated_at: "2026-07-27T17:00:00.000Z",
           },
         ],
       });
@@ -133,7 +140,29 @@ test("maps the content-only client to Plane work-item endpoints", async () => {
       finish_before: [],
     },
   );
-  assert.equal((await client.listProjectWorkItems(projectId)).length, 1);
+  const projectItems = await client.listProjectWorkItemSnapshots(projectId);
+  assert.equal(projectItems.length, 1);
+  assert.deepEqual(projectItems[0], {
+    id: workItemId,
+    project: projectId,
+    workspace: workspaceId,
+    labels: [],
+    assignees: [],
+    name: "Source ticket",
+    description_html: "<p>Source.</p>",
+    priority: "none",
+    state: stateId,
+    updated_at: "2026-07-27T17:00:00.000Z",
+  });
+  assert.deepEqual(await client.listProjectWorkItems(projectId), [
+    {
+      id: workItemId,
+      project: projectId,
+      labels: [],
+      name: "Source ticket",
+      descriptionHtml: "<p>Source.</p>",
+    },
+  ]);
   assert.equal(
     (
       await client.createWorkItem(projectId, {

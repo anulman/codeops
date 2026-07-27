@@ -78,9 +78,7 @@ export interface PlaneApiClient extends PlaneContentClient {
     workItemId: string,
   ): Promise<readonly unknown[]>;
   getWorkItemRelations(projectId: string, workItemId: string): Promise<unknown>;
-  listProjectWorkItems(
-    projectId: string,
-  ): Promise<readonly PlaneWorkItemRecord[]>;
+  listProjectWorkItemSnapshots(projectId: string): Promise<readonly unknown[]>;
 }
 
 function planeOrigin(value: string): URL {
@@ -244,6 +242,14 @@ export function createPlaneApiClient(
           )}/relations/`,
         ),
       );
+    },
+
+    async listProjectWorkItemSnapshots(projectId) {
+      // Admission binds this immutable index into the research request, so
+      // preserve Plane's full snapshot shape. The content-mutation adapter's
+      // narrower PlaneWorkItemRecord projection is only appropriate when
+      // reconciling one specifically permitted write.
+      return listProjectWorkItems(projectId);
     },
 
     async listProjectWorkItems(projectId) {

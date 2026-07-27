@@ -184,7 +184,8 @@ const listener = createPlaneWebhookRequestListener({
             projectId,
             workItemId,
           ),
-          projectWorkItems: await planeClient.listProjectWorkItems(projectId),
+          projectWorkItems:
+            await planeClient.listProjectWorkItemSnapshots(projectId),
         };
       },
       ledger,
