@@ -98,6 +98,14 @@ test("renders exactly one immutable orchestrator image", () => {
     ),
   );
   const pod = deployment.spec.template.spec;
+  assert.deepEqual(pod.securityContext, {
+    runAsNonRoot: true,
+    runAsUser: 1000,
+    runAsGroup: 1000,
+    fsGroup: 1000,
+    fsGroupChangePolicy: "OnRootMismatch",
+    seccompProfile: { type: "RuntimeDefault" },
+  });
   const dispatchOrigin = pod.containers[0].env.find(
     (entry) => entry.name === "CODEOPS_AGENT_DISPATCH_ORIGIN",
   );
