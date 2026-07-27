@@ -264,6 +264,54 @@ test("accepts progress prose only before one terminal research JSON object", asy
   }
 });
 
+test("accepts complete research responses beyond the legacy 20k checkpoint cap", async () => {
+  const citation = {
+    id: "citation-1",
+    path: "sites/app/lib/auth/fileIdentity.server.ts",
+    lineStart: 1,
+    lineEnd: 2,
+    claim: "The cited boundary requires executable negative evidence.",
+  };
+  const report = {
+    version: "codeops.research-persona-report/v2",
+    requestId: request.researchRequest.requestId,
+    persona: "@ai-security",
+    outcome: "findings",
+    summary: "Authentication boundaries need qualification.",
+    findings: Array.from({ length: 6 }, (_, index) => ({
+      id: `finding-${index + 1}`,
+      category: "downstream-defect",
+      severity: "high",
+      confidence: "high",
+      currentBehavior: `${index}: ${"observed ".repeat(375)}`,
+      expectedBehavior: "The boundary must fail closed under executable tests.",
+      citationIds: [citation.id],
+    })),
+    decisions: [],
+    citations: [citation],
+  };
+  const response = `Inspecting the exact source now.\n${JSON.stringify(report)}`;
+  assert.ok(response.length > 20_100);
+  const identity = createRunIdentity(request);
+  const rootDirectory = await mkdtemp(path.join(os.tmpdir(), "codeops-long-report-"));
+  try {
+    const retained = parseCheckpointLogs({
+      logs: checkpointLogs(identity.runId, { response }),
+      request,
+      runId: identity.runId,
+    });
+    const result = await retainCheckpoint({
+      rootDirectory,
+      request,
+      ...identity,
+      retained,
+    });
+    assert.equal(result.researchResult.report.findings.length, 6);
+  } finally {
+    await rm(rootDirectory, { recursive: true, force: true });
+  }
+});
+
 test("validates checkpoint identity, digest, patch, and research immutability", () => {
   const runId = createRunIdentity(request).runId;
   const parsed = parseCheckpointLogs({

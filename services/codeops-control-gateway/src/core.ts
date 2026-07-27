@@ -43,7 +43,7 @@ const checkpointSchema = z
     reasoningEffort: z.literal("high"),
     sessionId: z.string().max(500).optional(),
     stopReason: z.string().max(500).optional(),
-    response: z.string().max(20_100),
+    response: z.string().max(128_100),
     events: z.array(safeEventSchema).max(100_000),
     patch: z
       .object({
