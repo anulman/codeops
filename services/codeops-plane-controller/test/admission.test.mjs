@@ -230,10 +230,25 @@ test("deduplicates retries by Plane event ID rather than delivery ID", async () 
 
 test("admits only a signed allowlisted human transition into configured Ready", async () => {
   const admission = await admitPlaneReadyTransition(signedReadyInput());
-  assert.equal(admission.workItemId, payload.entity_id);
-  assert.equal(admission.projectId, payload.data.project_id);
-  assert.equal(admission.requestedBy, actorId);
-  assert.equal(admission.baseSha, baseSha);
+  assert.equal(admission.request.workItem.workItemId, payload.entity_id);
+  assert.equal(admission.request.projectId, payload.data.project_id);
+  assert.equal(admission.request.requestedBy, actorId);
+  assert.equal(admission.request.workItem.baseSha, baseSha);
+  assert.equal(
+    admission.request.workItem.summary,
+    "Inventory canonical auth states",
+  );
+  assert.deepEqual(admission.request.workItem.acceptanceCriteria, [
+    "Map the current behavior.",
+  ]);
+  assert.equal(
+    admission.request.requestId,
+    admission.request.workItem.workflowId,
+  );
+  assert.equal(
+    admission.request.workItem.runId,
+    admission.request.workItem.workflowId,
+  );
   assert.match(admission.eventId, /^ready-event:[0-9a-f]{64}$/);
   assert.match(admission.planeRevisionDigest, /^sha256:[0-9a-f]{64}$/);
 });
@@ -249,6 +264,24 @@ test("Ready admission is stable across delivery retries", async () => {
   );
   assert.equal(first.eventId, retry.eventId);
   assert.equal(first.planeRevisionDigest, retry.planeRevisionDigest);
+  assert.deepEqual(first.request, retry.request);
+});
+
+test("fails Ready admission closed without bounded acceptance criteria", async () => {
+  const input = signedReadyInput();
+  input.loadSource = async () => ({
+    project: source.project,
+    workItem: {
+      ...source.workItem,
+      state: readyStateId,
+      updated_at: readyUpdatedAt,
+      description_stripped: " ",
+    },
+  });
+  await assert.rejects(
+    admitPlaneReadyTransition(input),
+    /must define acceptance criteria/,
+  );
 });
 
 test("ignores non-Ready, non-human, and non-state Plane updates", async () => {

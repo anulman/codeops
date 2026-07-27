@@ -20,6 +20,9 @@ This service owns the privileged Plane integration boundary. It implements:
   `updated_at` revision to match the signed payload, bind the configured
   repository and exact source SHA, and derive a delivery-independent Ready
   event identity for durable replay handling;
+- compile the admitted Ready revision into a strict coding request and
+  work-item contract with deterministic workflow/run/branch identities,
+  bounded acceptance criteria, and no inline credentials;
 - persist event and request deduplication on a private durable volume with
   payload-digest collision checks, bounded processing leases, crash recovery,
   attempt counts, and explicit terminal outcomes;
@@ -31,7 +34,8 @@ This service owns the privileged Plane integration boundary. It implements:
   separate credential-free `/healthz` liveness route;
 - start the exact `workItemWorkflow` on the configured Temporal task queue with
   duplicate reuse rejected, running-workflow conflicts rejected, a one-hour
-  bound, the researcher role, and the complete bound research request;
+  bound for research or a 24-hour bound for coding, and the complete bound
+  request;
 - preflight an entire proposed mutation batch before the first write;
 - apply only comments, logical-label operations, project/ticket content edits,
   and same-project ticket creation;
@@ -54,7 +58,6 @@ Temporal error fails both held claims for a bounded retry. Immutable image and
 Kubernetes packaging plus deployment remain separate fail-closed slices. Until
 those exist, persona mentions must not be advertised as live.
 
-Ready admission currently stops after the trusted, immutable admission record.
-It does not yet enqueue coding work or mutate Plane. The next slice must compile
-that record into the strict work-item contract, claim it durably, and start the
-coding workflow with its separate plan-approval boundary intact.
+Ready admission starts the coding workflow only after durable event/request
+claims. The workflow then stops at its separate plan-approval boundary; Ready
+does not silently authorize Agent Job execution or mutate Plane.

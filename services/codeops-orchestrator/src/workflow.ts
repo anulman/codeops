@@ -7,6 +7,7 @@ import {
 } from "@temporalio/workflow";
 import type {
   AgentJobDispatchRequest,
+  CodingRequest,
   ResearchRequest,
 } from "@renoconcierge/codeops-contracts";
 import type {
@@ -30,6 +31,7 @@ interface WorkItemInputBase {
 export type WorkItemInput =
   | (WorkItemInputBase & {
       readonly role: "coding-agent";
+      readonly codingRequest: CodingRequest;
     })
   | (WorkItemInputBase & {
       readonly role: "qa-contract-researcher";
@@ -92,6 +94,15 @@ export const workflowStatus = defineQuery<WorkflowSnapshot>("workflowStatus");
 export async function workItemWorkflow(
   workItem: WorkItemInput,
 ): Promise<WorkflowSnapshot> {
+  if (
+    workItem.role === "coding-agent" &&
+    (workItem.codingRequest.workItem.workItemId !== workItem.workItemId ||
+      workItem.codingRequest.workItem.workflowId !== workItem.workflowId ||
+      workItem.codingRequest.workItem.baseSha !== workItem.baseSha ||
+      workItem.codingRequest.workItem.summary !== workItem.summary)
+  ) {
+    throw new Error("coding workflow identity does not match its request");
+  }
   let snapshot: WorkflowSnapshot = {
     state: "requested",
     sequence: 0,

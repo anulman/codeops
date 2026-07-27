@@ -5,6 +5,7 @@ import { test } from "node:test";
 import { WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
 import {
   createPlaneWebhookRequestListener,
+  createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "../dist/index.js";
 
@@ -21,6 +22,29 @@ const request = {
   personas: ["@ai-security", "@ai-web"],
   brief: "Cross-check the auth boundary and route guards.",
   requestedAt: "2026-07-26T18:50:00.000Z",
+};
+
+const codingRequest = {
+  version: "codeops.coding-request/v1",
+  requestId: "coding-123",
+  eventId: "ready-event:123",
+  workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",
+  projectId: request.projectId,
+  requestedBy: request.requestedBy,
+  planeRevisionDigest: request.planeRevisionDigest,
+  workItem: {
+    version: "codeops.work-item/v1",
+    workItemId: request.workItemId,
+    workflowId: "coding-123",
+    runId: "coding-123",
+    repository: request.repository,
+    baseSha: request.baseSha,
+    branch: "codeops/088a83b9-123456789abc",
+    summary: "Implement the admitted auth boundary",
+    acceptanceCriteria: ["The route guard is deterministic."],
+    secretReferences: [],
+    requestedAt: request.requestedAt,
+  },
 };
 
 test("starts the researcher workflow with the request ID and full bound request", async () => {
@@ -84,6 +108,38 @@ test("maps only Temporal's already-started error to idempotent success", async (
   await assert.rejects(
     failing({ workflowId: request.requestId, request }),
     /connection refused/,
+  );
+});
+
+test("starts coding at the separate plan-approval workflow boundary", async () => {
+  const starts = [];
+  const enqueue = createTemporalCodingEnqueuer({
+    client: {
+      workflow: {
+        start: async (...args) => {
+          starts.push(args);
+          return {};
+        },
+      },
+    },
+    taskQueue: "codeops-trial0",
+  });
+  assert.equal(
+    await enqueue({
+      workflowId: codingRequest.workItem.workflowId,
+      request: codingRequest,
+    }),
+    "enqueued",
+  );
+  assert.equal(starts.length, 1);
+  assert.equal(starts[0][0], "workItemWorkflow");
+  assert.equal(starts[0][1].workflowId, "coding-123");
+  assert.equal(starts[0][1].workflowRunTimeout, "24 hours");
+  assert.equal(starts[0][1].args[0].role, "coding-agent");
+  assert.deepEqual(starts[0][1].args[0].codingRequest, codingRequest);
+  await assert.rejects(
+    enqueue({ workflowId: "coding-drift", request: codingRequest }),
+    /identity/,
   );
 });
 

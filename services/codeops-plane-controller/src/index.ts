@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
 import {
   canonicalSerialize,
+  codingRequestSchema,
   contractVersions,
   createResearchRequestFromPlaneComment,
   parseResearchPersonaRound,
+  type CodingRequest,
   type ResearchRequest,
   verifyPlaneWebhookSignature,
 } from "@renoconcierge/codeops-contracts";
@@ -35,6 +37,7 @@ export {
 } from "./projection.js";
 export {
   createPlaneWebhookRequestListener,
+  createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "./runtime.js";
 
@@ -168,17 +171,12 @@ export type ResearchAdmission = Readonly<{
 
 export type ReadyAdmission = Readonly<{
   eventId: string;
-  workspaceId: string;
-  projectId: string;
-  workItemId: string;
-  requestedBy: string;
-  repository: Readonly<{ owner: string; name: string }>;
-  baseSha: string;
-  requestedAt: string;
+  request: CodingRequest;
   planeRevisionDigest: string;
 }>;
 
 export type ResearchRequestEnqueueResult = "enqueued" | "already-enqueued";
+export type CodingRequestEnqueueResult = ResearchRequestEnqueueResult;
 
 export type ResearchWebhookProcessingResult =
   | Readonly<{ status: "ignored" }>
@@ -192,6 +190,7 @@ export type ResearchWebhookProcessingResult =
       requestId: string;
       duplicate: boolean;
     }>;
+export type ReadyWebhookProcessingResult = ResearchWebhookProcessingResult;
 
 type NormalizedPlaneCommentEvent = Readonly<{
   deliveryId: string;
@@ -564,18 +563,213 @@ export async function admitPlaneReadyTransition(input: {
       }),
     )
     .digest("hex")}`;
+  const requestHash = createHash("sha256")
+    .update(
+      canonicalSerialize({
+        eventId,
+        planeRevisionDigest,
+        repository,
+        baseSha,
+      }),
+    )
+    .digest("hex");
+  const requestId = `coding-${requestHash.slice(0, 57)}`;
+  const description = (workItem.description_stripped ?? "").trim();
+  if (description.length === 0) {
+    throw new Error("Ready work item must define acceptance criteria");
+  }
+  const acceptanceCriteria: string[] = [];
+  for (let offset = 0; offset < description.length; offset += 2_000) {
+    acceptanceCriteria.push(description.slice(offset, offset + 2_000));
+  }
 
   return {
     eventId,
-    workspaceId: payload.workspace_id,
-    projectId: project.id,
-    workItemId: workItem.id,
-    requestedBy: payload.activity.actor.id,
-    repository,
-    baseSha,
-    requestedAt,
+    request: codingRequestSchema.parse({
+      version: contractVersions.codingRequest,
+      requestId,
+      eventId,
+      workspaceId: payload.workspace_id,
+      projectId: project.id,
+      requestedBy: payload.activity.actor.id,
+      planeRevisionDigest,
+      workItem: {
+        version: contractVersions.workItem,
+        workItemId: workItem.id,
+        workflowId: requestId,
+        runId: requestId,
+        repository,
+        baseSha,
+        branch: `codeops/${workItem.id.slice(0, 8)}-${requestHash.slice(0, 12)}`,
+        summary: z.string().min(1).max(500).parse(workItem.name.trim()),
+        acceptanceCriteria,
+        secretReferences: [],
+        requestedAt,
+      },
+    }),
     planeRevisionDigest,
   };
+}
+
+function codingRequestDigest(request: CodingRequest): string {
+  const { requestedAt: _requestedAt, ...stableWorkItem } = request.workItem;
+  return `sha256:${createHash("sha256")
+    .update(
+      canonicalSerialize({
+        ...request,
+        workItem: stableWorkItem,
+      }),
+    )
+    .digest("hex")}`;
+}
+
+function codingEventDigest(request: CodingRequest): string {
+  return `sha256:${createHash("sha256")
+    .update(
+      canonicalSerialize({
+        eventId: request.eventId,
+        workspaceId: request.workspaceId,
+        projectId: request.projectId,
+        workItemId: request.workItem.workItemId,
+        requestedBy: request.requestedBy,
+        planeRevisionDigest: request.planeRevisionDigest,
+      }),
+    )
+    .digest("hex")}`;
+}
+
+export async function processPlaneReadyWebhook(
+  input: Parameters<typeof admitPlaneReadyTransition>[0] & {
+    ledger: import("./dedup-ledger.js").ResearchDedupLedger;
+    enqueue: (input: {
+      workflowId: string;
+      request: CodingRequest;
+    }) => Promise<CodingRequestEnqueueResult>;
+    now?: () => string;
+  },
+): Promise<ReadyWebhookProcessingResult> {
+  const admission = await admitPlaneReadyTransition(input);
+  if (admission === null) return { status: "ignored" };
+
+  const now = input.now ?? (() => new Date().toISOString());
+  const eventPayloadDigest = codingEventDigest(admission.request);
+  const requestPayloadDigest = codingRequestDigest(admission.request);
+  let eventClaim:
+    | Extract<import("./dedup-ledger.js").DedupClaim, { status: "acquired" }>
+    | undefined;
+  let requestClaim:
+    | Extract<import("./dedup-ledger.js").DedupClaim, { status: "acquired" }>
+    | undefined;
+
+  const claimedEvent = await input.ledger.claim({
+    kind: "event",
+    stableId: admission.eventId,
+    payloadDigest: eventPayloadDigest,
+    now: now(),
+  });
+  if (claimedEvent.status === "busy") {
+    return {
+      status: "busy",
+      scope: "event",
+      leaseExpiresAt: claimedEvent.leaseExpiresAt,
+    };
+  }
+  if (claimedEvent.status === "complete") {
+    if (claimedEvent.outcome !== "request-enqueued") {
+      throw new Error(
+        `completed Ready event has unexpected outcome ${claimedEvent.outcome}`,
+      );
+    }
+    return {
+      status: "enqueued",
+      requestId: claimedEvent.resultId ?? admission.request.requestId,
+      duplicate: true,
+    };
+  }
+  eventClaim = claimedEvent;
+
+  try {
+    const claimedRequest = await input.ledger.claim({
+      kind: "request",
+      stableId: admission.request.requestId,
+      payloadDigest: requestPayloadDigest,
+      now: now(),
+    });
+    if (claimedRequest.status === "busy") {
+      await input.ledger.fail({
+        claim: eventClaim,
+        failure: "matching coding request is already processing",
+        now: now(),
+      });
+      return {
+        status: "busy",
+        scope: "request",
+        leaseExpiresAt: claimedRequest.leaseExpiresAt,
+      };
+    }
+    if (claimedRequest.status === "complete") {
+      if (claimedRequest.outcome !== "request-enqueued") {
+        throw new Error(
+          `completed coding request has unexpected outcome ${claimedRequest.outcome}`,
+        );
+      }
+      await input.ledger.complete({
+        claim: eventClaim,
+        outcome: "request-enqueued",
+        resultId: admission.request.requestId,
+        now: now(),
+      });
+      return {
+        status: "enqueued",
+        requestId: admission.request.requestId,
+        duplicate: true,
+      };
+    }
+    requestClaim = claimedRequest;
+
+    const enqueueResult = await input.enqueue({
+      workflowId: admission.request.workItem.workflowId,
+      request: admission.request,
+    });
+    if (enqueueResult !== "enqueued" && enqueueResult !== "already-enqueued") {
+      throw new Error("coding enqueuer returned an invalid outcome");
+    }
+    await input.ledger.complete({
+      claim: requestClaim,
+      outcome: "request-enqueued",
+      resultId: admission.request.requestId,
+      now: now(),
+    });
+    requestClaim = undefined;
+    await input.ledger.complete({
+      claim: eventClaim,
+      outcome: "request-enqueued",
+      resultId: admission.request.requestId,
+      now: now(),
+    });
+    eventClaim = undefined;
+    return {
+      status: "enqueued",
+      requestId: admission.request.requestId,
+      duplicate: enqueueResult === "already-enqueued",
+    };
+  } catch (error) {
+    if (requestClaim !== undefined) {
+      await input.ledger.fail({
+        claim: requestClaim,
+        failure: "Ready webhook processing failed",
+        now: now(),
+      });
+    }
+    if (eventClaim !== undefined) {
+      await input.ledger.fail({
+        claim: eventClaim,
+        failure: "Ready webhook processing failed",
+        now: now(),
+      });
+    }
+    throw error;
+  }
 }
 
 function researchRequestDigest(request: ResearchRequest): string {

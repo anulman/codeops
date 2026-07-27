@@ -5,6 +5,7 @@ import {
   agentJobDispatchRequestSchema,
   agentJobDispatchResultSchema,
   canonicalSerialize,
+  codingRequestSchema,
   contractVersions,
   controlCommandSchema,
   controlResultSchema,
@@ -73,6 +74,34 @@ function command(type, payload) {
 test("accepts the complete work-item and opaque secret-reference contracts", () => {
   assert.deepEqual(workItemRequestSchema.parse(workItem), workItem);
   assert.deepEqual(secretReferenceSchema.parse(secretReference), secretReference);
+});
+
+test("binds a coding request to one admitted Plane revision and workflow", () => {
+  const codingWorkItem = {
+    ...workItem,
+    workflowId: "coding-123",
+    runId: "coding-123",
+  };
+  const request = {
+    version: contractVersions.codingRequest,
+    requestId: "coding-123",
+    eventId: "ready-event:123",
+    workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",
+    projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
+    requestedBy: "88fc36c8-73b0-4547-81c7-96b70f61835e",
+    planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+    workItem: codingWorkItem,
+  };
+  assert.deepEqual(codingRequestSchema.parse(request), request);
+  assert.throws(() =>
+    codingRequestSchema.parse({
+      ...request,
+      workItem: { ...codingWorkItem, workflowId: "coding-drift" },
+    }),
+  );
+  assert.throws(() =>
+    codingRequestSchema.parse({ ...request, transcript: "raw agent state" }),
+  );
 });
 
 test("accepts every workflow state with deterministic logical IDs", () => {

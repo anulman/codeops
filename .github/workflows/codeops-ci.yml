@@ -220,6 +220,7 @@ jobs:
           CODEOPS_PLANE_CONTROLLER_HOST: work.renoconcierge.ca
           CODEOPS_PLANE_WORKSPACE_SLUG: reno-concierge
           CODEOPS_ALLOWED_HUMAN_ACTOR_IDS: 123e4567-e89b-12d3-a456-426614174000
+          CODEOPS_READY_STATE_ID: a23e4567-e89b-12d3-a456-426614174009
           CODEOPS_PERSONA_USER_IDS: 323e4567-e89b-12d3-a456-426614174002=@ai-web,423e4567-e89b-12d3-a456-426614174003=@ai-security,523e4567-e89b-12d3-a456-426614174004=@ai-database,623e4567-e89b-12d3-a456-426614174005=@ai-infra,723e4567-e89b-12d3-a456-426614174006=@ai-design,823e4567-e89b-12d3-a456-426614174007=@ai-product,923e4567-e89b-12d3-a456-426614174008=@ai-ml
         run: |
           node --test infra/scripts/test-codeops-plane-controller.mjs

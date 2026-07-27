@@ -143,6 +143,7 @@ CODEOPS_BASE_SHA=<40-lowercase-hex> \
 CODEOPS_PLANE_CONTROLLER_HOST=work.renoconcierge.ca \
 CODEOPS_PLANE_WORKSPACE_SLUG=<workspace-slug> \
 CODEOPS_ALLOWED_HUMAN_ACTOR_IDS=<comma-separated-lowercase-uuids> \
+CODEOPS_READY_STATE_ID=<ready-state-lowercase-uuid> \
 CODEOPS_PERSONA_USER_IDS=<uuid=@ai-handle,...all-seven-personas> \
   node infra/scripts/render-codeops-plane-controller.mjs \
   > "$CODEOPS_PLANE_CONTROLLER_MANIFEST"

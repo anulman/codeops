@@ -6,6 +6,7 @@ import path from "node:path";
 import { test } from "node:test";
 import {
   createFileResearchDedupLedger,
+  processPlaneReadyWebhook,
   processPlaneResearchWebhook,
 } from "../dist/index.js";
 
@@ -56,6 +57,25 @@ const source = {
     updated_at: "2026-07-26T01:00:00.000Z",
   },
 };
+const readyStateId = "cc8562ab-79c7-4f1c-b4a2-1ed51dfcd6aa";
+const readyUpdatedAt = "2026-07-27T02:45:00.000Z";
+const readyPayload = {
+  event: "issue",
+  action: "update",
+  webhook_id: payload.webhook_id,
+  workspace_id: payload.workspace_id,
+  data: {
+    ...source.workItem,
+    state: readyStateId,
+    updated_at: readyUpdatedAt,
+  },
+  activity: {
+    field: "state",
+    old_value: source.workItem.state,
+    new_value: readyStateId,
+    actor: { id: actorId },
+  },
+};
 
 function webhookInput(ledger, enqueue, body = payload) {
   const rawBody = Buffer.from(JSON.stringify(body));
@@ -75,6 +95,35 @@ function webhookInput(ledger, enqueue, body = payload) {
     ledger,
     enqueue,
     now: () => "2026-07-26T12:00:00.000Z",
+  };
+}
+
+function readyWebhookInput(ledger, enqueue, body = readyPayload) {
+  const rawBody = Buffer.from(JSON.stringify(body));
+  return {
+    rawBody,
+    headers: {
+      delivery: "716d98fe-35a7-4436-bdca-5ff5490dbf09",
+      event: body.event,
+      signature: createHmac("sha256", secret).update(rawBody).digest("hex"),
+    },
+    webhookSecret: secret,
+    allowedHumanActorIds: new Set([actorId]),
+    readyStateId,
+    repository: { owner: "anulman", name: "renoconcierge" },
+    baseSha: "8f3d2c033f70be04b4b2dc8a005683806e84e209",
+    receivedAt: "2026-07-27T02:45:01.000Z",
+    loadSource: async () => ({
+      project: source.project,
+      workItem: {
+        ...source.workItem,
+        state: readyStateId,
+        updated_at: readyUpdatedAt,
+      },
+    }),
+    ledger,
+    enqueue,
+    now: () => "2026-07-27T02:46:00.000Z",
   };
 }
 
@@ -202,6 +251,68 @@ test("ordinary signed comments remain ignored without touching the enqueuer", as
     );
     assert.deepEqual(result, { status: "ignored" });
     assert.equal(enqueueCount, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("durably compiles one Ready revision before starting Temporal", async () => {
+  const { root, ledger } = await fixture();
+  const enqueued = [];
+  try {
+    const first = await processPlaneReadyWebhook(
+      readyWebhookInput(ledger, async (input) => {
+        enqueued.push(input);
+        return "enqueued";
+      }),
+    );
+    const retryInput = readyWebhookInput(ledger, async () => {
+        throw new Error("retry must not enqueue");
+      });
+    retryInput.baseSha = "a".repeat(40);
+    retryInput.receivedAt = "2026-07-27T03:00:00.000Z";
+    const retry = await processPlaneReadyWebhook(retryInput);
+    assert.equal(first.status, "enqueued");
+    assert.equal(first.duplicate, false);
+    assert.equal(enqueued.length, 1);
+    assert.equal(enqueued[0].workflowId, first.requestId);
+    assert.equal(enqueued[0].request.requestId, first.requestId);
+    assert.equal(
+      enqueued[0].request.workItem.workflowId,
+      enqueued[0].request.workItem.runId,
+    );
+    assert.deepEqual(retry, {
+      status: "enqueued",
+      requestId: first.requestId,
+      duplicate: true,
+    });
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("failed Ready enqueue releases both identities for a bounded retry", async () => {
+  const { root, ledger } = await fixture();
+  let attempts = 0;
+  try {
+    await assert.rejects(
+      processPlaneReadyWebhook(
+        readyWebhookInput(ledger, async () => {
+          attempts += 1;
+          throw new Error("Temporal unavailable");
+        }),
+      ),
+      /Temporal unavailable/,
+    );
+    const retry = await processPlaneReadyWebhook(
+      readyWebhookInput(ledger, async () => {
+        attempts += 1;
+        return "enqueued";
+      }),
+    );
+    assert.equal(retry.status, "enqueued");
+    assert.equal(retry.duplicate, false);
+    assert.equal(attempts, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

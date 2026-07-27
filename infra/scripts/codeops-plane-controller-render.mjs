@@ -22,6 +22,7 @@ const TOKENS = {
   __CODEOPS_PLANE_CONTROLLER_DIGEST__: "controllerDigest",
   __CODEOPS_PLANE_CONTROLLER_HOST__: "controllerHost",
   __CODEOPS_PLANE_WORKSPACE_SLUG__: "workspaceSlug",
+  __CODEOPS_READY_STATE_ID__: "readyStateId",
 };
 
 function exactResources(resources) {
@@ -47,6 +48,9 @@ export function renderPlaneControllerManifest(template, input) {
     new Set(actorIds).size !== actorIds.length
   ) {
     throw new Error("allowed human actor IDs must be unique lowercase UUIDs");
+  }
+  if (!UUID.test(input.readyStateId ?? "")) {
+    throw new Error("Ready state ID must be a lowercase UUID");
   }
   const personaMappings = (input.personaUserIds ?? "")
     .split(",")
@@ -129,6 +133,7 @@ export function renderPlaneControllerManifest(template, input) {
     CODEOPS_HTTP_HOST: "0.0.0.0",
     CODEOPS_HTTP_PORT: "8080",
     CODEOPS_PERSONA_USER_IDS: input.personaUserIds,
+    CODEOPS_READY_STATE_ID: input.readyStateId,
     CODEOPS_PLANE_API_KEY_FILE: "/var/run/secrets/codeops/plane-api-key",
     CODEOPS_PLANE_API_ORIGIN: "https://work.renoconcierge.ca",
     CODEOPS_PLANE_WEBHOOK_SECRET_FILE:

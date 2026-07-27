@@ -5,10 +5,12 @@ import {
   createFileResearchDedupLedger,
   createPlaneApiClient,
   projectResearchPacket,
+  processPlaneReadyWebhook,
   processPlaneResearchWebhook,
 } from "./index.js";
 import {
   createPlaneWebhookRequestListener,
+  createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "./runtime.js";
 
@@ -121,6 +123,11 @@ const enqueue = createTemporalResearchEnqueuer({
   client: temporalClient,
   taskQueue: process.env.CODEOPS_TEMPORAL_TASK_QUEUE ?? "codeops-trial0",
 });
+const enqueueCoding = createTemporalCodingEnqueuer({
+  client: temporalClient,
+  taskQueue: process.env.CODEOPS_TEMPORAL_TASK_QUEUE ?? "codeops-trial0",
+});
+const readyStateId = required("CODEOPS_READY_STATE_ID");
 
 const listener = createPlaneWebhookRequestListener({
   projection: {
@@ -132,19 +139,24 @@ const listener = createPlaneWebhookRequestListener({
         client: planeClient,
       }),
   },
-  process: ({ rawBody, headers }) =>
-    processPlaneResearchWebhook({
+  process: async ({ rawBody, headers }) => {
+    const shared = {
       rawBody,
       headers,
       webhookSecret,
       allowedHumanActorIds,
-      personaUserIds,
       repository,
       baseSha,
       receivedAt: new Date().toISOString(),
-      loadSource: async ({ projectId, workItemId }) => {
+      loadSource: async ({
+        projectId,
+        workItemId,
+      }: {
+        projectId: string | undefined;
+        workItemId: string;
+      }) => {
         if (projectId === undefined) {
-          throw new Error("Plane research event omitted project identity");
+          throw new Error("Plane event omitted project identity");
         }
         return {
           project: await planeClient.getProjectSnapshot(projectId),
@@ -155,8 +167,19 @@ const listener = createPlaneWebhookRequestListener({
         };
       },
       ledger,
+    };
+    const ready = await processPlaneReadyWebhook({
+      ...shared,
+      readyStateId,
+      enqueue: enqueueCoding,
+    });
+    if (ready.status !== "ignored") return ready;
+    return processPlaneResearchWebhook({
+      ...shared,
+      personaUserIds,
       enqueue,
-    }),
+    });
+  },
 });
 
 const port = Number(process.env.CODEOPS_HTTP_PORT ?? "8080");

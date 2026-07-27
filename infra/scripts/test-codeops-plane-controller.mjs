@@ -18,6 +18,7 @@ const input = {
   workspaceSlug: "reno-concierge",
   allowedHumanActorIds:
     "123e4567-e89b-12d3-a456-426614174000,223e4567-e89b-12d3-a456-426614174001",
+  readyStateId: "a23e4567-e89b-12d3-a456-426614174009",
   personaUserIds: [
     "323e4567-e89b-12d3-a456-426614174002=@ai-web",
     "423e4567-e89b-12d3-a456-426614174003=@ai-security",
@@ -153,6 +154,7 @@ test("fails closed on malformed identity, image, host, or resource drift", () =>
     { baseSha: "abc" },
     { workspaceSlug: "Upper" },
     { allowedHumanActorIds: "" },
+    { readyStateId: "ready" },
     { personaUserIds: "" },
     {
       personaUserIds: [

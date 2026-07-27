@@ -4,8 +4,12 @@ import {
   WorkflowExecutionAlreadyStartedError,
   type Client,
 } from "@temporalio/client";
-import type { ResearchRequest } from "@renoconcierge/codeops-contracts";
 import type {
+  CodingRequest,
+  ResearchRequest,
+} from "@renoconcierge/codeops-contracts";
+import type {
+  CodingRequestEnqueueResult,
   ResearchRequestEnqueueResult,
   ResearchWebhookProcessingResult,
 } from "./index.js";
@@ -39,6 +43,48 @@ export function createTemporalResearchEnqueuer(input: {
             summary: `Research Plane work item ${request.workItemId} with ${request.personas.join(", ")}`,
             role: "qa-contract-researcher",
             researchRequest: request,
+          },
+        ],
+      });
+      return "enqueued";
+    } catch (error) {
+      if (error instanceof WorkflowExecutionAlreadyStartedError) {
+        return "already-enqueued";
+      }
+      throw error;
+    }
+  };
+}
+
+export function createTemporalCodingEnqueuer(input: {
+  client: Pick<Client, "workflow">;
+  taskQueue: string;
+}): (input: {
+  workflowId: string;
+  request: CodingRequest;
+}) => Promise<CodingRequestEnqueueResult> {
+  if (!/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$/.test(input.taskQueue)) {
+    throw new Error("invalid Temporal task queue");
+  }
+  return async ({ workflowId, request }) => {
+    if (workflowId !== request.workItem.workflowId) {
+      throw new Error("coding workflow identity does not match its request");
+    }
+    try {
+      await input.client.workflow.start("workItemWorkflow", {
+        taskQueue: input.taskQueue,
+        workflowId,
+        workflowIdReusePolicy: "REJECT_DUPLICATE",
+        workflowIdConflictPolicy: "FAIL",
+        workflowRunTimeout: "24 hours",
+        args: [
+          {
+            workItemId: request.workItem.workItemId,
+            workflowId,
+            baseSha: request.workItem.baseSha,
+            summary: request.workItem.summary,
+            role: "coding-agent",
+            codingRequest: request,
           },
         ],
       });

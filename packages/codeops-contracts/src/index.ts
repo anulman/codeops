@@ -18,6 +18,7 @@ const VERSION = {
   researchPacket: "codeops.research-packet/v2",
   researchMutationBatch: "codeops.research-mutation-batch/v1",
   readinessGate: "codeops.readiness-gate/v1",
+  codingRequest: "codeops.coding-request/v1",
   agentJobDispatch: "codeops.agent-job-dispatch/v1",
   agentJobDispatchResult: "codeops.agent-job-dispatch-result/v1",
 } as const;
@@ -115,6 +116,32 @@ export const workItemRequestSchema = z
     requestedAt: isoDateTime,
   })
   .strict();
+
+export const codingRequestSchema = z
+  .object({
+    version: z.literal(VERSION.codingRequest),
+    requestId: identifier,
+    eventId: identifier,
+    workspaceId: uuid,
+    projectId: uuid,
+    requestedBy: uuid,
+    planeRevisionDigest: sha256Digest,
+    workItem: workItemRequestSchema,
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (
+      request.requestId !== request.workItem.workflowId ||
+      request.workItem.runId !== request.workItem.workflowId
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["workItem", "workflowId"],
+        message:
+          "coding request identity must match its workflow and initial run identity",
+      });
+    }
+  });
 
 export const workflowStateSchema = z.enum([
   "requested",
@@ -833,6 +860,7 @@ export const contractVersions = VERSION;
 export type SecretReference = z.infer<typeof secretReferenceSchema>;
 export type EvidenceReference = z.infer<typeof evidenceReferenceSchema>;
 export type WorkItemRequest = z.infer<typeof workItemRequestSchema>;
+export type CodingRequest = z.infer<typeof codingRequestSchema>;
 export type WorkflowEvent = z.infer<typeof workflowEventSchema>;
 export type ControlCommand = z.infer<typeof controlCommandSchema>;
 export type ControlResult = z.infer<typeof controlResultSchema>;
