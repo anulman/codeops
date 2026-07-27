@@ -62,6 +62,43 @@ if (
 ) {
   throw new Error("CODEOPS_ALLOWED_HUMAN_ACTOR_IDS must contain UUIDs");
 }
+const rawPersonaEntries = required("CODEOPS_PERSONA_USER_IDS")
+  .split(",")
+  .map((entry) => entry.split("="));
+if (rawPersonaEntries.some((entry) => entry.length !== 2)) {
+  throw new Error(
+    "CODEOPS_PERSONA_USER_IDS must map all seven unique persona UUIDs",
+  );
+}
+const personaEntries = rawPersonaEntries.map(
+  (entry) => [entry[0]!, entry[1]!] as const,
+);
+const personaUserIds = new Map(
+  personaEntries.map(([id, handle]) => [id, handle]),
+);
+const allowedPersonaHandles = new Set([
+  "@ai-web",
+  "@ai-security",
+  "@ai-database",
+  "@ai-infra",
+  "@ai-design",
+  "@ai-product",
+  "@ai-ml",
+]);
+if (
+  personaUserIds.size !== 7 ||
+  [...personaUserIds].some(
+    ([id, handle]) =>
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+        id,
+      ) || !allowedPersonaHandles.has(handle),
+  ) ||
+  new Set(personaUserIds.values()).size !== allowedPersonaHandles.size
+) {
+  throw new Error(
+    "CODEOPS_PERSONA_USER_IDS must map all seven unique persona UUIDs",
+  );
+}
 const repository = {
   owner: required("CODEOPS_REPOSITORY_OWNER"),
   name: required("CODEOPS_REPOSITORY_NAME"),
@@ -101,6 +138,7 @@ const listener = createPlaneWebhookRequestListener({
       headers,
       webhookSecret,
       allowedHumanActorIds,
+      personaUserIds,
       repository,
       baseSha,
       receivedAt: new Date().toISOString(),

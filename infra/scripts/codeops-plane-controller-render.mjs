@@ -5,10 +5,20 @@ const SHA = /^[0-9a-f]{40}$/;
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
 const WORKSPACE_SLUG = /^[a-z0-9][a-z0-9-]{0,62}$/;
+const PERSONA_HANDLES = new Set([
+  "@ai-web",
+  "@ai-security",
+  "@ai-database",
+  "@ai-infra",
+  "@ai-design",
+  "@ai-product",
+  "@ai-ml",
+]);
 
 const TOKENS = {
   __CODEOPS_ALLOWED_HUMAN_ACTOR_IDS__: "allowedHumanActorIds",
   __CODEOPS_BASE_SHA__: "baseSha",
+  __CODEOPS_PERSONA_USER_IDS__: "personaUserIds",
   __CODEOPS_PLANE_CONTROLLER_DIGEST__: "controllerDigest",
   __CODEOPS_PLANE_CONTROLLER_HOST__: "controllerHost",
   __CODEOPS_PLANE_WORKSPACE_SLUG__: "workspaceSlug",
@@ -37,6 +47,25 @@ export function renderPlaneControllerManifest(template, input) {
     new Set(actorIds).size !== actorIds.length
   ) {
     throw new Error("allowed human actor IDs must be unique lowercase UUIDs");
+  }
+  const personaMappings = (input.personaUserIds ?? "")
+    .split(",")
+    .map((entry) => entry.split("="));
+  if (
+    personaMappings.length !== PERSONA_HANDLES.size ||
+    personaMappings.some(
+      ([id, handle, extra]) =>
+        !UUID.test(id) ||
+        !PERSONA_HANDLES.has(handle) ||
+        extra !== undefined,
+    ) ||
+    new Set(personaMappings.map(([id]) => id)).size !== personaMappings.length ||
+    new Set(personaMappings.map(([, handle]) => handle)).size !==
+      PERSONA_HANDLES.size
+  ) {
+    throw new Error(
+      "persona user IDs must map seven unique UUIDs to the registered handles",
+    );
   }
   const expectedHost = "work.renoconcierge.ca";
   if (input.controllerHost !== expectedHost) {
@@ -99,6 +128,7 @@ export function renderPlaneControllerManifest(template, input) {
     CODEOPS_DEDUP_ROOT: "/var/lib/codeops/dedup",
     CODEOPS_HTTP_HOST: "0.0.0.0",
     CODEOPS_HTTP_PORT: "8080",
+    CODEOPS_PERSONA_USER_IDS: input.personaUserIds,
     CODEOPS_PLANE_API_KEY_FILE: "/var/run/secrets/codeops/plane-api-key",
     CODEOPS_PLANE_API_ORIGIN: "https://work.renoconcierge.ca",
     CODEOPS_PLANE_WEBHOOK_SECRET_FILE:

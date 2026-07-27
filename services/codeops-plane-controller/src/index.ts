@@ -69,6 +69,28 @@ const planeV2CommentWebhookSchema = z
   })
   .strict();
 
+const planeCeCommentWebhookSchema = z
+  .object({
+    event: z.literal("issue_comment"),
+    action: z.literal("created"),
+    webhook_id: uuid,
+    workspace_id: uuid,
+    data: z
+      .object({
+        id: uuid,
+        comment_html: z.string().max(50_000),
+        edited_at: z.null(),
+        created_by: uuid,
+        project: uuid,
+        workspace: uuid,
+        issue: uuid,
+        actor: uuid,
+      })
+      .passthrough(),
+    activity: z.record(z.unknown()).optional(),
+  })
+  .strict();
+
 const workItemSnapshotSchema = z
   .object({
     id: uuid,
@@ -129,11 +151,134 @@ export type ResearchWebhookProcessingResult =
       duplicate: boolean;
     }>;
 
+type NormalizedPlaneCommentEvent = Readonly<{
+  deliveryId: string;
+  eventId: string;
+  workspaceId: string;
+  projectId: string | undefined;
+  workItemId: string;
+  commentId: string;
+  actorId: string;
+  comment: string;
+}>;
+
+function decodePlaneCommentText(value: string): string {
+  return value
+    .replace(/&nbsp;/gi, " ")
+    .replace(/&amp;/gi, "&")
+    .replace(/&lt;/gi, "<")
+    .replace(/&gt;/gi, ">")
+    .replace(/&quot;/gi, '"')
+    .replace(/&#39;|&apos;/gi, "'")
+    .replace(/&#(\d+);/g, (_match, value: string) => {
+      const codePoint = Number(value);
+      return Number.isSafeInteger(codePoint) &&
+        codePoint > 0 &&
+        codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : "";
+    })
+    .replace(/&#x([0-9a-f]+);/gi, (_match, value: string) => {
+      const codePoint = Number.parseInt(value, 16);
+      return Number.isSafeInteger(codePoint) &&
+        codePoint > 0 &&
+        codePoint <= 0x10ffff
+        ? String.fromCodePoint(codePoint)
+        : "";
+    });
+}
+
+function planeCeCommentText(
+  html: string,
+  personaUserIds: ReadonlyMap<string, string>,
+): string {
+  const withPersonas = html.replace(
+    /<mention-component\b([^>]*)>(?:<\/mention-component>)?/gi,
+    (_match, attributes: string) => {
+      const identifier =
+        /\bentity_identifier="([0-9a-f-]+)"/i.exec(attributes)?.[1];
+      return identifier === undefined
+        ? " "
+        : (personaUserIds.get(identifier.toLowerCase()) ?? " ");
+    },
+  );
+  const text = withPersonas
+    .replace(/<br\s*\/?>/gi, "\n")
+    .replace(/<\/(?:p|div|li)>/gi, "\n")
+    .replace(/<[^>]+>/g, " ");
+  return z
+    .string()
+    .max(8_000)
+    .parse(
+      decodePlaneCommentText(text)
+        .replace(/[ \t]+/g, " ")
+        .replace(/\s*\n\s*/g, "\n")
+        .trim(),
+    );
+}
+
+function normalizePlaneCommentEvent(input: {
+  rawPayload: unknown;
+  headers: PlaneWebhookHeaders;
+  personaUserIds: ReadonlyMap<string, string>;
+}): NormalizedPlaneCommentEvent {
+  const v2 = planeV2CommentWebhookSchema.safeParse(input.rawPayload);
+  if (v2.success) {
+    const payload = v2.data;
+    if (
+      input.headers.delivery !== payload.delivery_id ||
+      input.headers.event !== payload.event
+    ) {
+      throw new Error("Plane webhook headers do not match the signed payload");
+    }
+    if (
+      payload.entity_id !== payload.data.id ||
+      payload.entity_id !== payload.data.comment.issue_id
+    ) {
+      throw new Error("Plane webhook work-item identities do not match");
+    }
+    return {
+      deliveryId: payload.delivery_id,
+      eventId: payload.event_id,
+      workspaceId: payload.workspace_id,
+      projectId: payload.data.project_id,
+      workItemId: payload.entity_id,
+      commentId: payload.data.comment.id,
+      actorId: payload.data.comment.actor_id,
+      comment: payload.data.comment.comment_stripped.trim(),
+    };
+  }
+
+  const payload = planeCeCommentWebhookSchema.parse(input.rawPayload);
+  if (
+    input.headers.event !== payload.event ||
+    payload.data.workspace !== payload.workspace_id ||
+    payload.data.actor !== payload.data.created_by
+  ) {
+    throw new Error("Plane CE webhook headers or identities do not match");
+  }
+  return {
+    deliveryId: uuid.parse(input.headers.delivery),
+    // Plane CE retries change X-Plane-Delivery but retain the comment UUID.
+    eventId: payload.data.id,
+    workspaceId: payload.workspace_id,
+    projectId: payload.data.project,
+    workItemId: payload.data.issue,
+    commentId: payload.data.id,
+    actorId: payload.data.actor,
+    comment: planeCeCommentText(
+      payload.data.comment_html,
+      input.personaUserIds,
+    ),
+  };
+}
+
 export async function admitPlaneResearchComment(input: {
   rawBody: Buffer;
   headers: PlaneWebhookHeaders;
   webhookSecret: string;
   allowedHumanActorIds: ReadonlySet<string>;
+  personaUserIds?: ReadonlyMap<string, string>;
   repository: { owner: string; name: string };
   baseSha: string;
   receivedAt: string;
@@ -153,25 +298,14 @@ export async function admitPlaneResearchComment(input: {
     throw new Error("invalid Plane webhook signature");
   }
 
-  const payload = planeV2CommentWebhookSchema.parse(
-    JSON.parse(input.rawBody.toString("utf8")) as unknown,
-  );
-  if (
-    input.headers.delivery !== payload.delivery_id ||
-    input.headers.event !== payload.event
-  ) {
-    throw new Error("Plane webhook headers do not match the signed payload");
-  }
-  if (
-    payload.entity_id !== payload.data.id ||
-    payload.entity_id !== payload.data.comment.issue_id
-  ) {
-    throw new Error("Plane webhook work-item identities do not match");
-  }
+  const event = normalizePlaneCommentEvent({
+    rawPayload: JSON.parse(input.rawBody.toString("utf8")) as unknown,
+    headers: input.headers,
+    personaUserIds: input.personaUserIds ?? new Map(),
+  });
 
-  const comment = payload.data.comment.comment_stripped.trim();
-  if (parseResearchPersonaRound(comment) === null) return null;
-  if (!input.allowedHumanActorIds.has(payload.data.comment.actor_id)) {
+  if (parseResearchPersonaRound(event.comment) === null) return null;
+  if (!input.allowedHumanActorIds.has(event.actorId)) {
     // Controller/persona-authored replies may quote or mention persona handles.
     // Ignoring every non-admitted actor prevents recursive dispatch without
     // weakening the positive human allowlist.
@@ -179,19 +313,18 @@ export async function admitPlaneResearchComment(input: {
   }
 
   const source = await input.loadSource({
-    workspaceId: payload.workspace_id,
-    projectId: payload.data.project_id,
-    workItemId: payload.entity_id,
+    workspaceId: event.workspaceId,
+    projectId: event.projectId,
+    workItemId: event.workItemId,
   });
   const workItem = workItemSnapshotSchema.parse(source.workItem);
   const project = projectSnapshotSchema.parse(source.project);
   if (
-    workItem.id !== payload.entity_id ||
+    workItem.id !== event.workItemId ||
     workItem.project !== project.id ||
-    workItem.workspace !== payload.workspace_id ||
-    project.workspace !== payload.workspace_id ||
-    (payload.data.project_id !== undefined &&
-      payload.data.project_id !== project.id)
+    workItem.workspace !== event.workspaceId ||
+    project.workspace !== event.workspaceId ||
+    (event.projectId !== undefined && event.projectId !== project.id)
   ) {
     throw new Error("Plane source snapshot is outside the signed event scope");
   }
@@ -218,8 +351,8 @@ export async function admitPlaneResearchComment(input: {
           updatedAt: workItem.updated_at,
         },
         trigger: {
-          commentId: payload.data.comment.id,
-          eventId: payload.event_id,
+          commentId: event.commentId,
+          eventId: event.eventId,
         },
       }),
     )
@@ -228,18 +361,18 @@ export async function admitPlaneResearchComment(input: {
   const request = createResearchRequestFromPlaneComment(
     {
       version: contractVersions.planeCommentEvent,
-      deliveryId: payload.delivery_id,
-      eventId: payload.event_id,
+      deliveryId: event.deliveryId,
+      eventId: event.eventId,
       action: "create",
-      workspaceId: payload.workspace_id,
+      workspaceId: event.workspaceId,
       projectId: project.id,
       workItemId: workItem.id,
-      commentId: payload.data.comment.id,
+      commentId: event.commentId,
       actor: {
-        id: payload.data.comment.actor_id,
+        id: event.actorId,
         kind: "human",
       },
-      comment,
+      comment: event.comment,
       occurredAt: z.string().datetime({ offset: true }).parse(input.receivedAt),
     },
     {
@@ -256,7 +389,7 @@ export async function admitPlaneResearchComment(input: {
     throw new Error("admitted Plane research event did not produce a request");
   }
   return {
-    eventId: payload.event_id,
+    eventId: event.eventId,
     request,
     planeRevisionDigest,
   };

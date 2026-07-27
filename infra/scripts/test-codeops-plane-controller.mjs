@@ -18,6 +18,15 @@ const input = {
   workspaceSlug: "reno-concierge",
   allowedHumanActorIds:
     "123e4567-e89b-12d3-a456-426614174000,223e4567-e89b-12d3-a456-426614174001",
+  personaUserIds: [
+    "323e4567-e89b-12d3-a456-426614174002=@ai-web",
+    "423e4567-e89b-12d3-a456-426614174003=@ai-security",
+    "523e4567-e89b-12d3-a456-426614174004=@ai-database",
+    "623e4567-e89b-12d3-a456-426614174005=@ai-infra",
+    "723e4567-e89b-12d3-a456-426614174006=@ai-design",
+    "823e4567-e89b-12d3-a456-426614174007=@ai-product",
+    "923e4567-e89b-12d3-a456-426614174008=@ai-ml",
+  ].join(","),
 };
 
 function resources(rendered = renderPlaneControllerManifest(template, input)) {
@@ -144,6 +153,13 @@ test("fails closed on malformed identity, image, host, or resource drift", () =>
     { baseSha: "abc" },
     { workspaceSlug: "Upper" },
     { allowedHumanActorIds: "" },
+    { personaUserIds: "" },
+    {
+      personaUserIds: [
+        "323e4567-e89b-12d3-a456-426614174002=@ai-web",
+        "423e4567-e89b-12d3-a456-426614174003=@ai-web",
+      ].join(","),
+    },
     {
       allowedHumanActorIds:
         "123e4567-e89b-12d3-a456-426614174000,123e4567-e89b-12d3-a456-426614174000",

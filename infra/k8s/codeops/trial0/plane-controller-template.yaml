@@ -71,6 +71,8 @@ spec:
               value: /var/run/codeops-projection/token
             - name: CODEOPS_ALLOWED_HUMAN_ACTOR_IDS
               value: __CODEOPS_ALLOWED_HUMAN_ACTOR_IDS__
+            - name: CODEOPS_PERSONA_USER_IDS
+              value: __CODEOPS_PERSONA_USER_IDS__
             - name: CODEOPS_REPOSITORY_OWNER
               value: anulman
             - name: CODEOPS_REPOSITORY_NAME

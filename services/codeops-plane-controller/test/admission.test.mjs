@@ -56,6 +56,40 @@ const source = {
   },
 };
 
+const personaUserId = "98d2dd94-8b56-4d68-bce9-774fc6d4bb2c";
+const cePayload = {
+  event: "issue_comment",
+  action: "created",
+  webhook_id: "285f087b-e1e0-4f90-b9f4-0b720acfac04",
+  workspace_id: payload.workspace_id,
+  data: {
+    id: payload.data.comment.id,
+    created_at: "2026-07-26T02:29:00.000Z",
+    updated_at: "2026-07-26T02:29:00.000Z",
+    deleted_at: null,
+    comment_html: `<p><mention-component id="f3137058-e0aa-4375-a0d6-6f8608a1aed7" entity_identifier="${personaUserId}" entity_name="user_mention"></mention-component> Inspect &amp; verify the signed auth boundary.</p>`,
+    attachments: [],
+    access: "INTERNAL",
+    external_source: null,
+    external_id: null,
+    edited_at: null,
+    created_by: actorId,
+    updated_by: null,
+    project: payload.data.project_id,
+    workspace: payload.workspace_id,
+    description: "7bc73f5f-a32e-4b96-9bb3-2e22368cd015",
+    issue: payload.entity_id,
+    actor: actorId,
+    parent: null,
+  },
+  activity: {
+    field: null,
+    new_value: null,
+    old_value: null,
+    actor: { id: actorId },
+  },
+};
+
 function signedInput(overrides = {}) {
   const body = overrides.payload ?? payload;
   const rawBody = Buffer.from(JSON.stringify(body));
@@ -76,6 +110,27 @@ function signedInput(overrides = {}) {
   };
 }
 
+function signedCeInput(overrides = {}) {
+  const body = overrides.payload ?? cePayload;
+  const rawBody = Buffer.from(JSON.stringify(body));
+  return {
+    rawBody,
+    headers: {
+      delivery: "616d98fe-35a7-4436-bdca-5ff5490dbf09",
+      event: "issue_comment",
+      signature: createHmac("sha256", secret).update(rawBody).digest("hex"),
+      ...overrides.headers,
+    },
+    webhookSecret: secret,
+    allowedHumanActorIds: new Set([actorId]),
+    personaUserIds: new Map([[personaUserId, "@ai-security"]]),
+    repository: { owner: "anulman", name: "renoconcierge" },
+    baseSha,
+    receivedAt: "2026-07-26T02:30:00.000Z",
+    loadSource: async () => source,
+  };
+}
+
 test("admits signed human persona mentions and binds the bounded round", async () => {
   const admission = await admitPlaneResearchComment(signedInput());
   assert.equal(admission.request.workItemId, payload.entity_id);
@@ -87,6 +142,23 @@ test("admits signed human persona mentions and binds the bounded round", async (
     "Cross-check auth boundaries and route guards.",
   );
   assert.match(admission.planeRevisionDigest, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("admits the real Plane CE issue-comment payload and resolves mention UUIDs", async () => {
+  const admission = await admitPlaneResearchComment(signedCeInput());
+  assert.equal(admission.eventId, cePayload.data.id);
+  assert.equal(admission.request.workItemId, cePayload.data.issue);
+  assert.deepEqual(admission.request.personas, ["@ai-security"]);
+  assert.equal(
+    admission.request.brief,
+    "Inspect & verify the signed auth boundary.",
+  );
+});
+
+test("ignores unresolved Plane CE mention UUIDs", async () => {
+  const input = signedCeInput();
+  input.personaUserIds = new Map();
+  assert.equal(await admitPlaneResearchComment(input), null);
 });
 
 test("deduplicates retries by Plane event ID rather than delivery ID", async () => {
