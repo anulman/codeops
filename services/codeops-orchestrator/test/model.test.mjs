@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -195,23 +196,24 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
   const token = "t".repeat(64);
   await writeFile(tokenPath, token);
   const previous = {
-    fetch: globalThis.fetch,
     origin: process.env.CODEOPS_AGENT_DISPATCH_ORIGIN,
     tokenPath: process.env.CODEOPS_AGENT_DISPATCH_TOKEN_FILE,
   };
-  process.env.CODEOPS_AGENT_DISPATCH_ORIGIN = "http://codeops-control-gateway";
   process.env.CODEOPS_AGENT_DISPATCH_TOKEN_FILE = tokenPath;
-  globalThis.fetch = async (url, init) => {
-    assert.equal(String(url), "http://codeops-control-gateway/v1/agent-jobs");
-    assert.equal(init.headers.Authorization, `Bearer ${token}`);
-    const body = JSON.parse(init.body);
-    assert.equal(body.role, "qa-contract-researcher");
-    assert.deepEqual(body.researchStage, {
-      kind: "persona",
-      persona: "@ai-security",
-    });
-    return new Response(
-      JSON.stringify({
+  const server = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      assert.equal(request.url, "/v1/agent-jobs");
+      assert.equal(request.headers.authorization, `Bearer ${token}`);
+      const body = JSON.parse(Buffer.concat(chunks).toString("utf8"));
+      assert.equal(body.role, "qa-contract-researcher");
+      assert.deepEqual(body.researchStage, {
+        kind: "persona",
+        persona: "@ai-security",
+      });
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(JSON.stringify({
         version: "codeops.agent-job-dispatch-result/v1",
         role: "qa-contract-researcher",
         runId: "research-test",
@@ -232,10 +234,14 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
             citations: [],
           },
         },
-      }),
-      { status: 200, headers: { "Content-Type": "application/json" } },
-    );
-  };
+      }));
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  assert.equal(typeof address, "object");
+  process.env.CODEOPS_AGENT_DISPATCH_ORIGIN =
+    `http://127.0.0.1:${address.port}`;
   try {
     const result = await dispatchAgentJob({
       version: "codeops.agent-job-dispatch/v1",
@@ -278,7 +284,9 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
     });
     assert.equal(result.checkpointDigest, `sha256:${"a".repeat(64)}`);
   } finally {
-    globalThis.fetch = previous.fetch;
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
     if (previous.origin === undefined) delete process.env.CODEOPS_AGENT_DISPATCH_ORIGIN;
     else process.env.CODEOPS_AGENT_DISPATCH_ORIGIN = previous.origin;
     if (previous.tokenPath === undefined) {

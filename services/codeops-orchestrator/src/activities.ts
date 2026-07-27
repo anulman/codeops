@@ -1,4 +1,6 @@
 import { readFile } from "node:fs/promises";
+import { request as httpRequest } from "node:http";
+import { request as httpsRequest } from "node:https";
 import {
   agentJobDispatchRequestSchema,
   agentJobDispatchResultSchema,
@@ -34,6 +36,57 @@ function required(name: string): string {
   return value;
 }
 
+async function postJson(
+  endpoint: URL,
+  token: string,
+  payload: unknown,
+  timeoutMs: number,
+): Promise<{ statusCode: number; body: unknown }> {
+  const encoded = Buffer.from(JSON.stringify(payload));
+  const request = endpoint.protocol === "https:" ? httpsRequest : httpRequest;
+  return new Promise((resolve, reject) => {
+    const outgoing = request(
+      endpoint,
+      {
+        method: "POST",
+        signal: AbortSignal.timeout(timeoutMs),
+        headers: {
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+          "Content-Length": String(encoded.length),
+        },
+      },
+      (incoming) => {
+        const chunks: Buffer[] = [];
+        let size = 0;
+        incoming.on("data", (chunk: Buffer) => {
+          size += chunk.length;
+          if (size > 2 * 1024 * 1024) {
+            incoming.destroy(
+              new Error("CodeOps JSON response exceeds 2 MiB"),
+            );
+            return;
+          }
+          chunks.push(chunk);
+        });
+        incoming.once("error", reject);
+        incoming.once("end", () => {
+          try {
+            resolve({
+              statusCode: incoming.statusCode ?? 0,
+              body: JSON.parse(Buffer.concat(chunks).toString("utf8")),
+            });
+          } catch (error) {
+            reject(error);
+          }
+        });
+      },
+    );
+    outgoing.once("error", reject);
+    outgoing.end(encoded);
+  });
+}
+
 export async function recordTransition(
   workItem: WorkItemInput,
   snapshot: WorkflowSnapshot,
@@ -63,19 +116,21 @@ export async function dispatchAgentJob(
     throw new Error("CodeOps Agent Job dispatch token is invalid");
   }
 
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${token}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify(agentJobDispatchRequestSchema.parse(workItem)),
-    signal: AbortSignal.timeout(65 * 60 * 1_000),
-  });
-  if (!response.ok) {
-    throw new Error(`CodeOps Agent Job dispatch failed with status ${response.status}`);
+  // Agent Jobs may legitimately take longer than Node fetch's five-minute
+  // response-header timeout. Keep one explicit 65-minute total deadline while
+  // allowing the trusted gateway to hold the response until reconciliation.
+  const response = await postJson(
+    endpoint,
+    token,
+    agentJobDispatchRequestSchema.parse(workItem),
+    65 * 60 * 1_000,
+  );
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw new Error(
+      `CodeOps Agent Job dispatch failed with status ${response.statusCode}`,
+    );
   }
-  return agentJobDispatchResultSchema.parse(await response.json());
+  return agentJobDispatchResultSchema.parse(response.body);
 }
 
 export async function publishResearchPacket(
