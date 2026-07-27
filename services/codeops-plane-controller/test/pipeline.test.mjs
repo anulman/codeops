@@ -125,6 +125,18 @@ test("a Plane delivery retry returns the persisted outcome without enqueueing ag
         delivery_id: "616d98fe-35a7-4436-bdca-5ff5490dbf09",
       });
     retryInput.receivedAt = "2026-07-26T12:30:00.000Z";
+    retryInput.baseSha = "a".repeat(40);
+    retryInput.loadSource = async () => ({
+      project: {
+        ...source.project,
+        updated_at: "2026-07-26T12:29:00.000Z",
+      },
+      workItem: {
+        ...source.workItem,
+        name: "Inventory canonical auth states after deployment",
+        updated_at: "2026-07-26T12:29:00.000Z",
+      },
+    });
     const retry = await processPlaneResearchWebhook(retryInput);
     assert.equal(first.status, "enqueued");
     assert.deepEqual(retry, {

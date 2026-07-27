@@ -402,6 +402,21 @@ function researchRequestDigest(request: ResearchRequest): string {
     .digest("hex")}`;
 }
 
+function researchEventDigest(request: ResearchRequest): string {
+  return `sha256:${createHash("sha256")
+    .update(
+      canonicalSerialize({
+        projectId: request.projectId,
+        workItemId: request.workItemId,
+        triggerCommentId: request.triggerCommentId,
+        requestedBy: request.requestedBy,
+        personas: request.personas,
+        brief: request.brief,
+      }),
+    )
+    .digest("hex")}`;
+}
+
 export async function processPlaneResearchWebhook(
   input: Parameters<typeof admitPlaneResearchComment>[0] & {
     ledger: import("./dedup-ledger.js").ResearchDedupLedger;
@@ -416,7 +431,8 @@ export async function processPlaneResearchWebhook(
   if (admission === null) return { status: "ignored" };
 
   const now = input.now ?? (() => new Date().toISOString());
-  const payloadDigest = researchRequestDigest(admission.request);
+  const eventPayloadDigest = researchEventDigest(admission.request);
+  const requestPayloadDigest = researchRequestDigest(admission.request);
   let eventClaim:
     | Extract<
         import("./dedup-ledger.js").DedupClaim,
@@ -433,7 +449,7 @@ export async function processPlaneResearchWebhook(
   const claimedEvent = await input.ledger.claim({
     kind: "event",
     stableId: admission.eventId,
-    payloadDigest,
+    payloadDigest: eventPayloadDigest,
     now: now(),
   });
   if (claimedEvent.status === "busy") {
@@ -447,7 +463,7 @@ export async function processPlaneResearchWebhook(
     if (claimedEvent.outcome === "request-enqueued") {
       return {
         status: "enqueued",
-        requestId: admission.request.requestId,
+        requestId: claimedEvent.resultId ?? admission.request.requestId,
         duplicate: true,
       };
     }
@@ -464,7 +480,7 @@ export async function processPlaneResearchWebhook(
     const claimedRequest = await input.ledger.claim({
       kind: "request",
       stableId: admission.request.requestId,
-      payloadDigest,
+      payloadDigest: requestPayloadDigest,
       now: now(),
     });
     if (claimedRequest.status === "busy") {
@@ -491,12 +507,13 @@ export async function processPlaneResearchWebhook(
         await input.ledger.complete({
           claim: eventClaim,
           outcome: "request-enqueued",
+          resultId: claimedRequest.resultId ?? admission.request.requestId,
           now: now(),
         });
       }
       return {
         status: "enqueued",
-        requestId: admission.request.requestId,
+        requestId: claimedRequest.resultId ?? admission.request.requestId,
         duplicate: true,
       };
     }
@@ -516,6 +533,7 @@ export async function processPlaneResearchWebhook(
     await input.ledger.complete({
       claim: requestClaim,
       outcome: "request-enqueued",
+      resultId: admission.request.requestId,
       now: now(),
     });
     requestClaim = undefined;
@@ -523,6 +541,7 @@ export async function processPlaneResearchWebhook(
       await input.ledger.complete({
         claim: eventClaim,
         outcome: "request-enqueued",
+        resultId: admission.request.requestId,
         now: now(),
       });
       eventClaim = undefined;

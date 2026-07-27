@@ -37,6 +37,7 @@ const ledgerRecordSchema = z
     leaseExpiresAt: isoDateTimeSchema,
     updatedAt: isoDateTimeSchema,
     outcome: outcomeSchema.optional(),
+    resultId: stableIdSchema.optional(),
     failure: z.string().min(1).max(1_000).optional(),
   })
   .strict()
@@ -53,6 +54,13 @@ const ledgerRecordSchema = z
         code: z.ZodIssueCode.custom,
         path: ["outcome"],
         message: "only complete ledger records may carry an outcome",
+      });
+    }
+    if (record.state !== "complete" && record.resultId !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["resultId"],
+        message: "only complete ledger records may carry a result identity",
       });
     }
     if (record.state === "failed" && record.failure === undefined) {
@@ -92,6 +100,7 @@ export type DedupClaim =
   | Readonly<{
       status: "complete";
       outcome: LedgerOutcome;
+      resultId?: string;
     }>;
 
 export interface ResearchDedupLedger {
@@ -104,6 +113,7 @@ export interface ResearchDedupLedger {
   complete(input: {
     claim: Extract<DedupClaim, { status: "acquired" }>;
     outcome: LedgerOutcome;
+    resultId?: string;
     now: string;
   }): Promise<void>;
   fail(input: {
@@ -262,6 +272,7 @@ export function createFileResearchDedupLedger(
           type: "complete";
           claim: Extract<DedupClaim, { status: "acquired" }>;
           outcome: LedgerOutcome;
+          resultId?: string;
           now: string;
         }
       | {
@@ -287,7 +298,12 @@ export function createFileResearchDedupLedger(
         state: input.type === "complete" ? "complete" : "failed",
         updatedAt: now,
         ...(input.type === "complete"
-          ? { outcome: outcomeSchema.parse(input.outcome) }
+          ? {
+              outcome: outcomeSchema.parse(input.outcome),
+              ...(input.resultId === undefined
+                ? {}
+                : { resultId: stableIdSchema.parse(input.resultId) }),
+            }
           : { failure: boundedFailure(input.failure) }),
       });
     });
@@ -314,6 +330,9 @@ export function createFileResearchDedupLedger(
           return {
             status: "complete",
             outcome: existing.outcome as LedgerOutcome,
+            ...(existing.resultId === undefined
+              ? {}
+              : { resultId: existing.resultId }),
           };
         }
         if (
