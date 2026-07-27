@@ -23,7 +23,6 @@ function listHtml(title: string, values: readonly string[]): string {
 export function buildResearchPacket(input: {
   request: ResearchRequest;
   dispatches: readonly AgentJobDispatchResult[];
-  createdAt: string;
 }): ResearchPacket {
   if (input.dispatches.length !== input.request.personas.length) {
     throw new Error("research dispatch count does not match requested personas");
@@ -116,6 +115,8 @@ export function buildResearchPacket(input: {
         },
       ],
     },
-    createdAt: input.createdAt,
+    // Workflow time advances after a Temporal reset. The admitted request
+    // timestamp is immutable, so it keeps projection identity byte-stable.
+    createdAt: input.request.requestedAt,
   };
 }

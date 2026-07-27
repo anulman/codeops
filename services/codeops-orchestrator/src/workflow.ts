@@ -194,7 +194,6 @@ export async function workItemWorkflow(
         buildResearchPacket({
           request: workItem.researchRequest,
           dispatches,
-          createdAt: new Date().toISOString(),
         }),
       );
     } catch {

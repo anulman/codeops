@@ -42,7 +42,6 @@ test("assembles one deterministic content-only packet in requested persona order
   const packet = buildResearchPacket({
     request,
     dispatches: [result("@ai-security", "a"), result("@ai-web", "c")],
-    createdAt: "2026-07-26T01:00:00.000Z",
   });
   assert.deepEqual(
     packet.perspectives.map((perspective) => perspective.persona),
@@ -55,6 +54,7 @@ test("assembles one deterministic content-only packet in requested persona order
     /<@ai-security>/,
   );
   assert.equal(packet.evidence.length, 2);
+  assert.equal(packet.createdAt, request.requestedAt);
 });
 
 test("rejects missing, reordered, or identity-drifted reports", () => {
@@ -62,14 +62,12 @@ test("rejects missing, reordered, or identity-drifted reports", () => {
     buildResearchPacket({
       request,
       dispatches: [result("@ai-security", "a")],
-      createdAt: "2026-07-26T01:00:00.000Z",
     }),
   );
   assert.throws(() =>
     buildResearchPacket({
       request,
       dispatches: [result("@ai-web", "c"), result("@ai-security", "a")],
-      createdAt: "2026-07-26T01:00:00.000Z",
     }),
   );
 });
