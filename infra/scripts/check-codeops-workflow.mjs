@@ -77,8 +77,7 @@ assert.ok(
       step.name === "Test and render the Trial 0 Plane controller" &&
       step.run?.includes("infra/scripts/test-codeops-plane-controller.mjs") &&
       step.run?.includes("infra/scripts/render-codeops-plane-controller.mjs") &&
-      step.env?.CODEOPS_PLANE_CONTROLLER_HOST ===
-        "research-bbbbbbbbbbbb.preview.renoconcierge.ca",
+      step.env?.CODEOPS_PLANE_CONTROLLER_HOST === "work.renoconcierge.ca",
   ),
 );
 assert.ok(

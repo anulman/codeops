@@ -14,7 +14,7 @@ const template = await readFile(
 const input = {
   controllerDigest: `sha256:${"a".repeat(64)}`,
   baseSha: "b".repeat(40),
-  controllerHost: `research-${"b".repeat(12)}.preview.renoconcierge.ca`,
+  controllerHost: "work.renoconcierge.ca",
   workspaceSlug: "reno-concierge",
   allowedHumanActorIds:
     "123e4567-e89b-12d3-a456-426614174000,223e4567-e89b-12d3-a456-426614174001",

@@ -130,7 +130,7 @@ uses `Recreate` with one replica so two writers cannot mount or update the
 ledger concurrently.
 
 Only the exact SHA-bound
-`https://research-<sha-prefix>.preview.renoconcierge.ca/webhooks/plane`
+`https://work.renoconcierge.ca/webhooks/plane`
 endpoint is public. `/healthz` remains pod-local. Network policy admits ingress
 only from ingress-nginx and egress only to Temporal, cluster DNS, and public
 HTTPS for the fixed Plane API origin. The controller image, base SHA, Plane
@@ -140,7 +140,7 @@ the trusted renderer:
 ```bash
 CODEOPS_PLANE_CONTROLLER_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_BASE_SHA=<40-lowercase-hex> \
-CODEOPS_PLANE_CONTROLLER_HOST=research-<first-12-sha>.preview.renoconcierge.ca \
+CODEOPS_PLANE_CONTROLLER_HOST=work.renoconcierge.ca \
 CODEOPS_PLANE_WORKSPACE_SLUG=<workspace-slug> \
 CODEOPS_ALLOWED_HUMAN_ACTOR_IDS=<comma-separated-lowercase-uuids> \
   node infra/scripts/render-codeops-plane-controller.mjs \

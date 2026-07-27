@@ -38,7 +38,7 @@ export function renderPlaneControllerManifest(template, input) {
   ) {
     throw new Error("allowed human actor IDs must be unique lowercase UUIDs");
   }
-  const expectedHost = `research-${input.baseSha.slice(0, 12)}.preview.renoconcierge.ca`;
+  const expectedHost = "work.renoconcierge.ca";
   if (input.controllerHost !== expectedHost) {
     throw new Error(`controller host must be ${expectedHost}`);
   }
@@ -178,7 +178,7 @@ export function renderPlaneControllerManifest(template, input) {
     ingress.spec.rules[0].http.paths[0].path !== "/webhooks/plane" ||
     ingress.spec.rules[0].http.paths[0].pathType !== "Exact" ||
     ingress.spec.tls[0].hosts[0] !== input.controllerHost ||
-    ingress.spec.tls[0].secretName !== "renoconcierge-preview-wildcard-tls"
+    ingress.spec.tls[0].secretName !== "codeops-plane-work-tls"
   ) {
     throw new Error("controller ingress must expose only the exact webhook path");
   }

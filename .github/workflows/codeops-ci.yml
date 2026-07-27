@@ -217,7 +217,7 @@ jobs:
         env:
           CODEOPS_PLANE_CONTROLLER_DIGEST: sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
           CODEOPS_BASE_SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
-          CODEOPS_PLANE_CONTROLLER_HOST: research-bbbbbbbbbbbb.preview.renoconcierge.ca
+          CODEOPS_PLANE_CONTROLLER_HOST: work.renoconcierge.ca
           CODEOPS_PLANE_WORKSPACE_SLUG: reno-concierge
           CODEOPS_ALLOWED_HUMAN_ACTOR_IDS: 123e4567-e89b-12d3-a456-426614174000
         run: |

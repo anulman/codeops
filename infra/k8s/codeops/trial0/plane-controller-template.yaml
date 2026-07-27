@@ -175,7 +175,7 @@ spec:
   tls:
     - hosts:
         - __CODEOPS_PLANE_CONTROLLER_HOST__
-      secretName: renoconcierge-preview-wildcard-tls
+      secretName: codeops-plane-work-tls
   rules:
     - host: __CODEOPS_PLANE_CONTROLLER_HOST__
       http:
