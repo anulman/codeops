@@ -213,6 +213,57 @@ test("runs a distinct ticket-specific synthesis checkpoint after persona researc
   }
 });
 
+test("accepts progress prose only before one terminal research JSON object", async () => {
+  const report = {
+    version: "codeops.research-persona-report/v2",
+    requestId: request.researchRequest.requestId,
+    persona: "@ai-security",
+    outcome: "findings",
+    summary: "Authentication boundaries need qualification.",
+    findings: [],
+    decisions: [],
+    citations: [],
+  };
+  const identity = createRunIdentity(request);
+  const rootDirectory = await mkdtemp(path.join(os.tmpdir(), "codeops-terminal-json-"));
+  try {
+    const retained = parseCheckpointLogs({
+      logs: checkpointLogs(identity.runId, {
+        response: `Inspecting the exact source now.\n${JSON.stringify(report)}`,
+      }),
+      request,
+      runId: identity.runId,
+    });
+    const result = await retainCheckpoint({
+      rootDirectory,
+      request,
+      ...identity,
+      retained,
+    });
+    assert.equal(result.researchResult.report.persona, "@ai-security");
+
+    await rm(rootDirectory, { recursive: true, force: true });
+    const invalid = parseCheckpointLogs({
+      logs: checkpointLogs(identity.runId, {
+        response: `${JSON.stringify(report)}\ntrailing prose`,
+      }),
+      request,
+      runId: identity.runId,
+    });
+    await assert.rejects(
+      retainCheckpoint({
+        rootDirectory,
+        request,
+        ...identity,
+        retained: invalid,
+      }),
+      /must end with exactly one complete JSON object/,
+    );
+  } finally {
+    await rm(rootDirectory, { recursive: true, force: true });
+  }
+});
+
 test("validates checkpoint identity, digest, patch, and research immutability", () => {
   const runId = createRunIdentity(request).runId;
   const parsed = parseCheckpointLogs({

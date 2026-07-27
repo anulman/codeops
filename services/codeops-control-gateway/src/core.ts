@@ -420,6 +420,10 @@ export async function retainCheckpoint(input: {
     `${JSON.stringify(input.retained.checkpoint, null, 2)}\n`,
   );
   await atomicWrite(path.join(directory, "changes.patch"), input.retained.patch);
+  const researchResponse =
+    input.request.role === "qa-contract-researcher"
+      ? parseTerminalJsonObject(input.retained.checkpoint.response)
+      : undefined;
   const result = agentJobDispatchResultSchema.parse({
     version: "codeops.agent-job-dispatch-result/v1",
     role: input.request.role,
@@ -435,15 +439,11 @@ export async function retainCheckpoint(input: {
             input.request.researchStage.kind === "persona"
               ? {
                   kind: "persona",
-                  report: researchPersonaReportSchema.parse(
-                    JSON.parse(input.retained.checkpoint.response) as unknown,
-                  ),
+                  report: researchPersonaReportSchema.parse(researchResponse),
                 }
               : {
                   kind: "synthesis",
-                  synthesis: researchSynthesisSchema.parse(
-                    JSON.parse(input.retained.checkpoint.response) as unknown,
-                  ),
+                  synthesis: researchSynthesisSchema.parse(researchResponse),
                 },
         }
       : {}),
@@ -479,6 +479,29 @@ export async function retainCheckpoint(input: {
     `${JSON.stringify(result, null, 2)}\n`,
   );
   return result;
+}
+
+function parseTerminalJsonObject(response: string): unknown {
+  const trimmed = response.trim();
+  const candidates: unknown[] = [];
+  for (let index = 0; index < trimmed.length; index += 1) {
+    if (trimmed[index] !== "{") continue;
+    try {
+      const value = JSON.parse(trimmed.slice(index)) as unknown;
+      if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+        candidates.push(value);
+      }
+    } catch {
+      // Only a complete object that consumes the final response suffix is
+      // eligible. Progress prose and nested opening braces do not qualify.
+    }
+  }
+  if (candidates.length !== 1) {
+    throw new Error(
+      "research response must end with exactly one complete JSON object",
+    );
+  }
+  return candidates[0];
 }
 
 export async function claimRequest(input: {
