@@ -148,7 +148,7 @@ export function parseCheckpointLogs(input: {
   request: AgentJobDispatchRequest;
   runId: string;
 }): RetainedCheckpoint {
-  const checkpoints: z.infer<typeof checkpointRecordSchema>[] = [];
+  const checkpoints: unknown[] = [];
   const chunks: z.infer<typeof patchChunkSchema>[] = [];
   for (const line of input.logs.split(/\r?\n/)) {
     const trimmed = line.trim();
@@ -164,7 +164,7 @@ export function parseCheckpointLogs(input: {
       value !== null &&
       (value as { type?: unknown }).type === "codeops.checkpoint"
     ) {
-      checkpoints.push(checkpointRecordSchema.parse(value));
+      checkpoints.push(value);
     } else if (
       typeof value === "object" &&
       value !== null &&
@@ -176,10 +176,15 @@ export function parseCheckpointLogs(input: {
   if (checkpoints.length !== 1) {
     throw new Error("Agent Job must emit exactly one checkpoint record");
   }
-  const record = checkpoints[0]!;
+  const rawRecord = checkpoints[0] as { checkpoint?: unknown };
+  const record = checkpointRecordSchema.parse(rawRecord);
   const checkpoint = record.checkpoint;
+  const serializedCheckpoint = JSON.stringify(rawRecord.checkpoint);
+  if (serializedCheckpoint === undefined) {
+    throw new Error("Agent Job checkpoint is not serializable");
+  }
   const computedCheckpointDigest = `sha256:${createHash("sha256")
-    .update(JSON.stringify(checkpoint))
+    .update(serializedCheckpoint)
     .digest("hex")}`;
   if (record.checkpointDigest !== computedCheckpointDigest) {
     throw new Error("Agent Job checkpoint digest mismatch");

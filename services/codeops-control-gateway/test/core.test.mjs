@@ -123,6 +123,32 @@ test("validates checkpoint identity, digest, patch, and research immutability", 
       runId,
     }),
   );
+  const failureCheckpoint = {
+    schemaVersion: 2,
+    runId,
+    agentRole: "qa-contract-researcher",
+    baseSha: "a".repeat(40),
+    response: "",
+    events: [],
+    error: "Codex failed before producing a response",
+    patch: {
+      path: "changes.patch",
+      sha256:
+        "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+      bytes: 0,
+    },
+  };
+  const failureLogs = JSON.stringify({
+    type: "codeops.checkpoint",
+    checkpointDigest: `sha256:${createHash("sha256")
+      .update(JSON.stringify(failureCheckpoint))
+      .digest("hex")}`,
+    checkpoint: failureCheckpoint,
+  });
+  assert.throws(
+    () => parseCheckpointLogs({ logs: failureLogs, request, runId }),
+    /checkpoint reported failure/,
+  );
 });
 
 test("retains one idempotent digest-bound result", async () => {
@@ -186,5 +212,12 @@ test("builds only the fixed tokenless run resources", () => {
     /git -c safe\.directory=\/workspace -C \/workspace/,
   );
   assert.equal(workspaceBuilder.includes("safe.directory=*"), false);
+  const codingAgent = resources[2].spec.template.spec.containers.find(
+    (container) => container.name === "coding-agent",
+  );
+  assert.equal(
+    codingAgent.env.find((entry) => entry.name === "CODEX_HOME").value,
+    "/tmp/codex-home",
+  );
   assert.equal(JSON.stringify(resources).includes("automountServiceAccountToken\":true"), false);
 });

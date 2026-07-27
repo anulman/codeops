@@ -173,6 +173,7 @@ export function buildRunResources(
                       secretKeyRef: { name: secretName, key: "model-api-key" },
                     },
                   },
+                  { name: "CODEX_HOME", value: "/tmp/codex-home" },
                   {
                     name: "DEFAULT_AUTH_REQUEST",
                     value: '{"methodId":"api-key"}',

@@ -3,6 +3,10 @@ set -eu
 
 socket_path="${CODEOPS_ACP_SOCKET:-/run/codeops/agent.sock}"
 done_path="$(dirname "$socket_path")/done"
+codex_home="${CODEX_HOME:-/tmp/codex-home}"
+mkdir -p "$codex_home"
+chmod 700 "$codex_home"
+export CODEX_HOME="$codex_home"
 rm -f "$socket_path" "$done_path"
 
 socat \

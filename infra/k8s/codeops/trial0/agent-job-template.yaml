@@ -146,6 +146,8 @@ spec:
                 secretKeyRef:
                   name: codeops-run-__CODEOPS_RUN_SUFFIX__
                   key: model-api-key
+            - name: CODEX_HOME
+              value: /tmp/codex-home
             - name: DEFAULT_AUTH_REQUEST
               value: '{"methodId":"api-key"}'
             - name: CODEOPS_ACP_SOCKET

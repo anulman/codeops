@@ -172,6 +172,10 @@ test("scopes repository-read and model secrets to separate containers", () => {
     agent.env.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST").value,
     '{"methodId":"api-key"}',
   );
+  assert.equal(
+    agent.env.find((entry) => entry.name === "CODEX_HOME").value,
+    "/tmp/codex-home",
+  );
   assert.equal(JSON.stringify(job).includes("value: sk-"), false);
 });
 
