@@ -13,6 +13,13 @@ This service owns the privileged Plane integration boundary. It implements:
 - bind the request to the exact source SHA and a digest of the Plane revision;
 - deduplicate retries with Plane's stable `event_id`, not its per-attempt
   `delivery_id`.
+- parse Plane CE's signed `issue`/`update` activity envelope for lifecycle
+  admission, but accept only a `state` field transition into the configured
+  Ready UUID by an explicitly allowlisted human;
+- reload the exact ticket after a Ready event, require its state and
+  `updated_at` revision to match the signed payload, bind the configured
+  repository and exact source SHA, and derive a delivery-independent Ready
+  event identity for durable replay handling;
 - persist event and request deduplication on a private durable volume with
   payload-digest collision checks, bounded processing leases, crash recovery,
   attempt counts, and explicit terminal outcomes;
@@ -46,3 +53,8 @@ volume. Temporal `already started` maps to `already-enqueued`; every other
 Temporal error fails both held claims for a bounded retry. Immutable image and
 Kubernetes packaging plus deployment remain separate fail-closed slices. Until
 those exist, persona mentions must not be advertised as live.
+
+Ready admission currently stops after the trusted, immutable admission record.
+It does not yet enqueue coding work or mutate Plane. The next slice must compile
+that record into the strict work-item contract, claim it durably, and start the
+coding workflow with its separate plan-approval boundary intact.

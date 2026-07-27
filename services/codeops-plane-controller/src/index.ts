@@ -91,6 +91,36 @@ const planeCeCommentWebhookSchema = z
   })
   .strict();
 
+const planeCeIssueWebhookSchema = z
+  .object({
+    event: z.literal("issue"),
+    action: z.literal("update"),
+    webhook_id: uuid,
+    workspace_id: uuid,
+    data: z
+      .object({
+        id: uuid,
+        project: uuid,
+        workspace: uuid,
+        state: uuid,
+        updated_at: z.string().datetime({ offset: true }),
+      })
+      .passthrough(),
+    activity: z
+      .object({
+        field: z.literal("state"),
+        old_value: uuid,
+        new_value: uuid,
+        actor: z
+          .object({
+            id: uuid,
+          })
+          .passthrough(),
+      })
+      .passthrough(),
+  })
+  .strict();
+
 const workItemSnapshotSchema = z
   .object({
     id: uuid,
@@ -133,6 +163,18 @@ export type PlaneSourceSnapshot = Readonly<{
 export type ResearchAdmission = Readonly<{
   eventId: string;
   request: ResearchRequest;
+  planeRevisionDigest: string;
+}>;
+
+export type ReadyAdmission = Readonly<{
+  eventId: string;
+  workspaceId: string;
+  projectId: string;
+  workItemId: string;
+  requestedBy: string;
+  repository: Readonly<{ owner: string; name: string }>;
+  baseSha: string;
+  requestedAt: string;
   planeRevisionDigest: string;
 }>;
 
@@ -391,6 +433,147 @@ export async function admitPlaneResearchComment(input: {
   return {
     eventId: event.eventId,
     request,
+    planeRevisionDigest,
+  };
+}
+
+export async function admitPlaneReadyTransition(input: {
+  rawBody: Buffer;
+  headers: PlaneWebhookHeaders;
+  webhookSecret: string;
+  allowedHumanActorIds: ReadonlySet<string>;
+  readyStateId: string;
+  repository: { owner: string; name: string };
+  baseSha: string;
+  receivedAt: string;
+  loadSource: (input: {
+    workspaceId: string;
+    projectId: string;
+    workItemId: string;
+  }) => Promise<PlaneSourceSnapshot>;
+}): Promise<ReadyAdmission | null> {
+  if (
+    !verifyPlaneWebhookSignature({
+      secret: input.webhookSecret,
+      rawBody: input.rawBody,
+      signature: input.headers.signature,
+    })
+  ) {
+    throw new Error("invalid Plane webhook signature");
+  }
+
+  const parsed = planeCeIssueWebhookSchema.safeParse(
+    JSON.parse(input.rawBody.toString("utf8")) as unknown,
+  );
+  if (!parsed.success) return null;
+  const payload = parsed.data;
+  uuid.parse(input.headers.delivery);
+  if (
+    input.headers.event !== payload.event ||
+    payload.data.workspace !== payload.workspace_id ||
+    payload.data.state !== payload.activity.new_value
+  ) {
+    throw new Error("Plane Ready webhook headers or identities do not match");
+  }
+
+  const readyStateId = uuid.parse(input.readyStateId);
+  if (
+    payload.activity.old_value === payload.activity.new_value ||
+    payload.activity.new_value !== readyStateId ||
+    !input.allowedHumanActorIds.has(payload.activity.actor.id)
+  ) {
+    return null;
+  }
+
+  const source = await input.loadSource({
+    workspaceId: payload.workspace_id,
+    projectId: payload.data.project,
+    workItemId: payload.data.id,
+  });
+  const workItem = workItemSnapshotSchema.parse(source.workItem);
+  const project = projectSnapshotSchema.parse(source.project);
+  if (
+    workItem.id !== payload.data.id ||
+    workItem.project !== payload.data.project ||
+    workItem.workspace !== payload.workspace_id ||
+    project.id !== payload.data.project ||
+    project.workspace !== payload.workspace_id ||
+    workItem.state !== readyStateId ||
+    workItem.updated_at !== payload.data.updated_at
+  ) {
+    throw new Error("Plane Ready snapshot is outside the signed event scope");
+  }
+
+  const repository = {
+    owner: z
+      .string()
+      .min(1)
+      .max(100)
+      .regex(/^[A-Za-z0-9_.-]+$/)
+      .parse(input.repository.owner),
+    name: z
+      .string()
+      .min(1)
+      .max(100)
+      .regex(/^[A-Za-z0-9_.-]+$/)
+      .parse(input.repository.name),
+  };
+  const baseSha = gitSha.parse(input.baseSha);
+  const requestedAt = z
+    .string()
+    .datetime({ offset: true })
+    .parse(input.receivedAt);
+  const transition = {
+    actorId: payload.activity.actor.id,
+    oldStateId: payload.activity.old_value,
+    newStateId: payload.activity.new_value,
+    updatedAt: payload.data.updated_at,
+  };
+  const eventId = `ready-event:${createHash("sha256")
+    .update(
+      canonicalSerialize({
+        workspaceId: payload.workspace_id,
+        projectId: project.id,
+        workItemId: workItem.id,
+        transition,
+      }),
+    )
+    .digest("hex")}`;
+  const planeRevisionDigest = `sha256:${createHash("sha256")
+    .update(
+      canonicalSerialize({
+        project: {
+          id: project.id,
+          name: project.name,
+          descriptionHtml: project.description_html ?? null,
+          updatedAt: project.updated_at,
+        },
+        workItem: {
+          id: workItem.id,
+          name: workItem.name,
+          descriptionHtml: workItem.description_html ?? null,
+          priority: workItem.priority,
+          state: workItem.state,
+          labels: [...workItem.labels].sort(),
+          assignees: [...workItem.assignees].sort(),
+          module: workItem.module ?? null,
+          parent: workItem.parent ?? null,
+          updatedAt: workItem.updated_at,
+        },
+        transition,
+      }),
+    )
+    .digest("hex")}`;
+
+  return {
+    eventId,
+    workspaceId: payload.workspace_id,
+    projectId: project.id,
+    workItemId: workItem.id,
+    requestedBy: payload.activity.actor.id,
+    repository,
+    baseSha,
+    requestedAt,
     planeRevisionDigest,
   };
 }

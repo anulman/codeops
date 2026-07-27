@@ -1,7 +1,10 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { test } from "node:test";
-import { admitPlaneResearchComment } from "../dist/index.js";
+import {
+  admitPlaneReadyTransition,
+  admitPlaneResearchComment,
+} from "../dist/index.js";
 
 const actorId = "88fc36c8-73b0-4547-81c7-96b70f61835e";
 const payload = {
@@ -90,6 +93,30 @@ const cePayload = {
   },
 };
 
+const readyStateId = "cc8562ab-79c7-4f1c-b4a2-1ed51dfcd6aa";
+const backlogStateId = source.workItem.state;
+const readyUpdatedAt = "2026-07-27T02:45:00.000Z";
+const readyPayload = {
+  event: "issue",
+  action: "update",
+  webhook_id: cePayload.webhook_id,
+  workspace_id: payload.workspace_id,
+  data: {
+    ...source.workItem,
+    state: readyStateId,
+    updated_at: readyUpdatedAt,
+  },
+  activity: {
+    field: "state",
+    old_value: backlogStateId,
+    new_value: readyStateId,
+    actor: {
+      id: actorId,
+      display_name: "Aidan",
+    },
+  },
+};
+
 function signedInput(overrides = {}) {
   const body = overrides.payload ?? payload;
   const rawBody = Buffer.from(JSON.stringify(body));
@@ -128,6 +155,34 @@ function signedCeInput(overrides = {}) {
     baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
     loadSource: async () => source,
+  };
+}
+
+function signedReadyInput(overrides = {}) {
+  const body = overrides.payload ?? readyPayload;
+  const rawBody = Buffer.from(JSON.stringify(body));
+  return {
+    rawBody,
+    headers: {
+      delivery: "716d98fe-35a7-4436-bdca-5ff5490dbf09",
+      event: "issue",
+      signature: createHmac("sha256", secret).update(rawBody).digest("hex"),
+      ...overrides.headers,
+    },
+    webhookSecret: secret,
+    allowedHumanActorIds: new Set([actorId]),
+    readyStateId,
+    repository: { owner: "anulman", name: "renoconcierge" },
+    baseSha,
+    receivedAt: "2026-07-27T02:45:01.000Z",
+    loadSource: async () => ({
+      project: source.project,
+      workItem: {
+        ...source.workItem,
+        state: readyStateId,
+        updated_at: readyUpdatedAt,
+      },
+    }),
   };
 }
 
@@ -171,6 +226,98 @@ test("deduplicates retries by Plane event ID rather than delivery ID", async () 
     signedInput({ payload: retryPayload }),
   );
   assert.equal(first.request.requestId, retry.request.requestId);
+});
+
+test("admits only a signed allowlisted human transition into configured Ready", async () => {
+  const admission = await admitPlaneReadyTransition(signedReadyInput());
+  assert.equal(admission.workItemId, payload.entity_id);
+  assert.equal(admission.projectId, payload.data.project_id);
+  assert.equal(admission.requestedBy, actorId);
+  assert.equal(admission.baseSha, baseSha);
+  assert.match(admission.eventId, /^ready-event:[0-9a-f]{64}$/);
+  assert.match(admission.planeRevisionDigest, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("Ready admission is stable across delivery retries", async () => {
+  const first = await admitPlaneReadyTransition(signedReadyInput());
+  const retry = await admitPlaneReadyTransition(
+    signedReadyInput({
+      headers: {
+        delivery: "816d98fe-35a7-4436-bdca-5ff5490dbf09",
+      },
+    }),
+  );
+  assert.equal(first.eventId, retry.eventId);
+  assert.equal(first.planeRevisionDigest, retry.planeRevisionDigest);
+});
+
+test("ignores non-Ready, non-human, and non-state Plane updates", async () => {
+  assert.equal(
+    await admitPlaneReadyTransition({
+      ...signedReadyInput(),
+      allowedHumanActorIds: new Set(),
+    }),
+    null,
+  );
+  assert.equal(
+    await admitPlaneReadyTransition(
+      signedReadyInput({
+        payload: {
+          ...readyPayload,
+          data: {
+            ...readyPayload.data,
+            state: backlogStateId,
+          },
+          activity: {
+            ...readyPayload.activity,
+            new_value: backlogStateId,
+            old_value: readyStateId,
+          },
+        },
+      }),
+    ),
+    null,
+  );
+  assert.equal(
+    await admitPlaneReadyTransition(
+      signedReadyInput({
+        payload: {
+          ...readyPayload,
+          activity: {
+            ...readyPayload.activity,
+            field: "priority",
+          },
+        },
+      }),
+    ),
+    null,
+  );
+});
+
+test("fails Ready admission closed on signature and trusted snapshot drift", async () => {
+  await assert.rejects(
+    admitPlaneReadyTransition({
+      ...signedReadyInput(),
+      headers: {
+        ...signedReadyInput().headers,
+        signature: "0".repeat(64),
+      },
+    }),
+    /signature/,
+  );
+  const drifted = signedReadyInput();
+  drifted.loadSource = async () => ({
+    project: source.project,
+    workItem: {
+      ...source.workItem,
+      state: readyStateId,
+      updated_at: "2026-07-27T02:45:02.000Z",
+    },
+  });
+  await assert.rejects(
+    admitPlaneReadyTransition(drifted),
+    /outside the signed event scope/,
+  );
 });
 
 test("ignores comments without a registered persona without loading mutable source", async () => {
