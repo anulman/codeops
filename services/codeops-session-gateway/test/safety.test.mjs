@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import net from "node:net";
 import os from "node:os";
 import path from "node:path";
+import { promisify } from "node:util";
 import test from "node:test";
 import {
   boundedText,
@@ -14,8 +16,11 @@ import {
 import {
   createCheckpointLogRecord,
   createPatchLogRecords,
+  capturePatch,
   connectSocket,
 } from "../dist/index.js";
+
+const execFileAsync = promisify(execFile);
 
 test("waits boundedly for the pod-local ACP socket", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-acp-socket-"));
@@ -51,7 +56,35 @@ test("redacts common API and bearer credential shapes", () => {
 
 test("bounds retained agent text after redaction", () => {
   assert.equal(boundedText("abc", 3), "abc");
-  assert.equal(boundedText("abcdef", 3), "abc\n[TRUNCATED]");
+  assert.equal(boundedText("abcdef", 3), "\n[T");
+  assert.equal(boundedText("a".repeat(501), 500).length, 500);
+  assert.equal(boundedText("a".repeat(2_001), 2_000).length, 2_000);
+});
+
+test("captures the exact checkout patch through an explicit safe-directory binding", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-workspace-"));
+  try {
+    await execFileAsync("git", ["init", "--quiet", directory]);
+    await writeFile(path.join(directory, "tracked.txt"), "before\n");
+    await execFileAsync("git", ["-C", directory, "add", "tracked.txt"]);
+    await execFileAsync("git", [
+      "-C",
+      directory,
+      "-c",
+      "user.name=CodeOps Test",
+      "-c",
+      "user.email=codeops@example.invalid",
+      "commit",
+      "--quiet",
+      "-m",
+      "fixture",
+    ]);
+    await writeFile(path.join(directory, "tracked.txt"), "after\n");
+    const patch = await capturePatch(directory);
+    assert.match(patch.toString("utf8"), /-before\n\+after/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("validates run and immutable source identities", () => {

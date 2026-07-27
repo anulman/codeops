@@ -150,10 +150,19 @@ function safeEvent(sequence: number, update: acp.SessionUpdate): SafeEvent {
   };
 }
 
-async function capturePatch(workspace: string): Promise<Buffer> {
+export async function capturePatch(workspace: string): Promise<Buffer> {
   const { stdout } = await execFileAsync(
     "git",
-    ["-C", workspace, "diff", "--binary", "--no-ext-diff", "--"],
+    [
+      "-c",
+      `safe.directory=${workspace}`,
+      "-C",
+      workspace,
+      "diff",
+      "--binary",
+      "--no-ext-diff",
+      "--",
+    ],
     {
       encoding: "buffer",
       maxBuffer: MAX_PATCH_BYTES + 1,

@@ -15,7 +15,9 @@ export function redactSecrets(value: string): string {
 export function boundedText(value: string, maximum = 20_000): string {
   const redacted = redactSecrets(value);
   if (redacted.length <= maximum) return redacted;
-  return `${redacted.slice(0, maximum)}\n[TRUNCATED]`;
+  const marker = "\n[TRUNCATED]";
+  if (maximum <= marker.length) return marker.slice(0, maximum);
+  return `${redacted.slice(0, maximum - marker.length)}${marker}`;
 }
 
 export function requireLowerHex(
