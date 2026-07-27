@@ -45,6 +45,8 @@ export function buildRunResources(
     request.role === "coding-agent"
       ? request.codingRequest.researchPacket
       : undefined;
+  const researchDispatch =
+    request.role === "qa-contract-researcher" ? request : undefined;
   const commonSecurity = {
     allowPrivilegeEscalation: false,
     readOnlyRootFilesystem: true,
@@ -155,6 +157,16 @@ export function buildRunResources(
                           name: "CODEOPS_RESEARCH_PACKET_B64",
                           value: Buffer.from(
                             JSON.stringify(researchPacket),
+                          ).toString("base64"),
+                        },
+                      ]),
+                  ...(researchDispatch === undefined
+                    ? []
+                    : [
+                        {
+                          name: "CODEOPS_RESEARCH_DISPATCH_B64",
+                          value: Buffer.from(
+                            JSON.stringify(researchDispatch),
                           ).toString("base64"),
                         },
                       ]),

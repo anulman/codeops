@@ -12,6 +12,7 @@ import {
   agentJobDispatchResultSchema,
   canonicalSerialize,
   researchPersonaReportSchema,
+  researchSynthesisSchema,
   type AgentJobDispatchRequest,
   type AgentJobDispatchResult,
 } from "@renoconcierge/codeops-contracts";
@@ -129,27 +130,155 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       "Finish with a concise summary of changes and tests.",
     ].join("\n");
   }
+  if (request.researchStage.kind === "synthesis") {
+    return [
+      "You are the final QA Contract Researcher synthesizer.",
+      "Research only. The source workspace is read-only.",
+      `Plane work item: ${request.workItemId}`,
+      `Exact base SHA: ${request.baseSha}`,
+      `Project context digest: ${request.researchRequest.projectContext.digest}`,
+      "Read /context/project-context.json, /context/research-dispatch.json, and every manifested repository document.",
+      "The dispatch file contains the immutable ticket title, description, acceptance content, relevant human comments, revision, dependencies, a bounded same-project task index, and every persona report.",
+      "Deduplicate findings, reconcile conflicts, and make the result specific to this ticket.",
+      "Return no more than five ranked findings and three genuine product decisions.",
+      "Populate the versioned route/state/credential matrix from repository truth.",
+      "Classify out-of-scope defects as downstream findings.",
+      "Propose two to five same-project follow-up tasks when high- or medium-severity findings have strong repository evidence; prioritize security findings. Use targetWorkItemId to update a matching task from the immutable project task index, otherwise use null to create one. Do not create duplicate tasks.",
+      "Do not propose lifecycle, label, project, or comment mutations. The trusted projector alone may refine the current description and create or update these bounded tasks.",
+      "Every finding and matrix row needs exact source path/line citations; include exact test names when citing a test.",
+      "Return only one JSON object, without Markdown fences, with exactly this shape:",
+      JSON.stringify({
+        version: "codeops.research-synthesis/v1",
+        requestId: request.researchRequest.requestId,
+        verdict: "ready-to-refine",
+        summary: "ticket-specific verdict",
+        topFindings: [
+          {
+            id: "finding-1",
+            category: "matrix-fact",
+            severity: "high",
+            confidence: "high",
+            currentBehavior: "observed behavior",
+            expectedBehavior: "expected contract",
+            citationIds: ["citation-1"],
+          },
+        ],
+        decisions: [
+          {
+            question: "genuine product decision",
+            blocking: true,
+            citationIds: ["citation-1"],
+          },
+        ],
+        downstreamFindings: [],
+        followUpTasks: [
+          {
+            key: "otp-rate-limit",
+            area: "security",
+            targetWorkItemId: null,
+            title: "Bound OTP verification attempts",
+            objective: "Prevent unbounded OTP guessing during the validity window.",
+            acceptanceCriteria: [
+              "Attempts are bounded per challenge and identity.",
+              "Executable tests cover exhaustion and reset behavior.",
+            ],
+            sourceFindingIds: ["finding-1"],
+            citationIds: ["citation-1"],
+          },
+        ],
+        matrix: {
+          version: "codeops.route-state-credential-matrix/v1",
+          rows: [
+            {
+              id: "matrix-1",
+              lifecycleState: "state",
+              credentialState: "credential",
+              routeOrRpc: "route or RPC",
+              currentOracle: "current behavior",
+              expectedOracle: "expected behavior",
+              allowedSideEffects: "allowed mutations",
+              status: "verified",
+              citationIds: ["citation-1"],
+            },
+          ],
+        },
+        citations: [
+          {
+            id: "citation-1",
+            path: "relative/source/path.ts",
+            lineStart: 1,
+            lineEnd: 2,
+            testName: "exact test name when applicable",
+            claim: "claim supported by these lines",
+          },
+        ],
+      }),
+    ].join("\n");
+  }
+  const personaScopes: Record<string, string> = {
+    "@ai-security":
+      "Find exploit paths, rank severity and confidence, and map trust boundaries.",
+    "@ai-database":
+      "Map canonical states, transitions, database privileges, and failure atomicity.",
+    "@ai-web":
+      "Build the route/RPC oracle matrix and cite executable browser/runtime evidence.",
+    "@ai-infra":
+      "Inspect deployment boundaries, runtime configuration, isolation, and failure recovery.",
+    "@ai-design":
+      "Inspect user-visible states, error recovery, and interaction contract gaps.",
+    "@ai-product":
+      "Separate ticket facts from genuine product decisions and downstream scope.",
+    "@ai-ml":
+      "Inspect model/data contracts, evaluation evidence, and probabilistic failure modes.",
+  };
   return [
-    `You are the ${request.researchPersona} QA Contract Researcher perspective.`,
+    `You are the ${request.researchStage.persona} QA Contract Researcher perspective.`,
     "Research only. The source workspace is read-only.",
     `Plane work item: ${request.workItemId}`,
     `Exact base SHA: ${request.baseSha}`,
     `Brief: ${request.researchRequest.brief}`,
+    `Distinct assignment: ${personaScopes[request.researchStage.persona]}`,
     `Project context digest: ${request.researchRequest.projectContext.digest}`,
-    "Read /context/project-context.json and every manifested repository document before research.",
-    "Inspect the repository and return concrete current behavior, expected behavior,",
-    "evidence gaps and decisions.",
+    "Read /context/project-context.json, /context/research-dispatch.json, and every manifested repository document before research.",
+    "The dispatch file contains the immutable ticket title, description, acceptance content, relevant human comments, revision, dependencies, and a bounded same-project task index.",
+    "Stay within the distinct assignment above; classify each result as a matrix fact, product decision, or downstream defect.",
+    "Every finding needs exact source path/line citations; include exact test names when citing a test.",
     "Never propose or perform a Plane lifecycle-state change.",
     "Return only one JSON object, without Markdown fences, with exactly this shape:",
     JSON.stringify({
-      version: "codeops.research-persona-report/v1",
+      version: "codeops.research-persona-report/v2",
       requestId: request.researchRequest.requestId,
-      persona: request.researchPersona,
+      persona: request.researchStage.persona,
       outcome: "findings",
       summary: "bounded plain-text summary",
-      currentBehavior: ["observed behavior"],
-      expectedBehavior: ["expected contract"],
-      decisions: [{ question: "decision or unresolved question", blocking: false }],
+      findings: [
+        {
+          id: "finding-1",
+          category: "matrix-fact",
+          severity: "high",
+          confidence: "high",
+          currentBehavior: "observed behavior",
+          expectedBehavior: "expected contract",
+          citationIds: ["citation-1"],
+        },
+      ],
+      decisions: [
+        {
+          question: "decision or unresolved question",
+          blocking: false,
+          citationIds: ["citation-1"],
+        },
+      ],
+      citations: [
+        {
+          id: "citation-1",
+          path: "relative/source/path.ts",
+          lineStart: 1,
+          lineEnd: 2,
+          testName: "exact test name when applicable",
+          claim: "claim supported by these lines",
+        },
+      ],
     }),
   ].join("\n");
 }
@@ -302,19 +431,47 @@ export async function retainCheckpoint(input: {
     ),
     ...(input.request.role === "qa-contract-researcher"
       ? {
-          researchReport: researchPersonaReportSchema.parse(
-            JSON.parse(input.retained.checkpoint.response) as unknown,
-          ),
+          researchResult:
+            input.request.researchStage.kind === "persona"
+              ? {
+                  kind: "persona",
+                  report: researchPersonaReportSchema.parse(
+                    JSON.parse(input.retained.checkpoint.response) as unknown,
+                  ),
+                }
+              : {
+                  kind: "synthesis",
+                  synthesis: researchSynthesisSchema.parse(
+                    JSON.parse(input.retained.checkpoint.response) as unknown,
+                  ),
+                },
         }
       : {}),
   });
   if (input.request.role === "qa-contract-researcher") {
     if (
       result.role !== "qa-contract-researcher" ||
-      result.researchReport.requestId !== input.request.researchRequest.requestId ||
-      result.researchReport.persona !== input.request.researchPersona
+      result.researchResult.kind !== input.request.researchStage.kind
     ) {
       throw new Error("research report identity does not match its dispatch");
+    }
+    if (
+      input.request.researchStage.kind === "persona" &&
+      (result.researchResult.kind !== "persona" ||
+        result.researchResult.report.requestId !==
+          input.request.researchRequest.requestId ||
+        result.researchResult.report.persona !==
+          input.request.researchStage.persona)
+    ) {
+      throw new Error("research persona identity does not match its dispatch");
+    }
+    if (
+      input.request.researchStage.kind === "synthesis" &&
+      (result.researchResult.kind !== "synthesis" ||
+        result.researchResult.synthesis.requestId !==
+          input.request.researchRequest.requestId)
+    ) {
+      throw new Error("research synthesis identity does not match its dispatch");
     }
   }
   await atomicWrite(

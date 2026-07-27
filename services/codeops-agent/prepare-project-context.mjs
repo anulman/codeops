@@ -111,7 +111,7 @@ await chmod(projectContextPath, 0o400);
 if (process.env.CODEOPS_RESEARCH_PACKET_B64) {
   const researchPacket = decode("CODEOPS_RESEARCH_PACKET_B64");
   if (
-    researchPacket?.version !== "codeops.research-packet/v2" ||
+    researchPacket?.version !== "codeops.research-packet/v3" ||
     researchPacket.baseSha !== projectContext.baseSha ||
     researchPacket.projectId !== projectContext.project?.projectId ||
     researchPacket.projectContextDigest !== projectContext.digest
@@ -124,4 +124,30 @@ if (process.env.CODEOPS_RESEARCH_PACKET_B64) {
     flag: "wx",
   });
   await chmod(researchPacketPath, 0o400);
+}
+
+if (process.env.CODEOPS_RESEARCH_DISPATCH_B64) {
+  const dispatch = decode("CODEOPS_RESEARCH_DISPATCH_B64");
+  if (
+    dispatch?.version !== "codeops.agent-job-dispatch/v1" ||
+    dispatch.role !== "qa-contract-researcher" ||
+    dispatch.baseSha !== projectContext.baseSha ||
+    dispatch.workItemId !== dispatch.researchRequest?.workItemId ||
+    dispatch.workflowId !== dispatch.researchRequest?.requestId ||
+    dispatch.researchRequest?.projectId !== projectContext.project?.projectId ||
+    dispatch.researchRequest?.projectContext?.digest !== projectContext.digest ||
+    dispatch.researchRequest?.ticketSnapshot?.workItemId !== dispatch.workItemId ||
+    !["persona", "synthesis"].includes(dispatch.researchStage?.kind)
+  ) {
+    throw new Error("research dispatch does not match the project context");
+  }
+  const researchDispatchPath = path.join(
+    contextDirectory,
+    "research-dispatch.json",
+  );
+  await writeFile(researchDispatchPath, `${JSON.stringify(dispatch)}\n`, {
+    mode: 0o400,
+    flag: "wx",
+  });
+  await chmod(researchDispatchPath, 0o400);
 }

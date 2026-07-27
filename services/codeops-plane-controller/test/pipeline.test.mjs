@@ -10,6 +10,7 @@ import {
   processPlaneReadyWebhook,
   processPlaneResearchWebhook,
 } from "../dist/index.js";
+import { upgradeResearchPacket } from "./research-fixture.mjs";
 
 const actorId = "88fc36c8-73b0-4547-81c7-96b70f61835e";
 const secret = "plane_wh_test-secret";
@@ -99,7 +100,7 @@ function readyResearchPacket() {
     },
     documents: projectContextDocuments,
   });
-  return {
+  return upgradeResearchPacket({
     version: "codeops.research-packet/v2",
     personas: ["@ai-security"],
     perspectives: [
@@ -129,7 +130,7 @@ function readyResearchPacket() {
       mutations: [],
     },
     createdAt: "2026-07-26T02:30:00.000Z",
-  };
+  });
 }
 
 function webhookInput(ledger, enqueue, body = payload) {

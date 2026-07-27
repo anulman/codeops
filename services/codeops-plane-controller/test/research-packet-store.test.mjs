@@ -4,10 +4,11 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { createFileResearchPacketStore } from "../dist/index.js";
+import { upgradeResearchPacket } from "./research-fixture.mjs";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const workItemId = "22222222-2222-4222-8222-222222222222";
-const packet = {
+const packet = upgradeResearchPacket({
   version: "codeops.research-packet/v2",
   personas: ["@ai-product"],
   perspectives: [
@@ -37,7 +38,7 @@ const packet = {
     mutations: [],
   },
   createdAt: "2026-07-27T00:00:00.000Z",
-};
+});
 
 test("persists one immutable latest research packet across restarts", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-packets-"));
@@ -61,6 +62,10 @@ test("persists one immutable latest research packet across restarts", async () =
       restarted.put({
         ...packet,
         requestId: "research-request:conflict",
+        synthesis: {
+          ...packet.synthesis,
+          requestId: "research-request:conflict",
+        },
         proposedMutations: {
           ...packet.proposedMutations,
           requestId: "research-request:conflict",

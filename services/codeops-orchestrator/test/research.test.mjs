@@ -1,9 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { createProjectContext } from "@renoconcierge/codeops-contracts";
 import { buildResearchPacket } from "../dist/research.js";
-import {
-  createProjectContext,
-} from "@renoconcierge/codeops-contracts";
 
 const projectContext = createProjectContext({
   version: "codeops.project-context/v1",
@@ -26,10 +24,10 @@ const projectContext = createProjectContext({
 });
 
 const request = {
-  version: "codeops.research-request/v2",
+  version: "codeops.research-request/v3",
   requestId: "research-request-1",
   workspaceId: projectContext.project.workspaceId,
-  projectId: "11111111-1111-4111-8111-111111111111",
+  projectId: projectContext.project.projectId,
   workItemId: "22222222-2222-4222-8222-222222222222",
   triggerCommentId: "33333333-3333-4333-8333-333333333333",
   requestedBy: "44444444-4444-4444-8444-444444444444",
@@ -37,12 +35,37 @@ const request = {
   baseSha: "a".repeat(40),
   planeRevisionDigest: `sha256:${"b".repeat(64)}`,
   projectContext,
+  ticketSnapshot: {
+    workItemId: "22222222-2222-4222-8222-222222222222",
+    name: "Inventory canonical auth states",
+    descriptionHtml: "<p>Define the matrix.</p>",
+    priority: "high",
+    stateId: "66666666-6666-4666-8666-666666666666",
+    labelIds: [],
+    assigneeIds: [],
+    moduleId: null,
+    parentId: null,
+    updatedAt: "2026-07-26T00:00:00.000Z",
+    relevantComments: [],
+    relations: [],
+    projectTasks: [
+      {
+        workItemId: "77777777-7777-4777-8777-777777777777",
+        name: "Existing auth hardening task",
+        descriptionHtml: "<p>Preserve this context.</p>",
+        descriptionDigest: `sha256:${"e".repeat(64)}`,
+        priority: "high",
+        stateId: "88888888-8888-4888-8888-888888888888",
+        updatedAt: "2026-07-26T00:00:00.000Z",
+      },
+    ],
+  },
   personas: ["@ai-security", "@ai-web"],
   brief: "Inspect authentication contracts.",
   requestedAt: "2026-07-26T00:00:00.000Z",
 };
 
-function result(persona, suffix) {
+function personaResult(persona, suffix) {
   return {
     version: "codeops.agent-job-dispatch-result/v1",
     role: "qa-contract-researcher",
@@ -50,49 +73,157 @@ function result(persona, suffix) {
     checkpointUri: `artifact:///agent-runs/research-${suffix}/checkpoint.json`,
     checkpointDigest: `sha256:${suffix.repeat(64)}`,
     checkpointSizeBytes: 123,
-    researchReport: {
-      version: "codeops.research-persona-report/v1",
-      requestId: request.requestId,
-      persona,
-      outcome: "findings",
-      summary: `${persona} found a bounded issue.`,
-      currentBehavior: [`Current <${persona}>`],
-      expectedBehavior: [`Expected ${persona}`],
-      decisions: [],
+    researchResult: {
+      kind: "persona",
+      report: {
+        version: "codeops.research-persona-report/v2",
+        requestId: request.requestId,
+        persona,
+        outcome: "findings",
+        summary: `${persona} found a bounded issue.`,
+        findings: [],
+        decisions: [],
+        citations: [],
+      },
     },
   };
 }
 
-test("assembles one deterministic content-only packet in requested persona order", () => {
+function synthesisResult() {
+  return {
+    version: "codeops.agent-job-dispatch-result/v1",
+    role: "qa-contract-researcher",
+    runId: "research-synthesis",
+    checkpointUri:
+      "artifact:///agent-runs/research-synthesis/checkpoint.json",
+    checkpointDigest: `sha256:${"d".repeat(64)}`,
+    checkpointSizeBytes: 456,
+    researchResult: {
+      kind: "synthesis",
+      synthesis: {
+        version: "codeops.research-synthesis/v1",
+        requestId: request.requestId,
+        verdict: "ready-to-refine",
+        summary: "One ticket-specific contract is now explicit.",
+        topFindings: [
+          {
+            id: "finding-1",
+            category: "matrix-fact",
+            severity: "high",
+            confidence: "high",
+            currentBehavior: "The current route is ambiguous.",
+            expectedBehavior: "The route has one deterministic oracle.",
+            citationIds: ["citation-1"],
+          },
+        ],
+        decisions: [],
+        downstreamFindings: [],
+        followUpTasks: [
+          {
+            key: "db-auth-evidence",
+            area: "database",
+            targetWorkItemId: "77777777-7777-4777-8777-777777777777",
+            title: "Harden database auth evidence",
+            objective: "Restrict identity evidence mutations.",
+            acceptanceCriteria: ["Runtime roles cannot rewrite identity evidence."],
+            sourceFindingIds: ["finding-1"],
+            citationIds: ["citation-1"],
+          },
+          {
+            key: "otp-rate-limit",
+            area: "security",
+            targetWorkItemId: null,
+            title: "Bound OTP verification attempts",
+            objective: "Prevent unbounded OTP guessing.",
+            acceptanceCriteria: ["Attempts are bounded per active challenge."],
+            sourceFindingIds: ["finding-1"],
+            citationIds: ["citation-1"],
+          },
+        ],
+        matrix: {
+          version: "codeops.route-state-credential-matrix/v1",
+          rows: [
+            {
+              id: "matrix-1",
+              lifecycleState: "qualified",
+              credentialState: "valid",
+              routeOrRpc: "/claim",
+              currentOracle: "Ambiguous",
+              expectedOracle: "Deterministic",
+              allowedSideEffects: "None",
+              status: "gap",
+              citationIds: ["citation-1"],
+            },
+          ],
+        },
+        citations: [
+          {
+            id: "citation-1",
+            path: "services/auth.ts",
+            lineStart: 10,
+            lineEnd: 12,
+            testName: "rejects wrong-file cookies",
+            claim: "The route does not bind the file.",
+          },
+        ],
+      },
+    },
+  };
+}
+
+test("assembles one deterministic source-ticket refinement in requested persona order", () => {
   const packet = buildResearchPacket({
     request,
-    dispatches: [result("@ai-security", "a"), result("@ai-web", "c")],
+    personaDispatches: [
+      personaResult("@ai-security", "a"),
+      personaResult("@ai-web", "c"),
+    ],
+    synthesisDispatch: synthesisResult(),
   });
   assert.deepEqual(
     packet.perspectives.map((perspective) => perspective.persona),
     request.personas,
   );
-  assert.equal(packet.proposedMutations.mutations.length, 1);
-  assert.equal(packet.proposedMutations.mutations[0].type, "comment.create");
-  assert.doesNotMatch(
-    packet.proposedMutations.mutations[0].bodyHtml,
-    /<@ai-security>/,
+  assert.deepEqual(
+    packet.proposedMutations.mutations.map((mutation) => mutation.type),
+    ["ticket.update", "task.upsert", "task.upsert", "comment.create"],
   );
-  assert.equal(packet.evidence.length, 2);
+  assert.equal(
+    packet.proposedMutations.mutations[1].key,
+    "otp-rate-limit",
+  );
+  assert.equal(
+    packet.proposedMutations.mutations[2].expectedDescriptionDigest,
+    `sha256:${"e".repeat(64)}`,
+  );
+  assert.match(
+    packet.proposedMutations.mutations[0].changes.descriptionHtml,
+    /route\/state\/credential matrix/i,
+  );
+  assert.match(
+    packet.proposedMutations.mutations.at(-1).bodyHtml,
+    /github\.com\/anulman\/renoconcierge\/blob\/a{40}/,
+  );
+  assert.equal(packet.evidence.length, 3);
   assert.equal(packet.createdAt, request.requestedAt);
 });
 
-test("rejects missing, reordered, or identity-drifted reports", () => {
+test("rejects missing, reordered, or identity-drifted persona reports", () => {
   assert.throws(() =>
     buildResearchPacket({
       request,
-      dispatches: [result("@ai-security", "a")],
+      personaDispatches: [personaResult("@ai-security", "a")],
+      synthesisDispatch: synthesisResult(),
     }),
   );
   assert.throws(() =>
     buildResearchPacket({
       request,
-      dispatches: [result("@ai-web", "c"), result("@ai-security", "a")],
+      personaDispatches: [
+        personaResult("@ai-web", "c"),
+        personaResult("@ai-security", "a"),
+      ],
+      synthesisDispatch: synthesisResult(),
     }),
   );
 });

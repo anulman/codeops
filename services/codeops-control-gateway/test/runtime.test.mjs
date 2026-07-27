@@ -35,9 +35,9 @@ const request = {
   baseSha: "a".repeat(40),
   summary: "Research auth",
   role: "qa-contract-researcher",
-  researchPersona: "@ai-security",
+  researchStage: { kind: "persona", persona: "@ai-security" },
   researchRequest: {
-    version: "codeops.research-request/v2",
+    version: "codeops.research-request/v3",
     requestId: "research-request-1",
     workspaceId: projectContext.project.workspaceId,
     projectId: "11111111-1111-4111-8111-111111111111",
@@ -48,6 +48,20 @@ const request = {
     baseSha: "a".repeat(40),
     planeRevisionDigest: `sha256:${"b".repeat(64)}`,
     projectContext,
+    ticketSnapshot: {
+      workItemId: "22222222-2222-4222-8222-222222222222",
+      name: "Research auth",
+      descriptionHtml: "<p>Define auth contracts.</p>",
+      priority: "high",
+      stateId: "66666666-6666-4666-8666-666666666666",
+      labelIds: [],
+      assigneeIds: [],
+      moduleId: null,
+      parentId: null,
+      updatedAt: "2026-07-26T00:00:00.000Z",
+      relevantComments: [],
+      relations: [],
+    },
     personas: ["@ai-security"],
     brief: "Inspect auth",
     requestedAt: "2026-07-26T00:00:00.000Z",
@@ -56,14 +70,14 @@ const request = {
 
 function logs(runId) {
   const report = {
-    version: "codeops.research-persona-report/v1",
+    version: "codeops.research-persona-report/v2",
     requestId: "research-request-1",
     persona: "@ai-security",
     outcome: "findings",
     summary: "Authentication boundaries need qualification.",
-    currentBehavior: ["The current matrix is incomplete."],
-    expectedBehavior: ["Every route has an explicit contract."],
+    findings: [],
     decisions: [],
+    citations: [],
   };
   const checkpoint = {
     schemaVersion: 3,

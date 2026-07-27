@@ -13,10 +13,12 @@ const VERSION = {
   evidence: "codeops.evidence/v1",
   secretReference: "codeops.secret-reference/v1",
   planeCommentEvent: "codeops.plane-comment-event/v1",
-  researchRequest: "codeops.research-request/v2",
-  researchPersonaReport: "codeops.research-persona-report/v1",
-  researchPacket: "codeops.research-packet/v2",
-  researchMutationBatch: "codeops.research-mutation-batch/v1",
+  researchRequest: "codeops.research-request/v3",
+  researchPersonaReport: "codeops.research-persona-report/v2",
+  researchSynthesis: "codeops.research-synthesis/v1",
+  researchMatrix: "codeops.route-state-credential-matrix/v1",
+  researchPacket: "codeops.research-packet/v3",
+  researchMutationBatch: "codeops.research-mutation-batch/v2",
   readinessGate: "codeops.readiness-gate/v1",
   projectContext: "codeops.project-context/v1",
   codingRequest: "codeops.coding-request/v1",
@@ -443,6 +445,62 @@ const researchPersonasSchema = z
     "research persona handles must be unique",
   );
 
+const ticketCommentSnapshotSchema = z
+  .object({
+    id: uuid,
+    bodyHtml: z.string().max(8_000),
+    createdBy: uuid,
+    createdAt: isoDateTime,
+  })
+  .strict();
+
+const ticketRelationSnapshotSchema = z
+  .object({
+    kind: z.enum([
+      "blocking",
+      "blocked_by",
+      "duplicate",
+      "relates_to",
+      "start_after",
+      "start_before",
+      "finish_after",
+      "finish_before",
+    ]),
+    projectId: uuid,
+    workItemId: uuid,
+  })
+  .strict();
+
+const projectTaskSnapshotSchema = z
+  .object({
+    workItemId: uuid,
+    name: safeText(500),
+    descriptionHtml: z.string().max(50_000),
+    descriptionDigest: sha256Digest,
+    priority: safeText(64),
+    stateId: uuid,
+    updatedAt: isoDateTime,
+  })
+  .strict();
+
+export const ticketSnapshotSchema = z
+  .object({
+    workItemId: uuid,
+    name: safeText(500),
+    descriptionHtml: z.string().max(50_000),
+    priority: safeText(64),
+    stateId: uuid,
+    labelIds: z.array(uuid).max(100),
+    assigneeIds: z.array(uuid).max(100),
+    moduleId: uuid.nullable(),
+    parentId: uuid.nullable(),
+    updatedAt: isoDateTime,
+    relevantComments: z.array(ticketCommentSnapshotSchema).max(20),
+    relations: z.array(ticketRelationSnapshotSchema).max(200),
+    projectTasks: z.array(projectTaskSnapshotSchema).max(200).default([]),
+  })
+  .strict();
+
 export const researchRequestSchema = z
   .object({
     version: z.literal(VERSION.researchRequest),
@@ -454,6 +512,7 @@ export const researchRequestSchema = z
     repository,
     baseSha: gitSha,
     planeRevisionDigest: sha256Digest,
+    ticketSnapshot: ticketSnapshotSchema,
     personas: researchPersonasSchema,
     brief: safeText(8_000),
     requestedAt: isoDateTime,
@@ -468,7 +527,42 @@ export const researchRequestSchema = z
       },
       context,
     );
+    if (request.ticketSnapshot.workItemId !== request.workItemId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ticketSnapshot", "workItemId"],
+        message: "ticket snapshot does not match the research request",
+      });
+    }
   });
+
+export const researchCitationSchema = z
+  .object({
+    id: identifier,
+    path: repositoryPath,
+    lineStart: z.number().int().positive().max(10_000_000),
+    lineEnd: z.number().int().positive().max(10_000_000).optional(),
+    testName: safeText(500).optional(),
+    claim: safeText(2_000),
+  })
+  .strict()
+  .refine(
+    (citation) =>
+      citation.lineEnd === undefined || citation.lineEnd >= citation.lineStart,
+    "citation line range is invalid",
+  );
+
+const researchFindingSchema = z
+  .object({
+    id: identifier,
+    category: z.enum(["matrix-fact", "product-decision", "downstream-defect"]),
+    severity: z.enum(["critical", "high", "medium", "low", "info"]),
+    confidence: z.enum(["high", "medium", "low"]),
+    currentBehavior: safeText(4_000),
+    expectedBehavior: safeText(4_000),
+    citationIds: z.array(identifier).min(1).max(8),
+  })
+  .strict();
 
 export const researchPersonaReportSchema = z
   .object({
@@ -477,20 +571,133 @@ export const researchPersonaReportSchema = z
     persona: researchPersonaHandleSchema,
     outcome: z.enum(["findings", "no-additional-findings"]),
     summary: safeText(2_000),
-    currentBehavior: z.array(safeText(4_000)).max(50),
-    expectedBehavior: z.array(safeText(4_000)).max(50),
+    findings: z.array(researchFindingSchema).max(20),
     decisions: z
       .array(
         z
           .object({
             question: safeText(2_000),
             blocking: z.boolean(),
+            citationIds: z.array(identifier).max(8).default([]),
           })
           .strict(),
       )
-      .max(25),
+      .max(5),
+    citations: z.array(researchCitationSchema).max(40),
+  })
+  .strict()
+  .superRefine((report, context) => {
+    const citationIds = new Set(report.citations.map((citation) => citation.id));
+    const referenced = [
+      ...report.findings.flatMap((finding) => finding.citationIds),
+      ...report.decisions.flatMap((decision) => decision.citationIds),
+    ];
+    if (referenced.some((id) => !citationIds.has(id))) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["citations"],
+        message: "research report references an unknown citation",
+      });
+    }
+  });
+
+const researchMatrixRowSchema = z
+  .object({
+    id: identifier,
+    lifecycleState: safeText(500),
+    credentialState: safeText(500),
+    routeOrRpc: safeText(1_000),
+    currentOracle: safeText(2_000),
+    expectedOracle: safeText(2_000),
+    allowedSideEffects: safeText(2_000),
+    status: z.enum(["verified", "gap", "decision-required"]),
+    citationIds: z.array(identifier).min(1).max(8),
   })
   .strict();
+
+const researchFollowUpTaskSchema = z
+  .object({
+    key: identifier,
+    area: z.enum(["security", "database", "web", "infrastructure", "product", "other"]),
+    targetWorkItemId: uuid.nullable(),
+    title: safeText(500),
+    objective: safeText(4_000),
+    acceptanceCriteria: z.array(safeText(2_000)).min(1).max(10),
+    sourceFindingIds: z.array(identifier).min(1).max(8),
+    citationIds: z.array(identifier).min(1).max(8),
+  })
+  .strict();
+
+export const researchSynthesisSchema = z
+  .object({
+    version: z.literal(VERSION.researchSynthesis),
+    requestId: identifier,
+    verdict: z.enum(["ready-to-refine", "blocked-on-decisions", "insufficient-evidence"]),
+    summary: safeText(2_000),
+    topFindings: z.array(researchFindingSchema).max(5),
+    decisions: z
+      .array(
+        z
+          .object({
+            question: safeText(2_000),
+            blocking: z.boolean(),
+            citationIds: z.array(identifier).max(8).default([]),
+          })
+          .strict(),
+      )
+      .max(3),
+    downstreamFindings: z.array(researchFindingSchema).max(20),
+    followUpTasks: z.array(researchFollowUpTaskSchema).max(5),
+    matrix: z
+      .object({
+        version: z.literal(VERSION.researchMatrix),
+        rows: z.array(researchMatrixRowSchema).min(1).max(50),
+      })
+      .strict(),
+    citations: z.array(researchCitationSchema).max(80),
+  })
+  .strict()
+  .superRefine((synthesis, context) => {
+    const citationIds = new Set(synthesis.citations.map((citation) => citation.id));
+    const referenced = [
+      ...synthesis.topFindings.flatMap((finding) => finding.citationIds),
+      ...synthesis.decisions.flatMap((decision) => decision.citationIds),
+      ...synthesis.downstreamFindings.flatMap((finding) => finding.citationIds),
+      ...synthesis.followUpTasks.flatMap((task) => task.citationIds),
+      ...synthesis.matrix.rows.flatMap((row) => row.citationIds),
+    ];
+    if (referenced.some((id) => !citationIds.has(id))) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["citations"],
+        message: "research synthesis references an unknown citation",
+      });
+    }
+    const findingIds = new Set(
+      [...synthesis.topFindings, ...synthesis.downstreamFindings].map(
+        (finding) => finding.id,
+      ),
+    );
+    if (
+      synthesis.followUpTasks.some((task) =>
+        task.sourceFindingIds.some((id) => !findingIds.has(id)),
+      )
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["followUpTasks"],
+        message: "follow-up task references an unknown synthesized finding",
+      });
+    }
+    const taskKeys = synthesis.followUpTasks.map((task) => task.key);
+    if (new Set(taskKeys).size !== taskKeys.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["followUpTasks"],
+        message: "follow-up task keys must be unique",
+      });
+    }
+  });
 
 const agentJobBaseSchema = z
   .object({
@@ -515,7 +722,20 @@ export const agentJobDispatchRequestSchema = z
         version: z.literal(VERSION.agentJobDispatch),
         role: z.literal("qa-contract-researcher"),
         researchRequest: researchRequestSchema,
-        researchPersona: researchPersonaHandleSchema,
+        researchStage: z.discriminatedUnion("kind", [
+          z
+            .object({
+              kind: z.literal("persona"),
+              persona: researchPersonaHandleSchema,
+            })
+            .strict(),
+          z
+            .object({
+              kind: z.literal("synthesis"),
+              reports: z.array(researchPersonaReportSchema).min(1).max(7),
+            })
+            .strict(),
+        ]),
       })
       .strict(),
   ])
@@ -534,12 +754,26 @@ export const agentJobDispatchRequestSchema = z
       }
       return;
     }
-    if (!value.researchRequest.personas.includes(value.researchPersona)) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        path: ["researchPersona"],
-        message: "research persona was not requested",
-      });
+    if (value.researchStage.kind === "persona") {
+      if (!value.researchRequest.personas.includes(value.researchStage.persona)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["researchStage", "persona"],
+          message: "research persona was not requested",
+        });
+      }
+    } else {
+      const reported = value.researchStage.reports.map((report) => report.persona);
+      if (
+        reported.length !== value.researchRequest.personas.length ||
+        value.researchRequest.personas.some((persona) => !reported.includes(persona))
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["researchStage", "reports"],
+          message: "synthesis requires one report for every requested persona",
+        });
+      }
     }
     if (
       value.workItemId !== value.researchRequest.workItemId ||
@@ -575,30 +809,40 @@ export const agentJobDispatchResultSchema = z.discriminatedUnion("role", [
   agentJobDispatchResultBaseSchema
     .extend({
       role: z.literal("qa-contract-researcher"),
-      researchReport: researchPersonaReportSchema,
+      researchResult: z.discriminatedUnion("kind", [
+        z
+          .object({
+            kind: z.literal("persona"),
+            report: researchPersonaReportSchema,
+          })
+          .strict(),
+        z
+          .object({
+            kind: z.literal("synthesis"),
+            synthesis: researchSynthesisSchema,
+          })
+          .strict(),
+      ]),
     })
     .strict(),
 ]);
 
 const ticketChangesSchema = z
   .object({
-    name: safeText(500).optional(),
-    descriptionHtml: safeText(50_000).optional(),
-    priority: z.enum(["none", "urgent", "high", "medium", "low"]).optional(),
-    moduleId: uuid.nullable().optional(),
-    parentId: uuid.nullable().optional(),
-    assigneeIds: z.array(uuid).max(32).optional(),
+    descriptionHtml: safeText(50_000),
   })
-  .strict()
-  .refine((changes) => Object.keys(changes).length > 0, "ticket update is empty");
+  .strict();
 
-const projectChangesSchema = z
+const taskUpsertSchema = z
   .object({
-    name: safeText(255).optional(),
-    description: safeText(50_000).optional(),
+    type: z.literal("task.upsert"),
+    key: identifier,
+    targetWorkItemId: uuid.nullable(),
+    expectedDescriptionDigest: sha256Digest.nullable(),
+    name: safeText(500),
+    descriptionHtml: safeText(50_000),
   })
-  .strict()
-  .refine((changes) => Object.keys(changes).length > 0, "project update is empty");
+  .strict();
 
 export const researchPlaneMutationSchema = z.discriminatedUnion("type", [
   z
@@ -611,50 +855,12 @@ export const researchPlaneMutationSchema = z.discriminatedUnion("type", [
     .strict(),
   z
     .object({
-      type: z.literal("label.upsert"),
-      key: identifier,
-      name: safeText(255),
-      color: z.string().regex(/^#[0-9a-fA-F]{6}$/),
-      description: z.string().max(1_000).default(""),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.enum(["label.attach", "label.detach"]),
-      targetWorkItemId: uuid,
-      key: identifier,
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("project.update"),
-      changes: projectChangesSchema,
-    })
-    .strict(),
-  z
-    .object({
       type: z.literal("ticket.update"),
       targetWorkItemId: uuid,
       changes: ticketChangesSchema,
     })
     .strict(),
-  z
-    .object({
-      type: z.literal("ticket.create"),
-      name: safeText(500),
-      descriptionHtml: safeText(50_000),
-      moduleId: uuid.nullable().optional(),
-      parentId: uuid.nullable().optional(),
-      labelKeys: z.array(identifier).max(32).default([]),
-    })
-    .strict(),
-  z
-    .object({
-      type: z.literal("ticket.cancel-proposal"),
-      targetWorkItemId: uuid,
-      reason: safeText(2_000),
-    })
-    .strict(),
+  taskUpsertSchema,
 ]);
 
 export const researchMutationBatchSchema = z
@@ -663,9 +869,51 @@ export const researchMutationBatchSchema = z
     requestId: identifier,
     projectId: uuid,
     sourceWorkItemId: uuid,
-    mutations: z.array(researchPlaneMutationSchema).max(100),
+    mutations: z.array(researchPlaneMutationSchema).min(2).max(7),
   })
-  .strict();
+  .strict()
+  .superRefine((batch, context) => {
+    const [first, ...rest] = batch.mutations;
+    const last = rest.at(-1);
+    if (
+      first?.type !== "ticket.update" ||
+      first.targetWorkItemId !== batch.sourceWorkItemId ||
+      last?.type !== "comment.create" ||
+      last.targetWorkItemId !== batch.sourceWorkItemId ||
+      rest.slice(0, -1).some((mutation) => mutation.type !== "task.upsert")
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["mutations"],
+        message:
+          "research mutations must refine the source description, upsert up to five project tasks, then comment on the source",
+      });
+    }
+    for (const [index, mutation] of batch.mutations.entries()) {
+      if (
+        mutation.type === "task.upsert" &&
+        (mutation.targetWorkItemId === null) !==
+          (mutation.expectedDescriptionDigest === null)
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["mutations", index, "expectedDescriptionDigest"],
+          message:
+            "existing task updates require both a target and its expected description digest",
+        });
+      }
+    }
+    const taskKeys = batch.mutations
+      .filter((mutation) => mutation.type === "task.upsert")
+      .map((mutation) => mutation.key);
+    if (new Set(taskKeys).size !== taskKeys.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["mutations"],
+        message: "research task upsert keys must be unique",
+      });
+    }
+  });
 
 export const researchPacketSchema = z
   .object({
@@ -690,6 +938,7 @@ export const researchPacketSchema = z
     projectContextDigest: sha256Digest,
     planeRevisionDigest: sha256Digest,
     summary: safeText(2_000),
+    synthesis: researchSynthesisSchema,
     currentBehavior: z.array(safeText(4_000)).max(100),
     expectedBehavior: z.array(safeText(4_000)).max(100),
     fixtureManifest: evidenceReferenceSchema.optional(),
@@ -734,6 +983,13 @@ export const researchPacketSchema = z
         code: z.ZodIssueCode.custom,
         path: ["proposedMutations"],
         message: "research mutation batch does not match the source request",
+      });
+    }
+    if (packet.synthesis.requestId !== packet.requestId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["synthesis", "requestId"],
+        message: "research synthesis does not match the packet request",
       });
     }
     const requested = new Set(packet.personas);
@@ -901,16 +1157,17 @@ export const qaContractResearcherPolicy = Object.freeze({
   personaHandles: Object.freeze(researchPersonaHandles),
   allowedMutationTypes: Object.freeze([
     "comment.create",
+    "ticket.update",
+    "task.upsert",
+  ]),
+  forbiddenMutationTypes: Object.freeze([
+    "state.update",
     "label.upsert",
     "label.attach",
     "label.detach",
     "project.update",
-    "ticket.update",
     "ticket.create",
     "ticket.cancel-proposal",
-  ]),
-  forbiddenMutationTypes: Object.freeze([
-    "state.update",
     "ticket.cancel",
     "ticket.delete",
     "project.delete",
@@ -969,6 +1226,7 @@ export function createResearchRequestFromPlaneComment(
     baseSha: string;
     planeRevisionDigest: string;
     projectContext: ProjectContext;
+    ticketSnapshot: z.infer<typeof ticketSnapshotSchema>;
     defaultBrief: string;
   },
 ): ResearchRequest | null {
@@ -997,6 +1255,7 @@ export function createResearchRequestFromPlaneComment(
     repository: source.repository,
     baseSha: source.baseSha,
     planeRevisionDigest: source.planeRevisionDigest,
+    ticketSnapshot: source.ticketSnapshot,
     projectContext: source.projectContext,
     personas: round.personas,
     brief: round.brief || source.defaultBrief,
@@ -1037,6 +1296,9 @@ export type ResearchRequest = z.infer<typeof researchRequestSchema>;
 export type ResearchPersonaReport = z.infer<
   typeof researchPersonaReportSchema
 >;
+export type ResearchSynthesis = z.infer<typeof researchSynthesisSchema>;
+export type ResearchCitation = z.infer<typeof researchCitationSchema>;
+export type TicketSnapshot = z.infer<typeof ticketSnapshotSchema>;
 export type AgentJobDispatchRequest = z.infer<
   typeof agentJobDispatchRequestSchema
 >;

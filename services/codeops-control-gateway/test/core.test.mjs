@@ -7,6 +7,7 @@ import test from "node:test";
 import { createProjectContext } from "@renoconcierge/codeops-contracts";
 import {
   authenticateBearer,
+  buildAgentPrompt,
   createRunIdentity,
   parseCheckpointLogs,
   readRetainedResult,
@@ -41,9 +42,9 @@ const request = {
   baseSha: "a".repeat(40),
   summary: "Research auth",
   role: "qa-contract-researcher",
-  researchPersona: "@ai-security",
+  researchStage: { kind: "persona", persona: "@ai-security" },
   researchRequest: {
-    version: "codeops.research-request/v2",
+    version: "codeops.research-request/v3",
     requestId: "research-request-1",
     workspaceId: projectContext.project.workspaceId,
     projectId: "11111111-1111-4111-8111-111111111111",
@@ -54,6 +55,20 @@ const request = {
     baseSha: "a".repeat(40),
     planeRevisionDigest: `sha256:${"b".repeat(64)}`,
     projectContext,
+    ticketSnapshot: {
+      workItemId: "22222222-2222-4222-8222-222222222222",
+      name: "Research auth",
+      descriptionHtml: "<p>Define auth contracts.</p>",
+      priority: "high",
+      stateId: "66666666-6666-4666-8666-666666666666",
+      labelIds: [],
+      assigneeIds: [],
+      moduleId: null,
+      parentId: null,
+      updatedAt: "2026-07-26T00:00:00.000Z",
+      relevantComments: [],
+      relations: [],
+    },
     personas: ["@ai-security"],
     brief: "Inspect auth",
     requestedAt: "2026-07-26T00:00:00.000Z",
@@ -62,14 +77,14 @@ const request = {
 
 function checkpointLogs(runId, overrides = {}) {
   const report = {
-    version: "codeops.research-persona-report/v1",
+    version: "codeops.research-persona-report/v2",
     requestId: "research-request-1",
     persona: "@ai-security",
     outcome: "findings",
     summary: "Authentication boundaries need qualification.",
-    currentBehavior: ["The current matrix is incomplete."],
-    expectedBehavior: ["Every route has an explicit contract."],
+    findings: [],
     decisions: [],
+    citations: [],
   };
   const checkpoint = {
     schemaVersion: 3,
@@ -122,6 +137,80 @@ test("derives a stable bounded run identity", () => {
     createRunIdentity(request),
     createRunIdentity({ ...request, summary: "different" }),
   );
+});
+
+test("runs a distinct ticket-specific synthesis checkpoint after persona research", async () => {
+  const personaReport = {
+    version: "codeops.research-persona-report/v2",
+    requestId: request.researchRequest.requestId,
+    persona: "@ai-security",
+    outcome: "findings",
+    summary: "One auth gap.",
+    findings: [],
+    decisions: [],
+    citations: [],
+  };
+  const synthesisRequest = {
+    ...request,
+    researchStage: { kind: "synthesis", reports: [personaReport] },
+  };
+  assert.match(buildAgentPrompt(synthesisRequest), /no more than five ranked findings/);
+  assert.match(buildAgentPrompt(synthesisRequest), /route\/state\/credential matrix/);
+  const synthesis = {
+    version: "codeops.research-synthesis/v1",
+    requestId: request.researchRequest.requestId,
+    verdict: "ready-to-refine",
+    summary: "The ticket can be refined.",
+    topFindings: [],
+    decisions: [],
+    downstreamFindings: [],
+    followUpTasks: [],
+    matrix: {
+      version: "codeops.route-state-credential-matrix/v1",
+      rows: [
+        {
+          id: "matrix-1",
+          lifecycleState: "qualified",
+          credentialState: "valid",
+          routeOrRpc: "/claim",
+          currentOracle: "Observed",
+          expectedOracle: "Expected",
+          allowedSideEffects: "None",
+          status: "verified",
+          citationIds: ["citation-1"],
+        },
+      ],
+    },
+    citations: [
+      {
+        id: "citation-1",
+        path: "services/auth.ts",
+        lineStart: 1,
+        claim: "Fixture citation.",
+      },
+    ],
+  };
+  const identity = createRunIdentity(synthesisRequest);
+  const retained = parseCheckpointLogs({
+    logs: checkpointLogs(identity.runId, {
+      response: JSON.stringify(synthesis),
+    }),
+    request: synthesisRequest,
+    runId: identity.runId,
+  });
+  const rootDirectory = await mkdtemp(path.join(os.tmpdir(), "codeops-synthesis-"));
+  try {
+    const result = await retainCheckpoint({
+      rootDirectory,
+      request: synthesisRequest,
+      ...identity,
+      retained,
+    });
+    assert.equal(result.researchResult.kind, "synthesis");
+    assert.equal(result.researchResult.synthesis.verdict, "ready-to-refine");
+  } finally {
+    await rm(rootDirectory, { recursive: true, force: true });
+  }
 });
 
 test("validates checkpoint identity, digest, patch, and research immutability", () => {

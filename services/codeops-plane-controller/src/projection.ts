@@ -29,16 +29,17 @@ export type ResearchProjectionResult =
 function assertTrial0Projection(packet: ResearchPacket): void {
   const mutations = packet.proposedMutations.mutations;
   if (
-    mutations.length !== 1 ||
-    mutations[0]?.type !== "comment.create" ||
-    mutations[0].targetWorkItemId !== packet.workItemId
+    mutations.length !== 2 ||
+    mutations[0]?.type !== "ticket.update" ||
+    mutations[1]?.type !== "comment.create" ||
+    mutations.some((mutation) => mutation.targetWorkItemId !== packet.workItemId)
   ) {
     throw new Error(
-      "Trial 0 research projection must contain one source-ticket comment",
+      "research projection must refine and comment on only the source ticket",
     );
   }
   if (
-    canonicalSerialize(mutations[0].attachments) !==
+    canonicalSerialize(mutations[1].attachments) !==
     canonicalSerialize(packet.evidence)
   ) {
     throw new Error("research projection attachments do not match packet evidence");

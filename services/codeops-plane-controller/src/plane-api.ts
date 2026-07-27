@@ -1,32 +1,40 @@
 import { z } from "zod";
 import type {
   PlaneContentClient,
-  PlaneLabelRecord,
-  PlaneProjectContentPatch,
   PlaneWorkItemContentPatch,
   PlaneWorkItemRecord,
 } from "./mutations.js";
 
 const uuid = z.string().uuid();
 const workspaceSlug = z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/);
-const labelSchema = z
-  .object({
-    id: uuid,
-    name: z.string(),
-    color: z.string(),
-    description: z.string(),
-  })
-  .passthrough();
 const workItemSchema = z
   .object({
     id: uuid,
     project: uuid,
     labels: z.array(uuid),
+    name: z.string().max(500).default(""),
+    description_html: z.string().nullable().optional(),
+    priority: z.string().max(64).default("none"),
+    state: uuid.optional(),
+    updated_at: z.string().datetime({ offset: true }).optional(),
   })
   .passthrough();
+const workItemPageSchema = z.union([
+  z.array(workItemSchema),
+  z
+    .object({
+      results: z.array(workItemSchema),
+      next_cursor: z.string().optional(),
+      next_page_results: z.boolean().optional(),
+    })
+    .passthrough(),
+]);
 const commentSchema = z
   .object({
     id: uuid,
+    comment_html: z.string().max(50_000).default(""),
+    created_by: uuid.optional(),
+    created_at: z.string().datetime({ offset: true }).optional(),
     external_source: z.string().nullable().optional(),
     external_id: z.string().nullable().optional(),
   })
@@ -41,16 +49,16 @@ const commentPageSchema = z.union([
     })
     .passthrough(),
 ]);
-const labelPageSchema = z.union([
-  z.array(labelSchema),
-  z
-    .object({
-      results: z.array(labelSchema),
-      next_cursor: z.string().optional(),
-      next_page_results: z.boolean().optional(),
-    })
-    .passthrough(),
-]);
+const relationsSchema = z.record(
+  z.array(
+    z
+      .object({
+        project_id: uuid,
+        issue_id: uuid,
+      })
+      .passthrough(),
+  ),
+);
 
 export type PlaneApiClientConfig = Readonly<{
   baseUrl: string;
@@ -65,6 +73,14 @@ export interface PlaneApiClient extends PlaneContentClient {
     projectId: string,
     workItemId: string,
   ): Promise<unknown>;
+  getWorkItemComments(
+    projectId: string,
+    workItemId: string,
+  ): Promise<readonly unknown[]>;
+  getWorkItemRelations(projectId: string, workItemId: string): Promise<unknown>;
+  listProjectWorkItems(
+    projectId: string,
+  ): Promise<readonly PlaneWorkItemRecord[]>;
 }
 
 function planeOrigin(value: string): URL {
@@ -131,6 +147,75 @@ export function createPlaneApiClient(
     return `${workspacePath}/projects/${encodeURIComponent(uuid.parse(projectId))}`;
   }
 
+  async function listWorkItemComments(
+    projectId: string,
+    workItemId: string,
+  ): Promise<readonly z.infer<typeof commentSchema>[]> {
+    const commentsPath = `${projectPath(projectId)}/work-items/${encodeURIComponent(
+      uuid.parse(workItemId),
+    )}/comments/`;
+    const comments: z.infer<typeof commentSchema>[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 100; page += 1) {
+      const query =
+        cursor === undefined
+          ? "?per_page=100"
+          : `?per_page=100&cursor=${encodeURIComponent(cursor)}`;
+      const listed = commentPageSchema.parse(
+        await request("GET", `${commentsPath}${query}`),
+      );
+      if (Array.isArray(listed)) {
+        comments.push(...listed);
+        return comments;
+      }
+      comments.push(...listed.results);
+      if (
+        listed.next_page_results !== true ||
+        listed.next_cursor === undefined ||
+        listed.next_cursor === ""
+      ) {
+        return comments;
+      }
+      cursor = listed.next_cursor;
+    }
+    throw new Error("Plane comment pagination exceeded 100 pages");
+  }
+
+  async function listProjectWorkItems(
+    projectId: string,
+  ): Promise<readonly z.infer<typeof workItemSchema>[]> {
+    const items: z.infer<typeof workItemSchema>[] = [];
+    let cursor: string | undefined;
+    for (let page = 0; page < 3; page += 1) {
+      const query =
+        cursor === undefined
+          ? "?per_page=100"
+          : `?per_page=100&cursor=${encodeURIComponent(cursor)}`;
+      const listed = workItemPageSchema.parse(
+        await request("GET", `${projectPath(projectId)}/work-items/${query}`),
+      );
+      if (Array.isArray(listed)) {
+        if (listed.length > 200) {
+          throw new Error("Plane project task index exceeds 200 work items");
+        }
+        return listed;
+      }
+      items.push(...listed.results);
+      if (items.length > 200) {
+        throw new Error("Plane project task index exceeds 200 work items");
+      }
+      if (
+        listed.next_page_results !== true ||
+        listed.next_cursor === undefined ||
+        listed.next_cursor === ""
+      ) {
+        return items;
+      }
+      cursor = listed.next_cursor;
+    }
+    throw new Error("Plane project task index exceeds 200 work items");
+  }
+
   return {
     async getProjectSnapshot(projectId: string): Promise<unknown> {
       return request("GET", `${projectPath(projectId)}/`);
@@ -146,90 +231,55 @@ export function createPlaneApiClient(
       );
     },
 
+    async getWorkItemComments(projectId, workItemId) {
+      return listWorkItemComments(projectId, workItemId);
+    },
+
+    async getWorkItemRelations(projectId, workItemId) {
+      return relationsSchema.parse(
+        await request(
+          "GET",
+          `${projectPath(projectId)}/work-items/${encodeURIComponent(
+            uuid.parse(workItemId),
+          )}/relations/`,
+        ),
+      );
+    },
+
+    async listProjectWorkItems(projectId) {
+      return (await listProjectWorkItems(projectId)).map((item) => ({
+        id: item.id,
+        project: item.project,
+        labels: item.labels,
+        name: item.name,
+        descriptionHtml: item.description_html ?? "",
+      }));
+    },
+
     async getWorkItem(
       projectId: string,
       workItemId: string,
     ): Promise<PlaneWorkItemRecord> {
-      return workItemSchema.parse(
+      const item = workItemSchema.parse(
         await request(
           "GET",
           `${projectPath(projectId)}/work-items/${encodeURIComponent(uuid.parse(workItemId))}/`,
         ),
       );
-    },
-
-    async listLabels(projectId: string): Promise<readonly PlaneLabelRecord[]> {
-      const labels: PlaneLabelRecord[] = [];
-      let cursor: string | undefined;
-      for (let page = 0; page < 100; page += 1) {
-        const query =
-          cursor === undefined
-            ? "?per_page=100"
-            : `?per_page=100&cursor=${encodeURIComponent(cursor)}`;
-        const parsed = labelPageSchema.parse(
-          await request("GET", `${projectPath(projectId)}/labels/${query}`),
-        );
-        if (Array.isArray(parsed)) return parsed;
-        labels.push(...parsed.results);
-        if (
-          parsed.next_page_results !== true ||
-          parsed.next_cursor === undefined ||
-          parsed.next_cursor === ""
-        ) {
-          return labels;
-        }
-        cursor = parsed.next_cursor;
-      }
-      throw new Error("Plane label pagination exceeded 100 pages");
-    },
-
-    async createLabel(projectId, input): Promise<PlaneLabelRecord> {
-      return labelSchema.parse(
-        await request("POST", `${projectPath(projectId)}/labels/`, input),
-      );
-    },
-
-    async updateLabel(projectId, labelId, input): Promise<PlaneLabelRecord> {
-      return labelSchema.parse(
-        await request(
-          "PATCH",
-          `${projectPath(projectId)}/labels/${encodeURIComponent(uuid.parse(labelId))}/`,
-          input,
-        ),
-      );
+      return {
+        id: item.id,
+        project: item.project,
+        labels: item.labels,
+        name: item.name,
+        descriptionHtml: item.description_html ?? "",
+      };
     },
 
     async createComment(projectId, workItemId, input) {
       const commentsPath = `${projectPath(projectId)}/work-items/${encodeURIComponent(
         uuid.parse(workItemId),
       )}/comments/`;
-      const comments: z.infer<typeof commentSchema>[] = [];
-      let cursor: string | undefined;
-      for (let page = 0; page < 100; page += 1) {
-        const query =
-          cursor === undefined
-            ? "?per_page=100"
-            : `?per_page=100&cursor=${encodeURIComponent(cursor)}`;
-        const listed = commentPageSchema.parse(
-          await request("GET", `${commentsPath}${query}`),
-        );
-        if (Array.isArray(listed)) {
-          comments.push(...listed);
-          break;
-        }
-        comments.push(...listed.results);
-        if (
-          listed.next_page_results !== true ||
-          listed.next_cursor === undefined ||
-          listed.next_cursor === ""
-        ) {
-          break;
-        }
-        cursor = listed.next_cursor;
-        if (page === 99) {
-          throw new Error("Plane comment pagination exceeded 100 pages");
-        }
-      }
+      const comments = await listWorkItemComments(projectId, workItemId);
       const matches = comments.filter(
         (comment) =>
           comment.external_source === input.external_source &&
@@ -248,13 +298,6 @@ export function createPlaneApiClient(
       );
     },
 
-    async updateProject(
-      projectId: string,
-      input: PlaneProjectContentPatch,
-    ): Promise<void> {
-      await request("PATCH", `${projectPath(projectId)}/`, input);
-    },
-
     async updateWorkItem(
       projectId: string,
       workItemId: string,
@@ -268,9 +311,17 @@ export function createPlaneApiClient(
     },
 
     async createWorkItem(projectId, input): Promise<PlaneWorkItemRecord> {
-      return workItemSchema.parse(
+      const item = workItemSchema.parse(
         await request("POST", `${projectPath(projectId)}/work-items/`, input),
       );
+      return {
+        id: item.id,
+        project: item.project,
+        labels: item.labels,
+        name: item.name,
+        descriptionHtml: item.description_html ?? "",
+      };
     },
+
   };
 }

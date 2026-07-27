@@ -17,8 +17,6 @@ export {
   applyResearchMutationBatch,
   type MutationResult,
   type PlaneContentClient,
-  type PlaneLabelRecord,
-  type PlaneProjectContentPatch,
   type PlaneWorkItemContentPatch,
   type PlaneWorkItemRecord,
 } from "./mutations.js";
@@ -163,6 +161,47 @@ const projectSnapshotSchema = z
   })
   .passthrough();
 
+const workItemCommentSnapshotSchema = z
+  .object({
+    id: uuid,
+    comment_html: z.string().max(50_000),
+    created_by: uuid,
+    created_at: z.string().datetime({ offset: true }),
+    external_source: z.string().nullable().optional(),
+  })
+  .passthrough();
+
+const relationKinds = [
+  "blocking",
+  "blocked_by",
+  "duplicate",
+  "relates_to",
+  "start_after",
+  "start_before",
+  "finish_after",
+  "finish_before",
+] as const;
+const relationEntriesSchema = z.array(
+  z
+    .object({
+      project_id: uuid,
+      issue_id: uuid,
+    })
+    .passthrough(),
+);
+const workItemRelationsSnapshotSchema = z
+  .object({
+    blocking: relationEntriesSchema,
+    blocked_by: relationEntriesSchema,
+    duplicate: relationEntriesSchema,
+    relates_to: relationEntriesSchema,
+    start_after: relationEntriesSchema,
+    start_before: relationEntriesSchema,
+    finish_after: relationEntriesSchema,
+    finish_before: relationEntriesSchema,
+  })
+  .passthrough();
+
 export type PlaneWebhookHeaders = Readonly<{
   delivery: string;
   event: string;
@@ -172,6 +211,9 @@ export type PlaneWebhookHeaders = Readonly<{
 export type PlaneSourceSnapshot = Readonly<{
   workItem: unknown;
   project: unknown;
+  comments?: unknown;
+  relations?: unknown;
+  projectWorkItems?: unknown;
 }>;
 
 export type ResearchAdmission = Readonly<{
@@ -372,6 +414,17 @@ export async function admitPlaneResearchComment(input: {
   });
   const workItem = workItemSnapshotSchema.parse(source.workItem);
   const project = projectSnapshotSchema.parse(source.project);
+  const comments = z
+    .array(workItemCommentSnapshotSchema)
+    .parse(source.comments ?? []);
+  const relations = workItemRelationsSnapshotSchema.parse(
+    source.relations ??
+      Object.fromEntries(relationKinds.map((kind) => [kind, []])),
+  );
+  const projectWorkItems = z
+    .array(workItemSnapshotSchema)
+    .max(200)
+    .parse(source.projectWorkItems ?? []);
   if (
     workItem.id !== event.workItemId ||
     workItem.project !== project.id ||
@@ -382,6 +435,59 @@ export async function admitPlaneResearchComment(input: {
     throw new Error("Plane source snapshot is outside the signed event scope");
   }
 
+  const relevantComments = comments
+    .filter((comment) => comment.external_source !== "codeops")
+    .sort((left, right) => left.created_at.localeCompare(right.created_at))
+    .slice(-20)
+    .map((comment) => ({
+      id: comment.id,
+      bodyHtml: comment.comment_html.slice(0, 8_000),
+      createdBy: comment.created_by,
+      createdAt: comment.created_at,
+    }));
+  const relationSnapshot = relationKinds
+    .flatMap((kind) =>
+      (relations[kind] as readonly { project_id: string; issue_id: string }[]).map(
+        (relation) => ({
+          kind,
+          projectId: relation.project_id,
+          workItemId: relation.issue_id,
+        }),
+      ),
+    )
+    .sort((left, right) =>
+      `${left.kind}:${left.projectId}:${left.workItemId}`.localeCompare(
+        `${right.kind}:${right.projectId}:${right.workItemId}`,
+      ),
+    );
+  const ticketSnapshot = {
+    workItemId: workItem.id,
+    name: workItem.name,
+    descriptionHtml: workItem.description_html ?? "",
+    priority: workItem.priority,
+    stateId: workItem.state,
+    labelIds: [...workItem.labels].sort(),
+    assigneeIds: [...workItem.assignees].sort(),
+    moduleId: workItem.module ?? null,
+    parentId: workItem.parent ?? null,
+    updatedAt: workItem.updated_at,
+    relevantComments,
+    relations: relationSnapshot,
+    projectTasks: projectWorkItems
+      .filter((item) => item.id !== workItem.id)
+      .map((item) => ({
+        workItemId: item.id,
+        name: item.name,
+        descriptionHtml: item.description_html ?? "",
+        descriptionDigest: `sha256:${createHash("sha256")
+          .update(item.description_html ?? "")
+          .digest("hex")}`,
+        priority: item.priority,
+        stateId: item.state,
+        updatedAt: item.updated_at,
+      }))
+      .sort((left, right) => left.workItemId.localeCompare(right.workItemId)),
+  };
   const planeRevisionDigest = `sha256:${createHash("sha256")
     .update(
       canonicalSerialize({
@@ -391,18 +497,7 @@ export async function admitPlaneResearchComment(input: {
           descriptionHtml: project.description_html ?? null,
           updatedAt: project.updated_at,
         },
-        workItem: {
-          id: workItem.id,
-          name: workItem.name,
-          descriptionHtml: workItem.description_html ?? null,
-          priority: workItem.priority,
-          state: workItem.state,
-          labels: [...workItem.labels].sort(),
-          assignees: [...workItem.assignees].sort(),
-          module: workItem.module ?? null,
-          parent: workItem.parent ?? null,
-          updatedAt: workItem.updated_at,
-        },
+        ticketSnapshot,
         trigger: {
           commentId: event.commentId,
           eventId: event.eventId,
@@ -445,6 +540,7 @@ export async function admitPlaneResearchComment(input: {
       baseSha: gitSha.parse(input.baseSha),
       planeRevisionDigest,
       projectContext,
+      ticketSnapshot,
       defaultBrief: [workItem.name, workItem.description_stripped ?? ""]
         .filter((value) => value.trim().length > 0)
         .join("\n\n")

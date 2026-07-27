@@ -1,8 +1,13 @@
 import type {
   AgentJobDispatchResult,
+  ResearchCitation,
   ResearchPacket,
   ResearchRequest,
+  ResearchSynthesis,
 } from "@renoconcierge/codeops-contracts";
+
+const MANAGED_HEADING = "<h3>CodeOps research synthesis</h3>";
+const TASK_MANAGED_HEADING = "<h3>CodeOps research finding</h3>";
 
 function escapeHtml(value: string): string {
   return value
@@ -13,39 +18,241 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
-function listHtml(title: string, values: readonly string[]): string {
-  if (values.length === 0) return "";
-  return `<p><strong>${title}</strong></p><ul>${values
-    .map((value) => `<li>${escapeHtml(value)}</li>`)
+function sourceUrl(
+  request: ResearchRequest,
+  citation: ResearchCitation,
+): string {
+  const path = citation.path
+    .split("/")
+    .map((component) => encodeURIComponent(component))
+    .join("/");
+  const end = citation.lineEnd ?? citation.lineStart;
+  return `https://github.com/${encodeURIComponent(request.repository.owner)}/${encodeURIComponent(
+    request.repository.name,
+  )}/blob/${request.baseSha}/${path}#L${citation.lineStart}-L${end}`;
+}
+
+function citationLinks(
+  request: ResearchRequest,
+  synthesis: ResearchSynthesis,
+  ids: readonly string[],
+): string {
+  const citations = new Map(
+    synthesis.citations.map((citation) => [citation.id, citation]),
+  );
+  return ids
+    .map((id) => citations.get(id))
+    .filter((citation): citation is ResearchCitation => citation !== undefined)
+    .map((citation) => {
+      const test = citation.testName ? ` · ${citation.testName}` : "";
+      return `<a href="${sourceUrl(request, citation)}">${escapeHtml(
+        `${citation.path}:${citation.lineStart}${test}`,
+      )}</a>`;
+    })
+    .join("; ");
+}
+
+function findingsHtml(
+  request: ResearchRequest,
+  synthesis: ResearchSynthesis,
+): string {
+  if (synthesis.topFindings.length === 0) return "";
+  return `<p><strong>Top findings</strong></p><ol>${synthesis.topFindings
+    .map(
+      (finding) =>
+        `<li><strong>${escapeHtml(
+          `${finding.severity} · ${finding.confidence} confidence`,
+        )}</strong>: ${escapeHtml(finding.currentBehavior)} Expected: ${escapeHtml(
+          finding.expectedBehavior,
+        )}<br>${citationLinks(request, synthesis, finding.citationIds)}</li>`,
+    )
+    .join("")}</ol>`;
+}
+
+function decisionsHtml(
+  request: ResearchRequest,
+  synthesis: ResearchSynthesis,
+): string {
+  if (synthesis.decisions.length === 0) return "";
+  return `<p><strong>Product decisions (maximum three)</strong></p><ol>${synthesis.decisions
+    .map(
+      (decision) =>
+        `<li>${decision.blocking ? "<strong>Blocking:</strong> " : ""}${escapeHtml(
+          decision.question,
+        )}<br>${citationLinks(request, synthesis, decision.citationIds)}</li>`,
+    )
+    .join("")}</ol>`;
+}
+
+function matrixHtml(
+  request: ResearchRequest,
+  synthesis: ResearchSynthesis,
+): string {
+  return `<p><strong>Route/state/credential matrix · ${synthesis.matrix.version}</strong></p><ol>${synthesis.matrix.rows
+    .map(
+      (row) =>
+        `<li><strong>${escapeHtml(row.routeOrRpc)}</strong> — ${escapeHtml(
+          `${row.lifecycleState} / ${row.credentialState} / ${row.status}`,
+        )}<br>Current oracle: ${escapeHtml(
+          row.currentOracle,
+        )}<br>Expected oracle: ${escapeHtml(
+          row.expectedOracle,
+        )}<br>Allowed side effects: ${escapeHtml(
+          row.allowedSideEffects,
+        )}<br>${citationLinks(request, synthesis, row.citationIds)}</li>`,
+    )
+    .join("")}</ol>`;
+}
+
+function downstreamHtml(
+  request: ResearchRequest,
+  synthesis: ResearchSynthesis,
+): string {
+  if (synthesis.downstreamFindings.length === 0) return "";
+  return `<p><strong>Downstream findings (not ticket scope)</strong></p><ul>${synthesis.downstreamFindings
+    .map(
+      (finding) =>
+        `<li>${escapeHtml(finding.currentBehavior)}<br>${citationLinks(
+          request,
+          synthesis,
+          finding.citationIds,
+        )}</li>`,
+    )
     .join("")}</ul>`;
+}
+
+function followUpTasksHtml(synthesis: ResearchSynthesis): string {
+  if (synthesis.followUpTasks.length === 0) return "";
+  return `<p><strong>Follow-up tasks</strong></p><ol>${synthesis.followUpTasks
+    .map(
+      (task) =>
+        `<li><strong>${escapeHtml(task.area)}</strong>: ${escapeHtml(
+          task.targetWorkItemId === null ? `Create “${task.title}”` : `Update “${task.title}”`,
+        )}</li>`,
+    )
+    .join("")}</ol>`;
+}
+
+function taskDescription(input: {
+  request: ResearchRequest;
+  synthesis: ResearchSynthesis;
+  task: ResearchSynthesis["followUpTasks"][number];
+  original: string;
+}): string {
+  const preserved = input.original.split(TASK_MANAGED_HEADING)[0]!.trim();
+  return [
+    preserved,
+    TASK_MANAGED_HEADING,
+    `<p><strong>Area:</strong> ${escapeHtml(input.task.area)}</p>`,
+    `<p>${escapeHtml(input.task.objective)}</p>`,
+    `<p><strong>Acceptance criteria</strong></p><ul>${input.task.acceptanceCriteria
+      .map((criterion) => `<li>${escapeHtml(criterion)}</li>`)
+      .join("")}</ul>`,
+    `<p><strong>Evidence</strong><br>${citationLinks(
+      input.request,
+      input.synthesis,
+      input.task.citationIds,
+    )}</p>`,
+    `<p><code>[codeops-research-task:${escapeHtml(input.task.key)}]</code></p>`,
+  ]
+    .filter((value) => value.length > 0)
+    .join("");
+}
+
+function managedDescription(
+  request: ResearchRequest,
+  synthesis: ResearchSynthesis,
+): string {
+  const original = request.ticketSnapshot.descriptionHtml
+    .split(MANAGED_HEADING)[0]!
+    .trim();
+  return [
+    original,
+    MANAGED_HEADING,
+    `<p><strong>Verdict:</strong> ${escapeHtml(
+      synthesis.verdict,
+    )}</p><p>${escapeHtml(synthesis.summary)}</p>`,
+    findingsHtml(request, synthesis),
+    matrixHtml(request, synthesis),
+    decisionsHtml(request, synthesis),
+    downstreamHtml(request, synthesis),
+    followUpTasksHtml(synthesis),
+  ]
+    .filter((value) => value.length > 0)
+    .join("");
+}
+
+function compactComment(
+  request: ResearchRequest,
+  synthesis: ResearchSynthesis,
+): string {
+  const blocks = [
+    "<p><strong>CodeOps research synthesized</strong></p>",
+    `<p><strong>Verdict:</strong> ${escapeHtml(
+      synthesis.verdict,
+    )}</p><p>${escapeHtml(synthesis.summary)}</p>`,
+    findingsHtml(request, synthesis),
+    decisionsHtml(request, synthesis),
+    downstreamHtml(request, synthesis),
+    followUpTasksHtml(synthesis),
+    `<p>The current ticket description was refined with the versioned route/state/credential matrix and exact-SHA evidence links. Evidence-backed same-project follow-up tasks were created or updated where applicable.</p>`,
+  ];
+  let body = "";
+  for (const block of blocks) {
+    if (body.length + block.length <= 7_900) body += block;
+  }
+  return body;
 }
 
 export function buildResearchPacket(input: {
   request: ResearchRequest;
-  dispatches: readonly AgentJobDispatchResult[];
+  personaDispatches: readonly AgentJobDispatchResult[];
+  synthesisDispatch: AgentJobDispatchResult;
 }): ResearchPacket {
-  if (input.dispatches.length !== input.request.personas.length) {
+  if (input.personaDispatches.length !== input.request.personas.length) {
     throw new Error("research dispatch count does not match requested personas");
   }
-  const reports = input.dispatches.map((dispatch, index) => {
+  const reports = input.personaDispatches.map((dispatch, index) => {
     const persona = input.request.personas[index];
     if (
       dispatch.role !== "qa-contract-researcher" ||
-      dispatch.researchReport.requestId !== input.request.requestId ||
-      dispatch.researchReport.persona !== persona
+      dispatch.researchResult.kind !== "persona" ||
+      dispatch.researchResult.report.requestId !== input.request.requestId ||
+      dispatch.researchResult.report.persona !== persona
     ) {
-      throw new Error("research dispatch result identity mismatch");
+      throw new Error("research persona dispatch result identity mismatch");
     }
-    return dispatch.researchReport;
+    return dispatch.researchResult.report;
   });
-  const currentBehavior = reports
-    .flatMap((report) => report.currentBehavior)
-    .slice(0, 100);
-  const expectedBehavior = reports
-    .flatMap((report) => report.expectedBehavior)
-    .slice(0, 100);
-  const decisions = reports.flatMap((report) => report.decisions).slice(0, 50);
-  const evidence = input.dispatches.map((dispatch) => ({
+  if (
+    input.synthesisDispatch.role !== "qa-contract-researcher" ||
+    input.synthesisDispatch.researchResult.kind !== "synthesis" ||
+    input.synthesisDispatch.researchResult.synthesis.requestId !==
+      input.request.requestId
+  ) {
+    throw new Error("research synthesis dispatch result identity mismatch");
+  }
+  const synthesis = input.synthesisDispatch.researchResult.synthesis;
+  const projectTasks = new Map(
+    (input.request.ticketSnapshot.projectTasks ?? []).map((task) => [
+      task.workItemId,
+      task,
+    ]),
+  );
+  for (const task of synthesis.followUpTasks) {
+    if (
+      task.targetWorkItemId !== null &&
+      !projectTasks.has(task.targetWorkItemId)
+    ) {
+      throw new Error("research follow-up target is absent from the admitted task index");
+    }
+  }
+  const orderedTasks = [...synthesis.followUpTasks].sort((left, right) => {
+    const areaOrder = Number(right.area === "security") - Number(left.area === "security");
+    return areaOrder || left.key.localeCompare(right.key);
+  });
+  const dispatches = [...input.personaDispatches, input.synthesisDispatch];
+  const evidence = dispatches.map((dispatch) => ({
     version: "codeops.evidence/v1" as const,
     kind: "checkpoint" as const,
     uri: dispatch.checkpointUri,
@@ -53,41 +260,14 @@ export function buildResearchPacket(input: {
     sizeBytes: dispatch.checkpointSizeBytes,
     mediaType: "application/json",
   }));
-  const reportHtml = reports
-    .map(
-      (report) =>
-        `<p><strong>${escapeHtml(report.persona)}</strong> · ${escapeHtml(
-          report.outcome,
-        )}</p><p>${escapeHtml(report.summary)}</p>`,
-    )
-    .join("");
-  const bodyHtml = [
-    "<p><strong>CodeOps research complete</strong></p>",
-    reportHtml,
-    listHtml("Current behavior", currentBehavior),
-    listHtml("Expected behavior", expectedBehavior),
-    listHtml(
-      "Decisions",
-      decisions.map(
-        (decision) =>
-          `${decision.blocking ? "Blocking" : "Non-blocking"}: ${decision.question}`,
-      ),
-    ),
-  ]
-    .join("")
-    .slice(0, 50_000);
-  const summary = reports
-    .map((report) => `${report.persona}: ${report.summary}`)
-    .join("\n")
-    .slice(0, 2_000);
 
   return {
-    version: "codeops.research-packet/v2",
+    version: "codeops.research-packet/v3",
     personas: input.request.personas,
-    perspectives: reports.map(({ persona, outcome, summary: perspectiveSummary }) => ({
+    perspectives: reports.map(({ persona, outcome, summary }) => ({
       persona,
       outcome,
-      summary: perspectiveSummary,
+      summary,
     })),
     requestId: input.request.requestId,
     projectId: input.request.projectId,
@@ -95,29 +275,64 @@ export function buildResearchPacket(input: {
     baseSha: input.request.baseSha,
     projectContextDigest: input.request.projectContext.digest,
     planeRevisionDigest: input.request.planeRevisionDigest,
-    summary,
-    currentBehavior,
-    expectedBehavior,
+    summary: synthesis.summary,
+    synthesis,
+    currentBehavior: synthesis.topFindings.map(
+      (finding) => finding.currentBehavior,
+    ),
+    expectedBehavior: synthesis.topFindings.map(
+      (finding) => finding.expectedBehavior,
+    ),
     evidence,
     videoNotApplicableReason:
       "This bounded repository-contract review does not exercise a live user journey.",
-    decisions,
+    decisions: synthesis.decisions.map(({ question, blocking }) => ({
+      question,
+      blocking,
+    })),
     proposedMutations: {
-      version: "codeops.research-mutation-batch/v1",
+      version: "codeops.research-mutation-batch/v2",
       requestId: input.request.requestId,
       projectId: input.request.projectId,
       sourceWorkItemId: input.request.workItemId,
       mutations: [
         {
+          type: "ticket.update",
+          targetWorkItemId: input.request.workItemId,
+          changes: {
+            descriptionHtml: managedDescription(input.request, synthesis),
+          },
+        },
+        ...orderedTasks.map((task) => {
+          const existing =
+            task.targetWorkItemId === null
+              ? undefined
+              : projectTasks.get(task.targetWorkItemId);
+          return {
+            type: "task.upsert" as const,
+            key: task.key,
+            targetWorkItemId: task.targetWorkItemId,
+            expectedDescriptionDigest:
+              existing === undefined
+                ? null
+                : existing.descriptionDigest,
+            name: task.title,
+            descriptionHtml: taskDescription({
+              request: input.request,
+              synthesis,
+              task,
+              original: existing?.descriptionHtml ?? "",
+            }),
+          };
+        }),
+        {
           type: "comment.create",
           targetWorkItemId: input.request.workItemId,
-          bodyHtml,
+          bodyHtml: compactComment(input.request, synthesis),
           attachments: evidence,
         },
       ],
     },
-    // Workflow time advances after a Temporal reset. The admitted request
-    // timestamp is immutable, so it keeps projection identity byte-stable.
     createdAt: input.request.requestedAt,
   };
 }

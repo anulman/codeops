@@ -163,6 +163,7 @@ export async function workItemWorkflow(
 
   await move("executing", "Dispatching the isolated Agent Job");
   const dispatches: DispatchResult[] = [];
+  let synthesisDispatch: DispatchResult | undefined;
   try {
     if (workItem.role === "coding-agent") {
       dispatches.push(
@@ -179,10 +180,24 @@ export async function workItemWorkflow(
           await dispatchAgentJob({
             version: "codeops.agent-job-dispatch/v1",
             ...workItem,
-            researchPersona: persona,
+            researchStage: { kind: "persona", persona },
           }),
         );
       }
+      const reports = dispatches.map((dispatch) => {
+        if (
+          dispatch.role !== "qa-contract-researcher" ||
+          dispatch.researchResult.kind !== "persona"
+        ) {
+          throw new Error("persona dispatch returned the wrong result kind");
+        }
+        return dispatch.researchResult.report;
+      });
+      synthesisDispatch = await dispatchAgentJob({
+        version: "codeops.agent-job-dispatch/v1",
+        ...workItem,
+        researchStage: { kind: "synthesis", reports },
+      });
     }
   } catch {
     await move(
@@ -193,7 +208,7 @@ export async function workItemWorkflow(
   }
   await move(
     "evidence_ready",
-    `Checkpoints ready at ${dispatches
+    `Checkpoints ready at ${[...dispatches, ...(synthesisDispatch ? [synthesisDispatch] : [])]
       .map((dispatch) => dispatch.checkpointUri)
       .join(", ")}`,
   );
@@ -204,7 +219,12 @@ export async function workItemWorkflow(
       projection = await publishResearchPacket(
         buildResearchPacket({
           request: workItem.researchRequest,
-          dispatches,
+          personaDispatches: dispatches,
+          synthesisDispatch:
+            synthesisDispatch ??
+            (() => {
+              throw new Error("research synthesis checkpoint is missing");
+            })(),
         }),
       );
     } catch {

@@ -6,6 +6,7 @@ import {
   admitPlaneResearchComment,
   compileProjectContext,
 } from "../dist/index.js";
+import { upgradeResearchPacket } from "./research-fixture.mjs";
 
 const actorId = "88fc36c8-73b0-4547-81c7-96b70f61835e";
 const payload = {
@@ -65,6 +66,53 @@ const source = {
     description_html: "<p>Deterministic auth qualification.</p>",
     updated_at: "2026-07-26T01:00:00.000Z",
   },
+  comments: [
+    {
+      id: payload.data.comment.id,
+      comment_html: "<p>Human research request.</p>",
+      created_by: actorId,
+      created_at: "2026-07-26T02:29:00.000Z",
+      external_source: null,
+    },
+    {
+      id: "99999999-9999-4999-8999-999999999999",
+      comment_html: "<p>Old CodeOps output.</p>",
+      created_by: actorId,
+      created_at: "2026-07-26T02:29:30.000Z",
+      external_source: "codeops",
+    },
+  ],
+  relations: {
+    blocking: [
+      {
+        project_id: payload.data.project_id,
+        issue_id: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+      },
+    ],
+    blocked_by: [],
+    duplicate: [],
+    relates_to: [],
+    start_after: [],
+    start_before: [],
+    finish_after: [],
+    finish_before: [],
+  },
+  projectWorkItems: [
+    {
+      id: "77777777-7777-4777-8777-777777777777",
+      project: payload.data.project_id,
+      workspace: payload.workspace_id,
+      name: "Existing security hardening",
+      description_html: "<p>Existing task.</p>",
+      priority: "high",
+      state: "067b88e5-304b-4221-ba09-94340dcc36e5",
+      labels: [],
+      assignees: [],
+      module: null,
+      parent: null,
+      updated_at: "2026-07-26T01:30:00.000Z",
+    },
+  ],
 };
 
 const personaUserId = "98d2dd94-8b56-4d68-bce9-774fc6d4bb2c";
@@ -138,7 +186,7 @@ function researchPacket() {
     },
     documents: projectContextDocuments,
   });
-  return {
+  return upgradeResearchPacket({
     version: "codeops.research-packet/v2",
     personas: ["@ai-product"],
     perspectives: [
@@ -168,7 +216,7 @@ function researchPacket() {
       mutations: [],
     },
     createdAt: "2026-07-26T02:30:00.000Z",
-  };
+  });
 }
 
 function signedInput(overrides = {}) {
@@ -250,6 +298,20 @@ test("admits signed human persona mentions and binds the bounded round", async (
   assert.equal(admission.request.projectId, payload.data.project_id);
   assert.equal(admission.request.requestedBy, actorId);
   assert.deepEqual(admission.request.personas, ["@ai-security", "@ai-web"]);
+  assert.equal(admission.request.ticketSnapshot.name, source.workItem.name);
+  assert.equal(admission.request.ticketSnapshot.relevantComments.length, 1);
+  assert.equal(admission.request.ticketSnapshot.projectTasks.length, 1);
+  assert.equal(
+    admission.request.ticketSnapshot.projectTasks[0].workItemId,
+    source.projectWorkItems[0].id,
+  );
+  assert.deepEqual(admission.request.ticketSnapshot.relations, [
+    {
+      kind: "blocking",
+      projectId: payload.data.project_id,
+      workItemId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    },
+  ]);
   assert.equal(
     admission.request.brief,
     "Cross-check auth boundaries and route guards.",

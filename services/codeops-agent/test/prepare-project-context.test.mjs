@@ -72,6 +72,13 @@ async function run(input) {
               JSON.stringify(input.researchPacket),
             ).toString("base64"),
           }),
+      ...(input.researchDispatch === undefined
+        ? {}
+        : {
+            CODEOPS_RESEARCH_DISPATCH_B64: Buffer.from(
+              JSON.stringify(input.researchDispatch),
+            ).toString("base64"),
+          }),
     },
   });
 }
@@ -93,7 +100,7 @@ test("materializes verified context and fails on missing or digest-drifted files
       contextDirectory: validOutput,
       projectContext: context,
       researchPacket: {
-        version: "codeops.research-packet/v2",
+        version: "codeops.research-packet/v3",
         baseSha: context.baseSha,
         projectId: context.project.projectId,
         projectContextDigest: context.digest,
@@ -107,6 +114,38 @@ test("materializes verified context and fails on missing or digest-drifted files
         ),
       ),
       context,
+    );
+    const dispatchOutput = path.join(root, "dispatch");
+    const workItemId = "33333333-3333-4333-8333-333333333333";
+    const dispatch = {
+      version: "codeops.agent-job-dispatch/v1",
+      role: "qa-contract-researcher",
+      workItemId,
+      workflowId: "research-request-1",
+      baseSha: context.baseSha,
+      researchRequest: {
+        requestId: "research-request-1",
+        workItemId,
+        projectId: context.project.projectId,
+        projectContext: context,
+        ticketSnapshot: { workItemId },
+      },
+      researchStage: { kind: "persona", persona: "@ai-security" },
+    };
+    await run({
+      workspace,
+      contextDirectory: dispatchOutput,
+      projectContext: context,
+      researchDispatch: dispatch,
+    });
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(
+          path.join(dispatchOutput, "research-dispatch.json"),
+          "utf8",
+        ),
+      ),
+      dispatch,
     );
     await writeFile(path.join(workspace, "AGENTS.md"), "drifted\n");
     await assert.rejects(

@@ -46,7 +46,7 @@ projectContext.digest = `sha256:${createHash("sha256")
   .digest("hex")}`;
 
 const projectionPacket = {
-  version: "codeops.research-packet/v2",
+  version: "codeops.research-packet/v3",
   personas: ["@ai-security"],
   perspectives: [
     {
@@ -62,17 +62,63 @@ const projectionPacket = {
   projectContextDigest: projectContext.digest,
   planeRevisionDigest: `sha256:${"b".repeat(64)}`,
   summary: "Authentication boundaries need qualification.",
+  synthesis: {
+    version: "codeops.research-synthesis/v1",
+    requestId: "research-request-1",
+    verdict: "ready-to-refine",
+    summary: "Authentication boundaries need qualification.",
+    topFindings: [],
+    decisions: [],
+    downstreamFindings: [],
+    followUpTasks: [],
+    matrix: {
+      version: "codeops.route-state-credential-matrix/v1",
+      rows: [
+        {
+          id: "matrix-1",
+          lifecycleState: "qualified",
+          credentialState: "valid",
+          routeOrRpc: "/claim",
+          currentOracle: "Incomplete",
+          expectedOracle: "Explicit",
+          allowedSideEffects: "None",
+          status: "gap",
+          citationIds: ["citation-1"],
+        },
+      ],
+    },
+    citations: [
+      {
+        id: "citation-1",
+        path: "services/auth.ts",
+        lineStart: 1,
+        claim: "Fixture citation.",
+      },
+    ],
+  },
   currentBehavior: ["The current matrix is incomplete."],
   expectedBehavior: ["Every route has an explicit contract."],
   evidence: [],
   videoNotApplicableReason: "This is a repository-contract review.",
   decisions: [],
   proposedMutations: {
-    version: "codeops.research-mutation-batch/v1",
+    version: "codeops.research-mutation-batch/v2",
     requestId: "research-request-1",
     projectId: "11111111-1111-4111-8111-111111111111",
     sourceWorkItemId: "22222222-2222-4222-8222-222222222222",
-    mutations: [],
+    mutations: [
+      {
+        type: "ticket.update",
+        targetWorkItemId: "22222222-2222-4222-8222-222222222222",
+        changes: { descriptionHtml: "<p>Refined.</p>" },
+      },
+      {
+        type: "comment.create",
+        targetWorkItemId: "22222222-2222-4222-8222-222222222222",
+        bodyHtml: "<p>Research complete.</p>",
+        attachments: [],
+      },
+    ],
   },
   createdAt: "2026-07-26T00:00:00.000Z",
 };
@@ -160,7 +206,10 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
     assert.equal(init.headers.Authorization, `Bearer ${token}`);
     const body = JSON.parse(init.body);
     assert.equal(body.role, "qa-contract-researcher");
-    assert.equal(body.researchPersona, "@ai-security");
+    assert.deepEqual(body.researchStage, {
+      kind: "persona",
+      persona: "@ai-security",
+    });
     return new Response(
       JSON.stringify({
         version: "codeops.agent-job-dispatch-result/v1",
@@ -170,15 +219,18 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
           "artifact:///agent-runs/research-test/checkpoint.json",
         checkpointDigest: `sha256:${"a".repeat(64)}`,
         checkpointSizeBytes: 123,
-        researchReport: {
-          version: "codeops.research-persona-report/v1",
-          requestId: "research-request-1",
-          persona: "@ai-security",
-          outcome: "findings",
-          summary: "Authentication boundaries need qualification.",
-          currentBehavior: ["The current matrix is incomplete."],
-          expectedBehavior: ["Every route has an explicit contract."],
-          decisions: [],
+        researchResult: {
+          kind: "persona",
+          report: {
+            version: "codeops.research-persona-report/v2",
+            requestId: "research-request-1",
+            persona: "@ai-security",
+            outcome: "findings",
+            summary: "Authentication boundaries need qualification.",
+            findings: [],
+            decisions: [],
+            citations: [],
+          },
         },
       }),
       { status: 200, headers: { "Content-Type": "application/json" } },
@@ -192,9 +244,9 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
       baseSha: "a".repeat(40),
       summary: "Research routing matrix",
       role: "qa-contract-researcher",
-      researchPersona: "@ai-security",
+      researchStage: { kind: "persona", persona: "@ai-security" },
       researchRequest: {
-        version: "codeops.research-request/v2",
+        version: "codeops.research-request/v3",
         requestId: "research-request-1",
         workspaceId: projectContext.project.workspaceId,
         projectId: "11111111-1111-4111-8111-111111111111",
@@ -205,6 +257,20 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
         baseSha: "a".repeat(40),
         planeRevisionDigest: `sha256:${"b".repeat(64)}`,
         projectContext,
+        ticketSnapshot: {
+          workItemId: "22222222-2222-4222-8222-222222222222",
+          name: "Research auth",
+          descriptionHtml: "<p>Define auth contracts.</p>",
+          priority: "high",
+          stateId: "66666666-6666-4666-8666-666666666666",
+          labelIds: [],
+          assigneeIds: [],
+          moduleId: null,
+          parentId: null,
+          updatedAt: "2026-07-26T00:00:00.000Z",
+          relevantComments: [],
+          relations: [],
+        },
         personas: ["@ai-security"],
         brief: "Research authentication boundaries",
         requestedAt: "2026-07-26T00:00:00.000Z",

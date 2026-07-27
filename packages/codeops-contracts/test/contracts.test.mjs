@@ -52,6 +52,60 @@ function makeProjectContext(workspaceId, projectId) {
   });
 }
 
+function makeTicketSnapshot(workItemId) {
+  return {
+    workItemId,
+    name: "Inventory canonical auth states",
+    descriptionHtml: "<p>Define the route/state/credential matrix.</p>",
+    priority: "high",
+    stateId: "77777777-7777-4777-8777-777777777777",
+    labelIds: [],
+    assigneeIds: [],
+    moduleId: null,
+    parentId: null,
+    updatedAt: now,
+    relevantComments: [],
+    relations: [],
+  };
+}
+
+function makeSynthesis(requestId) {
+  return {
+    version: contractVersions.researchSynthesis,
+    requestId,
+    verdict: "ready-to-refine",
+    summary: "The product and implementation boundaries are explicit.",
+    topFindings: [],
+    decisions: [],
+    downstreamFindings: [],
+    followUpTasks: [],
+    matrix: {
+      version: contractVersions.researchMatrix,
+      rows: [
+        {
+          id: "matrix-1",
+          lifecycleState: "qualified",
+          credentialState: "valid",
+          routeOrRpc: "/claim",
+          currentOracle: "Repository-backed current behavior.",
+          expectedOracle: "Customer-file-scoped behavior.",
+          allowedSideEffects: "None during research.",
+          status: "verified",
+          citationIds: ["citation-1"],
+        },
+      ],
+    },
+    citations: [
+      {
+        id: "citation-1",
+        path: "services/auth.ts",
+        lineStart: 1,
+        claim: "Fixture citation.",
+      },
+    ],
+  };
+}
+
 function makeResearchPacket({ projectContext, workItemId }) {
   const requestId = "research-request:fixture";
   return {
@@ -71,6 +125,7 @@ function makeResearchPacket({ projectContext, workItemId }) {
     projectContextDigest: projectContext.digest,
     planeRevisionDigest: `sha256:${"9".repeat(64)}`,
     summary: "The product and implementation boundaries are explicit.",
+    synthesis: makeSynthesis(requestId),
     currentBehavior: ["The current behavior is repository-backed."],
     expectedBehavior: ["The accepted behavior remains customer-file scoped."],
     evidence: [],
@@ -81,7 +136,19 @@ function makeResearchPacket({ projectContext, workItemId }) {
       requestId,
       projectId: projectContext.project.projectId,
       sourceWorkItemId: workItemId,
-      mutations: [],
+      mutations: [
+        {
+          type: "ticket.update",
+          targetWorkItemId: workItemId,
+          changes: { descriptionHtml: "<p>Refined description.</p>" },
+        },
+        {
+          type: "comment.create",
+          targetWorkItemId: workItemId,
+          bodyHtml: "<p>Research complete.</p>",
+          attachments: [],
+        },
+      ],
     },
     createdAt: now,
   };
@@ -414,6 +481,7 @@ const researchSource = {
     planeCommentEvent.workspaceId,
     planeCommentEvent.projectId,
   ),
+  ticketSnapshot: makeTicketSnapshot(planeCommentEvent.workItemId),
   defaultBrief: "Inventory canonical auth states from the Plane ticket.",
 };
 
@@ -506,13 +574,13 @@ test("binds strict Agent Job dispatch and result identities", () => {
     summary: "Research the canonical authentication matrix.",
     role: "qa-contract-researcher",
     researchRequest: request,
-    researchPersona: "@ai-security",
+    researchStage: { kind: "persona", persona: "@ai-security" },
   };
   assert.deepEqual(agentJobDispatchRequestSchema.parse(dispatch), dispatch);
   assert.throws(() =>
     agentJobDispatchRequestSchema.parse({
       ...dispatch,
-      researchPersona: "@ai-ml",
+      researchStage: { kind: "persona", persona: "@ai-ml" },
     }),
   );
   assert.throws(() =>
@@ -529,15 +597,18 @@ test("binds strict Agent Job dispatch and result identities", () => {
       "artifact:///agent-runs/research-123/checkpoint.json",
     checkpointDigest: `sha256:${"c".repeat(64)}`,
     checkpointSizeBytes: 123,
-    researchReport: {
-      version: contractVersions.researchPersonaReport,
-      requestId: request.requestId,
-      persona: "@ai-security",
-      outcome: "findings",
-      summary: "Authentication boundaries need qualification.",
-      currentBehavior: ["The current matrix is incomplete."],
-      expectedBehavior: ["Every route has an explicit contract."],
-      decisions: [],
+    researchResult: {
+      kind: "persona",
+      report: {
+        version: contractVersions.researchPersonaReport,
+        requestId: request.requestId,
+        persona: "@ai-security",
+        outcome: "findings",
+        summary: "Authentication boundaries need qualification.",
+        findings: [],
+        decisions: [],
+        citations: [],
+      },
     },
   };
   assert.deepEqual(agentJobDispatchResultSchema.parse(result), result);
@@ -583,13 +654,31 @@ test("the research mutation contract cannot express lifecycle state changes", ()
     attachments: [],
   };
   assert.deepEqual(researchPlaneMutationSchema.parse(comment), comment);
-  assert.equal(
+  const descriptionUpdate = {
+    type: "ticket.update",
+    targetWorkItemId: planeCommentEvent.workItemId,
+    changes: { descriptionHtml: "<p>Refined description.</p>" },
+  };
+  assert.deepEqual(
+    researchPlaneMutationSchema.parse(descriptionUpdate),
+    descriptionUpdate,
+  );
+  const taskUpsert = {
+    type: "task.upsert",
+    key: "otp-rate-limit",
+    targetWorkItemId: null,
+    expectedDescriptionDigest: null,
+    name: "Bound OTP verification attempts",
+    descriptionHtml:
+      "<p>Evidence-backed task.</p><p><code>[codeops-research-task:otp-rate-limit]</code></p>",
+  };
+  assert.deepEqual(researchPlaneMutationSchema.parse(taskUpsert), taskUpsert);
+  assert.throws(() =>
     researchPlaneMutationSchema.parse({
       type: "ticket.cancel-proposal",
       targetWorkItemId: planeCommentEvent.workItemId,
-      reason: "Superseded by the canonical matrix item.",
-    }).type,
-    "ticket.cancel-proposal",
+      reason: "Superseded.",
+    }),
   );
   assert.throws(() =>
     researchPlaneMutationSchema.parse({
@@ -612,6 +701,8 @@ test("the research mutation contract cannot express lifecycle state changes", ()
     }),
   );
   assert.ok(qaContractResearcherPolicy.forbiddenMutationTypes.includes("state.update"));
+  assert.ok(qaContractResearcherPolicy.allowedMutationTypes.includes("task.upsert"));
+  assert.ok(qaContractResearcherPolicy.forbiddenMutationTypes.includes("ticket.create"));
 });
 
 test("research packets bind evidence and mutations to one source request", () => {
@@ -631,6 +722,11 @@ test("research packets bind evidence and mutations to one source request", () =>
     projectId: request.projectId,
     sourceWorkItemId: request.workItemId,
     mutations: [
+      {
+        type: "ticket.update",
+        targetWorkItemId: request.workItemId,
+        changes: { descriptionHtml: "<p>Refined description.</p>" },
+      },
       {
         type: "comment.create",
         targetWorkItemId: request.workItemId,
@@ -662,6 +758,20 @@ test("research packets bind evidence and mutations to one source request", () =>
     projectContextDigest: request.projectContext.digest,
     planeRevisionDigest: request.planeRevisionDigest,
     summary: "Current and expected routing behavior are documented.",
+    synthesis: {
+      ...makeSynthesis(request.requestId),
+      topFindings: [
+        {
+          id: "finding-1",
+          category: "matrix-fact",
+          severity: "high",
+          confidence: "high",
+          currentBehavior: "Wrong-file cookies reach the public claim route.",
+          expectedBehavior: "Wrong-file cookies reveal no private file state.",
+          citationIds: ["citation-1"],
+        },
+      ],
+    },
     currentBehavior: ["Wrong-file cookies reach the public claim route."],
     expectedBehavior: ["Wrong-file cookies reveal no private file state."],
     evidence: [video],

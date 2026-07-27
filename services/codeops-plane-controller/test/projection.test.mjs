@@ -7,6 +7,7 @@ import {
   createFileResearchDedupLedger,
   projectResearchPacket,
 } from "../dist/index.js";
+import { upgradeResearchPacket } from "./research-fixture.mjs";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const workItemId = "22222222-2222-4222-8222-222222222222";
@@ -18,7 +19,7 @@ const evidence = {
   sizeBytes: 123,
   mediaType: "application/json",
 };
-const packet = {
+const packet = upgradeResearchPacket({
   version: "codeops.research-packet/v2",
   personas: ["@ai-security"],
   perspectives: [
@@ -55,34 +56,20 @@ const packet = {
     ],
   },
   createdAt: "2026-07-26T00:00:00.000Z",
-};
+});
 
 function client(comments) {
+  const descriptions = [];
   return {
     async getWorkItem() {
       return { id: workItemId, project: projectId, labels: [] };
-    },
-    async listLabels() {
-      return [];
     },
     async createComment(_projectId, _workItemId, input) {
       comments.push(input);
       return { id: "33333333-3333-4333-8333-333333333333" };
     },
-    async createLabel() {
-      throw new Error("unexpected label creation");
-    },
-    async updateLabel() {
-      throw new Error("unexpected label update");
-    },
-    async updateProject() {
-      throw new Error("unexpected project update");
-    },
-    async updateWorkItem() {
-      throw new Error("unexpected work-item update");
-    },
-    async createWorkItem() {
-      throw new Error("unexpected work-item creation");
+    async updateWorkItem(_projectId, _workItemId, patch) {
+      descriptions.push(patch);
     },
   };
 }
@@ -116,12 +103,12 @@ test("durably applies one content-only projection and deduplicates restart retri
     assert.deepEqual(first, {
       status: "applied",
       requestId: packet.requestId,
-      mutationCount: 1,
+      mutationCount: 2,
     });
     assert.deepEqual(retry, {
       status: "duplicate",
       requestId: packet.requestId,
-      mutationCount: 1,
+      mutationCount: 2,
     });
     assert.equal(comments.length, 1);
     assert.equal(comments[0].external_source, "codeops");
@@ -130,7 +117,7 @@ test("durably applies one content-only projection and deduplicates restart retri
   }
 });
 
-test("rejects projection identity drift and every non-comment Trial 0 mutation", async () => {
+test("rejects projection identity drift and every mutation outside source-ticket refinement", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-projection-bad-"));
   const ledger = createFileResearchDedupLedger({
     rootDirectory: root,
@@ -171,7 +158,7 @@ test("rejects projection identity drift and every non-comment Trial 0 mutation",
         packetStore,
         client: client([]),
       }),
-      /one source-ticket comment/,
+      /Invalid discriminator|exactly 2/,
     );
   } finally {
     await rm(root, { recursive: true, force: true });

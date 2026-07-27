@@ -4,7 +4,6 @@ import { createPlaneApiClient } from "../dist/index.js";
 
 const projectId = "45b87d89-0ce0-4d6f-8903-4070f1c67f1b";
 const workItemId = "088a83b9-a53f-4dda-b2bc-c860cf455997";
-const labelId = "a6f8e562-49d2-4c19-bc4b-2bcb9d4f6a03";
 const apiKey = "plane_api_test-only-key";
 
 function jsonResponse(value, status = 200) {
@@ -25,30 +24,55 @@ function recordingFetch() {
     };
     calls.push(call);
     if (call.url.endsWith(`/work-items/${workItemId}/`)) {
-      return jsonResponse({ id: workItemId, project: projectId, labels: [] });
+      return jsonResponse({
+        id: workItemId,
+        project: projectId,
+        labels: [],
+        name: "Source ticket",
+        description_html: "<p>Source.</p>",
+      });
+    }
+    if (call.url.includes(`/projects/${projectId}/work-items/?`)) {
+      return jsonResponse({
+        results: [
+          {
+            id: workItemId,
+            project: projectId,
+            labels: [],
+            name: "Source ticket",
+            description_html: "<p>Source.</p>",
+          },
+        ],
+      });
+    }
+    if (
+      call.method === "POST" &&
+      call.url.endsWith(`/projects/${projectId}/work-items/`)
+    ) {
+      return jsonResponse(
+        {
+          id: "77777777-7777-4777-8777-777777777777",
+          project: projectId,
+          labels: [],
+          name: call.body.name,
+          description_html: call.body.description_html,
+        },
+        201,
+      );
     }
     if (call.url.endsWith(`/projects/${projectId}/`)) {
       return jsonResponse({ id: projectId, name: "Onboarding Auth QA" });
     }
-    if (call.url.includes("/labels/")) {
-      if (call.method === "GET") {
-        return jsonResponse({
-          results: [
-            {
-              id: labelId,
-              name: "Auth",
-              color: "#334455",
-              description: "[codeops-key:auth]",
-            },
-          ],
-          next_page_results: false,
-        });
-      }
+    if (call.url.endsWith(`/work-items/${workItemId}/relations/`)) {
       return jsonResponse({
-        id: labelId,
-        name: call.body.name,
-        color: call.body.color,
-        description: call.body.description,
+        blocking: [],
+        blocked_by: [],
+        duplicate: [],
+        relates_to: [],
+        start_after: [],
+        start_before: [],
+        finish_after: [],
+        finish_before: [],
       });
     }
     if (call.url.includes("/comments/")) {
@@ -72,12 +96,6 @@ function recordingFetch() {
         201,
       );
     }
-    if (call.method === "POST" && call.url.endsWith("/work-items/")) {
-      return jsonResponse(
-        { id: workItemId, project: projectId, labels: call.body.labels ?? [] },
-        201,
-      );
-    }
     return jsonResponse(undefined, 204);
   };
   return { calls, fetch };
@@ -98,22 +116,40 @@ test("maps the content-only client to Plane work-item endpoints", async () => {
     workItemId,
   );
   assert.equal((await client.getProjectSnapshot(projectId)).id, projectId);
-  assert.equal((await client.listLabels(projectId))[0].id, labelId);
+  assert.equal(
+    (await client.getWorkItemComments(projectId, workItemId)).length,
+    1,
+  );
+  assert.deepEqual(
+    await client.getWorkItemRelations(projectId, workItemId),
+    {
+      blocking: [],
+      blocked_by: [],
+      duplicate: [],
+      relates_to: [],
+      start_after: [],
+      start_before: [],
+      finish_after: [],
+      finish_before: [],
+    },
+  );
+  assert.equal((await client.listProjectWorkItems(projectId)).length, 1);
+  assert.equal(
+    (
+      await client.createWorkItem(projectId, {
+        name: "Bound OTP verification attempts",
+        description_html: "<p>Evidence-backed task.</p>",
+      })
+    ).project,
+    projectId,
+  );
   await client.createComment(projectId, workItemId, {
     comment_html: "<p>Research complete.</p>",
     external_source: "codeops",
     external_id: "deterministic-id",
   });
-  await client.updateProject(projectId, {
-    description: "Project contract.",
-  });
   await client.updateWorkItem(projectId, workItemId, {
-    name: "Clarify auth flow",
-    labels: [labelId],
-  });
-  await client.createWorkItem(projectId, {
-    name: "Follow-up",
-    labels: [labelId],
+    description_html: "<p>Clarified auth flow.</p>",
   });
 
   assert.ok(
