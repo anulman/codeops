@@ -4,6 +4,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { Readable, Writable } from "node:stream";
 import {
@@ -101,13 +102,37 @@ function getPrompt(): string {
   return prompt;
 }
 
-async function connectSocket(socketPath: string): Promise<net.Socket> {
-  const socket = net.createConnection(socketPath);
-  await new Promise<void>((resolve, reject) => {
-    socket.once("connect", resolve);
-    socket.once("error", reject);
-  });
-  return socket;
+export async function connectSocket(
+  socketPath: string,
+  options: { timeoutMs?: number; retryIntervalMs?: number } = {},
+): Promise<net.Socket> {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const retryIntervalMs = options.retryIntervalMs ?? 100;
+  const deadline = Date.now() + timeoutMs;
+  let lastError: Error | undefined;
+  do {
+    const socket = net.createConnection(socketPath);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("connect", resolve);
+        socket.once("error", reject);
+      });
+      return socket;
+    } catch (error) {
+      socket.destroy();
+      const code =
+        error instanceof Error && "code" in error
+          ? String(error.code)
+          : "";
+      if (code !== "ENOENT" && code !== "ECONNREFUSED") throw error;
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (Date.now() >= deadline) break;
+      await delay(retryIntervalMs);
+    }
+  } while (Date.now() < deadline);
+  throw new Error(
+    `ACP socket was not ready within ${timeoutMs}ms: ${lastError?.message ?? "unavailable"}`,
+  );
 }
 
 function safeEvent(sequence: number, update: acp.SessionUpdate): SafeEvent {

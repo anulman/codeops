@@ -1,4 +1,8 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import net from "node:net";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   boundedText,
@@ -10,7 +14,31 @@ import {
 import {
   createCheckpointLogRecord,
   createPatchLogRecords,
+  connectSocket,
 } from "../dist/index.js";
+
+test("waits boundedly for the pod-local ACP socket", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-acp-socket-"));
+  const socketPath = path.join(directory, "agent.sock");
+  const server = net.createServer((socket) => socket.end());
+  const listening = new Promise((resolve, reject) => {
+    setTimeout(() => {
+      server.once("error", reject);
+      server.listen(socketPath, resolve);
+    }, 50);
+  });
+  try {
+    const socket = await connectSocket(socketPath, {
+      timeoutMs: 1_000,
+      retryIntervalMs: 10,
+    });
+    socket.destroy();
+    await listening;
+  } finally {
+    await new Promise((resolve) => server.close(resolve));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
 
 test("redacts common API and bearer credential shapes", () => {
   assert.equal(
