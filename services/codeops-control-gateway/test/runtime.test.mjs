@@ -166,3 +166,48 @@ test("retains terminal validation failure and removes credentials/resources", as
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("removes credentials/resources when an init failure prevents log retrieval", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-init-fail-"));
+  const deleted = [];
+  const kubernetes = {
+    async ensure() {},
+    async getJob() {
+      return { status: { failed: 1 } };
+    },
+    async listRunPods() {
+      return [{ metadata: { name: "agent-pod" } }];
+    },
+    async getPodLogs() {
+      throw new Error("session-gateway container never started");
+    },
+    async delete(resource) {
+      deleted.push(resource.kind);
+    },
+  };
+  const run = createAgentJobRunner({
+    kubernetes,
+    config: {
+      namespace: "codeops",
+      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+      sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      repositoryReadToken: "repo-token",
+      modelApiKey: "model-key",
+      evidenceRoot: root,
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    },
+  });
+  try {
+    await assert.rejects(run(request), /container never started/);
+    assert.deepEqual(deleted.sort(), [
+      "Job",
+      "NetworkPolicy",
+      "Secret",
+      "ServiceAccount",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

@@ -117,16 +117,19 @@ export function createAgentJobRunner(input: {
     }
     if (!terminal) throw new Error("Agent Job reconciliation timed out");
 
-    const pods = await input.kubernetes.listRunPods(identity.runId);
-    const names = pods.map(podName).filter((value): value is string => value !== null);
-    if (names.length !== 1) {
-      throw new Error("Agent Job must reconcile to exactly one Pod");
-    }
-    const logs = await input.kubernetes.getPodLogs(
-      names[0]!,
-      "session-gateway",
-    );
+    let logs = "";
     try {
+      const pods = await input.kubernetes.listRunPods(identity.runId);
+      const names = pods
+        .map(podName)
+        .filter((value): value is string => value !== null);
+      if (names.length !== 1) {
+        throw new Error("Agent Job must reconcile to exactly one Pod");
+      }
+      logs = await input.kubernetes.getPodLogs(
+        names[0]!,
+        "session-gateway",
+      );
       const checkpoint = parseCheckpointLogs({
         logs,
         request,
