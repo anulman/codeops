@@ -162,6 +162,14 @@ test("runs a distinct ticket-specific synthesis checkpoint after persona researc
     researchStage: { kind: "synthesis", reports: [personaReport] },
   };
   assert.match(buildAgentPrompt(synthesisRequest), /no more than five ranked findings/);
+  assert.match(
+    buildAgentPrompt(synthesisRequest),
+    /Use at most 8 citationIds on any finding, decision, follow-up task, or matrix row/,
+  );
+  assert.match(
+    buildAgentPrompt(synthesisRequest),
+    /no more than 20 downstream findings, 5 follow-up tasks, 50 matrix rows, and 80 citations/,
+  );
   assert.match(buildAgentPrompt(synthesisRequest), /route\/state\/credential matrix/);
   const synthesis = {
     version: "codeops.research-synthesis/v1",
