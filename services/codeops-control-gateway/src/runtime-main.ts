@@ -62,6 +62,23 @@ if (token.length < 32 || token.length > 4_096) {
   throw new Error("dispatch token length is invalid");
 }
 const kubernetes = await loadInClusterKubernetesClient(namespace);
+const modelAuthMode = required("CODEOPS_MODEL_AUTH_MODE");
+const modelAuth =
+  modelAuthMode === "chatgpt"
+    ? {
+        mode: "chatgpt" as const,
+        claimName: required("CODEOPS_CODEX_AUTH_CLAIM"),
+      }
+    : modelAuthMode === "api-key"
+      ? {
+          mode: "api-key" as const,
+          apiKey: await secretFile("CODEOPS_MODEL_API_KEY_FILE"),
+        }
+      : (() => {
+          throw new Error(
+            "CODEOPS_MODEL_AUTH_MODE must be api-key or chatgpt",
+          );
+        })();
 const run = createAgentJobRunner({
   kubernetes,
   config: {
@@ -72,7 +89,7 @@ const run = createAgentJobRunner({
     repositoryReadToken: await secretFile(
       "CODEOPS_REPOSITORY_READ_TOKEN_FILE",
     ),
-    modelApiKey: await secretFile("CODEOPS_MODEL_API_KEY_FILE"),
+    modelAuth,
     evidenceRoot: required("CODEOPS_EVIDENCE_ROOT"),
   },
 });

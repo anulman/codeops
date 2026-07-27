@@ -9,7 +9,9 @@ interface ResourceConfig {
   readonly agentImage: string;
   readonly sessionGatewayImage: string;
   readonly repositoryReadToken: string;
-  readonly modelApiKey: string;
+  readonly modelAuth:
+    | { readonly mode: "api-key"; readonly apiKey: string }
+    | { readonly mode: "chatgpt"; readonly claimName: string };
 }
 
 function labels(input: ResourceConfig, request: AgentJobDispatchRequest) {
@@ -67,7 +69,13 @@ export function buildRunResources(
         "repository-read-token": Buffer.from(
           input.repositoryReadToken,
         ).toString("base64"),
-        "model-api-key": Buffer.from(input.modelApiKey).toString("base64"),
+        ...(input.modelAuth.mode === "api-key"
+          ? {
+              "model-api-key": Buffer.from(
+                input.modelAuth.apiKey,
+              ).toString("base64"),
+            }
+          : {}),
       },
     },
     {
@@ -206,16 +214,32 @@ export function buildRunResources(
                 env: [
                   ...commonIdentity,
                   { name: "CODEOPS_REPOSITORY", value: input.repositoryUrl },
+                  ...(input.modelAuth.mode === "api-key"
+                    ? [
+                        {
+                          name: "CODEX_API_KEY",
+                          valueFrom: {
+                            secretKeyRef: {
+                              name: secretName,
+                              key: "model-api-key",
+                            },
+                          },
+                        },
+                      ]
+                    : []),
                   {
-                    name: "CODEX_API_KEY",
-                    valueFrom: {
-                      secretKeyRef: { name: secretName, key: "model-api-key" },
-                    },
+                    name: "CODEX_HOME",
+                    value:
+                      input.modelAuth.mode === "chatgpt"
+                        ? "/var/lib/codeops-codex"
+                        : "/tmp/codex-home",
                   },
-                  { name: "CODEX_HOME", value: "/tmp/codex-home" },
                   {
                     name: "DEFAULT_AUTH_REQUEST",
-                    value: '{"methodId":"api-key"}',
+                    value:
+                      input.modelAuth.mode === "chatgpt"
+                        ? '{"methodId":"chat-gpt"}'
+                        : '{"methodId":"api-key"}',
                   },
                   {
                     name: "CODEX_CONFIG",
@@ -243,6 +267,14 @@ export function buildRunResources(
                     mountPath: "/context",
                     readOnly: true,
                   },
+                  ...(input.modelAuth.mode === "chatgpt"
+                    ? [
+                        {
+                          name: "codex-auth",
+                          mountPath: "/var/lib/codeops-codex",
+                        },
+                      ]
+                    : []),
                 ],
               },
             ],
@@ -255,6 +287,16 @@ export function buildRunResources(
               { name: "checkpoint", emptyDir: { sizeLimit: "256Mi" } },
               { name: "context", emptyDir: { sizeLimit: "2Mi" } },
               { name: "temp", emptyDir: { sizeLimit: "256Mi" } },
+              ...(input.modelAuth.mode === "chatgpt"
+                ? [
+                    {
+                      name: "codex-auth",
+                      persistentVolumeClaim: {
+                        claimName: input.modelAuth.claimName,
+                      },
+                    },
+                  ]
+                : []),
             ],
           },
         },
@@ -328,11 +370,14 @@ export function assertRunResources(
   ) {
     throw new Error("control gateway may create only the fixed run resources");
   }
-  if (
-    serialized.includes("hostPath") ||
-    serialized.includes("PersistentVolumeClaim")
-  ) {
-    throw new Error("Agent Job resources must remain ephemeral");
+  if (serialized.includes("hostPath")) {
+    throw new Error("Agent Job resources must not mount host paths");
+  }
+  const claimReferences = [
+    ...serialized.matchAll(/"persistentVolumeClaim"/g),
+  ].length;
+  if (claimReferences > 1) {
+    throw new Error("Agent Job may mount at most one existing auth claim");
   }
   const job = resources.find((resource) => resource.kind === "Job") as {
     spec: { template: { spec: Record<string, unknown> } };
@@ -345,5 +390,37 @@ export function assertRunResources(
     account.automountServiceAccountToken !== false
   ) {
     throw new Error("Agent Job resources must remain tokenless");
+  }
+  const pod = job.spec.template.spec as {
+    containers?: {
+      name?: string;
+      env?: { name?: string; value?: string }[];
+      volumeMounts?: { name?: string; mountPath?: string }[];
+    }[];
+    volumes?: {
+      name?: string;
+      persistentVolumeClaim?: { claimName?: string };
+    }[];
+  };
+  const agent = pod.containers?.find(
+    (container) => container.name === "coding-agent",
+  );
+  const authVolume = pod.volumes?.find((volume) => volume.name === "codex-auth");
+  if (claimReferences === 1) {
+    if (
+      authVolume?.persistentVolumeClaim?.claimName !== "codeops-codex-auth" ||
+      agent?.env?.find((entry) => entry.name === "CODEX_HOME")?.value !==
+        "/var/lib/codeops-codex" ||
+      agent.env?.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST")
+        ?.value !== '{"methodId":"chat-gpt"}' ||
+      agent.env?.some((entry) => entry.name === "CODEX_API_KEY") ||
+      pod.containers?.some(
+        (container) =>
+          container.name !== "coding-agent" &&
+          container.volumeMounts?.some((mount) => mount.name === "codex-auth"),
+      )
+    ) {
+      throw new Error("ChatGPT auth claim boundary drifted");
+    }
   }
 }

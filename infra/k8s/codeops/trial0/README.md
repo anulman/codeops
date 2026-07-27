@@ -89,14 +89,34 @@ and persists that checkpoint before acknowledging the Temporal activity.
 Research comments are already human approval for the bounded read-only run;
 coding-agent workflows continue to wait for a separate Ready/approval signal.
 
-The gateway mounts the externally created
-`codeops-agent-source-credentials` Secret (`repository-read-token` and
-`model-api-key`) and may create/delete, but never read or list, one immutable
-request-digest-derived run Secret. Its namespace Role may create/get/delete
-only the fixed ServiceAccount, Job, and NetworkPolicy resources plus read the
-terminal pod and session-gateway log. The trusted renderer requires the exact
-Kubernetes API Service address as a `/32`; no broad private-network egress is
-accepted.
+The gateway mounts only the repository token from the externally created
+`codeops-agent-source-credentials` Secret. ChatGPT subscription authentication
+lives on the separate `codeops-codex-auth` RWO claim, which the gateway itself
+never mounts. A one-shot, tokenless login Job has no repository, Plane, GitHub,
+Kubernetes, model API, or run credential; it writes the device-auth session to
+that claim. A separate credential-only smoke Job runs `codex login status`
+without inspecting or printing `auth.json`.
+
+Each serialized Agent Job mounts the existing auth claim only into the Codex
+container, never the workspace builder or session gateway. It receives no
+`CODEX_API_KEY`, selects the ACP `chat-gpt` method, and keeps the auth path
+outside the checked-out workspace. The live acceptance gate must additionally
+prove that a Codex tool subprocess cannot read the cached credential through
+the sandbox before the preserved Plane research trigger is replayed.
+
+The gateway may create/delete, but never read or list, one immutable
+request-digest-derived repository Secret. Its namespace Role may
+create/get/delete only the fixed ServiceAccount, Job, and NetworkPolicy
+resources plus read the terminal pod and session-gateway log. The trusted
+renderer requires the exact Kubernetes API Service address as a `/32`; no
+broad private-network egress is accepted.
+
+```bash
+CODEOPS_AGENT_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_AUTH_ACTION=login \
+  node infra/scripts/render-codeops-codex-auth.mjs \
+  > "$CODEOPS_CODEX_AUTH_MANIFEST"
+```
 
 ```bash
 CODEOPS_CONTROL_GATEWAY_DIGEST=sha256:<64-lowercase-hex> \

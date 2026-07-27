@@ -41,6 +41,16 @@ test("renders one namespace-scoped authenticated gateway", () => {
     JSON.stringify(deployment).includes("codeops-agent-source-credentials"),
     true,
   );
+  assert.equal(
+    JSON.stringify(deployment).includes("CODEOPS_MODEL_API_KEY_FILE"),
+    false,
+  );
+  assert.equal(
+    deployment.spec.template.spec.containers[0].env.find(
+      (entry) => entry.name === "CODEOPS_MODEL_AUTH_MODE",
+    ).value,
+    "chatgpt",
+  );
 });
 
 test("grants only fixed run-resource and log operations", () => {

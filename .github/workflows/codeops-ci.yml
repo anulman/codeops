@@ -41,6 +41,9 @@ on:
       - "infra/scripts/codeops-agent-job-render.mjs"
       - "infra/scripts/render-codeops-agent-job.mjs"
       - "infra/scripts/test-codeops-agent-job.mjs"
+      - "infra/scripts/codeops-codex-auth-render.mjs"
+      - "infra/scripts/render-codeops-codex-auth.mjs"
+      - "infra/scripts/test-codeops-codex-auth.mjs"
       - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
@@ -86,6 +89,9 @@ on:
       - "infra/scripts/codeops-agent-job-render.mjs"
       - "infra/scripts/render-codeops-agent-job.mjs"
       - "infra/scripts/test-codeops-agent-job.mjs"
+      - "infra/scripts/codeops-codex-auth-render.mjs"
+      - "infra/scripts/render-codeops-codex-auth.mjs"
+      - "infra/scripts/test-codeops-codex-auth.mjs"
       - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
@@ -275,6 +281,19 @@ jobs:
           node --test infra/scripts/test-codeops-agent-job.mjs
           node infra/scripts/render-codeops-agent-job.mjs > /tmp/codeops-agent-job.yaml
           node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-agent-job.yaml
+
+      - name: Test and render the credential-only Codex auth Jobs
+        env:
+          CODEOPS_AGENT_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+        run: |
+          node --test infra/scripts/test-codeops-codex-auth.mjs
+          CODEOPS_AUTH_ACTION=login \
+            node infra/scripts/render-codeops-codex-auth.mjs > /tmp/codeops-codex-auth-login.yaml
+          CODEOPS_AUTH_ACTION=smoke \
+            node infra/scripts/render-codeops-codex-auth.mjs > /tmp/codeops-codex-auth-smoke.yaml
+          node infra/scripts/check-codeops-manifests.mjs \
+            /tmp/codeops-codex-auth-login.yaml \
+            /tmp/codeops-codex-auth-smoke.yaml
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD

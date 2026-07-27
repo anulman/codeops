@@ -69,9 +69,19 @@ export function renderControlGatewayManifest(template, input) {
     runtimeCredentials?.secret?.secretName !==
       "codeops-agent-source-credentials" ||
     runtimeCredentials.secret.items?.map((item) => item.key).sort().join(",") !==
-      "model-api-key,repository-read-token"
+      "repository-read-token"
   ) {
     throw new Error("control gateway runtime credential binding drifted");
+  }
+  const env = deployment.spec.template.spec.containers[0].env;
+  if (
+    env.find((item) => item.name === "CODEOPS_MODEL_AUTH_MODE")?.value !==
+      "chatgpt" ||
+    env.find((item) => item.name === "CODEOPS_CODEX_AUTH_CLAIM")?.value !==
+      "codeops-codex-auth" ||
+    env.some((item) => item.name === "CODEOPS_MODEL_API_KEY_FILE")
+  ) {
+    throw new Error("control gateway ChatGPT auth binding drifted");
   }
   const serialized = JSON.stringify(resources);
   if (serialized.includes("ClusterRole") || serialized.includes("hostPath")) {

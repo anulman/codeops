@@ -23,7 +23,9 @@ interface RuntimeConfig {
   readonly agentImage: string;
   readonly sessionGatewayImage: string;
   readonly repositoryReadToken: string;
-  readonly modelApiKey: string;
+  readonly modelAuth:
+    | { readonly mode: "api-key"; readonly apiKey: string }
+    | { readonly mode: "chatgpt"; readonly claimName: string };
   readonly evidenceRoot: string;
   readonly pollIntervalMs?: number;
   readonly timeoutMs?: number;
@@ -72,7 +74,7 @@ export function createAgentJobRunner(input: {
         agentImage: input.config.agentImage,
         sessionGatewayImage: input.config.sessionGatewayImage,
         repositoryReadToken: input.config.repositoryReadToken,
-        modelApiKey: input.config.modelApiKey,
+        modelAuth: input.config.modelAuth,
       },
       request,
     );

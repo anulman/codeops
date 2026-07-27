@@ -96,6 +96,13 @@ export function renderAgentJobManifest(template, input) {
   if (JSON.stringify(resources).includes("hostPath")) {
     throw new Error("agent run must not mount host paths");
   }
+  const authVolume = pod.volumes.find((volume) => volume.name === "codex-auth");
+  if (
+    authVolume?.persistentVolumeClaim?.claimName !== "codeops-codex-auth" ||
+    pod.volumes.filter((volume) => volume.persistentVolumeClaim).length !== 1
+  ) {
+    throw new Error("agent run must mount only the exact existing Codex auth claim");
+  }
   for (const resource of [account, job, job.spec.template, networkPolicy]) {
     if (
       resource.metadata.labels?.["codeops.renoconcierge.ca/agent-role"] !==

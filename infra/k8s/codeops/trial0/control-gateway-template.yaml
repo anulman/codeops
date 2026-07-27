@@ -100,8 +100,10 @@ spec:
               value: /var/run/secrets/codeops-dispatch/token
             - name: CODEOPS_REPOSITORY_READ_TOKEN_FILE
               value: /var/run/secrets/codeops-runtime/repository-read-token
-            - name: CODEOPS_MODEL_API_KEY_FILE
-              value: /var/run/secrets/codeops-runtime/model-api-key
+            - name: CODEOPS_MODEL_AUTH_MODE
+              value: chatgpt
+            - name: CODEOPS_CODEX_AUTH_CLAIM
+              value: codeops-codex-auth
             - name: CODEOPS_EVIDENCE_ROOT
               value: /var/lib/codeops
             - name: CODEOPS_HTTP_HOST
@@ -169,8 +171,6 @@ spec:
             items:
               - key: repository-read-token
                 path: repository-read-token
-              - key: model-api-key
-                path: model-api-key
         - name: temp
           emptyDir:
             sizeLimit: 64Mi

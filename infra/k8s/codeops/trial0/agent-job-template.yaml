@@ -141,15 +141,12 @@ spec:
               value: __CODEOPS_AGENT_ROLE__
             - name: CODEOPS_REPOSITORY
               value: __CODEOPS_REPOSITORY_URL__
-            - name: CODEX_API_KEY
-              valueFrom:
-                secretKeyRef:
-                  name: codeops-run-__CODEOPS_RUN_SUFFIX__
-                  key: model-api-key
             - name: CODEX_HOME
-              value: /tmp/codex-home
+              value: /var/lib/codeops-codex
             - name: DEFAULT_AUTH_REQUEST
-              value: '{"methodId":"api-key"}'
+              value: '{"methodId":"chat-gpt"}'
+            - name: CODEX_CONFIG
+              value: '{"model":"gpt-5.6-sol","model_reasoning_effort":"high"}'
             - name: CODEOPS_ACP_SOCKET
               value: /run/codeops/agent.sock
           resources:
@@ -174,6 +171,8 @@ spec:
               mountPath: /checkpoint
             - name: temp
               mountPath: /tmp
+            - name: codex-auth
+              mountPath: /var/lib/codeops-codex
       volumes:
         - name: workspace
           emptyDir: {}
@@ -187,6 +186,9 @@ spec:
         - name: temp
           emptyDir:
             sizeLimit: 256Mi
+        - name: codex-auth
+          persistentVolumeClaim:
+            claimName: codeops-codex-auth
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy

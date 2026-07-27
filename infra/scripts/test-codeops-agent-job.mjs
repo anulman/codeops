@@ -22,7 +22,7 @@ function resources(rendered = renderAgentJobManifest(template, input)) {
   return parseAllDocuments(rendered).map((document) => document.toJS());
 }
 
-test("renders one tokenless, bounded, ephemeral Agent Job", () => {
+test("renders one tokenless, bounded Agent Job with only the auth claim persisted", () => {
   const rendered = renderAgentJobManifest(template, input);
   const manifests = resources(rendered);
   assert.deepEqual(
@@ -38,7 +38,15 @@ test("renders one tokenless, bounded, ephemeral Agent Job", () => {
   assert.equal(pod.enableServiceLinks, false);
   assert.deepEqual(pod.imagePullSecrets, [{ name: "ghcr-renoconcierge" }]);
   assert.deepEqual(pod.nodeSelector, { "renoconcierge.ca/codeops": "true" });
-  assert.equal(pod.volumes.every((volume) => volume.emptyDir), true);
+  assert.equal(
+    pod.volumes.filter((volume) => volume.persistentVolumeClaim).length,
+    1,
+  );
+  assert.equal(
+    pod.volumes.find((volume) => volume.name === "codex-auth")
+      .persistentVolumeClaim.claimName,
+    "codeops-codex-auth",
+  );
   assert.equal(rendered.includes("hostPath"), false);
   assert.equal(rendered.includes("PersistentVolumeClaim"), false);
 });
@@ -144,13 +152,10 @@ test("scopes repository-read and model secrets to separate containers", () => {
   const gateway = job.spec.template.spec.containers.find(
     (container) => container.name === "session-gateway",
   );
-  const secret = agent.env.find(
-    (entry) => entry.name === "CODEX_API_KEY",
+  assert.equal(
+    agent.env.some((entry) => entry.name === "CODEX_API_KEY"),
+    false,
   );
-  assert.deepEqual(secret.valueFrom.secretKeyRef, {
-    name: "codeops-run-routing-matrix-2fdebb4c",
-    key: "model-api-key",
-  });
   assert.deepEqual(
     builder.env.find(
       (entry) => entry.name === "CODEOPS_REPOSITORY_READ_TOKEN",
@@ -170,11 +175,11 @@ test("scopes repository-read and model secrets to separate containers", () => {
   );
   assert.equal(
     agent.env.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST").value,
-    '{"methodId":"api-key"}',
+    '{"methodId":"chat-gpt"}',
   );
   assert.equal(
     agent.env.find((entry) => entry.name === "CODEX_HOME").value,
-    "/tmp/codex-home",
+    "/var/lib/codeops-codex",
   );
   assert.equal(JSON.stringify(job).includes("value: sk-"), false);
 });

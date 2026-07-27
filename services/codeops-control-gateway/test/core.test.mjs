@@ -225,7 +225,10 @@ test("builds only the fixed tokenless run resources", () => {
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
       repositoryReadToken: "repo-token",
-      modelApiKey: "model-key",
+      modelAuth: {
+        mode: "chatgpt",
+        claimName: "codeops-codex-auth",
+      },
     },
     request,
   );
@@ -246,7 +249,21 @@ test("builds only the fixed tokenless run resources", () => {
   );
   assert.equal(
     codingAgent.env.find((entry) => entry.name === "CODEX_HOME").value,
-    "/tmp/codex-home",
+    "/var/lib/codeops-codex",
+  );
+  assert.equal(
+    codingAgent.env.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST").value,
+    '{"methodId":"chat-gpt"}',
+  );
+  assert.equal(
+    codingAgent.env.some((entry) => entry.name === "CODEX_API_KEY"),
+    false,
+  );
+  assert.deepEqual(
+    resources[2].spec.template.spec.volumes.find(
+      (volume) => volume.name === "codex-auth",
+    ).persistentVolumeClaim,
+    { claimName: "codeops-codex-auth" },
   );
   assert.equal(
     codingAgent.env.find((entry) => entry.name === "CODEX_CONFIG").value,
