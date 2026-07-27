@@ -179,5 +179,12 @@ test("builds only the fixed tokenless run resources", () => {
     resources.map((resource) => resource.kind),
     ["Secret", "ServiceAccount", "Job", "NetworkPolicy"],
   );
+  const workspaceBuilder =
+    resources[2].spec.template.spec.initContainers[0].command.at(-1);
+  assert.match(
+    workspaceBuilder,
+    /git -c safe\.directory=\/workspace -C \/workspace/,
+  );
+  assert.equal(workspaceBuilder.includes("safe.directory=*"), false);
   assert.equal(JSON.stringify(resources).includes("automountServiceAccountToken\":true"), false);
 });

@@ -100,12 +100,12 @@ export function buildRunResources(
                   [
                     "auth=\"$(printf 'x-access-token:%s' \"$CODEOPS_REPOSITORY_READ_TOKEN\" | base64 | tr -d '\\n')\"",
                     "git init /workspace",
-                    "git -C /workspace remote add origin \"$CODEOPS_REPOSITORY\"",
-                    "git -C /workspace -c \"http.extraHeader=Authorization: Basic $auth\" fetch --depth=1 origin \"$CODEOPS_BASE_SHA\"",
+                    "git -c safe.directory=/workspace -C /workspace remote add origin \"$CODEOPS_REPOSITORY\"",
+                    "git -c safe.directory=/workspace -C /workspace -c \"http.extraHeader=Authorization: Basic $auth\" fetch --depth=1 origin \"$CODEOPS_BASE_SHA\"",
                     "unset auth CODEOPS_REPOSITORY_READ_TOKEN",
-                    "git -C /workspace checkout --detach FETCH_HEAD",
-                    "git -C /workspace remote remove origin",
-                    "test \"$(git -C /workspace rev-parse HEAD)\" = \"$CODEOPS_BASE_SHA\"",
+                    "git -c safe.directory=/workspace -C /workspace checkout --detach FETCH_HEAD",
+                    "git -c safe.directory=/workspace -C /workspace remote remove origin",
+                    "test \"$(git -c safe.directory=/workspace -C /workspace rev-parse HEAD)\" = \"$CODEOPS_BASE_SHA\"",
                   ].join("\n"),
                 ],
                 env: [

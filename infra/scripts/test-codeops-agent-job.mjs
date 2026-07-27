@@ -102,6 +102,9 @@ test("uses an exact source SHA and only immutable images", () => {
   const builder = pod.initContainers.find(
     (container) => container.name === "workspace-builder",
   );
+  const checkout = builder.command.at(-1);
+  assert.match(checkout, /git -c safe\.directory=\/workspace -C \/workspace/);
+  assert.equal(checkout.includes("safe.directory=*"), false);
   const gateway = pod.containers.find(
     (container) => container.name === "session-gateway",
   );
