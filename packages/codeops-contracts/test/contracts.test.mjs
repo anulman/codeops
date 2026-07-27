@@ -98,7 +98,7 @@ function makeSynthesis(requestId) {
     citations: [
       {
         id: "citation-1",
-        path: "services/auth.ts",
+        path: "sites/app/routes/f.$fileCode/index.tsx",
         lineStart: 1,
         claim: "Fixture citation.",
       },

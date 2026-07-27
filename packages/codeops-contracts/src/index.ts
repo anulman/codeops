@@ -65,7 +65,7 @@ const repositoryPath = z
   .string()
   .min(1)
   .max(500)
-  .regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\/\/)[A-Za-z0-9._/-]+$/);
+  .regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\/\/)[A-Za-z0-9.$_/-]+$/);
 
 function hasSafeEvidenceUri(value: string): boolean {
   if (value.length > 2_048) return false;
