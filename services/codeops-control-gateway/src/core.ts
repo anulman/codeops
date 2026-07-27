@@ -243,6 +243,8 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
     "The dispatch file contains the immutable ticket title, description, acceptance content, relevant human comments, revision, dependencies, and a bounded same-project task index.",
     "Stay within the distinct assignment above; classify each result as a matrix fact, product decision, or downstream defect.",
     "Every finding needs exact source path/line citations; include exact test names when citing a test.",
+    "Return no more than 20 findings, 5 decisions, and 40 citations.",
+    "Omit citation.testName when the citation is not a test; never emit an empty string for an optional field.",
     "Never propose or perform a Plane lifecycle-state change.",
     "Return only one JSON object, without Markdown fences, with exactly this shape:",
     JSON.stringify({

@@ -139,6 +139,13 @@ test("derives a stable bounded run identity", () => {
   );
 });
 
+test("states persona report cardinality and optional-field contracts explicitly", () => {
+  const prompt = buildAgentPrompt(request);
+  assert.match(prompt, /no more than 20 findings, 5 decisions, and 40 citations/);
+  assert.match(prompt, /Omit citation\.testName when the citation is not a test/);
+  assert.match(prompt, /never emit an empty string for an optional field/);
+});
+
 test("runs a distinct ticket-specific synthesis checkpoint after persona research", async () => {
   const personaReport = {
     version: "codeops.research-persona-report/v2",
