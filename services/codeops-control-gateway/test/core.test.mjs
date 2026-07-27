@@ -170,6 +170,10 @@ test("runs a distinct ticket-specific synthesis checkpoint after persona researc
     buildAgentPrompt(synthesisRequest),
     /no more than 20 downstream findings, 5 follow-up tasks, 50 matrix rows, and 80 citations/,
   );
+  assert.match(
+    buildAgentPrompt(synthesisRequest),
+    /category must be exactly one of: matrix-fact, product-decision, downstream-defect/,
+  );
   assert.match(buildAgentPrompt(synthesisRequest), /route\/state\/credential matrix/);
   const synthesis = {
     version: "codeops.research-synthesis/v1",
