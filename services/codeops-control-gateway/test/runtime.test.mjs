@@ -4,8 +4,29 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { createProjectContext } from "@renoconcierge/codeops-contracts";
 import { createRunIdentity } from "../dist/core.js";
 import { createAgentJobRunner } from "../dist/runtime.js";
+
+const projectContext = createProjectContext({
+  version: "codeops.project-context/v1",
+  repository: { owner: "anulman", name: "renoconcierge" },
+  baseSha: "a".repeat(40),
+  project: {
+    workspaceId: "55555555-5555-4555-8555-555555555555",
+    projectId: "11111111-1111-4111-8111-111111111111",
+    name: "Onboarding Auth QA",
+    descriptionHtml: "<p>Deterministic qualification.</p>",
+    updatedAt: "2026-07-26T00:00:00.000Z",
+  },
+  documents: [
+    {
+      path: "AGENTS.md",
+      purpose: "Repository guidance",
+      digest: `sha256:${"1".repeat(64)}`,
+    },
+  ],
+});
 
 const request = {
   version: "codeops.agent-job-dispatch/v1",
@@ -18,6 +39,7 @@ const request = {
   researchRequest: {
     version: "codeops.research-request/v2",
     requestId: "research-request-1",
+    workspaceId: projectContext.project.workspaceId,
     projectId: "11111111-1111-4111-8111-111111111111",
     workItemId: "22222222-2222-4222-8222-222222222222",
     triggerCommentId: "33333333-3333-4333-8333-333333333333",
@@ -25,6 +47,7 @@ const request = {
     repository: { owner: "anulman", name: "renoconcierge" },
     baseSha: "a".repeat(40),
     planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+    projectContext,
     personas: ["@ai-security"],
     brief: "Inspect auth",
     requestedAt: "2026-07-26T00:00:00.000Z",
@@ -43,10 +66,13 @@ function logs(runId) {
     decisions: [],
   };
   const checkpoint = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     runId,
     agentRole: "qa-contract-researcher",
     baseSha: "a".repeat(40),
+    projectContextDigest: projectContext.digest,
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
     response: JSON.stringify(report),
     events: [],
     patch: {

@@ -11,6 +11,10 @@ This service owns the privileged Plane integration boundary. It implements:
   fallback brief into research-request v2;
 - reload the current project and work item through a trusted reader;
 - bind the request to the exact source SHA and a digest of the Plane revision;
+- compile `codeops.project-context/v1` from the exact Plane project name and
+  description plus the six required, image-baked repository context documents;
+- retain each document path, purpose, and SHA-256 so the Agent Job can verify
+  the exact checkout before starting Codex;
 - deduplicate retries with Plane's stable `event_id`, not its per-attempt
   `delivery_id`.
 - parse Plane CE's signed `issue`/`update` activity envelope for lifecycle
@@ -22,7 +26,8 @@ This service owns the privileged Plane integration boundary. It implements:
   event identity for durable replay handling;
 - compile the admitted Ready revision into a strict coding request and
   work-item contract with deterministic workflow/run/branch identities,
-  bounded acceptance criteria, and no inline credentials;
+  bounded acceptance criteria, the same project-context digest, the immutable
+  successfully projected research packet, and no inline credentials;
 - persist event and request deduplication on a private durable volume with
   payload-digest collision checks, bounded processing leases, crash recovery,
   attempt counts, and explicit terminal outcomes;
@@ -61,3 +66,8 @@ those exist, persona mentions must not be advertised as live.
 Ready admission starts the coding workflow only after durable event/request
 claims. The workflow then stops at its separate plan-approval boundary; Ready
 does not silently authorize Agent Job execution or mutate Plane.
+
+The context pack and latest research packet are stored on the controller's
+single-writer durable volume. A fresh product-aware research round is required
+after introducing or changing the context contract; old Plane comments are not
+treated as an implicit packet.

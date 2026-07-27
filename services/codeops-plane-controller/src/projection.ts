@@ -12,6 +12,7 @@ import type {
   DedupClaim,
   ResearchDedupLedger,
 } from "./dedup-ledger.js";
+import type { ResearchPacketStore } from "./research-packet-store.js";
 
 export type ResearchProjectionResult =
   | Readonly<{
@@ -47,6 +48,7 @@ function assertTrial0Projection(packet: ResearchPacket): void {
 export async function projectResearchPacket(input: {
   packet: unknown;
   ledger: ResearchDedupLedger;
+  packetStore: ResearchPacketStore;
   client: PlaneContentClient;
   now?: () => string;
 }): Promise<ResearchProjectionResult> {
@@ -94,6 +96,7 @@ export async function projectResearchPacket(input: {
       },
       client: input.client,
     });
+    await input.packetStore.put(packet);
     await input.ledger.complete({
       claim,
       outcome: "mutations-applied",

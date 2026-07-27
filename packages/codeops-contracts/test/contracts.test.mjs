@@ -10,6 +10,7 @@ import {
   controlCommandSchema,
   controlResultSchema,
   createEventId,
+  createProjectContext,
   createResearchRequestFromPlaneComment,
   createTransitionId,
   evidenceReferenceSchema,
@@ -28,6 +29,63 @@ import {
 
 const now = "2026-07-25T16:00:00.000Z";
 const sha = "8f3d2c033f70be04b4b2dc8a005683806e84e209";
+
+function makeProjectContext(workspaceId, projectId) {
+  return createProjectContext({
+    version: contractVersions.projectContext,
+    repository: { owner: "anulman", name: "renoconcierge" },
+    baseSha: sha,
+    project: {
+      workspaceId,
+      projectId,
+      name: "Onboarding Auth QA",
+      descriptionHtml: "<p>Qualify the canonical customer-file auth matrix.</p>",
+      updatedAt: now,
+    },
+    documents: [
+      {
+        path: "AGENTS.md",
+        purpose: "Repository agent guidance",
+        digest: `sha256:${"1".repeat(64)}`,
+      },
+    ],
+  });
+}
+
+function makeResearchPacket({ projectContext, workItemId }) {
+  const requestId = "research-request:fixture";
+  return {
+    version: contractVersions.researchPacket,
+    personas: ["@ai-product"],
+    perspectives: [
+      {
+        persona: "@ai-product",
+        outcome: "findings",
+        summary: "The task needs one bounded product-aware implementation.",
+      },
+    ],
+    requestId,
+    projectId: projectContext.project.projectId,
+    workItemId,
+    baseSha: sha,
+    projectContextDigest: projectContext.digest,
+    planeRevisionDigest: `sha256:${"9".repeat(64)}`,
+    summary: "The product and implementation boundaries are explicit.",
+    currentBehavior: ["The current behavior is repository-backed."],
+    expectedBehavior: ["The accepted behavior remains customer-file scoped."],
+    evidence: [],
+    videoNotApplicableReason: "This is a bounded contract fixture.",
+    decisions: [],
+    proposedMutations: {
+      version: contractVersions.researchMutationBatch,
+      requestId,
+      projectId: projectContext.project.projectId,
+      sourceWorkItemId: workItemId,
+      mutations: [],
+    },
+    createdAt: now,
+  };
+}
 
 const secretReference = {
   version: contractVersions.secretReference,
@@ -79,6 +137,7 @@ test("accepts the complete work-item and opaque secret-reference contracts", () 
 test("binds a coding request to one admitted Plane revision and workflow", () => {
   const codingWorkItem = {
     ...workItem,
+    workItemId: "e1c25c66-5bb8-465e-a818-92a483423443",
     workflowId: "coding-123",
     runId: "coding-123",
   };
@@ -90,8 +149,16 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
     projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
     requestedBy: "88fc36c8-73b0-4547-81c7-96b70f61835e",
     planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+    projectContext: makeProjectContext(
+      "d250cd44-fa71-42c2-b2b5-3c73227288fc",
+      "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
+    ),
     workItem: codingWorkItem,
   };
+  request.researchPacket = makeResearchPacket({
+    projectContext: request.projectContext,
+    workItemId: codingWorkItem.workItemId,
+  });
   assert.deepEqual(codingRequestSchema.parse(request), request);
   assert.throws(() =>
     codingRequestSchema.parse({
@@ -101,6 +168,29 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
   );
   assert.throws(() =>
     codingRequestSchema.parse({ ...request, transcript: "raw agent state" }),
+  );
+  assert.throws(() =>
+    codingRequestSchema.parse({
+      ...request,
+      projectContext: {
+        ...request.projectContext,
+        documents: [
+          {
+            ...request.projectContext.documents[0],
+            digest: `sha256:${"f".repeat(64)}`,
+          },
+        ],
+      },
+    }),
+  );
+  assert.throws(() =>
+    codingRequestSchema.parse({
+      ...request,
+      researchPacket: {
+        ...request.researchPacket,
+        projectContextDigest: `sha256:${"e".repeat(64)}`,
+      },
+    }),
   );
 });
 
@@ -320,6 +410,10 @@ const researchSource = {
   repository: { owner: "anulman", name: "renoconcierge" },
   baseSha: sha,
   planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+  projectContext: makeProjectContext(
+    planeCommentEvent.workspaceId,
+    planeCommentEvent.projectId,
+  ),
   defaultBrief: "Inventory canonical auth states from the Plane ticket.",
 };
 
@@ -565,6 +659,7 @@ test("research packets bind evidence and mutations to one source request", () =>
     projectId: request.projectId,
     workItemId: request.workItemId,
     baseSha: request.baseSha,
+    projectContextDigest: request.projectContext.digest,
     planeRevisionDigest: request.planeRevisionDigest,
     summary: "Current and expected routing behavior are documented.",
     currentBehavior: ["Wrong-file cookies reach the public claim route."],

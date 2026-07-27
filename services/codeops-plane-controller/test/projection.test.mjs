@@ -32,6 +32,7 @@ const packet = {
   projectId,
   workItemId,
   baseSha: "b".repeat(40),
+  projectContextDigest: `sha256:${"d".repeat(64)}`,
   planeRevisionDigest: `sha256:${"c".repeat(64)}`,
   summary: "Authentication boundaries need qualification.",
   currentBehavior: ["The current route matrix is incomplete."],
@@ -86,6 +87,10 @@ function client(comments) {
   };
 }
 
+const packetStore = {
+  async put() {},
+};
+
 test("durably applies one content-only projection and deduplicates restart retries", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-projection-"));
   const comments = [];
@@ -97,12 +102,14 @@ test("durably applies one content-only projection and deduplicates restart retri
     const first = await projectResearchPacket({
       packet,
       ledger,
+      packetStore,
       client: client(comments),
       now: () => "2026-07-26T00:01:00.000Z",
     });
     const retry = await projectResearchPacket({
       packet,
       ledger,
+      packetStore,
       client: client(comments),
       now: () => "2026-07-26T00:02:00.000Z",
     });
@@ -140,6 +147,7 @@ test("rejects projection identity drift and every non-comment Trial 0 mutation",
           },
         },
         ledger,
+        packetStore,
         client: client([]),
       }),
     );
@@ -160,6 +168,7 @@ test("rejects projection identity drift and every non-comment Trial 0 mutation",
           },
         },
         ledger,
+        packetStore,
         client: client([]),
       }),
       /one source-ticket comment/,

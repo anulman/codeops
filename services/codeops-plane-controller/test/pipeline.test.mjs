@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { test } from "node:test";
 import {
+  compileProjectContext,
   createFileResearchDedupLedger,
   processPlaneReadyWebhook,
   processPlaneResearchWebhook,
@@ -12,6 +13,14 @@ import {
 
 const actorId = "88fc36c8-73b0-4547-81c7-96b70f61835e";
 const secret = "plane_wh_test-secret";
+const baseSha = "8f3d2c033f70be04b4b2dc8a005683806e84e209";
+const projectContextDocuments = [
+  {
+    path: "AGENTS.md",
+    purpose: "Repository guidance",
+    digest: `sha256:${"a".repeat(64)}`,
+  },
+];
 const payload = {
   version: "v2",
   delivery_id: "01ab9316-f978-4449-bad6-dce958be8454",
@@ -77,6 +86,52 @@ const readyPayload = {
   },
 };
 
+function readyResearchPacket() {
+  const projectContext = compileProjectContext({
+    repository: { owner: "anulman", name: "renoconcierge" },
+    baseSha,
+    workspaceId: payload.workspace_id,
+    project: {
+      id: source.project.id,
+      name: source.project.name,
+      descriptionHtml: source.project.description_html,
+      updatedAt: source.project.updated_at,
+    },
+    documents: projectContextDocuments,
+  });
+  return {
+    version: "codeops.research-packet/v2",
+    personas: ["@ai-security"],
+    perspectives: [
+      {
+        persona: "@ai-security",
+        outcome: "findings",
+        summary: "The signed auth boundary is explicit.",
+      },
+    ],
+    requestId: "research-request:pipeline-fixture",
+    projectId: source.project.id,
+    workItemId: source.workItem.id,
+    baseSha,
+    projectContextDigest: projectContext.digest,
+    planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+    summary: "The signed auth boundary is explicit.",
+    currentBehavior: [],
+    expectedBehavior: [],
+    evidence: [],
+    videoNotApplicableReason: "Contract-only fixture.",
+    decisions: [],
+    proposedMutations: {
+      version: "codeops.research-mutation-batch/v1",
+      requestId: "research-request:pipeline-fixture",
+      projectId: source.project.id,
+      sourceWorkItemId: source.workItem.id,
+      mutations: [],
+    },
+    createdAt: "2026-07-26T02:30:00.000Z",
+  };
+}
+
 function webhookInput(ledger, enqueue, body = payload) {
   const rawBody = Buffer.from(JSON.stringify(body));
   return {
@@ -89,8 +144,9 @@ function webhookInput(ledger, enqueue, body = payload) {
     webhookSecret: secret,
     allowedHumanActorIds: new Set([actorId]),
     repository: { owner: "anulman", name: "renoconcierge" },
-    baseSha: "8f3d2c033f70be04b4b2dc8a005683806e84e209",
+    baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
+    projectContextDocuments,
     loadSource: async () => source,
     ledger,
     enqueue,
@@ -111,8 +167,10 @@ function readyWebhookInput(ledger, enqueue, body = readyPayload) {
     allowedHumanActorIds: new Set([actorId]),
     readyStateId,
     repository: { owner: "anulman", name: "renoconcierge" },
-    baseSha: "8f3d2c033f70be04b4b2dc8a005683806e84e209",
+    baseSha,
     receivedAt: "2026-07-27T02:45:01.000Z",
+    projectContextDocuments,
+    loadResearchPacket: async () => readyResearchPacket(),
     loadSource: async () => ({
       project: source.project,
       workItem: {
@@ -256,7 +314,7 @@ test("ordinary signed comments remain ignored without touching the enqueuer", as
   }
 });
 
-test("durably compiles one Ready revision before starting Temporal", async () => {
+test("durably compiles one Ready revision and rejects source/context drift", async () => {
   const { root, ledger } = await fixture();
   const enqueued = [];
   try {
@@ -271,7 +329,10 @@ test("durably compiles one Ready revision before starting Temporal", async () =>
       });
     retryInput.baseSha = "a".repeat(40);
     retryInput.receivedAt = "2026-07-27T03:00:00.000Z";
-    const retry = await processPlaneReadyWebhook(retryInput);
+    await assert.rejects(
+      processPlaneReadyWebhook(retryInput),
+      /research packet does not match its project context/,
+    );
     assert.equal(first.status, "enqueued");
     assert.equal(first.duplicate, false);
     assert.equal(enqueued.length, 1);
@@ -281,11 +342,6 @@ test("durably compiles one Ready revision before starting Temporal", async () =>
       enqueued[0].request.workItem.workflowId,
       enqueued[0].request.workItem.runId,
     );
-    assert.deepEqual(retry, {
-      status: "enqueued",
-      requestId: first.requestId,
-      duplicate: true,
-    });
   } finally {
     await rm(root, { recursive: true, force: true });
   }

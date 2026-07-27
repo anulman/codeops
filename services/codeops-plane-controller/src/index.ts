@@ -4,12 +4,14 @@ import {
   codingRequestSchema,
   contractVersions,
   createResearchRequestFromPlaneComment,
+  type ProjectContextDocument,
   parseResearchPersonaRound,
   type CodingRequest,
   type ResearchRequest,
   verifyPlaneWebhookSignature,
 } from "@renoconcierge/codeops-contracts";
 import { z } from "zod";
+import { compileProjectContext } from "./project-context.js";
 
 export {
   applyResearchMutationBatch,
@@ -31,6 +33,15 @@ export {
   type FileResearchDedupLedgerConfig,
   type ResearchDedupLedger,
 } from "./dedup-ledger.js";
+export {
+  createFileResearchPacketStore,
+  type ResearchPacketStore,
+} from "./research-packet-store.js";
+export {
+  compileProjectContext,
+  loadProjectContextDocuments,
+  projectContextDocumentPaths,
+} from "./project-context.js";
 export {
   projectResearchPacket,
   type ResearchProjectionResult,
@@ -323,6 +334,7 @@ export async function admitPlaneResearchComment(input: {
   repository: { owner: string; name: string };
   baseSha: string;
   receivedAt: string;
+  projectContextDocuments: readonly ProjectContextDocument[];
   loadSource: (input: {
     workspaceId: string;
     projectId: string | undefined;
@@ -398,6 +410,18 @@ export async function admitPlaneResearchComment(input: {
       }),
     )
     .digest("hex")}`;
+  const projectContext = compileProjectContext({
+    repository: input.repository,
+    baseSha: input.baseSha,
+    workspaceId: event.workspaceId,
+    project: {
+      id: project.id,
+      name: project.name,
+      descriptionHtml: project.description_html,
+      updatedAt: project.updated_at,
+    },
+    documents: input.projectContextDocuments,
+  });
 
   const request = createResearchRequestFromPlaneComment(
     {
@@ -420,6 +444,7 @@ export async function admitPlaneResearchComment(input: {
       repository: input.repository,
       baseSha: gitSha.parse(input.baseSha),
       planeRevisionDigest,
+      projectContext,
       defaultBrief: [workItem.name, workItem.description_stripped ?? ""]
         .filter((value) => value.trim().length > 0)
         .join("\n\n")
@@ -445,6 +470,11 @@ export async function admitPlaneReadyTransition(input: {
   repository: { owner: string; name: string };
   baseSha: string;
   receivedAt: string;
+  projectContextDocuments: readonly ProjectContextDocument[];
+  loadResearchPacket: (input: {
+    projectId: string;
+    workItemId: string;
+  }) => Promise<import("@renoconcierge/codeops-contracts").ResearchPacket | null>;
   loadSource: (input: {
     workspaceId: string;
     projectId: string;
@@ -563,6 +593,25 @@ export async function admitPlaneReadyTransition(input: {
       }),
     )
     .digest("hex")}`;
+  const projectContext = compileProjectContext({
+    repository,
+    baseSha,
+    workspaceId: payload.workspace_id,
+    project: {
+      id: project.id,
+      name: project.name,
+      descriptionHtml: project.description_html,
+      updatedAt: project.updated_at,
+    },
+    documents: input.projectContextDocuments,
+  });
+  const researchPacket = await input.loadResearchPacket({
+    projectId: project.id,
+    workItemId: workItem.id,
+  });
+  if (researchPacket === null) {
+    throw new Error("Ready work item has no immutable research packet");
+  }
   const requestHash = createHash("sha256")
     .update(
       canonicalSerialize({
@@ -591,8 +640,10 @@ export async function admitPlaneReadyTransition(input: {
       eventId,
       workspaceId: payload.workspace_id,
       projectId: project.id,
+      projectContext,
       requestedBy: payload.activity.actor.id,
       planeRevisionDigest,
+      researchPacket,
       workItem: {
         version: contractVersions.workItem,
         workItemId: workItem.id,

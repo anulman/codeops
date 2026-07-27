@@ -153,7 +153,10 @@ assert.ok(
   contracts.steps.some(
     (step) =>
       step.name === "Verify pinned ACP agent adapter" &&
-      step.run === "npm ci --workspaces=false --prefix services/codeops-agent",
+      step.run?.includes(
+        "npm ci --workspaces=false --prefix services/codeops-agent",
+      ) &&
+      step.run?.includes("npm test --prefix services/codeops-agent"),
   ),
 );
 assert.ok(

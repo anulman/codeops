@@ -11,6 +11,8 @@ on:
       - "services/codeops-plane-controller/**"
       - "services/codeops-control-gateway/**"
       - "services/codeops-agent/**"
+      - "AGENTS.md"
+      - "docs/agent-context/**"
       - "infra/docker/codeops-*.Dockerfile"
       - "infra/docker/codeops-*.Dockerfile.dockerignore"
       - "infra/ci/images.json"
@@ -54,6 +56,8 @@ on:
       - "services/codeops-plane-controller/**"
       - "services/codeops-control-gateway/**"
       - "services/codeops-agent/**"
+      - "AGENTS.md"
+      - "docs/agent-context/**"
       - "infra/docker/codeops-*.Dockerfile"
       - "infra/docker/codeops-*.Dockerfile.dockerignore"
       - "infra/ci/images.json"
@@ -153,7 +157,9 @@ jobs:
           npm run typecheck --prefix services/codeops-control-gateway
 
       - name: Verify pinned ACP agent adapter
-        run: npm ci --workspaces=false --prefix services/codeops-agent
+        run: |
+          npm ci --workspaces=false --prefix services/codeops-agent
+          npm test --prefix services/codeops-agent
 
       - name: Build isolated ACP runtime images
         run: |

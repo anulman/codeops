@@ -93,6 +93,7 @@ export function buildResearchPacket(input: {
     projectId: input.request.projectId,
     workItemId: input.request.workItemId,
     baseSha: input.request.baseSha,
+    projectContextDigest: input.request.projectContext.digest,
     planeRevisionDigest: input.request.planeRevisionDigest,
     summary,
     currentBehavior,

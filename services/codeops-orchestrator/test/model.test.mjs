@@ -1,15 +1,49 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { bundleWorkflowCode } from "@temporalio/worker";
+import { canonicalSerialize } from "@renoconcierge/codeops-contracts";
 import {
   dispatchAgentJob,
   publishResearchPacket,
 } from "../dist/activities.js";
 import { initialPlanDecision, transition } from "../dist/model.js";
+
+const projectContext = {
+  version: "codeops.project-context/v1",
+  repository: { owner: "anulman", name: "renoconcierge" },
+  baseSha: "a".repeat(40),
+  project: {
+    workspaceId: "55555555-5555-4555-8555-555555555555",
+    projectId: "11111111-1111-4111-8111-111111111111",
+    name: "Onboarding Auth QA",
+    descriptionHtml: "<p>Deterministic qualification.</p>",
+    updatedAt: "2026-07-26T00:00:00.000Z",
+  },
+  documents: [
+    {
+      path: "AGENTS.md",
+      purpose: "Repository guidance",
+      digest: `sha256:${"1".repeat(64)}`,
+    },
+  ],
+  digest: "PLACEHOLDER",
+};
+// Match the contract's canonical identity digest without coupling activity
+// fixtures to controller helpers.
+projectContext.digest = `sha256:${createHash("sha256")
+  .update(
+    canonicalSerialize(
+      Object.fromEntries(
+        Object.entries(projectContext).filter(([key]) => key !== "digest"),
+      ),
+    ),
+  )
+  .digest("hex")}`;
 
 const projectionPacket = {
   version: "codeops.research-packet/v2",
@@ -25,6 +59,7 @@ const projectionPacket = {
   projectId: "11111111-1111-4111-8111-111111111111",
   workItemId: "22222222-2222-4222-8222-222222222222",
   baseSha: "a".repeat(40),
+  projectContextDigest: projectContext.digest,
   planeRevisionDigest: `sha256:${"b".repeat(64)}`,
   summary: "Authentication boundaries need qualification.",
   currentBehavior: ["The current matrix is incomplete."],
@@ -161,6 +196,7 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
       researchRequest: {
         version: "codeops.research-request/v2",
         requestId: "research-request-1",
+        workspaceId: projectContext.project.workspaceId,
         projectId: "11111111-1111-4111-8111-111111111111",
         workItemId: "22222222-2222-4222-8222-222222222222",
         triggerCommentId: "33333333-3333-4333-8333-333333333333",
@@ -168,6 +204,7 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
         repository: { owner: "anulman", name: "renoconcierge" },
         baseSha: "a".repeat(40),
         planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+        projectContext,
         personas: ["@ai-security"],
         brief: "Research authentication boundaries",
         requestedAt: "2026-07-26T00:00:00.000Z",

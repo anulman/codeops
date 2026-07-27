@@ -18,6 +18,7 @@ const VERSION = {
   researchPacket: "codeops.research-packet/v2",
   researchMutationBatch: "codeops.research-mutation-batch/v1",
   readinessGate: "codeops.readiness-gate/v1",
+  projectContext: "codeops.project-context/v1",
   codingRequest: "codeops.coding-request/v1",
   agentJobDispatch: "codeops.agent-job-dispatch/v1",
   agentJobDispatchResult: "codeops.agent-job-dispatch-result/v1",
@@ -58,6 +59,11 @@ const isoDateTime = z.string().datetime({ offset: true });
 const safeText = (maximum: number) => z.string().min(1).max(maximum);
 const sha256Digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const uuid = z.string().uuid();
+const repositoryPath = z
+  .string()
+  .min(1)
+  .max(500)
+  .regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\/\/)[A-Za-z0-9._/-]+$/);
 
 function hasSafeEvidenceUri(value: string): boolean {
   if (value.length > 2_048) return false;
@@ -117,31 +123,113 @@ export const workItemRequestSchema = z
   })
   .strict();
 
-export const codingRequestSchema = z
+export const projectContextDocumentSchema = z
   .object({
-    version: z.literal(VERSION.codingRequest),
-    requestId: identifier,
-    eventId: identifier,
-    workspaceId: uuid,
-    projectId: uuid,
-    requestedBy: uuid,
-    planeRevisionDigest: sha256Digest,
-    workItem: workItemRequestSchema,
+    path: repositoryPath,
+    purpose: safeText(500),
+    digest: sha256Digest,
+  })
+  .strict();
+
+const projectContextIdentitySchema = z
+  .object({
+    version: z.literal(VERSION.projectContext),
+    repository,
+    baseSha: gitSha,
+    project: z
+      .object({
+        workspaceId: uuid,
+        projectId: uuid,
+        name: safeText(255),
+        descriptionHtml: z.string().max(50_000),
+        updatedAt: isoDateTime,
+      })
+      .strict(),
+    documents: z.array(projectContextDocumentSchema).min(1).max(32),
+  })
+  .strict();
+
+export function createProjectContextDigest(
+  input: z.infer<typeof projectContextIdentitySchema>,
+): string {
+  const parsed = projectContextIdentitySchema.parse(input);
+  return `sha256:${createHash("sha256")
+    .update(canonicalSerialize(parsed))
+    .digest("hex")}`;
+}
+
+export const projectContextSchema = projectContextIdentitySchema
+  .extend({
+    digest: sha256Digest,
   })
   .strict()
-  .superRefine((request, context) => {
+  .superRefine((context, refinement) => {
+    const paths = context.documents.map((document) => document.path);
     if (
-      request.requestId !== request.workItem.workflowId ||
-      request.workItem.runId !== request.workItem.workflowId
+      new Set(paths).size !== paths.length ||
+      paths.some((value, index) => index > 0 && paths[index - 1]! >= value)
     ) {
-      context.addIssue({
+      refinement.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["workItem", "workflowId"],
-        message:
-          "coding request identity must match its workflow and initial run identity",
+        path: ["documents"],
+        message: "project context documents must be unique and path-sorted",
+      });
+    }
+    const { digest: _digest, ...identity } = context;
+    if (context.digest !== createProjectContextDigest(identity)) {
+      refinement.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["digest"],
+        message: "project context digest does not match its identity",
       });
     }
   });
+
+export function createProjectContext(
+  input: z.infer<typeof projectContextIdentitySchema>,
+): ProjectContext {
+  const identity = projectContextIdentitySchema.parse({
+    ...input,
+    documents: [...input.documents].sort((left, right) =>
+      left.path.localeCompare(right.path),
+    ),
+  });
+  return projectContextSchema.parse({
+    ...identity,
+    digest: createProjectContextDigest(identity),
+  });
+}
+
+const requestProjectIdentity = {
+  workspaceId: uuid,
+  projectId: uuid,
+  projectContext: projectContextSchema,
+};
+
+function validateRequestProjectContext(
+  request: {
+    workspaceId: string;
+    projectId: string;
+    repository: z.infer<typeof repository>;
+    baseSha: string;
+    projectContext: ProjectContext;
+  },
+  context: z.RefinementCtx,
+): void {
+  if (
+    request.workspaceId !== request.projectContext.project.workspaceId ||
+    request.projectId !== request.projectContext.project.projectId ||
+    canonicalSerialize(request.repository) !==
+      canonicalSerialize(request.projectContext.repository) ||
+    request.baseSha !== request.projectContext.baseSha
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["projectContext"],
+      message: "request identity does not match its project context",
+    });
+  }
+}
 
 export const workflowStateSchema = z.enum([
   "requested",
@@ -359,7 +447,7 @@ export const researchRequestSchema = z
   .object({
     version: z.literal(VERSION.researchRequest),
     requestId: identifier,
-    projectId: uuid,
+    ...requestProjectIdentity,
     workItemId: uuid,
     triggerCommentId: uuid,
     requestedBy: uuid,
@@ -370,7 +458,17 @@ export const researchRequestSchema = z
     brief: safeText(8_000),
     requestedAt: isoDateTime,
   })
-  .strict();
+  .strict()
+  .superRefine((request, context) => {
+    validateRequestProjectContext(
+      {
+        ...request,
+        repository: request.repository,
+        baseSha: request.baseSha,
+      },
+      context,
+    );
+  });
 
 export const researchPersonaReportSchema = z
   .object({
@@ -409,6 +507,7 @@ export const agentJobDispatchRequestSchema = z
       .extend({
         version: z.literal(VERSION.agentJobDispatch),
         role: z.literal("coding-agent"),
+        codingRequest: z.lazy(() => codingRequestSchema),
       })
       .strict(),
     agentJobBaseSchema
@@ -421,7 +520,20 @@ export const agentJobDispatchRequestSchema = z
       .strict(),
   ])
   .superRefine((value, context) => {
-    if (value.role !== "qa-contract-researcher") return;
+    if (value.role === "coding-agent") {
+      if (
+        value.workItemId !== value.codingRequest.workItem.workItemId ||
+        value.workflowId !== value.codingRequest.requestId ||
+        value.baseSha !== value.codingRequest.workItem.baseSha
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["codingRequest"],
+          message: "coding dispatch identity does not match its request",
+        });
+      }
+      return;
+    }
     if (!value.researchRequest.personas.includes(value.researchPersona)) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -575,6 +687,7 @@ export const researchPacketSchema = z
     projectId: uuid,
     workItemId: uuid,
     baseSha: gitSha,
+    projectContextDigest: sha256Digest,
     planeRevisionDigest: sha256Digest,
     summary: safeText(2_000),
     currentBehavior: z.array(safeText(4_000)).max(100),
@@ -638,6 +751,54 @@ export const researchPacketSchema = z
         path: ["perspectives"],
         message:
           "research packet must report one terminal perspective for every requested persona",
+      });
+    }
+  });
+
+export const codingRequestSchema = z
+  .object({
+    version: z.literal(VERSION.codingRequest),
+    requestId: identifier,
+    eventId: identifier,
+    ...requestProjectIdentity,
+    requestedBy: uuid,
+    planeRevisionDigest: sha256Digest,
+    researchPacket: researchPacketSchema,
+    workItem: workItemRequestSchema,
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (
+      request.requestId !== request.workItem.workflowId ||
+      request.workItem.runId !== request.workItem.workflowId
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["workItem", "workflowId"],
+        message:
+          "coding request identity must match its workflow and initial run identity",
+      });
+    }
+    validateRequestProjectContext(
+      {
+        ...request,
+        repository: request.workItem.repository,
+        baseSha: request.workItem.baseSha,
+      },
+      context,
+    );
+    if (
+      request.researchPacket.projectId !== request.projectId ||
+      request.researchPacket.workItemId !== request.workItem.workItemId ||
+      request.researchPacket.baseSha !== request.workItem.baseSha ||
+      request.researchPacket.projectContextDigest !==
+        request.projectContext.digest
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["researchPacket"],
+        message:
+          "coding request research packet does not match its project context or work item",
       });
     }
   });
@@ -807,6 +968,7 @@ export function createResearchRequestFromPlaneComment(
     repository: z.infer<typeof repository>;
     baseSha: string;
     planeRevisionDigest: string;
+    projectContext: ProjectContext;
     defaultBrief: string;
   },
 ): ResearchRequest | null {
@@ -827,6 +989,7 @@ export function createResearchRequestFromPlaneComment(
       commentId: event.commentId,
       planeRevisionDigest: source.planeRevisionDigest,
     }),
+    workspaceId: event.workspaceId,
     projectId: event.projectId,
     workItemId: event.workItemId,
     triggerCommentId: event.commentId,
@@ -834,6 +997,7 @@ export function createResearchRequestFromPlaneComment(
     repository: source.repository,
     baseSha: source.baseSha,
     planeRevisionDigest: source.planeRevisionDigest,
+    projectContext: source.projectContext,
     personas: round.personas,
     brief: round.brief || source.defaultBrief,
     requestedAt: event.occurredAt,
@@ -860,6 +1024,10 @@ export const contractVersions = VERSION;
 export type SecretReference = z.infer<typeof secretReferenceSchema>;
 export type EvidenceReference = z.infer<typeof evidenceReferenceSchema>;
 export type WorkItemRequest = z.infer<typeof workItemRequestSchema>;
+export type ProjectContextDocument = z.infer<
+  typeof projectContextDocumentSchema
+>;
+export type ProjectContext = z.infer<typeof projectContextSchema>;
 export type CodingRequest = z.infer<typeof codingRequestSchema>;
 export type WorkflowEvent = z.infer<typeof workflowEventSchema>;
 export type ControlCommand = z.infer<typeof controlCommandSchema>;

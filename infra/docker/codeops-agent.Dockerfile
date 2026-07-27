@@ -8,7 +8,9 @@ RUN apt-get update \
   && npm ci --omit=dev --ignore-scripts
 
 COPY services/codeops-agent/entrypoint.sh /usr/local/bin/codeops-agent-entrypoint
+COPY services/codeops-agent/prepare-project-context.mjs /opt/codeops-agent/prepare-project-context.mjs
 RUN chmod 0555 /usr/local/bin/codeops-agent-entrypoint \
+  && chmod 0444 /opt/codeops-agent/prepare-project-context.mjs \
   && test -x node_modules/.bin/codex-acp \
   && node_modules/.bin/codex-acp --version
 

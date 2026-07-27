@@ -15,3 +15,7 @@
 !services/codeops-plane-controller/tsconfig.build.json
 !services/codeops-plane-controller/src/
 !services/codeops-plane-controller/src/**
+!AGENTS.md
+!docs/
+!docs/agent-context/
+!docs/agent-context/**

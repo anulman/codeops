@@ -33,10 +33,13 @@ const safeEventSchema = z
 
 const checkpointSchema = z
   .object({
-    schemaVersion: z.literal(2),
+    schemaVersion: z.literal(3),
     runId: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/),
     agentRole: z.enum(["coding-agent", "qa-contract-researcher"]),
     baseSha: z.string().regex(/^[0-9a-f]{40}$/),
+    projectContextDigest: z.string().regex(SHA256),
+    model: z.literal("gpt-5.6-sol"),
+    reasoningEffort: z.literal("high"),
     sessionId: z.string().max(500).optional(),
     stopReason: z.string().max(500).optional(),
     response: z.string().max(20_100),
@@ -115,6 +118,12 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       `Work item: ${request.workItemId}`,
       `Exact base SHA: ${request.baseSha}`,
       `Task: ${request.summary}`,
+      `Project context digest: ${request.codingRequest.projectContext.digest}`,
+      "Read /context/project-context.json and every manifested repository document before planning.",
+      "Read /context/research-packet.json; it is the immutable handoff from research.",
+      `Acceptance criteria: ${JSON.stringify(
+        request.codingRequest.workItem.acceptanceCriteria,
+      )}`,
       "Make only the smallest source changes required by the task.",
       "Do not push, open or merge a PR, deploy, or access Plane/Kubernetes.",
       "Finish with a concise summary of changes and tests.",
@@ -126,6 +135,8 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
     `Plane work item: ${request.workItemId}`,
     `Exact base SHA: ${request.baseSha}`,
     `Brief: ${request.researchRequest.brief}`,
+    `Project context digest: ${request.researchRequest.projectContext.digest}`,
+    "Read /context/project-context.json and every manifested repository document before research.",
     "Inspect the repository and return concrete current behavior, expected behavior,",
     "evidence gaps and decisions.",
     "Never propose or perform a Plane lifecycle-state change.",
@@ -192,7 +203,11 @@ export function parseCheckpointLogs(input: {
   if (
     checkpoint.runId !== input.runId ||
     checkpoint.agentRole !== input.request.role ||
-    checkpoint.baseSha !== input.request.baseSha
+    checkpoint.baseSha !== input.request.baseSha ||
+    checkpoint.projectContextDigest !==
+      (input.request.role === "coding-agent"
+        ? input.request.codingRequest.projectContext.digest
+        : input.request.researchRequest.projectContext.digest)
   ) {
     throw new Error("Agent Job checkpoint identity mismatch");
   }

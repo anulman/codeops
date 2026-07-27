@@ -28,10 +28,13 @@ interface SafeEvent {
 }
 
 interface Checkpoint {
-  readonly schemaVersion: 2;
+  readonly schemaVersion: 3;
   readonly runId: string;
   readonly agentRole: "coding-agent" | "qa-contract-researcher";
   readonly baseSha: string;
+  readonly projectContextDigest: string;
+  readonly model: "gpt-5.6-sol";
+  readonly reasoningEffort: "high";
   readonly sessionId?: string;
   readonly stopReason?: string;
   readonly response: string;
@@ -205,6 +208,21 @@ export async function runGateway(): Promise<void> {
   const runId = requireRunId(process.env.CODEOPS_RUN_ID);
   const agentRole = requireAgentRole(process.env.CODEOPS_AGENT_ROLE);
   const baseSha = requireLowerHex("CODEOPS_BASE_SHA", process.env.CODEOPS_BASE_SHA, 40);
+  const projectContextDigest = process.env.CODEOPS_PROJECT_CONTEXT_DIGEST;
+  if (
+    !projectContextDigest ||
+    !/^sha256:[0-9a-f]{64}$/.test(projectContextDigest)
+  ) {
+    throw new Error(
+      "CODEOPS_PROJECT_CONTEXT_DIGEST must contain one SHA-256 digest",
+    );
+  }
+  if (
+    process.env.CODEOPS_MODEL !== "gpt-5.6-sol" ||
+    process.env.CODEOPS_REASONING_EFFORT !== "high"
+  ) {
+    throw new Error("CodeOps Trial 0 requires gpt-5.6-sol with high reasoning");
+  }
   const workspace = process.env.CODEOPS_WORKSPACE ?? "/workspace";
   const checkpointDirectory =
     process.env.CODEOPS_CHECKPOINT_DIR ?? "/checkpoint";
@@ -285,10 +303,13 @@ export async function runGateway(): Promise<void> {
   const checkpoint = await writeCheckpoint(
     checkpointDirectory,
     {
-      schemaVersion: 2,
+      schemaVersion: 3,
       runId,
       agentRole,
       baseSha,
+      projectContextDigest,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
       ...(sessionId ? { sessionId } : {}),
       ...(stopReason ? { stopReason } : {}),
       response: boundedText(response),

@@ -111,10 +111,13 @@ test("validates run and immutable source identities", () => {
 
 test("emits one digest-bound checkpoint record for trusted reconciliation", () => {
   const checkpoint = {
-    schemaVersion: 2,
+    schemaVersion: 3,
     runId: "research-1",
     agentRole: "qa-contract-researcher",
     baseSha: "a".repeat(40),
+    projectContextDigest: `sha256:${"b".repeat(64)}`,
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
     response: "research result",
     events: [],
     patch: {

@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   admitPlaneReadyTransition,
   admitPlaneResearchComment,
+  compileProjectContext,
 } from "../dist/index.js";
 
 const actorId = "88fc36c8-73b0-4547-81c7-96b70f61835e";
@@ -34,6 +35,13 @@ const payload = {
 
 const secret = "plane_wh_test-secret";
 const baseSha = "8f3d2c033f70be04b4b2dc8a005683806e84e209";
+const projectContextDocuments = [
+  {
+    path: "AGENTS.md",
+    purpose: "Repository guidance",
+    digest: `sha256:${"a".repeat(64)}`,
+  },
+];
 const source = {
   workItem: {
     id: payload.entity_id,
@@ -117,6 +125,52 @@ const readyPayload = {
   },
 };
 
+function researchPacket() {
+  const projectContext = compileProjectContext({
+    repository: { owner: "anulman", name: "renoconcierge" },
+    baseSha,
+    workspaceId: payload.workspace_id,
+    project: {
+      id: source.project.id,
+      name: source.project.name,
+      descriptionHtml: source.project.description_html,
+      updatedAt: source.project.updated_at,
+    },
+    documents: projectContextDocuments,
+  });
+  return {
+    version: "codeops.research-packet/v2",
+    personas: ["@ai-product"],
+    perspectives: [
+      {
+        persona: "@ai-product",
+        outcome: "findings",
+        summary: "The product context is bound.",
+      },
+    ],
+    requestId: "research-request:fixture",
+    projectId: source.project.id,
+    workItemId: source.workItem.id,
+    baseSha,
+    projectContextDigest: projectContext.digest,
+    planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+    summary: "The product context is bound.",
+    currentBehavior: [],
+    expectedBehavior: [],
+    evidence: [],
+    videoNotApplicableReason: "Contract-only fixture.",
+    decisions: [],
+    proposedMutations: {
+      version: "codeops.research-mutation-batch/v1",
+      requestId: "research-request:fixture",
+      projectId: source.project.id,
+      sourceWorkItemId: source.workItem.id,
+      mutations: [],
+    },
+    createdAt: "2026-07-26T02:30:00.000Z",
+  };
+}
+
 function signedInput(overrides = {}) {
   const body = overrides.payload ?? payload;
   const rawBody = Buffer.from(JSON.stringify(body));
@@ -133,6 +187,7 @@ function signedInput(overrides = {}) {
     repository: { owner: "anulman", name: "renoconcierge" },
     baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
+    projectContextDocuments,
     loadSource: async () => source,
   };
 }
@@ -154,6 +209,7 @@ function signedCeInput(overrides = {}) {
     repository: { owner: "anulman", name: "renoconcierge" },
     baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
+    projectContextDocuments,
     loadSource: async () => source,
   };
 }
@@ -175,6 +231,8 @@ function signedReadyInput(overrides = {}) {
     repository: { owner: "anulman", name: "renoconcierge" },
     baseSha,
     receivedAt: "2026-07-27T02:45:01.000Z",
+    projectContextDocuments,
+    loadResearchPacket: async () => researchPacket(),
     loadSource: async () => ({
       project: source.project,
       workItem: {

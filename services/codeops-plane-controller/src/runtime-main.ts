@@ -3,7 +3,9 @@ import { createServer } from "node:http";
 import { Client, Connection } from "@temporalio/client";
 import {
   createFileResearchDedupLedger,
+  createFileResearchPacketStore,
   createPlaneApiClient,
+  loadProjectContextDocuments,
   projectResearchPacket,
   processPlaneReadyWebhook,
   processPlaneResearchWebhook,
@@ -115,9 +117,16 @@ const baseSha = required("CODEOPS_BASE_SHA");
 if (!/^[0-9a-f]{40}$/.test(baseSha)) {
   throw new Error("CODEOPS_BASE_SHA must be an exact lowercase Git SHA");
 }
+const projectContextDocuments = await loadProjectContextDocuments(
+  process.env.CODEOPS_PROJECT_CONTEXT_ROOT ?? "/app/project-context",
+);
+const dedupRoot = required("CODEOPS_DEDUP_ROOT");
 const ledger = createFileResearchDedupLedger({
-  rootDirectory: required("CODEOPS_DEDUP_ROOT"),
+  rootDirectory: dedupRoot,
   leaseDurationMs: 5 * 60 * 1_000,
+});
+const packetStore = createFileResearchPacketStore({
+  rootDirectory: `${dedupRoot}/research-packets`,
 });
 const enqueue = createTemporalResearchEnqueuer({
   client: temporalClient,
@@ -136,6 +145,7 @@ const listener = createPlaneWebhookRequestListener({
       projectResearchPacket({
         packet,
         ledger,
+        packetStore,
         client: planeClient,
       }),
   },
@@ -148,6 +158,11 @@ const listener = createPlaneWebhookRequestListener({
       repository,
       baseSha,
       receivedAt: new Date().toISOString(),
+      projectContextDocuments,
+      loadResearchPacket: (identity: {
+        projectId: string;
+        workItemId: string;
+      }) => packetStore.getLatest(identity),
       loadSource: async ({
         projectId,
         workItemId,

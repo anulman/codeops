@@ -35,6 +35,14 @@ export function buildRunResources(
   const name = `codeops-agent-${input.runId}`;
   const secretName = `codeops-run-${input.runId}`;
   const workspaceReadOnly = request.role === "qa-contract-researcher";
+  const projectContext =
+    request.role === "coding-agent"
+      ? request.codingRequest.projectContext
+      : request.researchRequest.projectContext;
+  const researchPacket =
+    request.role === "coding-agent"
+      ? request.codingRequest.researchPacket
+      : undefined;
   const commonSecurity = {
     allowPrivilegeEscalation: false,
     readOnlyRootFilesystem: true,
@@ -44,6 +52,9 @@ export function buildRunResources(
     { name: "CODEOPS_RUN_ID", value: input.runId },
     { name: "CODEOPS_BASE_SHA", value: request.baseSha },
     { name: "CODEOPS_AGENT_ROLE", value: request.role },
+    { name: "CODEOPS_PROJECT_CONTEXT_DIGEST", value: projectContext.digest },
+    { name: "CODEOPS_MODEL", value: "gpt-5.6-sol" },
+    { name: "CODEOPS_REASONING_EFFORT", value: "high" },
   ];
   return [
     {
@@ -106,6 +117,7 @@ export function buildRunResources(
                     "git -c safe.directory=/workspace -C /workspace checkout --detach FETCH_HEAD",
                     "git -c safe.directory=/workspace -C /workspace remote remove origin",
                     "test \"$(git -c safe.directory=/workspace -C /workspace rev-parse HEAD)\" = \"$CODEOPS_BASE_SHA\"",
+                    "node /opt/codeops-agent/prepare-project-context.mjs",
                   ].join("\n"),
                 ],
                 env: [
@@ -120,13 +132,34 @@ export function buildRunResources(
                       },
                     },
                   },
+                  { name: "CODEOPS_WORKSPACE", value: "/workspace" },
+                  { name: "CODEOPS_CONTEXT_DIR", value: "/context" },
+                  {
+                    name: "CODEOPS_PROJECT_CONTEXT_B64",
+                    value: Buffer.from(JSON.stringify(projectContext)).toString(
+                      "base64",
+                    ),
+                  },
+                  ...(researchPacket === undefined
+                    ? []
+                    : [
+                        {
+                          name: "CODEOPS_RESEARCH_PACKET_B64",
+                          value: Buffer.from(
+                            JSON.stringify(researchPacket),
+                          ).toString("base64"),
+                        },
+                      ]),
                 ],
                 resources: {
                   requests: { cpu: "100m", memory: "128Mi" },
                   limits: { cpu: "500m", memory: "512Mi" },
                 },
                 securityContext: commonSecurity,
-                volumeMounts: [{ name: "workspace", mountPath: "/workspace" }],
+                volumeMounts: [
+                  { name: "workspace", mountPath: "/workspace" },
+                  { name: "context", mountPath: "/context" },
+                ],
               },
             ],
             containers: [
@@ -139,6 +172,7 @@ export function buildRunResources(
                   { name: "CODEOPS_ACP_SOCKET", value: "/run/codeops/agent.sock" },
                   { name: "CODEOPS_CHECKPOINT_DIR", value: "/checkpoint" },
                   { name: "CODEOPS_WORKSPACE", value: "/workspace" },
+                  { name: "CODEOPS_CONTEXT_DIR", value: "/context" },
                   {
                     name: "CODEOPS_PROMPT_B64",
                     value: Buffer.from(buildAgentPrompt(request)).toString("base64"),
@@ -158,6 +192,11 @@ export function buildRunResources(
                   { name: "session", mountPath: "/run/codeops" },
                   { name: "checkpoint", mountPath: "/checkpoint" },
                   { name: "temp", mountPath: "/tmp" },
+                  {
+                    name: "context",
+                    mountPath: "/context",
+                    readOnly: true,
+                  },
                 ],
               },
               {
@@ -178,6 +217,11 @@ export function buildRunResources(
                     name: "DEFAULT_AUTH_REQUEST",
                     value: '{"methodId":"api-key"}',
                   },
+                  {
+                    name: "CODEX_CONFIG",
+                    value:
+                      '{"model":"gpt-5.6-sol","model_reasoning_effort":"high"}',
+                  },
                   { name: "CODEOPS_ACP_SOCKET", value: "/run/codeops/agent.sock" },
                 ],
                 resources: {
@@ -194,6 +238,11 @@ export function buildRunResources(
                   { name: "session", mountPath: "/run/codeops" },
                   { name: "checkpoint", mountPath: "/checkpoint" },
                   { name: "temp", mountPath: "/tmp" },
+                  {
+                    name: "context",
+                    mountPath: "/context",
+                    readOnly: true,
+                  },
                 ],
               },
             ],
@@ -204,6 +253,7 @@ export function buildRunResources(
                 emptyDir: { medium: "Memory", sizeLimit: "16Mi" },
               },
               { name: "checkpoint", emptyDir: { sizeLimit: "256Mi" } },
+              { name: "context", emptyDir: { sizeLimit: "2Mi" } },
               { name: "temp", emptyDir: { sizeLimit: "256Mi" } },
             ],
           },

@@ -19,6 +19,11 @@ providers.
   identity. Do not substitute random IDs for durable transitions.
 - Evidence references must use bounded, credential-free `https:`, `s3:`, or
   local `artifact:` URIs and include a SHA-256 digest.
+- Every research and coding request carries `codeops.project-context/v1`: the
+  exact Plane project identity and description, repository/base SHA, and a
+  path-sorted SHA-256 manifest of the bounded in-repository context pack.
+  Missing documents, digest drift, source drift, or a request/context identity
+  mismatch fail before model execution.
 
 ## QA Contract Researcher
 
@@ -49,6 +54,12 @@ fixture/evidence references when available, blocking decisions, and proposed
 mutations. A canonical video is strongly encouraged for user-visible behavior,
 but its absence does not by itself invalidate a packet. Video is human
 evidence, not the acceptance oracle.
+
+The packet also binds the project-context digest. The trusted controller
+persists the successfully projected packet by work-item identity. A later
+coding request must include that exact packet and the same project-context
+digest; Ready admission fails closed when the research handoff is absent,
+stale, or source-incompatible.
 
 `readinessGateSchema` keeps one Plane `Ready` state while compiling a
 ticket-specific set of criteria under `qa-ticket-readiness/v1`. Each criterion
