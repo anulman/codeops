@@ -36,6 +36,7 @@ export function buildRunResources(
   };
   const name = `codeops-agent-${input.runId}`;
   const secretName = `codeops-run-${input.runId}`;
+  const prompt = buildAgentPrompt(request);
   const workspaceReadOnly = request.role === "qa-contract-researcher";
   const projectContext =
     request.role === "coding-agent"
@@ -71,6 +72,24 @@ export function buildRunResources(
         "repository-read-token": Buffer.from(
           input.repositoryReadToken,
         ).toString("base64"),
+        "agent-prompt": Buffer.from(prompt).toString("base64"),
+        "project-context": Buffer.from(
+          JSON.stringify(projectContext),
+        ).toString("base64"),
+        ...(researchPacket === undefined
+          ? {}
+          : {
+              "research-packet": Buffer.from(
+                JSON.stringify(researchPacket),
+              ).toString("base64"),
+            }),
+        ...(researchDispatch === undefined
+          ? {}
+          : {
+              "research-dispatch": Buffer.from(
+                JSON.stringify(researchDispatch),
+              ).toString("base64"),
+            }),
         ...(input.modelAuth.mode === "api-key"
           ? {
               "model-api-key": Buffer.from(
@@ -145,29 +164,23 @@ export function buildRunResources(
                   { name: "CODEOPS_WORKSPACE", value: "/workspace" },
                   { name: "CODEOPS_CONTEXT_DIR", value: "/context" },
                   {
-                    name: "CODEOPS_PROJECT_CONTEXT_B64",
-                    value: Buffer.from(JSON.stringify(projectContext)).toString(
-                      "base64",
-                    ),
+                    name: "CODEOPS_PROJECT_CONTEXT_FILE",
+                    value: "/input/project-context.json",
                   },
                   ...(researchPacket === undefined
                     ? []
                     : [
                         {
-                          name: "CODEOPS_RESEARCH_PACKET_B64",
-                          value: Buffer.from(
-                            JSON.stringify(researchPacket),
-                          ).toString("base64"),
+                          name: "CODEOPS_RESEARCH_PACKET_FILE",
+                          value: "/input/research-packet.json",
                         },
                       ]),
                   ...(researchDispatch === undefined
                     ? []
                     : [
                         {
-                          name: "CODEOPS_RESEARCH_DISPATCH_B64",
-                          value: Buffer.from(
-                            JSON.stringify(researchDispatch),
-                          ).toString("base64"),
+                          name: "CODEOPS_RESEARCH_DISPATCH_FILE",
+                          value: "/input/research-dispatch.json",
                         },
                       ]),
                 ],
@@ -179,6 +192,11 @@ export function buildRunResources(
                 volumeMounts: [
                   { name: "workspace", mountPath: "/workspace" },
                   { name: "context", mountPath: "/context" },
+                  {
+                    name: "run-input",
+                    mountPath: "/input",
+                    readOnly: true,
+                  },
                 ],
               },
             ],
@@ -194,8 +212,8 @@ export function buildRunResources(
                   { name: "CODEOPS_WORKSPACE", value: "/workspace" },
                   { name: "CODEOPS_CONTEXT_DIR", value: "/context" },
                   {
-                    name: "CODEOPS_PROMPT_B64",
-                    value: Buffer.from(buildAgentPrompt(request)).toString("base64"),
+                    name: "CODEOPS_PROMPT_FILE",
+                    value: "/input/agent-prompt.txt",
                   },
                 ],
                 resources: {
@@ -215,6 +233,11 @@ export function buildRunResources(
                   {
                     name: "context",
                     mountPath: "/context",
+                    readOnly: true,
+                  },
+                  {
+                    name: "run-input",
+                    mountPath: "/input",
                     readOnly: true,
                   },
                 ],
@@ -298,6 +321,35 @@ export function buildRunResources(
               },
               { name: "checkpoint", emptyDir: { sizeLimit: "256Mi" } },
               { name: "context", emptyDir: { sizeLimit: "2Mi" } },
+              {
+                name: "run-input",
+                secret: {
+                  secretName,
+                  items: [
+                    { key: "agent-prompt", path: "agent-prompt.txt" },
+                    {
+                      key: "project-context",
+                      path: "project-context.json",
+                    },
+                    ...(researchPacket === undefined
+                      ? []
+                      : [
+                          {
+                            key: "research-packet",
+                            path: "research-packet.json",
+                          },
+                        ]),
+                    ...(researchDispatch === undefined
+                      ? []
+                      : [
+                          {
+                            key: "research-dispatch",
+                            path: "research-dispatch.json",
+                          },
+                        ]),
+                  ],
+                },
+              },
               { name: "temp", emptyDir: { sizeLimit: "256Mi" } },
               ...(input.modelAuth.mode === "chatgpt"
                 ? [

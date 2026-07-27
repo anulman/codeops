@@ -56,28 +56,47 @@ function projectContext(documentDigest) {
 }
 
 async function run(input) {
+  const inputDirectory = path.join(
+    path.dirname(input.contextDirectory),
+    `${path.basename(input.contextDirectory)}-input`,
+  );
+  await mkdir(inputDirectory);
+  const projectContextFile = path.join(inputDirectory, "project-context.json");
+  await writeFile(projectContextFile, JSON.stringify(input.projectContext));
+  const researchPacketFile =
+    input.researchPacket === undefined
+      ? undefined
+      : path.join(inputDirectory, "research-packet.json");
+  const researchDispatchFile =
+    input.researchDispatch === undefined
+      ? undefined
+      : path.join(inputDirectory, "research-dispatch.json");
+  if (researchPacketFile) {
+    await writeFile(researchPacketFile, JSON.stringify(input.researchPacket));
+  }
+  if (researchDispatchFile) {
+    await writeFile(
+      researchDispatchFile,
+      JSON.stringify(input.researchDispatch),
+    );
+  }
   return execute(process.execPath, [script.pathname], {
     env: {
       ...process.env,
       CODEOPS_WORKSPACE: input.workspace,
       CODEOPS_CONTEXT_DIR: input.contextDirectory,
+      CODEOPS_INPUT_ROOT: inputDirectory,
       CODEOPS_BASE_SHA: "a".repeat(40),
-      CODEOPS_PROJECT_CONTEXT_B64: Buffer.from(
-        JSON.stringify(input.projectContext),
-      ).toString("base64"),
+      CODEOPS_PROJECT_CONTEXT_FILE: projectContextFile,
       ...(input.researchPacket === undefined
         ? {}
         : {
-            CODEOPS_RESEARCH_PACKET_B64: Buffer.from(
-              JSON.stringify(input.researchPacket),
-            ).toString("base64"),
+            CODEOPS_RESEARCH_PACKET_FILE: researchPacketFile,
           }),
       ...(input.researchDispatch === undefined
         ? {}
         : {
-            CODEOPS_RESEARCH_DISPATCH_B64: Buffer.from(
-              JSON.stringify(input.researchDispatch),
-            ).toString("base64"),
+            CODEOPS_RESEARCH_DISPATCH_FILE: researchDispatchFile,
           }),
     },
   });

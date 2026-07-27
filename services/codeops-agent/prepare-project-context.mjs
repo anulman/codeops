@@ -43,6 +43,29 @@ function decode(name) {
   return JSON.parse(Buffer.from(encoded, "base64").toString("utf8"));
 }
 
+async function loadJson(encodedName, fileName, fixedPath) {
+  const encoded = process.env[encodedName];
+  const file = process.env[fileName];
+  if (encoded && file) {
+    throw new Error(`${encodedName} and ${fileName} are mutually exclusive`);
+  }
+  if (file) {
+    const inputRoot = process.env.CODEOPS_INPUT_ROOT || "/input";
+    if (
+      !path.isAbsolute(inputRoot) ||
+      file !== path.join(inputRoot, path.basename(fixedPath))
+    ) {
+      throw new Error(`${fileName} must use the fixed run input path`);
+    }
+    const bytes = await readFile(file);
+    if (bytes.length === 0 || bytes.length > 900_000) {
+      throw new Error(`${fileName} must contain 1 to 900000 bytes`);
+    }
+    return JSON.parse(bytes.toString("utf8"));
+  }
+  return decode(encodedName);
+}
+
 const workspace = await realpath(required("CODEOPS_WORKSPACE"));
 const contextDirectory = required("CODEOPS_CONTEXT_DIR");
 if (!path.isAbsolute(contextDirectory)) {
@@ -54,7 +77,11 @@ if (!contextMetadata.isDirectory() || contextMetadata.isSymbolicLink()) {
   throw new Error("project context output must be a real directory");
 }
 
-const projectContext = decode("CODEOPS_PROJECT_CONTEXT_B64");
+const projectContext = await loadJson(
+  "CODEOPS_PROJECT_CONTEXT_B64",
+  "CODEOPS_PROJECT_CONTEXT_FILE",
+  "/input/project-context.json",
+);
 if (
   projectContext?.version !== "codeops.project-context/v1" ||
   projectContext.baseSha !== required("CODEOPS_BASE_SHA") ||
@@ -108,8 +135,15 @@ await writeFile(projectContextPath, `${JSON.stringify(projectContext)}\n`, {
 });
 await chmod(projectContextPath, 0o400);
 
-if (process.env.CODEOPS_RESEARCH_PACKET_B64) {
-  const researchPacket = decode("CODEOPS_RESEARCH_PACKET_B64");
+if (
+  process.env.CODEOPS_RESEARCH_PACKET_B64 ||
+  process.env.CODEOPS_RESEARCH_PACKET_FILE
+) {
+  const researchPacket = await loadJson(
+    "CODEOPS_RESEARCH_PACKET_B64",
+    "CODEOPS_RESEARCH_PACKET_FILE",
+    "/input/research-packet.json",
+  );
   if (
     researchPacket?.version !== "codeops.research-packet/v3" ||
     researchPacket.baseSha !== projectContext.baseSha ||
@@ -126,8 +160,15 @@ if (process.env.CODEOPS_RESEARCH_PACKET_B64) {
   await chmod(researchPacketPath, 0o400);
 }
 
-if (process.env.CODEOPS_RESEARCH_DISPATCH_B64) {
-  const dispatch = decode("CODEOPS_RESEARCH_DISPATCH_B64");
+if (
+  process.env.CODEOPS_RESEARCH_DISPATCH_B64 ||
+  process.env.CODEOPS_RESEARCH_DISPATCH_FILE
+) {
+  const dispatch = await loadJson(
+    "CODEOPS_RESEARCH_DISPATCH_B64",
+    "CODEOPS_RESEARCH_DISPATCH_FILE",
+    "/input/research-dispatch.json",
+  );
   if (
     dispatch?.version !== "codeops.agent-job-dispatch/v1" ||
     dispatch.role !== "qa-contract-researcher" ||

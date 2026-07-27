@@ -11,7 +11,6 @@ const TOKENS = {
   __CODEOPS_AGENT_DIGEST__: "agentDigest",
   __CODEOPS_AGENT_ROLE__: "role",
   __CODEOPS_BASE_SHA__: "baseSha",
-  __CODEOPS_PROMPT_B64__: "promptBase64",
   __CODEOPS_REPOSITORY_URL__: "repository",
   __CODEOPS_RUN_ID__: "runId",
   __CODEOPS_RUN_SUFFIX__: "runSuffix",

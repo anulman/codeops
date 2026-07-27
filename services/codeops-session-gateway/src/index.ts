@@ -89,12 +89,24 @@ export function createPatchLogRecords(
   }));
 }
 
-function getPrompt(): string {
+export async function loadPrompt(): Promise<string> {
+  const promptFile = process.env.CODEOPS_PROMPT_FILE;
   const encoded = process.env.CODEOPS_PROMPT_B64;
-  if (!encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
-    throw new Error("CODEOPS_PROMPT_B64 must contain canonical base64");
+  if (promptFile && encoded) {
+    throw new Error("CodeOps prompt must use exactly one input");
   }
-  const bytes = Buffer.from(encoded, "base64");
+  let bytes: Buffer;
+  if (promptFile) {
+    if (promptFile !== "/input/agent-prompt.txt") {
+      throw new Error("CODEOPS_PROMPT_FILE must use the fixed run input path");
+    }
+    bytes = await readFile(promptFile);
+  } else {
+    if (!encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+      throw new Error("CodeOps prompt input is required");
+    }
+    bytes = Buffer.from(encoded, "base64");
+  }
   if (bytes.length === 0 || bytes.length > MAX_PROMPT_BYTES) {
     throw new Error("decoded CodeOps prompt must contain 1 to 100000 bytes");
   }
@@ -227,7 +239,7 @@ export async function runGateway(): Promise<void> {
   const checkpointDirectory =
     process.env.CODEOPS_CHECKPOINT_DIR ?? "/checkpoint";
   const socketPath = process.env.CODEOPS_ACP_SOCKET ?? "/run/codeops/agent.sock";
-  const prompt = getPrompt();
+  const prompt = await loadPrompt();
   const events: SafeEvent[] = [];
   let response = "";
   let sessionId: string | undefined;

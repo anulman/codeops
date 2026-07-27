@@ -451,6 +451,50 @@ test("builds only the fixed tokenless run resources", () => {
     /git -c safe\.directory=\/workspace -C \/workspace/,
   );
   assert.equal(workspaceBuilder.includes("safe.directory=*"), false);
+  const runSecret = resources[0];
+  assert.ok(runSecret.data["agent-prompt"]);
+  assert.ok(runSecret.data["project-context"]);
+  assert.ok(runSecret.data["research-dispatch"]);
+  const sessionGateway = resources[2].spec.template.spec.containers.find(
+    (container) => container.name === "session-gateway",
+  );
+  assert.equal(
+    sessionGateway.env.find((entry) => entry.name === "CODEOPS_PROMPT_FILE")
+      .value,
+    "/input/agent-prompt.txt",
+  );
+  assert.equal(
+    sessionGateway.env.some((entry) => entry.name === "CODEOPS_PROMPT_B64"),
+    false,
+  );
+  assert.ok(
+    resources[2].spec.template.spec.volumes.find(
+      (volume) => volume.name === "run-input",
+    ).secret.items.some((item) => item.path === "research-dispatch.json"),
+  );
+  const runInputItems = resources[2].spec.template.spec.volumes.find(
+    (volume) => volume.name === "run-input",
+  ).secret.items;
+  assert.equal(
+    runInputItems.some((item) =>
+      ["repository-read-token", "model-api-key"].includes(item.key),
+    ),
+    false,
+  );
+  assert.deepEqual(
+    JSON.parse(
+      Buffer.from(runSecret.data["research-dispatch"], "base64").toString(
+        "utf8",
+      ),
+    ),
+    request,
+  );
+  assert.equal(
+    resources[2].spec.template.spec.initContainers[0].env.some((entry) =>
+      entry.name.endsWith("_B64"),
+    ),
+    false,
+  );
   const codingAgent = resources[2].spec.template.spec.containers.find(
     (container) => container.name === "coding-agent",
   );

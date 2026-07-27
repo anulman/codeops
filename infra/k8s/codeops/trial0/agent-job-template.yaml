@@ -88,6 +88,9 @@ spec:
           volumeMounts:
             - name: workspace
               mountPath: /workspace
+            - name: run-input
+              mountPath: /input
+              readOnly: true
       containers:
         - name: session-gateway
           image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-gateway@__CODEOPS_SESSION_GATEWAY_DIGEST__
@@ -105,8 +108,8 @@ spec:
               value: /checkpoint
             - name: CODEOPS_WORKSPACE
               value: /workspace
-            - name: CODEOPS_PROMPT_B64
-              value: __CODEOPS_PROMPT_B64__
+            - name: CODEOPS_PROMPT_FILE
+              value: /input/agent-prompt.txt
           resources:
             requests:
               cpu: 100m
@@ -129,6 +132,9 @@ spec:
               mountPath: /checkpoint
             - name: temp
               mountPath: /tmp
+            - name: run-input
+              mountPath: /input
+              readOnly: true
         - name: coding-agent
           image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
           imagePullPolicy: IfNotPresent
@@ -186,6 +192,12 @@ spec:
         - name: temp
           emptyDir:
             sizeLimit: 256Mi
+        - name: run-input
+          secret:
+            secretName: codeops-run-__CODEOPS_RUN_SUFFIX__
+            items:
+              - key: agent-prompt
+                path: agent-prompt.txt
         - name: codex-auth
           persistentVolumeClaim:
             claimName: codeops-codex-auth
