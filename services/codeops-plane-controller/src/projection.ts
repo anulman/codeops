@@ -28,18 +28,21 @@ export type ResearchProjectionResult =
 
 function assertTrial0Projection(packet: ResearchPacket): void {
   const mutations = packet.proposedMutations.mutations;
+  const [first, ...rest] = mutations;
+  const last = rest.at(-1);
   if (
-    mutations.length !== 2 ||
-    mutations[0]?.type !== "ticket.update" ||
-    mutations[1]?.type !== "comment.create" ||
-    mutations.some((mutation) => mutation.targetWorkItemId !== packet.workItemId)
+    first?.type !== "ticket.update" ||
+    first.targetWorkItemId !== packet.workItemId ||
+    last?.type !== "comment.create" ||
+    last.targetWorkItemId !== packet.workItemId ||
+    rest.slice(0, -1).some((mutation) => mutation.type !== "task.upsert")
   ) {
     throw new Error(
-      "research projection must refine and comment on only the source ticket",
+      "research projection must refine the source, upsert bounded project tasks, then comment on the source",
     );
   }
   if (
-    canonicalSerialize(mutations[1].attachments) !==
+    canonicalSerialize(last.attachments) !==
     canonicalSerialize(packet.evidence)
   ) {
     throw new Error("research projection attachments do not match packet evidence");

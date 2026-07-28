@@ -58,11 +58,27 @@ const packet = upgradeResearchPacket({
   createdAt: "2026-07-26T00:00:00.000Z",
 });
 
-function client(comments) {
+function client(comments, tasks = []) {
   const descriptions = [];
   return {
-    async getWorkItem() {
+    async getWorkItem(_projectId, requestedWorkItemId) {
+      const task = tasks.find((item) => item.id === requestedWorkItemId);
+      if (task) return task;
       return { id: workItemId, project: projectId, labels: [] };
+    },
+    async listProjectWorkItems() {
+      return tasks;
+    },
+    async createWorkItem(_projectId, input) {
+      const created = {
+        id: `33333333-3333-4333-8333-${String(tasks.length + 1).padStart(12, "0")}`,
+        project: projectId,
+        labels: [],
+        name: input.name,
+        descriptionHtml: input.description_html,
+      };
+      tasks.push(created);
+      return created;
     },
     async createComment(_projectId, _workItemId, input) {
       comments.push(input);
@@ -117,6 +133,54 @@ test("durably applies one content-only projection and deduplicates restart retri
   }
 });
 
+test("applies bounded same-project task upserts between source refinement and comment", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-projection-tasks-"));
+  const comments = [];
+  const tasks = [];
+  const ledger = createFileResearchDedupLedger({
+    rootDirectory: root,
+    leaseDurationMs: 60_000,
+  });
+  const taskPacket = {
+    ...packet,
+    proposedMutations: {
+      ...packet.proposedMutations,
+      mutations: [
+        packet.proposedMutations.mutations[0],
+        {
+          type: "task.upsert",
+          key: "bound-otp-attempts",
+          targetWorkItemId: null,
+          expectedDescriptionDigest: null,
+          name: "Bound OTP verification attempts",
+          descriptionHtml:
+            "<p>Limit guesses.</p><p><code>[codeops-research-task:bound-otp-attempts]</code></p>",
+        },
+        packet.proposedMutations.mutations[1],
+      ],
+    },
+  };
+  try {
+    const result = await projectResearchPacket({
+      packet: taskPacket,
+      ledger,
+      packetStore,
+      client: client(comments, tasks),
+      now: () => "2026-07-26T00:01:00.000Z",
+    });
+    assert.deepEqual(result, {
+      status: "applied",
+      requestId: packet.requestId,
+      mutationCount: 3,
+    });
+    assert.equal(tasks.length, 1);
+    assert.match(tasks[0].descriptionHtml, /codeops-research-task/);
+    assert.equal(comments.length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("rejects projection identity drift and every mutation outside source-ticket refinement", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-projection-bad-"));
   const ledger = createFileResearchDedupLedger({
@@ -158,7 +222,7 @@ test("rejects projection identity drift and every mutation outside source-ticket
         packetStore,
         client: client([]),
       }),
-      /Invalid discriminator|exactly 2/,
+      /Invalid discriminator|research mutations must refine/,
     );
   } finally {
     await rm(root, { recursive: true, force: true });
