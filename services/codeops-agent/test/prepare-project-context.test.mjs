@@ -27,10 +27,11 @@ function canonicalSerialize(value) {
     .join(",")}}`;
 }
 
-function projectContext(documentDigest) {
+function projectContext(documentContent) {
   const identity = {
     version: "codeops.project-context/v1",
     repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha: "b".repeat(40),
     baseSha: "a".repeat(40),
     project: {
       workspaceId: "11111111-1111-4111-8111-111111111111",
@@ -43,7 +44,10 @@ function projectContext(documentDigest) {
       {
         path: "AGENTS.md",
         purpose: "Repository guidance",
-        digest: documentDigest,
+        digest: `sha256:${createHash("sha256")
+          .update(documentContent)
+          .digest("hex")}`,
+        content: documentContent,
       },
     ],
   };
@@ -87,6 +91,7 @@ async function run(input) {
       CODEOPS_CONTEXT_DIR: input.contextDirectory,
       CODEOPS_INPUT_ROOT: inputDirectory,
       CODEOPS_BASE_SHA: "a".repeat(40),
+      CODEOPS_CONTROL_PLANE_SHA: "b".repeat(40),
       CODEOPS_PROJECT_CONTEXT_FILE: projectContextFile,
       ...(input.researchPacket === undefined
         ? {}
@@ -102,17 +107,13 @@ async function run(input) {
   });
 }
 
-test("materializes verified context and fails on missing or digest-drifted files", async () => {
+test("materializes trusted context documents and rejects inline digest drift", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-agent-context-"));
   try {
     const workspace = path.join(root, "workspace");
     await mkdir(workspace);
     const bytes = "bounded guidance\n";
-    await writeFile(path.join(workspace, "AGENTS.md"), bytes);
-    const digest = `sha256:${createHash("sha256")
-      .update(bytes)
-      .digest("hex")}`;
-    const context = projectContext(digest);
+    const context = projectContext(bytes);
     const validOutput = path.join(root, "valid");
     await run({
       workspace,
@@ -133,6 +134,13 @@ test("materializes verified context and fails on missing or digest-drifted files
         ),
       ),
       context,
+    );
+    assert.equal(
+      await readFile(
+        path.join(validOutput, "project-documents", "AGENTS.md"),
+        "utf8",
+      ),
+      bytes,
     );
     const dispatchOutput = path.join(root, "dispatch");
     const workItemId = "33333333-3333-4333-8333-333333333333";
@@ -166,22 +174,29 @@ test("materializes verified context and fails on missing or digest-drifted files
       ),
       dispatch,
     );
-    await writeFile(path.join(workspace, "AGENTS.md"), "drifted\n");
+    const driftedIdentity = {
+      ...context,
+      documents: [
+        {
+          ...context.documents[0],
+          content: "drifted\n",
+        },
+      ],
+    };
+    delete driftedIdentity.digest;
+    const driftedContext = {
+      ...driftedIdentity,
+      digest: `sha256:${createHash("sha256")
+        .update(canonicalSerialize(driftedIdentity))
+        .digest("hex")}`,
+    };
     await assert.rejects(
       run({
         workspace,
         contextDirectory: path.join(root, "drift"),
-        projectContext: context,
+        projectContext: driftedContext,
       }),
       /project context document digest drift/,
-    );
-    await rm(path.join(workspace, "AGENTS.md"));
-    await assert.rejects(
-      run({
-        workspace,
-        contextDirectory: path.join(root, "missing"),
-        projectContext: context,
-      }),
     );
     await assert.rejects(
       run({

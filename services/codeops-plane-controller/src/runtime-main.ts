@@ -5,6 +5,7 @@ import {
   createFileResearchDedupLedger,
   createFileResearchPacketStore,
   createPlaneApiClient,
+  identifyPlaneReadyTransition,
   loadProjectContextDocuments,
   projectResearchPacket,
   processPlaneReadyWebhook,
@@ -12,6 +13,7 @@ import {
 } from "./index.js";
 import {
   createPlaneWebhookRequestListener,
+  createRepositoryHeadResolver,
   createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "./runtime.js";
@@ -49,6 +51,13 @@ const projectionToken = await secretFile(
 if (projectionToken.length < 32 || projectionToken.length > 4_096) {
   throw new Error("CodeOps research projection token is invalid");
 }
+const repositoryHeadToken = await secretFile(
+  "CODEOPS_REPOSITORY_HEAD_TOKEN_FILE",
+);
+const resolveTargetBaseSha = createRepositoryHeadResolver({
+  origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
+  token: repositoryHeadToken,
+});
 const allowedHumanActorIds = new Set(
   required("CODEOPS_ALLOWED_HUMAN_ACTOR_IDS")
     .split(",")
@@ -113,9 +122,11 @@ if (
 ) {
   throw new Error("CodeOps repository identity is invalid");
 }
-const baseSha = required("CODEOPS_BASE_SHA");
-if (!/^[0-9a-f]{40}$/.test(baseSha)) {
-  throw new Error("CODEOPS_BASE_SHA must be an exact lowercase Git SHA");
+const controlPlaneSha = required("CODEOPS_CONTROL_PLANE_SHA");
+if (!/^[0-9a-f]{40}$/.test(controlPlaneSha)) {
+  throw new Error(
+    "CODEOPS_CONTROL_PLANE_SHA must be an exact lowercase Git SHA",
+  );
 }
 const projectContextDocuments = await loadProjectContextDocuments(
   process.env.CODEOPS_PROJECT_CONTEXT_ROOT ?? "/app/project-context",
@@ -138,6 +149,15 @@ const enqueueCoding = createTemporalCodingEnqueuer({
 });
 const readyStateId = required("CODEOPS_READY_STATE_ID");
 
+function escapeHtml(value: string): string {
+  return value
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
 const listener = createPlaneWebhookRequestListener({
   projection: {
     token: projectionToken,
@@ -149,58 +169,132 @@ const listener = createPlaneWebhookRequestListener({
         client: planeClient,
       }),
   },
+  transitionProjection: {
+    token: projectionToken,
+    process: async (notice) => {
+      const label =
+        notice.state === "failed"
+          ? "failed"
+          : notice.state === "cancelled"
+            ? "was cancelled"
+            : "completed";
+      await planeClient.createComment(
+        notice.projectId,
+        notice.workItemId,
+        {
+          comment_html: [
+            `<p><strong>CodeOps workflow ${label}.</strong></p>`,
+            `<p><code>${escapeHtml(notice.workflowId)}</code>: ${escapeHtml(notice.summary)}</p>`,
+          ].join(""),
+          external_source: "codeops",
+          external_id: `workflow-terminal:${notice.workflowId}:${notice.state}`,
+        },
+      );
+    },
+  },
   process: async ({ rawBody, headers }) => {
-    const shared = {
+    const readyIdentity = identifyPlaneReadyTransition({
       rawBody,
       headers,
       webhookSecret,
       allowedHumanActorIds,
-      repository,
-      baseSha,
-      receivedAt: new Date().toISOString(),
-      projectContextDocuments,
-      loadResearchPacket: (identity: {
-        projectId: string;
-        workItemId: string;
-      }) => packetStore.getLatest(identity),
-      loadSource: async ({
-        projectId,
-        workItemId,
-      }: {
-        projectId: string | undefined;
-        workItemId: string;
-      }) => {
-        if (projectId === undefined) {
-          throw new Error("Plane event omitted project identity");
-        }
-        return {
-          project: await planeClient.getProjectSnapshot(projectId),
-          workItem: await planeClient.getWorkItemSnapshot(
-            projectId,
-            workItemId,
-          ),
-          comments: await planeClient.getWorkItemComments(projectId, workItemId),
-          relations: await planeClient.getWorkItemRelations(
-            projectId,
-            workItemId,
-          ),
-          projectWorkItems:
-            await planeClient.listProjectWorkItemSnapshots(projectId),
-        };
-      },
-      ledger,
-    };
-    const ready = await processPlaneReadyWebhook({
-      ...shared,
       readyStateId,
-      enqueue: enqueueCoding,
     });
-    if (ready.status !== "ignored") return ready;
-    return processPlaneResearchWebhook({
-      ...shared,
-      personaUserIds,
-      enqueue,
-    });
+    let readyWorkflowEnqueued = false;
+    try {
+      const baseSha = await resolveTargetBaseSha();
+      const shared = {
+        rawBody,
+        headers,
+        webhookSecret,
+        allowedHumanActorIds,
+        repository,
+        controlPlaneSha,
+        baseSha,
+        receivedAt: new Date().toISOString(),
+        projectContextDocuments,
+        loadResearchPacket: (identity: {
+          projectId: string;
+          workItemId: string;
+        }) => packetStore.getLatest(identity),
+        loadSource: async ({
+          projectId,
+          workItemId,
+        }: {
+          projectId: string | undefined;
+          workItemId: string;
+        }) => {
+          if (projectId === undefined) {
+            throw new Error("Plane event omitted project identity");
+          }
+          return {
+            project: await planeClient.getProjectSnapshot(projectId),
+            workItem: await planeClient.getWorkItemSnapshot(
+              projectId,
+              workItemId,
+            ),
+            comments: await planeClient.getWorkItemComments(
+              projectId,
+              workItemId,
+            ),
+            relations: await planeClient.getWorkItemRelations(
+              projectId,
+              workItemId,
+            ),
+            projectWorkItems:
+              await planeClient.listProjectWorkItemSnapshots(projectId),
+          };
+        },
+        ledger,
+      };
+      const ready = await processPlaneReadyWebhook({
+        ...shared,
+        readyStateId,
+        enqueue: enqueueCoding,
+        publishAccepted: async ({ request, enqueueResult }) => {
+          readyWorkflowEnqueued = true;
+          await planeClient.createComment(
+            request.projectId,
+            request.workItem.workItemId,
+            {
+              comment_html: [
+                "<p><strong>CodeOps admitted this Ready transition.</strong></p>",
+                `<p>Workflow <code>${request.requestId}</code> is ${enqueueResult === "enqueued" ? "queued" : "already queued"} against exact main commit <code>${request.workItem.baseSha}</code>.</p>`,
+                `<p>Research disposition: <code>${request.researchDisposition.mode}</code>. Planning and execution are authorized by the human Ready transition; merge and production remain separately gated.</p>`,
+              ].join(""),
+              external_source: "codeops",
+              external_id: `ready-admitted:${request.requestId}`,
+            },
+          );
+        },
+      });
+      if (ready.status !== "ignored") return ready;
+      return processPlaneResearchWebhook({
+        ...shared,
+        personaUserIds,
+        enqueue,
+      });
+    } catch (error) {
+      if (readyIdentity !== null && !readyWorkflowEnqueued) {
+        try {
+          await planeClient.createComment(
+            readyIdentity.projectId,
+            readyIdentity.workItemId,
+            {
+              comment_html: [
+                "<p><strong>CodeOps could not start this Ready transition.</strong></p>",
+                "<p>The admission attempt failed closed before a workflow acknowledgement. It remains retryable; no merge or deployment was authorized.</p>",
+              ].join(""),
+              external_source: "codeops",
+              external_id: `ready-admission-failed:${readyIdentity.eventId}`,
+            },
+          );
+        } catch {
+          // Preserve the original admission failure for Plane's webhook retry.
+        }
+      }
+      throw error;
+    }
   },
 });
 

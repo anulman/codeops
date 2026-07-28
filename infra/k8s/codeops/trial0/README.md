@@ -74,10 +74,10 @@ public Temporal ingress. Both workloads use the CodeOps-only node selector,
 explicit resources, non-root containers, and service accounts with token
 mounting disabled.
 
-The orchestrator implements the authoritative Trial 0 lifecycle through plan
-approval, execution dispatch, and an externally reported independent acceptance
-verdict. The trusted supervisor renders and applies the isolated Agent Job; the
-candidate never receives deployment authority.
+The orchestrator implements the authoritative Trial 0 lifecycle through
+Ready-authorized planning and execution dispatch, followed by an externally
+reported independent acceptance verdict. The trusted supervisor reviews the
+result; the candidate never receives deployment authority.
 
 The tokenless orchestrator authenticates to a separately reviewed
 `codeops-control-gateway` through the file-mounted
@@ -87,7 +87,14 @@ only the fixed Trial 0 research dispatch shape, creates the bounded tokenless
 Job, reconciles its terminal pod, validates the digest-bound checkpoint record,
 and persists that checkpoint before acknowledging the Temporal activity.
 Research comments are already human approval for the bounded read-only run;
-coding-agent workflows continue to wait for a separate Ready/approval signal.
+the trusted human Ready transition authorizes routine coding planning and
+execution without a second unsurfaced approval signal.
+
+The Plane controller resolves the exact protected `main` head through the
+gateway before admitting a coding workflow. That read-only endpoint uses the
+separate externally created `codeops-repository-head-auth` Secret; the
+controller never receives `codeops-agent-dispatch-auth` and therefore cannot
+bypass Temporal to create an Agent Job directly.
 
 The gateway mounts only the repository token from the externally created
 `codeops-agent-source-credentials` Secret. ChatGPT subscription authentication
@@ -153,13 +160,13 @@ Only the exact SHA-bound
 `https://work.renoconcierge.ca/webhooks/plane`
 endpoint is public. `/healthz` remains pod-local. Network policy admits ingress
 only from ingress-nginx and egress only to Temporal, cluster DNS, and public
-HTTPS for the fixed Plane API origin. The controller image, base SHA, Plane
-workspace, admitted human actor IDs, and exact webhook host are validated by
-the trusted renderer:
+HTTPS for the fixed Plane API origin plus the internal control gateway. The
+controller image, control-plane SHA, Plane workspace, admitted human actor
+IDs, and exact webhook host are validated by the trusted renderer:
 
 ```bash
 CODEOPS_PLANE_CONTROLLER_DIGEST=sha256:<64-lowercase-hex> \
-CODEOPS_BASE_SHA=<40-lowercase-hex> \
+CODEOPS_CONTROL_PLANE_SHA=<40-lowercase-hex> \
 CODEOPS_PLANE_CONTROLLER_HOST=work.renoconcierge.ca \
 CODEOPS_PLANE_WORKSPACE_SLUG=<workspace-slug> \
 CODEOPS_ALLOWED_HUMAN_ACTOR_IDS=<comma-separated-lowercase-uuids> \
@@ -178,9 +185,10 @@ Job.
 
 The externally created `codeops-research-projection-auth` Secret contains only
 the `token` key and is mounted by the orchestrator and controller. The
-orchestrator posts the schema-validated packet to the cluster-internal exact
-`/v1/research-packets` route. Network policy admits that route only from the
-orchestrator; the public Ingress still exposes only `/webhooks/plane`.
+orchestrator posts schema-validated research packets and terminal workflow
+notices to their cluster-internal exact routes. Network policy admits those
+routes only from the orchestrator; the public Ingress still exposes only
+`/webhooks/plane`.
 The controller durably claims the packet identity before applying exactly one
 source-ticket findings comment, reconciles an existing deterministic
 `external_source`/`external_id` comment after a crash, and records

@@ -24,6 +24,7 @@ const VERSION = {
   codingRequest: "codeops.coding-request/v1",
   agentJobDispatch: "codeops.agent-job-dispatch/v1",
   agentJobDispatchResult: "codeops.agent-job-dispatch-result/v1",
+  workflowTransitionNotice: "codeops.workflow-transition-notice/v1",
 } as const;
 
 const identifier = z
@@ -130,13 +131,27 @@ export const projectContextDocumentSchema = z
     path: repositoryPath,
     purpose: safeText(500),
     digest: sha256Digest,
+    content: safeText(100_000),
   })
-  .strict();
+  .strict()
+  .superRefine((document, context) => {
+    const digest = `sha256:${createHash("sha256")
+      .update(document.content)
+      .digest("hex")}`;
+    if (document.digest !== digest) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["digest"],
+        message: "project context document digest does not match its content",
+      });
+    }
+  });
 
 const projectContextIdentitySchema = z
   .object({
     version: z.literal(VERSION.projectContext),
     repository,
+    controlPlaneSha: gitSha,
     baseSha: gitSha,
     project: z
       .object({
@@ -213,6 +228,7 @@ function validateRequestProjectContext(
     workspaceId: string;
     projectId: string;
     repository: z.infer<typeof repository>;
+    controlPlaneSha: string;
     baseSha: string;
     projectContext: ProjectContext;
   },
@@ -223,6 +239,7 @@ function validateRequestProjectContext(
     request.projectId !== request.projectContext.project.projectId ||
     canonicalSerialize(request.repository) !==
       canonicalSerialize(request.projectContext.repository) ||
+    request.controlPlaneSha !== request.projectContext.controlPlaneSha ||
     request.baseSha !== request.projectContext.baseSha
   ) {
     context.addIssue({
@@ -510,6 +527,7 @@ export const researchRequestSchema = z
     triggerCommentId: uuid,
     requestedBy: uuid,
     repository,
+    controlPlaneSha: gitSha,
     baseSha: gitSha,
     planeRevisionDigest: sha256Digest,
     ticketSnapshot: ticketSnapshotSchema,
@@ -523,6 +541,7 @@ export const researchRequestSchema = z
       {
         ...request,
         repository: request.repository,
+        controlPlaneSha: request.controlPlaneSha,
         baseSha: request.baseSha,
       },
       context,
@@ -1018,8 +1037,15 @@ export const codingRequestSchema = z
     eventId: identifier,
     ...requestProjectIdentity,
     requestedBy: uuid,
+    controlPlaneSha: gitSha,
     planeRevisionDigest: sha256Digest,
-    researchPacket: researchPacketSchema,
+    researchDisposition: z
+      .object({
+        mode: z.enum(["required", "optional", "skipped"]),
+        rationale: safeText(2_000),
+      })
+      .strict(),
+    researchPacket: researchPacketSchema.optional(),
     workItem: workItemRequestSchema,
   })
   .strict()
@@ -1039,25 +1065,55 @@ export const codingRequestSchema = z
       {
         ...request,
         repository: request.workItem.repository,
+        controlPlaneSha: request.controlPlaneSha,
         baseSha: request.workItem.baseSha,
       },
       context,
     );
-    if (
-      request.researchPacket.projectId !== request.projectId ||
-      request.researchPacket.workItemId !== request.workItem.workItemId ||
-      request.researchPacket.baseSha !== request.workItem.baseSha ||
-      request.researchPacket.projectContextDigest !==
-        request.projectContext.digest
-    ) {
+    if (request.researchDisposition.mode === "required" && !request.researchPacket) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["researchPacket"],
-        message:
-          "coding request research packet does not match its project context or work item",
+        message: "required coding research must include its immutable packet",
       });
     }
+    if (request.researchDisposition.mode === "skipped" && request.researchPacket) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["researchPacket"],
+        message: "skipped coding research cannot include a packet",
+      });
+    }
+    if (request.researchPacket) {
+      if (
+        request.researchPacket.projectId !== request.projectId ||
+        request.researchPacket.workItemId !== request.workItem.workItemId ||
+        request.researchPacket.baseSha !== request.workItem.baseSha ||
+        request.researchPacket.projectContextDigest !==
+          request.projectContext.digest
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["researchPacket"],
+          message:
+            "coding request research packet does not match its project context or work item",
+        });
+      }
+    }
   });
+
+export const workflowTransitionNoticeSchema = z
+  .object({
+    version: z.literal(VERSION.workflowTransitionNotice),
+    workspaceId: uuid,
+    projectId: uuid,
+    workItemId: uuid,
+    workflowId: workflowRunIdentifier,
+    state: z.enum(["completed", "failed", "cancelled"]),
+    sequence: z.number().int().positive(),
+    summary: safeText(1_000),
+  })
+  .strict();
 
 const readinessIdentity = {
   version: z.literal(VERSION.readinessGate),
@@ -1223,6 +1279,7 @@ export function createResearchRequestFromPlaneComment(
   input: unknown,
   source: {
     repository: z.infer<typeof repository>;
+    controlPlaneSha: string;
     baseSha: string;
     planeRevisionDigest: string;
     projectContext: ProjectContext;
@@ -1253,6 +1310,7 @@ export function createResearchRequestFromPlaneComment(
     triggerCommentId: event.commentId,
     requestedBy: event.actor.id,
     repository: source.repository,
+    controlPlaneSha: source.controlPlaneSha,
     baseSha: source.baseSha,
     planeRevisionDigest: source.planeRevisionDigest,
     ticketSnapshot: source.ticketSnapshot,
@@ -1288,6 +1346,9 @@ export type ProjectContextDocument = z.infer<
 >;
 export type ProjectContext = z.infer<typeof projectContextSchema>;
 export type CodingRequest = z.infer<typeof codingRequestSchema>;
+export type WorkflowTransitionNotice = z.infer<
+  typeof workflowTransitionNoticeSchema
+>;
 export type WorkflowEvent = z.infer<typeof workflowEventSchema>;
 export type ControlCommand = z.infer<typeof controlCommandSchema>;
 export type ControlResult = z.infer<typeof controlResultSchema>;

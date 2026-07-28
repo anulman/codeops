@@ -5,6 +5,7 @@ import {
   admitPlaneReadyTransition,
   admitPlaneResearchComment,
   compileProjectContext,
+  identifyPlaneReadyTransition,
 } from "../dist/index.js";
 import { upgradeResearchPacket } from "./research-fixture.mjs";
 
@@ -36,11 +37,14 @@ const payload = {
 
 const secret = "plane_wh_test-secret";
 const baseSha = "8f3d2c033f70be04b4b2dc8a005683806e84e209";
+const controlPlaneSha = "bd8072b349424e4af7fabfd986dc133b53400603";
 const projectContextDocuments = [
   {
     path: "AGENTS.md",
     purpose: "Repository guidance",
-    digest: `sha256:${"a".repeat(64)}`,
+    digest:
+      "sha256:bce2d710d7649d7175f3dcf1ef4705b5cd16a3ba674788ab17ca03164cb8be85",
+    content: "# Repository guidance\n",
   },
 ];
 const source = {
@@ -176,6 +180,7 @@ const readyPayload = {
 function researchPacket() {
   const projectContext = compileProjectContext({
     repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha,
     baseSha,
     workspaceId: payload.workspace_id,
     project: {
@@ -233,6 +238,7 @@ function signedInput(overrides = {}) {
     webhookSecret: secret,
     allowedHumanActorIds: new Set([actorId]),
     repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha,
     baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
     projectContextDocuments,
@@ -255,6 +261,7 @@ function signedCeInput(overrides = {}) {
     allowedHumanActorIds: new Set([actorId]),
     personaUserIds: new Map([[personaUserId, "@ai-security"]]),
     repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha,
     baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
     projectContextDocuments,
@@ -277,6 +284,7 @@ function signedReadyInput(overrides = {}) {
     allowedHumanActorIds: new Set([actorId]),
     readyStateId,
     repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha,
     baseSha,
     receivedAt: "2026-07-27T02:45:01.000Z",
     projectContextDocuments,
@@ -349,7 +357,12 @@ test("deduplicates retries by Plane event ID rather than delivery ID", async () 
 });
 
 test("admits only a signed allowlisted human transition into configured Ready", async () => {
-  const admission = await admitPlaneReadyTransition(signedReadyInput());
+  const input = signedReadyInput();
+  const identified = identifyPlaneReadyTransition(input);
+  const admission = await admitPlaneReadyTransition(input);
+  assert.equal(identified.projectId, payload.data.project_id);
+  assert.equal(identified.workItemId, payload.entity_id);
+  assert.equal(identified.eventId, admission.eventId);
   assert.equal(admission.request.workItem.workItemId, payload.entity_id);
   assert.equal(admission.request.projectId, payload.data.project_id);
   assert.equal(admission.request.requestedBy, actorId);

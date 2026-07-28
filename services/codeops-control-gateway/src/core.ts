@@ -99,6 +99,65 @@ export function parseDispatchRequest(value: unknown): AgentJobDispatchRequest {
   return agentJobDispatchRequestSchema.parse(value);
 }
 
+export async function resolveGitHubBranchHead(input: {
+  repositoryUrl: string;
+  repositoryReadToken: string;
+  branch: "main";
+  fetch?: typeof fetch;
+}): Promise<string> {
+  const repository = new URL(input.repositoryUrl);
+  const match = repository.pathname.match(
+    /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/,
+  );
+  if (
+    repository.protocol !== "https:" ||
+    repository.hostname !== "github.com" ||
+    repository.username !== "" ||
+    repository.password !== "" ||
+    repository.search !== "" ||
+    repository.hash !== "" ||
+    match === null
+  ) {
+    throw new Error("repository head resolver requires an exact GitHub HTTPS repository");
+  }
+  if (
+    input.repositoryReadToken.length < 16 ||
+    /\s/.test(input.repositoryReadToken)
+  ) {
+    throw new Error("repository head resolver token is invalid");
+  }
+  const [, owner, name] = match;
+  const response = await (input.fetch ?? fetch)(
+    `https://api.github.com/repos/${encodeURIComponent(owner!)}/${encodeURIComponent(name!)}/git/ref/heads/${input.branch}`,
+    {
+      redirect: "error",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${input.repositoryReadToken}`,
+        "User-Agent": "renoconcierge-codeops-control-gateway",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`GitHub branch resolution failed with ${response.status}`);
+  }
+  const body = z
+    .object({
+      ref: z.literal("refs/heads/main"),
+      object: z
+        .object({
+          type: z.literal("commit"),
+          sha: z.string().regex(/^[0-9a-f]{40}$/),
+        })
+        .passthrough(),
+    })
+    .passthrough()
+    .parse(await response.json());
+  return body.object.sha;
+}
+
 export function createRunIdentity(request: AgentJobDispatchRequest): {
   readonly runId: string;
   readonly requestDigest: string;
@@ -120,8 +179,15 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       `Exact base SHA: ${request.baseSha}`,
       `Task: ${request.summary}`,
       `Project context digest: ${request.codingRequest.projectContext.digest}`,
-      "Read /context/project-context.json and every manifested repository document before planning.",
-      "Read /context/research-packet.json; it is the immutable handoff from research.",
+      "Read /context/project-context.json and every trusted document under /context/project-documents/ before planning.",
+      "Treat /workspace as the exact writable target-base checkout. Trusted project-context documents are supplemental control-plane context, not files in that target checkout.",
+      ...(request.codingRequest.researchPacket
+        ? [
+            "Read /context/research-packet.json; it is optional immutable implementation context from a completed research round.",
+          ]
+        : [
+            `No standalone research packet is attached: ${request.codingRequest.researchDisposition.rationale}`,
+          ]),
       `Acceptance criteria: ${JSON.stringify(
         request.codingRequest.workItem.acceptanceCriteria,
       )}`,
@@ -137,7 +203,8 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       `Plane work item: ${request.workItemId}`,
       `Exact base SHA: ${request.baseSha}`,
       `Project context digest: ${request.researchRequest.projectContext.digest}`,
-      "Read /context/project-context.json, /context/research-dispatch.json, and every manifested repository document.",
+      "Read /context/project-context.json, /context/research-dispatch.json, and every trusted document under /context/project-documents/.",
+      "Treat /workspace as the exact read-only target-base checkout. Trusted project-context documents are supplemental control-plane context and must not be cited as if they existed in that target checkout.",
       "The dispatch file contains the immutable ticket title, description, acceptance content, relevant human comments, revision, dependencies, a bounded same-project task index, and every persona report.",
       "Deduplicate findings, reconcile conflicts, and make the result specific to this ticket.",
       "Return no more than five ranked findings and three genuine product decisions.",

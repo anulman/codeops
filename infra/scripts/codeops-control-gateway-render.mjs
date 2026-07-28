@@ -61,6 +61,12 @@ export function renderControlGatewayManifest(template, input) {
   const runtimeCredentials = deployment.spec.template.spec.volumes.find(
     (volume) => volume.name === "runtime-credentials",
   );
+  const dispatchAuth = deployment.spec.template.spec.volumes.find(
+    (volume) => volume.name === "dispatch-auth",
+  );
+  const repositoryHeadAuth = deployment.spec.template.spec.volumes.find(
+    (volume) => volume.name === "repository-head-auth",
+  );
   const image = deployment.spec.template.spec.containers[0].image;
   if (!/@sha256:[0-9a-f]{64}$/.test(image)) {
     throw new Error("control gateway image must be immutable");
@@ -72,6 +78,14 @@ export function renderControlGatewayManifest(template, input) {
       "repository-read-token"
   ) {
     throw new Error("control gateway runtime credential binding drifted");
+  }
+  if (
+    dispatchAuth?.secret?.secretName !== "codeops-agent-dispatch-auth" ||
+    repositoryHeadAuth?.secret?.secretName !==
+      "codeops-repository-head-auth" ||
+    dispatchAuth.secret.secretName === repositoryHeadAuth.secret.secretName
+  ) {
+    throw new Error("control gateway endpoint auth bindings drifted");
   }
   const env = deployment.spec.template.spec.containers[0].env;
   if (

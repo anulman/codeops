@@ -11,12 +11,14 @@ import { canonicalSerialize } from "@renoconcierge/codeops-contracts";
 import {
   dispatchAgentJob,
   publishResearchPacket,
+  recordTransition,
 } from "../dist/activities.js";
-import { initialPlanDecision, transition } from "../dist/model.js";
+import { transition } from "../dist/model.js";
 
 const projectContext = {
   version: "codeops.project-context/v1",
   repository: { owner: "anulman", name: "renoconcierge" },
+  controlPlaneSha: "b".repeat(40),
   baseSha: "a".repeat(40),
   project: {
     workspaceId: "55555555-5555-4555-8555-555555555555",
@@ -29,7 +31,9 @@ const projectContext = {
     {
       path: "AGENTS.md",
       purpose: "Repository guidance",
-      digest: `sha256:${"1".repeat(64)}`,
+      digest:
+        "sha256:bce2d710d7649d7175f3dcf1ef4705b5cd16a3ba674788ab17ca03164cb8be85",
+      content: "# Repository guidance\n",
     },
   ],
   digest: "PLACEHOLDER",
@@ -124,11 +128,6 @@ const projectionPacket = {
   createdAt: "2026-07-26T00:00:00.000Z",
 };
 
-test("an admitted persona comment approves only the research run", () => {
-  assert.equal(initialPlanDecision("qa-contract-researcher"), "approved");
-  assert.equal(initialPlanDecision("coding-agent"), null);
-});
-
 test("accepts only the reviewed Trial 0 lifecycle", () => {
   let snapshot = {
     state: "requested",
@@ -138,7 +137,6 @@ test("accepts only the reviewed Trial 0 lifecycle", () => {
   for (const state of [
     "started",
     "planning",
-    "approval_required",
     "executing",
     "evidence_ready",
     "validating",
@@ -147,14 +145,14 @@ test("accepts only the reviewed Trial 0 lifecycle", () => {
     snapshot = transition(snapshot, state, state);
   }
   assert.equal(snapshot.state, "completed");
-  assert.equal(snapshot.sequence, 7);
+  assert.equal(snapshot.sequence, 6);
 });
 
 test("terminal states and skipped gates fail closed", () => {
   assert.throws(
     () =>
       transition(
-        { state: "approval_required", sequence: 3, summary: "review" },
+        { state: "planning", sequence: 2, summary: "plan" },
         "completed",
         "skip",
       ),
@@ -163,12 +161,94 @@ test("terminal states and skipped gates fail closed", () => {
   assert.throws(
     () =>
       transition(
-        { state: "completed", sequence: 7, summary: "done" },
+        { state: "completed", sequence: 6, summary: "done" },
         "executing",
         "retry",
       ),
     /invalid CodeOps transition/,
   );
+});
+
+test("projects terminal coding failure to the authenticated Plane boundary", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-transition-"));
+  const tokenPath = path.join(directory, "token");
+  const token = "t".repeat(64);
+  await writeFile(tokenPath, token);
+  const seen = [];
+  const server = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      assert.equal(request.url, "/v1/workflow-transitions");
+      assert.equal(request.headers.authorization, `Bearer ${token}`);
+      seen.push(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end("{}");
+    });
+  });
+  await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+  const address = server.address();
+  const previous = {
+    origin: process.env.CODEOPS_RESEARCH_PROJECTION_ORIGIN,
+    tokenPath: process.env.CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE,
+  };
+  process.env.CODEOPS_RESEARCH_PROJECTION_ORIGIN =
+    `http://127.0.0.1:${address.port}`;
+  process.env.CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE = tokenPath;
+  const workItem = {
+    role: "coding-agent",
+    workItemId: "22222222-2222-4222-8222-222222222222",
+    workflowId: "coding-123",
+    baseSha: "a".repeat(40),
+    summary: "Implement auth",
+    codingRequest: {
+      workspaceId: "55555555-5555-4555-8555-555555555555",
+      projectId: "11111111-1111-4111-8111-111111111111",
+      workItem: {
+        workItemId: "22222222-2222-4222-8222-222222222222",
+      },
+    },
+  };
+  try {
+    await recordTransition(workItem, {
+      state: "planning",
+      sequence: 2,
+      summary: "Ready authorizes execution",
+    });
+    assert.equal(seen.length, 0);
+    await recordTransition(workItem, {
+      state: "failed",
+      sequence: 4,
+      summary: "Agent Job dispatch failed closed",
+    });
+    assert.deepEqual(seen, [
+      {
+        version: "codeops.workflow-transition-notice/v1",
+        workspaceId: "55555555-5555-4555-8555-555555555555",
+        projectId: "11111111-1111-4111-8111-111111111111",
+        workItemId: "22222222-2222-4222-8222-222222222222",
+        workflowId: "coding-123",
+        state: "failed",
+        sequence: 4,
+        summary: "Agent Job dispatch failed closed",
+      },
+    ]);
+  } finally {
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    if (previous.origin === undefined) {
+      delete process.env.CODEOPS_RESEARCH_PROJECTION_ORIGIN;
+    } else {
+      process.env.CODEOPS_RESEARCH_PROJECTION_ORIGIN = previous.origin;
+    }
+    if (previous.tokenPath === undefined) {
+      delete process.env.CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE;
+    } else {
+      process.env.CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE = previous.tokenPath;
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("the Agent Job boundary fails closed without its trusted dispatcher", async () => {
@@ -260,6 +340,7 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
         triggerCommentId: "33333333-3333-4333-8333-333333333333",
         requestedBy: "44444444-4444-4444-8444-444444444444",
         repository: { owner: "anulman", name: "renoconcierge" },
+        controlPlaneSha: "b".repeat(40),
         baseSha: "a".repeat(40),
         planeRevisionDigest: `sha256:${"b".repeat(64)}`,
         projectContext,

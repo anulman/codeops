@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import {
   authenticateBearer,
   parseDispatchRequest,
+  resolveGitHubBranchHead,
 } from "./core.js";
 import { loadInClusterKubernetesClient } from "./kubernetes.js";
 import { createAgentJobRunner } from "./runtime.js";
@@ -61,6 +62,12 @@ const token = await secretFile("CODEOPS_DISPATCH_TOKEN_FILE");
 if (token.length < 32 || token.length > 4_096) {
   throw new Error("dispatch token length is invalid");
 }
+const repositoryHeadToken = await secretFile(
+  "CODEOPS_REPOSITORY_HEAD_TOKEN_FILE",
+);
+if (repositoryHeadToken.length < 32 || repositoryHeadToken.length > 4_096) {
+  throw new Error("repository head token length is invalid");
+}
 const kubernetes = await loadInClusterKubernetesClient(namespace);
 const modelAuthMode = required("CODEOPS_MODEL_AUTH_MODE");
 const modelAuth =
@@ -79,16 +86,18 @@ const modelAuth =
             "CODEOPS_MODEL_AUTH_MODE must be api-key or chatgpt",
           );
         })();
+const repositoryUrl = required("CODEOPS_REPOSITORY_URL");
+const repositoryReadToken = await secretFile(
+  "CODEOPS_REPOSITORY_READ_TOKEN_FILE",
+);
 const run = createAgentJobRunner({
   kubernetes,
   config: {
     namespace,
-    repositoryUrl: required("CODEOPS_REPOSITORY_URL"),
+    repositoryUrl,
     agentImage: requireDigestImage("CODEOPS_AGENT_IMAGE"),
     sessionGatewayImage: requireDigestImage("CODEOPS_SESSION_GATEWAY_IMAGE"),
-    repositoryReadToken: await secretFile(
-      "CODEOPS_REPOSITORY_READ_TOKEN_FILE",
-    ),
+    repositoryReadToken,
     modelAuth,
     evidenceRoot: required("CODEOPS_EVIDENCE_ROOT"),
   },
@@ -99,6 +108,36 @@ const server = createServer((request, response) => {
   void (async () => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    if (
+      request.method === "GET" &&
+      request.url === "/v1/repository-heads/main"
+    ) {
+      if (
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          repositoryHeadToken,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      try {
+        json(response, 200, {
+          version: "codeops.repository-head/v1",
+          ref: "refs/heads/main",
+          sha: await resolveGitHubBranchHead({
+            repositoryUrl,
+            repositoryReadToken,
+            branch: "main",
+          }),
+        });
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
       return;
     }
     if (request.method !== "POST" || request.url !== "/v1/agent-jobs") {

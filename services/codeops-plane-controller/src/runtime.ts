@@ -4,9 +4,11 @@ import {
   WorkflowExecutionAlreadyStartedError,
   type Client,
 } from "@temporalio/client";
-import type {
-  CodingRequest,
-  ResearchRequest,
+import {
+  workflowTransitionNoticeSchema,
+  type CodingRequest,
+  type ResearchRequest,
+  type WorkflowTransitionNotice,
 } from "@renoconcierge/codeops-contracts";
 import type {
   CodingRequestEnqueueResult,
@@ -16,6 +18,60 @@ import type {
 import type { ResearchProjectionResult } from "./projection.js";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
+const GIT_SHA = /^[0-9a-f]{40}$/;
+
+export function createRepositoryHeadResolver(input: {
+  origin: string;
+  token: string;
+  fetch?: typeof fetch;
+}): () => Promise<string> {
+  const origin = new URL(input.origin);
+  if (
+    origin.protocol !== "http:" ||
+    origin.hostname !== "codeops-control-gateway" ||
+    origin.port !== "8080" ||
+    origin.username !== "" ||
+    origin.password !== "" ||
+    origin.pathname !== "/" ||
+    origin.search !== "" ||
+    origin.hash !== ""
+  ) {
+    throw new Error("repository head origin must be the internal control gateway");
+  }
+  if (input.token.length < 32 || input.token.length > 4_096) {
+    throw new Error("repository head token is invalid");
+  }
+  return async () => {
+    const response = await (input.fetch ?? fetch)(
+      new URL("/v1/repository-heads/main", origin),
+      {
+        redirect: "error",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${input.token}`,
+        },
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`repository head resolution failed with ${response.status}`);
+    }
+    const body = (await response.json()) as {
+      version?: unknown;
+      ref?: unknown;
+      sha?: unknown;
+    };
+    if (
+      body.version !== "codeops.repository-head/v1" ||
+      body.ref !== "refs/heads/main" ||
+      typeof body.sha !== "string" ||
+      !GIT_SHA.test(body.sha)
+    ) {
+      throw new Error("repository head response is invalid");
+    }
+    return body.sha;
+  };
+}
 
 export function createTemporalResearchEnqueuer(input: {
   client: Pick<Client, "workflow">;
@@ -164,6 +220,10 @@ export function createPlaneWebhookRequestListener(input: {
     token: string;
     process: (packet: unknown) => Promise<ResearchProjectionResult>;
   };
+  transitionProjection?: {
+    token: string;
+    process: (notice: WorkflowTransitionNotice) => Promise<void>;
+  };
 }): (request: IncomingMessage, response: ServerResponse) => Promise<void> {
   return async (request, response) => {
     if (request.method === "GET" && request.url === "/healthz") {
@@ -207,6 +267,41 @@ export function createPlaneWebhookRequestListener(input: {
         json(response, 200, {
           version: "codeops.research-projection-result/v1",
           ...result,
+        });
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      request.url === "/v1/workflow-transitions"
+    ) {
+      if (
+        input.transitionProjection === undefined ||
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          input.transitionProjection.token,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      if (!request.headers["content-type"]?.startsWith("application/json")) {
+        json(response, 415, { status: "unsupported-media-type" });
+        return;
+      }
+      try {
+        const notice = workflowTransitionNoticeSchema.parse(
+          JSON.parse((await readRawBody(request)).toString("utf8")) as unknown,
+        );
+        await input.transitionProjection.process(notice);
+        json(response, 200, {
+          version: "codeops.workflow-transition-result/v1",
+          status: "applied",
+          workflowId: notice.workflowId,
         });
       } catch {
         json(response, 503, { status: "unavailable" });

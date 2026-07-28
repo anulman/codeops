@@ -85,6 +85,7 @@ const projectContext = await loadJson(
 if (
   projectContext?.version !== "codeops.project-context/v1" ||
   projectContext.baseSha !== required("CODEOPS_BASE_SHA") ||
+  projectContext.controlPlaneSha !== required("CODEOPS_CONTROL_PLANE_SHA") ||
   !Array.isArray(projectContext.documents) ||
   projectContext.documents.length === 0
 ) {
@@ -99,6 +100,8 @@ if (digest !== computedContextDigest) {
 }
 
 let previousPath = "";
+const documentsRoot = path.join(contextDirectory, "project-documents");
+await mkdir(documentsRoot, { recursive: true, mode: 0o700 });
 for (const document of projectContext.documents) {
   if (
     typeof document?.path !== "string" ||
@@ -106,26 +109,28 @@ for (const document of projectContext.documents) {
       document.path,
     ) ||
     document.path <= previousPath ||
-    !/^sha256:[0-9a-f]{64}$/.test(document.digest)
+    !/^sha256:[0-9a-f]{64}$/.test(document.digest) ||
+    typeof document.content !== "string" ||
+    document.content.length === 0 ||
+    Buffer.byteLength(document.content) > 100_000
   ) {
     throw new Error("project context document manifest is invalid");
   }
   previousPath = document.path;
-  const candidate = path.resolve(workspace, document.path);
-  const relative = path.relative(workspace, candidate);
+  const candidate = path.resolve(documentsRoot, document.path);
+  const relative = path.relative(documentsRoot, candidate);
   if (relative.startsWith("..") || path.isAbsolute(relative)) {
-    throw new Error("project context document escaped the workspace");
-  }
-  const metadata = await lstat(candidate);
-  if (!metadata.isFile() || metadata.isSymbolicLink()) {
-    throw new Error(`project context document is not a regular file: ${document.path}`);
+    throw new Error("project context document escaped its output root");
   }
   const actualDigest = `sha256:${createHash("sha256")
-    .update(await readFile(candidate))
+    .update(document.content)
     .digest("hex")}`;
   if (actualDigest !== document.digest) {
     throw new Error(`project context document digest drift: ${document.path}`);
   }
+  await mkdir(path.dirname(candidate), { recursive: true, mode: 0o700 });
+  await writeFile(candidate, document.content, { mode: 0o400, flag: "wx" });
+  await chmod(candidate, 0o400);
 }
 
 const projectContextPath = path.join(contextDirectory, "project-context.json");

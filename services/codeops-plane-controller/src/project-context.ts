@@ -63,6 +63,7 @@ export async function loadProjectContextDocuments(
     documents.push({
       ...document,
       digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+      content: bytes.toString("utf8"),
     });
   }
   return documents;
@@ -70,6 +71,7 @@ export async function loadProjectContextDocuments(
 
 export function compileProjectContext(input: {
   repository: { owner: string; name: string };
+  controlPlaneSha: string;
   baseSha: string;
   workspaceId: string;
   project: {
@@ -83,6 +85,7 @@ export function compileProjectContext(input: {
   return createProjectContext({
     version: "codeops.project-context/v1",
     repository: input.repository,
+    controlPlaneSha: input.controlPlaneSha,
     baseSha: input.baseSha,
     project: {
       workspaceId: input.workspaceId,

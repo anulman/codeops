@@ -6,6 +6,7 @@ import { buildResearchPacket } from "../dist/research.js";
 const projectContext = createProjectContext({
   version: "codeops.project-context/v1",
   repository: { owner: "anulman", name: "renoconcierge" },
+  controlPlaneSha: "b".repeat(40),
   baseSha: "a".repeat(40),
   project: {
     workspaceId: "55555555-5555-4555-8555-555555555555",
@@ -18,7 +19,9 @@ const projectContext = createProjectContext({
     {
       path: "AGENTS.md",
       purpose: "Repository guidance",
-      digest: `sha256:${"1".repeat(64)}`,
+      digest:
+        "sha256:bce2d710d7649d7175f3dcf1ef4705b5cd16a3ba674788ab17ca03164cb8be85",
+      content: "# Repository guidance\n",
     },
   ],
 });
@@ -32,6 +35,7 @@ const request = {
   triggerCommentId: "33333333-3333-4333-8333-333333333333",
   requestedBy: "44444444-4444-4444-8444-444444444444",
   repository: { owner: "anulman", name: "renoconcierge" },
+  controlPlaneSha: "b".repeat(40),
   baseSha: "a".repeat(40),
   planeRevisionDigest: `sha256:${"b".repeat(64)}`,
   projectContext,

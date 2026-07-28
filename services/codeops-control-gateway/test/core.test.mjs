@@ -11,6 +11,7 @@ import {
   createRunIdentity,
   parseCheckpointLogs,
   readRetainedResult,
+  resolveGitHubBranchHead,
   retainCheckpoint,
 } from "../dist/core.js";
 import { assertRunResources, buildRunResources } from "../dist/resources.js";
@@ -18,6 +19,7 @@ import { assertRunResources, buildRunResources } from "../dist/resources.js";
 const projectContext = createProjectContext({
   version: "codeops.project-context/v1",
   repository: { owner: "anulman", name: "renoconcierge" },
+  controlPlaneSha: "b".repeat(40),
   baseSha: "a".repeat(40),
   project: {
     workspaceId: "55555555-5555-4555-8555-555555555555",
@@ -30,7 +32,9 @@ const projectContext = createProjectContext({
     {
       path: "AGENTS.md",
       purpose: "Repository guidance",
-      digest: `sha256:${"1".repeat(64)}`,
+      digest:
+        "sha256:bce2d710d7649d7175f3dcf1ef4705b5cd16a3ba674788ab17ca03164cb8be85",
+      content: "# Repository guidance\n",
     },
   ],
 });
@@ -52,6 +56,7 @@ const request = {
     triggerCommentId: "33333333-3333-4333-8333-333333333333",
     requestedBy: "44444444-4444-4444-8444-444444444444",
     repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha: "b".repeat(40),
     baseSha: "a".repeat(40),
     planeRevisionDigest: `sha256:${"b".repeat(64)}`,
     projectContext,
@@ -74,6 +79,63 @@ const request = {
     requestedAt: "2026-07-26T00:00:00.000Z",
   },
 };
+
+test("resolves only the exact GitHub main ref through the read-only boundary", async () => {
+  const calls = [];
+  const sha = "c".repeat(40);
+  assert.equal(
+    await resolveGitHubBranchHead({
+      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryReadToken: "r".repeat(32),
+      branch: "main",
+      fetch: async (url, init) => {
+        calls.push({ url, init });
+        return new Response(
+          JSON.stringify({
+            ref: "refs/heads/main",
+            object: { type: "commit", sha },
+          }),
+          {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          },
+        );
+      },
+    }),
+    sha,
+  );
+  assert.equal(
+    calls[0].url,
+    "https://api.github.com/repos/anulman/renoconcierge/git/ref/heads/main",
+  );
+  assert.equal(
+    calls[0].init.headers.Authorization,
+    `Bearer ${"r".repeat(32)}`,
+  );
+  for (const repositoryUrl of [
+    "http://github.com/anulman/renoconcierge",
+    "https://evil.example/anulman/renoconcierge",
+    "https://user@github.com/anulman/renoconcierge",
+    "https://github.com/anulman/renoconcierge?ref=main",
+  ]) {
+    await assert.rejects(
+      resolveGitHubBranchHead({
+        repositoryUrl,
+        repositoryReadToken: "r".repeat(32),
+        branch: "main",
+      }),
+      /exact GitHub HTTPS repository/,
+    );
+  }
+  await assert.rejects(
+    resolveGitHubBranchHead({
+      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryReadToken: "short",
+      branch: "main",
+    }),
+    /token is invalid/,
+  );
+});
 
 function checkpointLogs(runId, overrides = {}) {
   const report = {

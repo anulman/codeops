@@ -17,7 +17,7 @@ const PERSONA_HANDLES = new Set([
 
 const TOKENS = {
   __CODEOPS_ALLOWED_HUMAN_ACTOR_IDS__: "allowedHumanActorIds",
-  __CODEOPS_BASE_SHA__: "baseSha",
+  __CODEOPS_CONTROL_PLANE_SHA__: "controlPlaneSha",
   __CODEOPS_PERSONA_USER_IDS__: "personaUserIds",
   __CODEOPS_PLANE_CONTROLLER_DIGEST__: "controllerDigest",
   __CODEOPS_PLANE_CONTROLLER_HOST__: "controllerHost",
@@ -35,8 +35,10 @@ export function renderPlaneControllerManifest(template, input) {
   if (!DIGEST.test(input.controllerDigest ?? "")) {
     throw new Error("controller image must use a lowercase SHA-256 digest");
   }
-  if (!SHA.test(input.baseSha ?? "")) {
-    throw new Error("base SHA must contain exactly 40 lowercase hex characters");
+  if (!SHA.test(input.controlPlaneSha ?? "")) {
+    throw new Error(
+      "control-plane SHA must contain exactly 40 lowercase hex characters",
+    );
   }
   if (!WORKSPACE_SLUG.test(input.workspaceSlug ?? "")) {
     throw new Error("Plane workspace slug is invalid");
@@ -128,7 +130,7 @@ export function renderPlaneControllerManifest(template, input) {
   );
   const expectedEnv = {
     CODEOPS_ALLOWED_HUMAN_ACTOR_IDS: input.allowedHumanActorIds,
-    CODEOPS_BASE_SHA: input.baseSha,
+    CODEOPS_CONTROL_PLANE_SHA: input.controlPlaneSha,
     CODEOPS_DEDUP_ROOT: "/var/lib/codeops/dedup",
     CODEOPS_HTTP_HOST: "0.0.0.0",
     CODEOPS_HTTP_PORT: "8080",
@@ -140,6 +142,9 @@ export function renderPlaneControllerManifest(template, input) {
       "/var/run/secrets/codeops/webhook-secret",
     CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE:
       "/var/run/codeops-projection/token",
+    CODEOPS_REPOSITORY_HEAD_ORIGIN: "http://codeops-control-gateway:8080",
+    CODEOPS_REPOSITORY_HEAD_TOKEN_FILE:
+      "/var/run/codeops-repository-head/token",
     CODEOPS_PLANE_WORKSPACE_SLUG: input.workspaceSlug,
     CODEOPS_REPOSITORY_NAME: "renoconcierge",
     CODEOPS_REPOSITORY_OWNER: "anulman",
@@ -187,6 +192,9 @@ export function renderPlaneControllerManifest(template, input) {
   const projectionVolume = pod.volumes.find(
     (volume) => volume.name === "projection-auth",
   );
+  const repositoryHeadVolume = pod.volumes.find(
+    (volume) => volume.name === "repository-head-auth",
+  );
   if (
     secretVolume?.secret?.secretName !== "codeops-plane-controller-secrets" ||
     secretVolume.secret.defaultMode !== 288 ||
@@ -194,6 +202,9 @@ export function renderPlaneControllerManifest(template, input) {
     projectionVolume?.secret?.secretName !==
       "codeops-research-projection-auth" ||
     projectionVolume.secret.defaultMode !== 256 ||
+    repositoryHeadVolume?.secret?.secretName !==
+      "codeops-repository-head-auth" ||
+    repositoryHeadVolume.secret.defaultMode !== 256 ||
     ledgerVolume?.persistentVolumeClaim?.claimName !==
       "codeops-plane-controller-ledger"
   ) {
@@ -229,6 +240,13 @@ export function renderPlaneControllerManifest(template, input) {
     ) ||
     !policy.spec.egress.some((rule) =>
       rule.ports?.some((port) => port.port === 7233),
+    ) ||
+    !policy.spec.egress.some((rule) =>
+      rule.to?.some(
+        (target) =>
+          target.podSelector?.matchLabels?.["app.kubernetes.io/name"] ===
+          "codeops-control-gateway",
+      ),
     ) ||
     !policy.spec.egress.some((rule) =>
       rule.ports?.some((port) => port.port === 443),

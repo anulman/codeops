@@ -17,6 +17,6 @@ process.stdout.write(
     allowedHumanActorIds: process.env.CODEOPS_ALLOWED_HUMAN_ACTOR_IDS ?? "",
     personaUserIds: process.env.CODEOPS_PERSONA_USER_IDS ?? "",
     readyStateId: process.env.CODEOPS_READY_STATE_ID ?? "",
-    baseSha: process.env.CODEOPS_BASE_SHA ?? "",
+    controlPlaneSha: process.env.CODEOPS_CONTROL_PLANE_SHA ?? "",
   }),
 );

@@ -10,11 +10,13 @@ This service owns the privileged Plane integration boundary. It implements:
 - bind the ordered, deduplicated persona set and the bounded comment/ticket
   fallback brief into research-request v2;
 - reload the current project and work item through a trusted reader;
-- bind the request to the exact source SHA and a digest of the Plane revision;
+- bind the request to the exact control-plane SHA, resolve and pin the current
+  protected `main` SHA as the coding target, and digest the Plane revision;
 - compile `codeops.project-context/v1` from the exact Plane project name and
   description plus the six required, image-baked repository context documents;
-- retain each document path, purpose, and SHA-256 so the Agent Job can verify
-  the exact checkout before starting Codex;
+- retain each document path, purpose, SHA-256, and trusted content so the Agent
+  Job can use the control-plane context even when the target `main` checkout
+  predates the control-plane branch;
 - deduplicate retries with Plane's stable `event_id`, not its per-attempt
   `delivery_id`.
 - parse Plane CE's signed `issue`/`update` activity envelope for lifecycle
@@ -26,8 +28,9 @@ This service owns the privileged Plane integration boundary. It implements:
   event identity for durable replay handling;
 - compile the admitted Ready revision into a strict coding request and
   work-item contract with deterministic workflow/run/branch identities,
-  bounded acceptance criteria, the same project-context digest, the immutable
-  successfully projected research packet, and no inline credentials;
+  bounded acceptance criteria, the same project-context digest, an explicit
+  `required | optional | skipped` research disposition, any compatible
+  immutable research packet, and no inline credentials;
 - persist event and request deduplication on a private durable volume with
   payload-digest collision checks, bounded processing leases, crash recovery,
   attempt counts, and explicit terminal outcomes;
@@ -41,6 +44,9 @@ This service owns the privileged Plane integration boundary. It implements:
   duplicate reuse rejected, running-workflow conflicts rejected, a one-hour
   bound for research or a 24-hour bound for coding, and the complete bound
   request;
+- publish one idempotent internal Plane acknowledgement after Temporal accepts
+  the Ready request, and idempotent terminal completion/failure/cancellation
+  comments through the authenticated internal transition route;
 - preflight an entire proposed mutation batch before the first write;
 - apply only comments, logical-label operations, project/ticket content edits,
   and same-project ticket creation;
@@ -64,10 +70,10 @@ Kubernetes packaging plus deployment remain separate fail-closed slices. Until
 those exist, persona mentions must not be advertised as live.
 
 Ready admission starts the coding workflow only after durable event/request
-claims. The workflow then stops at its separate plan-approval boundary; Ready
-does not silently authorize Agent Job execution or mutate Plane.
+claims. A trusted human Ready transition authorizes routine planning and Agent
+Job execution; merge and production deployment remain separate human gates.
 
 The context pack and latest research packet are stored on the controller's
-single-writer durable volume. A fresh product-aware research round is required
-after introducing or changing the context contract; old Plane comments are not
-treated as an implicit packet.
+single-writer durable volume. A compatible packet may be attached as optional
+implementation context. Missing or stale research is recorded as skipped and
+never inferred from old Plane comments.

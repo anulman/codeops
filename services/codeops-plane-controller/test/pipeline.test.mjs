@@ -15,11 +15,14 @@ import { upgradeResearchPacket } from "./research-fixture.mjs";
 const actorId = "88fc36c8-73b0-4547-81c7-96b70f61835e";
 const secret = "plane_wh_test-secret";
 const baseSha = "8f3d2c033f70be04b4b2dc8a005683806e84e209";
+const controlPlaneSha = "bd8072b349424e4af7fabfd986dc133b53400603";
 const projectContextDocuments = [
   {
     path: "AGENTS.md",
     purpose: "Repository guidance",
-    digest: `sha256:${"a".repeat(64)}`,
+    digest:
+      "sha256:bce2d710d7649d7175f3dcf1ef4705b5cd16a3ba674788ab17ca03164cb8be85",
+    content: "# Repository guidance\n",
   },
 ];
 const payload = {
@@ -90,6 +93,7 @@ const readyPayload = {
 function readyResearchPacket() {
   const projectContext = compileProjectContext({
     repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha,
     baseSha,
     workspaceId: payload.workspace_id,
     project: {
@@ -145,6 +149,7 @@ function webhookInput(ledger, enqueue, body = payload) {
     webhookSecret: secret,
     allowedHumanActorIds: new Set([actorId]),
     repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha,
     baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
     projectContextDocuments,
@@ -168,6 +173,7 @@ function readyWebhookInput(ledger, enqueue, body = readyPayload) {
     allowedHumanActorIds: new Set([actorId]),
     readyStateId,
     repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha,
     baseSha,
     receivedAt: "2026-07-27T02:45:01.000Z",
     projectContextDocuments,
@@ -315,7 +321,7 @@ test("ordinary signed comments remain ignored without touching the enqueuer", as
   }
 });
 
-test("durably compiles one Ready revision and rejects source/context drift", async () => {
+test("durably reuses the first Ready admission across delivery-time source drift", async () => {
   const { root, ledger } = await fixture();
   const enqueued = [];
   try {
@@ -330,12 +336,12 @@ test("durably compiles one Ready revision and rejects source/context drift", asy
       });
     retryInput.baseSha = "a".repeat(40);
     retryInput.receivedAt = "2026-07-27T03:00:00.000Z";
-    await assert.rejects(
-      processPlaneReadyWebhook(retryInput),
-      /research packet does not match its project context/,
-    );
+    const retry = await processPlaneReadyWebhook(retryInput);
     assert.equal(first.status, "enqueued");
     assert.equal(first.duplicate, false);
+    assert.equal(retry.status, "enqueued");
+    assert.equal(retry.duplicate, true);
+    assert.equal(retry.requestId, first.requestId);
     assert.equal(enqueued.length, 1);
     assert.equal(enqueued[0].workflowId, first.requestId);
     assert.equal(enqueued[0].request.requestId, first.requestId);
@@ -370,6 +376,49 @@ test("failed Ready enqueue releases both identities for a bounded retry", async 
     assert.equal(retry.status, "enqueued");
     assert.equal(retry.duplicate, false);
     assert.equal(attempts, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("publishes one fail-closed Ready acknowledgement after durable enqueue", async () => {
+  const { root, ledger } = await fixture();
+  const accepted = [];
+  try {
+    const input = readyWebhookInput(ledger, async () => "enqueued");
+    input.publishAccepted = async (value) => {
+      accepted.push(value);
+    };
+    const result = await processPlaneReadyWebhook(input);
+    assert.equal(result.status, "enqueued");
+    assert.equal(accepted.length, 1);
+    assert.equal(accepted[0].request.requestId, result.requestId);
+    assert.equal(accepted[0].enqueueResult, "enqueued");
+    assert.equal(
+      accepted[0].request.researchDisposition.mode,
+      "optional",
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("admits a bounded Ready ticket with research explicitly skipped", async () => {
+  const { root, ledger } = await fixture();
+  const enqueued = [];
+  try {
+    const input = readyWebhookInput(ledger, async (value) => {
+      enqueued.push(value);
+      return "enqueued";
+    });
+    input.loadResearchPacket = async () => null;
+    const result = await processPlaneReadyWebhook(input);
+    assert.equal(result.status, "enqueued");
+    assert.equal(enqueued.length, 1);
+    assert.equal(enqueued[0].request.researchDisposition.mode, "skipped");
+    assert.equal(enqueued[0].request.researchPacket, undefined);
+    assert.equal(enqueued[0].request.workItem.baseSha, baseSha);
+    assert.equal(enqueued[0].request.controlPlaneSha, controlPlaneSha);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -98,6 +98,8 @@ spec:
               value: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-gateway@__CODEOPS_SESSION_GATEWAY_DIGEST__
             - name: CODEOPS_DISPATCH_TOKEN_FILE
               value: /var/run/secrets/codeops-dispatch/token
+            - name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE
+              value: /var/run/secrets/codeops-repository-head/token
             - name: CODEOPS_REPOSITORY_READ_TOKEN_FILE
               value: /var/run/secrets/codeops-runtime/repository-read-token
             - name: CODEOPS_MODEL_AUTH_MODE
@@ -148,6 +150,9 @@ spec:
             - name: dispatch-auth
               mountPath: /var/run/secrets/codeops-dispatch
               readOnly: true
+            - name: repository-head-auth
+              mountPath: /var/run/secrets/codeops-repository-head
+              readOnly: true
             - name: runtime-credentials
               mountPath: /var/run/secrets/codeops-runtime
               readOnly: true
@@ -160,6 +165,13 @@ spec:
         - name: dispatch-auth
           secret:
             secretName: codeops-agent-dispatch-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: repository-head-auth
+          secret:
+            secretName: codeops-repository-head-auth
             defaultMode: 256
             items:
               - key: token
@@ -201,6 +213,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: codeops-orchestrator
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-plane-controller
       ports:
         - { protocol: TCP, port: 8080 }
   egress:
@@ -219,3 +234,20 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+      ports:
+        - { protocol: TCP, port: 443 }

@@ -42,6 +42,18 @@ test("renders one namespace-scoped authenticated gateway", () => {
     true,
   );
   assert.equal(
+    JSON.stringify(deployment).includes("codeops-repository-head-auth"),
+    true,
+  );
+  assert.notEqual(
+    deployment.spec.template.spec.volumes.find(
+      (volume) => volume.name === "dispatch-auth",
+    ).secret.secretName,
+    deployment.spec.template.spec.volumes.find(
+      (volume) => volume.name === "repository-head-auth",
+    ).secret.secretName,
+  );
+  assert.equal(
     JSON.stringify(deployment).includes("CODEOPS_MODEL_API_KEY_FILE"),
     false,
   );
@@ -69,7 +81,7 @@ test("grants only fixed run-resource and log operations", () => {
   assert.deepEqual(secretRule.verbs, ["create", "delete"]);
 });
 
-test("admits only the orchestrator and exact API /32", () => {
+test("admits only the orchestrator/controller and exact API /32", () => {
   const policy = resources().find(
     (resource) => resource.kind === "NetworkPolicy",
   );
@@ -78,6 +90,12 @@ test("admits only the orchestrator and exact API /32", () => {
       "app.kubernetes.io/name"
     ],
     "codeops-orchestrator",
+  );
+  assert.equal(
+    policy.spec.ingress[0].from[1].podSelector.matchLabels[
+      "app.kubernetes.io/name"
+    ],
+    "codeops-plane-controller",
   );
   assert.equal(policy.spec.egress[0].to[0].ipBlock.cidr, "10.3.0.1/32");
   assert.deepEqual(policy.spec.egress[0].ports, [

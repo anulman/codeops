@@ -46,6 +46,7 @@ export {
 } from "./projection.js";
 export {
   createPlaneWebhookRequestListener,
+  createRepositoryHeadResolver,
   createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "./runtime.js";
@@ -374,6 +375,7 @@ export async function admitPlaneResearchComment(input: {
   allowedHumanActorIds: ReadonlySet<string>;
   personaUserIds?: ReadonlyMap<string, string>;
   repository: { owner: string; name: string };
+  controlPlaneSha: string;
   baseSha: string;
   receivedAt: string;
   projectContextDocuments: readonly ProjectContextDocument[];
@@ -507,6 +509,7 @@ export async function admitPlaneResearchComment(input: {
     .digest("hex")}`;
   const projectContext = compileProjectContext({
     repository: input.repository,
+    controlPlaneSha: input.controlPlaneSha,
     baseSha: input.baseSha,
     workspaceId: event.workspaceId,
     project: {
@@ -537,6 +540,7 @@ export async function admitPlaneResearchComment(input: {
     },
     {
       repository: input.repository,
+      controlPlaneSha: gitSha.parse(input.controlPlaneSha),
       baseSha: gitSha.parse(input.baseSha),
       planeRevisionDigest,
       projectContext,
@@ -557,26 +561,20 @@ export async function admitPlaneResearchComment(input: {
   };
 }
 
-export async function admitPlaneReadyTransition(input: {
+export function identifyPlaneReadyTransition(input: {
   rawBody: Buffer;
   headers: PlaneWebhookHeaders;
   webhookSecret: string;
   allowedHumanActorIds: ReadonlySet<string>;
   readyStateId: string;
-  repository: { owner: string; name: string };
-  baseSha: string;
-  receivedAt: string;
-  projectContextDocuments: readonly ProjectContextDocument[];
-  loadResearchPacket: (input: {
-    projectId: string;
-    workItemId: string;
-  }) => Promise<import("@renoconcierge/codeops-contracts").ResearchPacket | null>;
-  loadSource: (input: {
-    workspaceId: string;
-    projectId: string;
-    workItemId: string;
-  }) => Promise<PlaneSourceSnapshot>;
-}): Promise<ReadyAdmission | null> {
+}):
+  | {
+      payload: z.infer<typeof planeCeIssueWebhookSchema>;
+      eventId: string;
+      projectId: string;
+      workItemId: string;
+    }
+  | null {
   if (
     !verifyPlaneWebhookSignature({
       secret: input.webhookSecret,
@@ -609,6 +607,53 @@ export async function admitPlaneReadyTransition(input: {
   ) {
     return null;
   }
+  return {
+    payload,
+    eventId: `ready-event:${createHash("sha256")
+      .update(
+        canonicalSerialize({
+          workspaceId: payload.workspace_id,
+          projectId: payload.data.project,
+          workItemId: payload.data.id,
+          transition: {
+            actorId: payload.activity.actor.id,
+            oldStateId: payload.activity.old_value,
+            newStateId: payload.activity.new_value,
+            updatedAt: payload.data.updated_at,
+          },
+        }),
+      )
+      .digest("hex")}`,
+    projectId: payload.data.project,
+    workItemId: payload.data.id,
+  };
+}
+
+export async function admitPlaneReadyTransition(input: {
+  rawBody: Buffer;
+  headers: PlaneWebhookHeaders;
+  webhookSecret: string;
+  allowedHumanActorIds: ReadonlySet<string>;
+  readyStateId: string;
+  repository: { owner: string; name: string };
+  controlPlaneSha: string;
+  baseSha: string;
+  receivedAt: string;
+  projectContextDocuments: readonly ProjectContextDocument[];
+  loadResearchPacket: (input: {
+    projectId: string;
+    workItemId: string;
+  }) => Promise<import("@renoconcierge/codeops-contracts").ResearchPacket | null>;
+  loadSource: (input: {
+    workspaceId: string;
+    projectId: string;
+    workItemId: string;
+  }) => Promise<PlaneSourceSnapshot>;
+}): Promise<ReadyAdmission | null> {
+  const identified = identifyPlaneReadyTransition(input);
+  if (identified === null) return null;
+  const { payload } = identified;
+  const readyStateId = uuid.parse(input.readyStateId);
 
   const source = await input.loadSource({
     workspaceId: payload.workspace_id,
@@ -643,6 +688,7 @@ export async function admitPlaneReadyTransition(input: {
       .regex(/^[A-Za-z0-9_.-]+$/)
       .parse(input.repository.name),
   };
+  const controlPlaneSha = gitSha.parse(input.controlPlaneSha);
   const baseSha = gitSha.parse(input.baseSha);
   const requestedAt = z
     .string()
@@ -654,16 +700,7 @@ export async function admitPlaneReadyTransition(input: {
     newStateId: payload.activity.new_value,
     updatedAt: payload.data.updated_at,
   };
-  const eventId = `ready-event:${createHash("sha256")
-    .update(
-      canonicalSerialize({
-        workspaceId: payload.workspace_id,
-        projectId: project.id,
-        workItemId: workItem.id,
-        transition,
-      }),
-    )
-    .digest("hex")}`;
+  const eventId = identified.eventId;
   const planeRevisionDigest = `sha256:${createHash("sha256")
     .update(
       canonicalSerialize({
@@ -691,6 +728,7 @@ export async function admitPlaneReadyTransition(input: {
     .digest("hex")}`;
   const projectContext = compileProjectContext({
     repository,
+    controlPlaneSha,
     baseSha,
     workspaceId: payload.workspace_id,
     project: {
@@ -701,19 +739,39 @@ export async function admitPlaneReadyTransition(input: {
     },
     documents: input.projectContextDocuments,
   });
-  const researchPacket = await input.loadResearchPacket({
+  const storedResearchPacket = await input.loadResearchPacket({
     projectId: project.id,
     workItemId: workItem.id,
   });
-  if (researchPacket === null) {
-    throw new Error("Ready work item has no immutable research packet");
-  }
+  const researchPacket =
+    storedResearchPacket !== null &&
+    storedResearchPacket.projectId === project.id &&
+    storedResearchPacket.workItemId === workItem.id &&
+    storedResearchPacket.baseSha === baseSha &&
+    storedResearchPacket.projectContextDigest === projectContext.digest
+      ? storedResearchPacket
+      : null;
+  const researchDisposition =
+    researchPacket === null
+      ? {
+          mode: "skipped" as const,
+          rationale:
+            storedResearchPacket === null
+              ? "The human-authorized Ready ticket has bounded acceptance criteria and no ticket-specific research packet."
+              : "The stored research packet does not match the admitted target revision and was not used.",
+        }
+      : {
+          mode: "optional" as const,
+          rationale:
+            "A ticket-specific immutable research packet is available as additional implementation context.",
+        };
   const requestHash = createHash("sha256")
     .update(
       canonicalSerialize({
         eventId,
         planeRevisionDigest,
         repository,
+        controlPlaneSha,
         baseSha,
       }),
     )
@@ -738,8 +796,10 @@ export async function admitPlaneReadyTransition(input: {
       projectId: project.id,
       projectContext,
       requestedBy: payload.activity.actor.id,
+      controlPlaneSha,
       planeRevisionDigest,
-      researchPacket,
+      researchDisposition,
+      ...(researchPacket === null ? {} : { researchPacket }),
       workItem: {
         version: contractVersions.workItem,
         workItemId: workItem.id,
@@ -792,6 +852,10 @@ export async function processPlaneReadyWebhook(
       workflowId: string;
       request: CodingRequest;
     }) => Promise<CodingRequestEnqueueResult>;
+    publishAccepted?: (input: {
+      request: CodingRequest;
+      enqueueResult: CodingRequestEnqueueResult;
+    }) => Promise<void>;
     now?: () => string;
   },
 ): Promise<ReadyWebhookProcessingResult> {
@@ -881,6 +945,10 @@ export async function processPlaneReadyWebhook(
     if (enqueueResult !== "enqueued" && enqueueResult !== "already-enqueued") {
       throw new Error("coding enqueuer returned an invalid outcome");
     }
+    await input.publishAccepted?.({
+      request: admission.request,
+      enqueueResult,
+    });
     await input.ledger.complete({
       claim: requestClaim,
       outcome: "request-enqueued",

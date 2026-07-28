@@ -111,7 +111,7 @@ test("maps only Temporal's already-started error to idempotent success", async (
   );
 });
 
-test("starts coding at the separate plan-approval workflow boundary", async () => {
+test("starts coding directly under the human Ready authorization", async () => {
   const starts = [];
   const enqueue = createTemporalCodingEnqueuer({
     client: {
@@ -141,6 +141,66 @@ test("starts coding at the separate plan-approval workflow boundary", async () =
     enqueue({ workflowId: "coding-drift", request: codingRequest }),
     /identity/,
   );
+});
+
+test("keeps terminal workflow projection internal and contract-bound", async () => {
+  const notices = [];
+  const token = "t".repeat(64);
+  const notice = {
+    version: "codeops.workflow-transition-notice/v1",
+    workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",
+    projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
+    workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
+    workflowId: "coding-123",
+    state: "failed",
+    sequence: 4,
+    summary: "Agent Job dispatch failed closed before workload execution",
+  };
+  const listener = createPlaneWebhookRequestListener({
+    process: async () => ({ status: "ignored" }),
+    transitionProjection: {
+      token,
+      process: async (value) => {
+        notices.push(value);
+      },
+    },
+  });
+  const server = createServer((incoming, response) => {
+    void listener(incoming, response);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const address = server.address();
+    const url = `http://127.0.0.1:${address.port}/v1/workflow-transitions`;
+    const denied = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${"x".repeat(64)}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(notice),
+    });
+    assert.equal(denied.status, 401);
+    const accepted = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(notice),
+    });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await accepted.json(), {
+      version: "codeops.workflow-transition-result/v1",
+      status: "applied",
+      workflowId: "coding-123",
+    });
+    assert.deepEqual(notices, [notice]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
 });
 
 test("serves health and preserves the exact raw Plane body and headers", async () => {

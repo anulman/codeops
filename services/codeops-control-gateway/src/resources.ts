@@ -56,6 +56,10 @@ export function buildRunResources(
   const commonIdentity = [
     { name: "CODEOPS_RUN_ID", value: input.runId },
     { name: "CODEOPS_BASE_SHA", value: request.baseSha },
+    {
+      name: "CODEOPS_CONTROL_PLANE_SHA",
+      value: projectContext.controlPlaneSha,
+    },
     { name: "CODEOPS_AGENT_ROLE", value: request.role },
     { name: "CODEOPS_PROJECT_CONTEXT_DIGEST", value: projectContext.digest },
     { name: "CODEOPS_MODEL", value: "gpt-5.6-sol" },

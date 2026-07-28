@@ -2,7 +2,6 @@ export const workflowStates = [
   "requested",
   "started",
   "planning",
-  "approval_required",
   "executing",
   "evidence_ready",
   "validating",
@@ -16,8 +15,7 @@ export type WorkflowState = (typeof workflowStates)[number];
 const allowedTransitions: Readonly<Record<WorkflowState, readonly WorkflowState[]>> = {
   requested: ["started", "cancelled"],
   started: ["planning", "failed", "cancelled"],
-  planning: ["approval_required", "failed", "cancelled"],
-  approval_required: ["executing", "failed", "cancelled"],
+  planning: ["executing", "failed", "cancelled"],
   executing: ["evidence_ready", "failed", "cancelled"],
   evidence_ready: ["validating", "failed", "cancelled"],
   validating: ["completed", "failed", "cancelled"],
@@ -30,14 +28,6 @@ export interface WorkflowSnapshot {
   readonly state: WorkflowState;
   readonly sequence: number;
   readonly summary: string;
-}
-
-export type PlanDecision = "approved" | "rejected" | null;
-
-export function initialPlanDecision(
-  role: "coding-agent" | "qa-contract-researcher",
-): PlanDecision {
-  return role === "qa-contract-researcher" ? "approved" : null;
 }
 
 export function transition(

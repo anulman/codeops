@@ -24,6 +24,7 @@ test("loads the complete bounded context pack and compiles one digest", async ()
   );
   const context = compileProjectContext({
     repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha: "b".repeat(40),
     baseSha: "a".repeat(40),
     workspaceId: "11111111-1111-4111-8111-111111111111",
     project: {

@@ -8,6 +8,7 @@ import {
   type AgentJobDispatchResult,
   researchPacketSchema,
   type ResearchPacket,
+  workflowTransitionNoticeSchema,
 } from "@renoconcierge/codeops-contracts";
 import { z } from "zod";
 import type { WorkflowSnapshot } from "./model.js";
@@ -100,6 +101,53 @@ export async function recordTransition(
       ...snapshot,
     }),
   );
+  if (
+    snapshot.state !== "completed" &&
+    snapshot.state !== "failed" &&
+    snapshot.state !== "cancelled"
+  ) {
+    return;
+  }
+  const identity =
+    workItem.role === "coding-agent"
+      ? {
+          workspaceId: workItem.codingRequest.workspaceId,
+          projectId: workItem.codingRequest.projectId,
+          workItemId: workItem.codingRequest.workItem.workItemId,
+        }
+      : {
+          workspaceId: workItem.researchRequest.workspaceId,
+          projectId: workItem.researchRequest.projectId,
+          workItemId: workItem.researchRequest.workItemId,
+        };
+  const endpoint = new URL(
+    "/v1/workflow-transitions",
+    required("CODEOPS_RESEARCH_PROJECTION_ORIGIN"),
+  );
+  const token = (
+    await readFile(required("CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE"), "utf8")
+  ).trim();
+  if (token.length < 32 || token.length > 4_096) {
+    throw new Error("CodeOps transition projection token is invalid");
+  }
+  const response = await postJson(
+    endpoint,
+    token,
+    workflowTransitionNoticeSchema.parse({
+      version: "codeops.workflow-transition-notice/v1",
+      ...identity,
+      workflowId: workItem.workflowId,
+      state: snapshot.state,
+      sequence: snapshot.sequence,
+      summary: snapshot.summary,
+    }),
+    2 * 60 * 1_000,
+  );
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw new Error(
+      `CodeOps transition projection failed with status ${response.statusCode}`,
+    );
+  }
 }
 
 export async function dispatchAgentJob(

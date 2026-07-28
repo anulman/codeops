@@ -34,6 +34,7 @@ function makeProjectContext(workspaceId, projectId) {
   return createProjectContext({
     version: contractVersions.projectContext,
     repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha: sha,
     baseSha: sha,
     project: {
       workspaceId,
@@ -46,7 +47,9 @@ function makeProjectContext(workspaceId, projectId) {
       {
         path: "AGENTS.md",
         purpose: "Repository agent guidance",
-        digest: `sha256:${"1".repeat(64)}`,
+        digest:
+          "sha256:bce2d710d7649d7175f3dcf1ef4705b5cd16a3ba674788ab17ca03164cb8be85",
+        content: "# Repository guidance\n",
       },
     ],
   });
@@ -215,7 +218,12 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
     workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",
     projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
     requestedBy: "88fc36c8-73b0-4547-81c7-96b70f61835e",
+    controlPlaneSha: sha,
     planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+    researchDisposition: {
+      mode: "optional",
+      rationale: "The exact packet is useful but not required.",
+    },
     projectContext: makeProjectContext(
       "d250cd44-fa71-42c2-b2b5-3c73227288fc",
       "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
@@ -475,6 +483,7 @@ const planeCommentEvent = {
 
 const researchSource = {
   repository: { owner: "anulman", name: "renoconcierge" },
+  controlPlaneSha: sha,
   baseSha: sha,
   planeRevisionDigest: `sha256:${"b".repeat(64)}`,
   projectContext: makeProjectContext(

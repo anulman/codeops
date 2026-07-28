@@ -69,6 +69,10 @@ spec:
               value: /var/run/secrets/codeops/webhook-secret
             - name: CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE
               value: /var/run/codeops-projection/token
+            - name: CODEOPS_REPOSITORY_HEAD_ORIGIN
+              value: http://codeops-control-gateway:8080
+            - name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE
+              value: /var/run/codeops-repository-head/token
             - name: CODEOPS_ALLOWED_HUMAN_ACTOR_IDS
               value: __CODEOPS_ALLOWED_HUMAN_ACTOR_IDS__
             - name: CODEOPS_READY_STATE_ID
@@ -79,8 +83,8 @@ spec:
               value: anulman
             - name: CODEOPS_REPOSITORY_NAME
               value: renoconcierge
-            - name: CODEOPS_BASE_SHA
-              value: __CODEOPS_BASE_SHA__
+            - name: CODEOPS_CONTROL_PLANE_SHA
+              value: __CODEOPS_CONTROL_PLANE_SHA__
             - name: CODEOPS_DEDUP_ROOT
               value: /var/lib/codeops/dedup
             - name: CODEOPS_HTTP_HOST
@@ -135,6 +139,9 @@ spec:
             - name: projection-auth
               mountPath: /var/run/codeops-projection
               readOnly: true
+            - name: repository-head-auth
+              mountPath: /var/run/codeops-repository-head
+              readOnly: true
             - name: temp
               mountPath: /tmp
       volumes:
@@ -153,6 +160,10 @@ spec:
         - name: projection-auth
           secret:
             secretName: codeops-research-projection-auth
+            defaultMode: 256
+        - name: repository-head-auth
+          secret:
+            secretName: codeops-repository-head-auth
             defaultMode: 256
         - name: temp
           emptyDir:
@@ -226,6 +237,13 @@ spec:
       ports:
         - protocol: TCP
           port: 7233
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-control-gateway
+      ports:
+        - protocol: TCP
+          port: 8080
     - to:
         - namespaceSelector:
             matchLabels:

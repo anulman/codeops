@@ -14,11 +14,7 @@ import type {
   DispatchResult,
   ResearchProjectionResult,
 } from "./activities.js";
-import {
-  initialPlanDecision,
-  transition,
-  type WorkflowSnapshot,
-} from "./model.js";
+import { transition, type WorkflowSnapshot } from "./model.js";
 import { buildResearchPacket } from "./research.js";
 
 interface WorkItemInputBase {
@@ -84,8 +80,6 @@ const { publishResearchPacket } = proxyActivities<
   },
 });
 
-export const approvePlan = defineSignal("approvePlan");
-export const rejectPlan = defineSignal<[string]>("rejectPlan");
 export const cancelWorkItem = defineSignal<[string]>("cancelWorkItem");
 export const reportAcceptance =
   defineSignal<[AcceptanceResult]>("reportAcceptance");
@@ -108,25 +102,12 @@ export async function workItemWorkflow(
     sequence: 0,
     summary: workItem.summary,
   };
-  // A human-authored, admitted persona mention is the bounded research
-  // approval. Coding work still requires a separate Ready/approval signal.
-  let planDecision = initialPlanDecision(workItem.role);
-  let planRejection = "";
   let cancellation = "";
   const external = {
     acceptance: null as AcceptanceResult | null,
   };
 
   setHandler(workflowStatus, () => snapshot);
-  setHandler(approvePlan, () => {
-    if (snapshot.state === "approval_required") planDecision = "approved";
-  });
-  setHandler(rejectPlan, (reason) => {
-    if (snapshot.state === "approval_required") {
-      planDecision = "rejected";
-      planRejection = reason;
-    }
-  });
   setHandler(cancelWorkItem, (reason) => {
     cancellation = reason;
   });
@@ -146,20 +127,14 @@ export async function workItemWorkflow(
   };
 
   await move("started", "Temporal accepted the work item");
-  await move("planning", "Preparing the implementation plan");
   await move(
-    "approval_required",
-    workItem.role === "qa-contract-researcher"
-      ? "The admitted human persona request authorizes research execution"
-      : "Plan review is required before execution",
+    "planning",
+    workItem.role === "coding-agent"
+      ? "Ready authorizes routine planning and execution"
+      : "The admitted human persona request authorizes research execution",
   );
-  await condition(() => planDecision !== null || cancellation.length > 0);
 
   if (await cancelIfRequested()) return snapshot;
-  if (planDecision === "rejected") {
-    await move("failed", planRejection || "Plan rejected");
-    return snapshot;
-  }
 
   await move("executing", "Dispatching the isolated Agent Job");
   const dispatches: DispatchResult[] = [];

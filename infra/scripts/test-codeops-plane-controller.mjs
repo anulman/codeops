@@ -13,7 +13,7 @@ const template = await readFile(
 );
 const input = {
   controllerDigest: `sha256:${"a".repeat(64)}`,
-  baseSha: "b".repeat(40),
+  controlPlaneSha: "b".repeat(40),
   controllerHost: "work.renoconcierge.ca",
   workspaceSlug: "reno-concierge",
   allowedHumanActorIds:
@@ -103,6 +103,11 @@ test("keeps credentials in mounted files and the ledger on a private RWO claim",
       .secretName,
     "codeops-research-projection-auth",
   );
+  assert.equal(
+    pod.volumes.find((volume) => volume.name === "repository-head-auth").secret
+      .secretName,
+    "codeops-repository-head-auth",
+  );
   assert.equal(container.env.some((entry) => entry.valueFrom), false);
   assert.equal(JSON.stringify(manifests).includes("value: sk-"), false);
 });
@@ -123,7 +128,7 @@ test("exposes only the exact signed webhook and keeps liveness private", () => {
   assert.equal(JSON.stringify(ingress).includes("/healthz"), false);
 });
 
-test("allows only ingress-nginx/orchestrator, Temporal, DNS, and public HTTPS", () => {
+test("allows only ingress-nginx/orchestrator, gateway, Temporal, DNS, and public HTTPS", () => {
   const policy = resources().find(
     (resource) => resource.kind === "NetworkPolicy",
   );
@@ -140,6 +145,15 @@ test("allows only ingress-nginx/orchestrator, Temporal, DNS, and public HTTPS", 
     ],
     "codeops-orchestrator",
   );
+  assert.ok(
+    policy.spec.egress.some((rule) =>
+      rule.to?.some(
+        (target) =>
+          target.podSelector?.matchLabels?.["app.kubernetes.io/name"] ===
+          "codeops-control-gateway",
+      ),
+    ),
+  );
   const publicHttps = policy.spec.egress.find((rule) =>
     rule.ports?.some((port) => port.port === 443),
   );
@@ -151,7 +165,7 @@ test("allows only ingress-nginx/orchestrator, Temporal, DNS, and public HTTPS", 
 test("fails closed on malformed identity, image, host, or resource drift", () => {
   for (const patch of [
     { controllerDigest: "latest" },
-    { baseSha: "abc" },
+    { controlPlaneSha: "abc" },
     { workspaceSlug: "Upper" },
     { allowedHumanActorIds: "" },
     { readyStateId: "ready" },
