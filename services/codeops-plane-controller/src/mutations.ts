@@ -3,6 +3,10 @@ import {
   researchMutationBatchSchema,
   type ResearchMutationBatch,
 } from "@renoconcierge/codeops-contracts";
+import {
+  RESEARCH_MANAGED_HEADING,
+  RESEARCH_TASK_MANAGED_HEADING,
+} from "@renoconcierge/codeops-contracts/managed-content";
 import { createHash } from "node:crypto";
 
 export type PlaneWorkItemRecord = Readonly<{
@@ -123,15 +127,35 @@ function descriptionDigest(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+function assertPreservedContentAndSafeManagedHtml(input: {
+  current: string;
+  proposed: string;
+  managedHeading: string;
+}): void {
+  const managedIndex = input.proposed.indexOf(input.managedHeading);
+  if (managedIndex < 0) {
+    throw new Error("research mutation is missing its managed content boundary");
+  }
+  const currentPreserved = input.current
+    .split(input.managedHeading)[0]!
+    .trim();
+  const proposedPreserved = input.proposed.slice(0, managedIndex).trim();
+  if (proposedPreserved !== currentPreserved) {
+    throw new Error("research mutation changed preserved human-authored content");
+  }
+  assertSafeContentHtml(input.proposed.slice(managedIndex));
+}
+
 async function assertSourceTicket(
   client: PlaneContentClient,
   projectId: string,
   sourceWorkItemId: string,
-): Promise<void> {
+): Promise<PlaneWorkItemRecord> {
   const item = await client.getWorkItem(projectId, sourceWorkItemId);
   if (item.id !== sourceWorkItemId || item.project !== projectId) {
     throw new Error("research mutation target is outside the source ticket");
   }
+  return item;
 }
 
 async function resolveTaskTarget(
@@ -179,21 +203,28 @@ export async function applyResearchMutationBatch(input: {
   ) {
     throw new Error("research mutation batch does not match admitted request");
   }
-  await assertSourceTicket(input.client, batch.projectId, batch.sourceWorkItemId);
+  const sourceTicket = await assertSourceTicket(
+    input.client,
+    batch.projectId,
+    batch.sourceWorkItemId,
+  );
   const taskTargets = new Map<number, PlaneWorkItemRecord | undefined>();
   for (const [index, mutation] of batch.mutations.entries()) {
     if (mutation.type === "ticket.update") {
       if (mutation.targetWorkItemId !== batch.sourceWorkItemId) {
         throw new Error("research description refinement must target the source ticket");
       }
-      assertSafeContentHtml(mutation.changes.descriptionHtml);
+      assertPreservedContentAndSafeManagedHtml({
+        current: sourceTicket.descriptionHtml,
+        proposed: mutation.changes.descriptionHtml,
+        managedHeading: RESEARCH_MANAGED_HEADING,
+      });
     } else if (mutation.type === "comment.create") {
       if (mutation.targetWorkItemId !== batch.sourceWorkItemId) {
         throw new Error("research synthesis comment must target the source ticket");
       }
       assertSafeContentHtml(mutation.bodyHtml);
     } else {
-      assertSafeContentHtml(mutation.descriptionHtml);
       if (!mutation.descriptionHtml.includes(taskMarker(mutation.key))) {
         throw new Error("research task description is missing its stable key");
       }
@@ -202,6 +233,9 @@ export async function applyResearchMutationBatch(input: {
         batch.projectId,
         mutation,
       );
+      if (target === undefined) {
+        assertSafeContentHtml(mutation.descriptionHtml);
+      }
       if (
         target !== undefined &&
         (target.name !== mutation.name ||
@@ -211,6 +245,13 @@ export async function applyResearchMutationBatch(input: {
             mutation.expectedDescriptionDigest)
       ) {
         throw new Error(`research task ${mutation.key} changed after admission`);
+      }
+      if (target !== undefined) {
+        assertPreservedContentAndSafeManagedHtml({
+          current: target.descriptionHtml,
+          proposed: mutation.descriptionHtml,
+          managedHeading: RESEARCH_TASK_MANAGED_HEADING,
+        });
       }
       taskTargets.set(index, target);
     }

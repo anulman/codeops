@@ -5,9 +5,10 @@ import type {
   ResearchRequest,
   ResearchSynthesis,
 } from "@renoconcierge/codeops-contracts";
-
-const MANAGED_HEADING = "<h3>CodeOps research synthesis</h3>";
-const TASK_MANAGED_HEADING = "<h3>CodeOps research finding</h3>";
+import {
+  RESEARCH_MANAGED_HEADING,
+  RESEARCH_TASK_MANAGED_HEADING,
+} from "@renoconcierge/codeops-contracts/managed-content";
 const DESCRIPTION_HTML_LIMIT = 50_000;
 
 function escapeHtml(value: string): string {
@@ -169,10 +170,12 @@ function taskDescription(input: {
   task: ResearchSynthesis["followUpTasks"][number];
   original: string;
 }): string {
-  const preserved = input.original.split(TASK_MANAGED_HEADING)[0]!.trim();
+  const preserved = input.original
+    .split(RESEARCH_TASK_MANAGED_HEADING)[0]!
+    .trim();
   return [
     preserved,
-    TASK_MANAGED_HEADING,
+    RESEARCH_TASK_MANAGED_HEADING,
     `<p><strong>Area:</strong> ${escapeHtml(input.task.area)}</p>`,
     `<p>${escapeHtml(input.task.objective)}</p>`,
     `<p><strong>Acceptance criteria</strong></p><ul>${input.task.acceptanceCriteria
@@ -194,11 +197,11 @@ function managedDescription(
   synthesis: ResearchSynthesis,
 ): string {
   const original = request.ticketSnapshot.descriptionHtml
-    .split(MANAGED_HEADING)[0]!
+    .split(RESEARCH_MANAGED_HEADING)[0]!
     .trim();
   const required = [
     original,
-    MANAGED_HEADING,
+    RESEARCH_MANAGED_HEADING,
     `<p><strong>Verdict:</strong> ${escapeHtml(
       synthesis.verdict,
     )}</p><p>${escapeHtml(synthesis.summary)}</p>`,

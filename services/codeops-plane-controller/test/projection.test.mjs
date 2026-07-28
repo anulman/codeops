@@ -64,7 +64,13 @@ function client(comments, tasks = []) {
     async getWorkItem(_projectId, requestedWorkItemId) {
       const task = tasks.find((item) => item.id === requestedWorkItemId);
       if (task) return task;
-      return { id: workItemId, project: projectId, labels: [] };
+      return {
+        id: workItemId,
+        project: projectId,
+        labels: [],
+        name: "Source",
+        descriptionHtml: "<p>Source</p>",
+      };
     },
     async listProjectWorkItems() {
       return tasks;
@@ -154,7 +160,7 @@ test("applies bounded same-project task upserts between source refinement and co
           expectedDescriptionDigest: null,
           name: "Bound OTP verification attempts",
           descriptionHtml:
-            "<p>Limit guesses.</p><p><code>[codeops-research-task:bound-otp-attempts]</code></p>",
+            "<h3>CodeOps research finding</h3><p>Limit guesses.</p><p><code>[codeops-research-task:bound-otp-attempts]</code></p>",
         },
         packet.proposedMutations.mutations[1],
       ],

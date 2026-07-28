@@ -52,7 +52,10 @@ export function upgradeResearchPacket(packet) {
         {
           type: "ticket.update",
           targetWorkItemId: packet.workItemId,
-          changes: { descriptionHtml: "<p>Refined description.</p>" },
+          changes: {
+            descriptionHtml:
+              "<p>Source</p><h3>CodeOps research synthesis</h3><p>Refined description.</p>",
+          },
         },
         comment,
       ],

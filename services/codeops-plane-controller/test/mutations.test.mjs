@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import { applyResearchMutationBatch } from "../dist/index.js";
 
@@ -18,7 +19,7 @@ function batch(overrides = {}) {
         targetWorkItemId: workItemId,
         changes: {
           descriptionHtml:
-            '<p>Refined with <a href="https://github.com/a/b/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/x.ts#L1-L2">evidence</a>.</p>',
+            '<p>Source</p><h3>CodeOps research synthesis</h3><p>Refined with <a href="https://github.com/a/b/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/x.ts#L1-L2">evidence</a>.</p>',
         },
       },
       {
@@ -161,7 +162,7 @@ test("updates only a snapshot-bound task and rejects concurrent edits before wri
       "sha256:c34c0c2474359053178d0f0bc55ed1d7b183becc18b6efc5c4515fdedf8eceef",
     name: "Bound OTP verification attempts",
     descriptionHtml:
-      "<h3>CodeOps research finding</h3><p>Bound attempts.</p><p><code>[codeops-research-task:otp-rate-limit]</code></p>",
+      "<p>Original task.</p><h3>CodeOps research finding</h3><p>Bound attempts.</p><p><code>[codeops-research-task:otp-rate-limit]</code></p>",
   };
   const input = batch({
     mutations: [batch().mutations[0], task, batch().mutations[1]],
@@ -214,9 +215,9 @@ test("rejects lifecycle, label, project, ticket-create, and broad ticket edits",
 
 test("rejects active or malformed HTML before any Plane write", async () => {
   for (const descriptionHtml of [
-    "<script>alert(1)</script>",
-    '<p onclick="alert(1)">bad</p>',
-    '<a href="https://example.com/?secret=x">bad</a>',
+    "<p>Source</p><h3>CodeOps research synthesis</h3><script>alert(1)</script>",
+    '<p>Source</p><h3>CodeOps research synthesis</h3><p onclick="alert(1)">bad</p>',
+    '<p>Source</p><h3>CodeOps research synthesis</h3><a href="https://example.com/?secret=x">bad</a>',
   ]) {
     const writes = [];
     await assert.rejects(
@@ -237,4 +238,86 @@ test("rejects active or malformed HTML before any Plane write", async () => {
     );
     assert.equal(writes.length, 0);
   }
+});
+
+test("preserves live rich-text HTML while validating only the managed suffix", async () => {
+  const richSource =
+    '<h3 class="editor-heading" data-id="source">Human scope</h3><div><p class="body">Keep me.</p></div>';
+  const targetId = "77777777-7777-4777-8777-777777777777";
+  const richTask = {
+    id: targetId,
+    project: projectId,
+    labels: [],
+    name: "Existing rich task",
+    descriptionHtml: '<div data-id="task"><p>Human task notes.</p></div>',
+  };
+  const writes = [];
+  const input = batch({
+    mutations: [
+      {
+        type: "ticket.update",
+        targetWorkItemId: workItemId,
+        changes: {
+          descriptionHtml: `${richSource}<h3>CodeOps research synthesis</h3><p>Safe synthesis.</p>`,
+        },
+      },
+      {
+        type: "task.upsert",
+        key: "rich-task",
+        targetWorkItemId: targetId,
+        expectedDescriptionDigest: `sha256:${createHash("sha256")
+          .update(richTask.descriptionHtml)
+          .digest("hex")}`,
+        name: richTask.name,
+        descriptionHtml: `${richTask.descriptionHtml}<h3>CodeOps research finding</h3><p>Safe finding.</p><p><code>[codeops-research-task:rich-task]</code></p>`,
+      },
+      batch().mutations[1],
+    ],
+  });
+  const liveClient = client(writes, [richTask]);
+  const originalGet = liveClient.getWorkItem;
+  liveClient.getWorkItem = async (actualProjectId, targetIdValue) =>
+    targetIdValue === workItemId
+      ? {
+          id: workItemId,
+          project: projectId,
+          labels: [],
+          name: "Source",
+          descriptionHtml: richSource,
+        }
+      : originalGet(actualProjectId, targetIdValue);
+  await applyResearchMutationBatch({
+    batch: input,
+    expected: { requestId, projectId, sourceWorkItemId: workItemId },
+    client: liveClient,
+  });
+  assert.deepEqual(
+    writes.map(([kind]) => kind),
+    ["update", "update", "comment"],
+  );
+});
+
+test("rejects changes to preserved human-authored HTML before writing", async () => {
+  const writes = [];
+  await assert.rejects(
+    applyResearchMutationBatch({
+      batch: batch({
+        mutations: [
+          {
+            type: "ticket.update",
+            targetWorkItemId: workItemId,
+            changes: {
+              descriptionHtml:
+                "<p>Changed source</p><h3>CodeOps research synthesis</h3><p>Safe synthesis.</p>",
+            },
+          },
+          batch().mutations[1],
+        ],
+      }),
+      expected: { requestId, projectId, sourceWorkItemId: workItemId },
+      client: client(writes),
+    }),
+    /changed preserved human-authored content/,
+  );
+  assert.equal(writes.length, 0);
 });
