@@ -174,6 +174,14 @@ test("runs a distinct ticket-specific synthesis checkpoint after persona researc
     buildAgentPrompt(synthesisRequest),
     /category must be exactly one of: matrix-fact, product-decision, downstream-defect/,
   );
+  assert.match(
+    buildAgentPrompt(synthesisRequest),
+    /followUpTasks\.area = security, database, web, infrastructure, product, or other/,
+  );
+  assert.match(
+    buildAgentPrompt(synthesisRequest),
+    /matrix row status = verified, gap, or decision-required/,
+  );
   assert.match(buildAgentPrompt(synthesisRequest), /route\/state\/credential matrix/);
   const synthesis = {
     version: "codeops.research-synthesis/v1",

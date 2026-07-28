@@ -144,6 +144,7 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       "Return no more than 20 downstream findings, 5 follow-up tasks, 50 matrix rows, and 80 citations.",
       "Use at most 8 citationIds on any finding, decision, follow-up task, or matrix row; select the strongest sources. Use at most 8 sourceFindingIds on a follow-up task.",
       "For every topFindings and downstreamFindings item, category must be exactly one of: matrix-fact, product-decision, downstream-defect. Do not invent narrower category names.",
+      "Use only these exact enum values: verdict = ready-to-refine, blocked-on-decisions, or insufficient-evidence; finding severity = critical, high, medium, low, or info; finding confidence = high, medium, or low; followUpTasks.area = security, database, web, infrastructure, product, or other; matrix row status = verified, gap, or decision-required. Do not invent synonyms or compound values.",
       "Omit citation.testName when the citation is not a test; never emit an empty string for an optional field.",
       "Populate the versioned route/state/credential matrix from repository truth.",
       "Classify out-of-scope defects as downstream findings.",
