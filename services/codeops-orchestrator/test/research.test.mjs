@@ -208,6 +208,36 @@ test("assembles one deterministic source-ticket refinement in requested persona 
   assert.equal(packet.createdAt, request.requestedAt);
 });
 
+test("bounds the rendered ticket description while retaining the versioned matrix", () => {
+  const synthesisDispatch = synthesisResult();
+  const synthesis = synthesisDispatch.researchResult.synthesis;
+  const citation = synthesis.citations[0];
+  synthesis.matrix.rows = Array.from({ length: 50 }, (_, index) => ({
+    ...synthesis.matrix.rows[0],
+    id: `matrix-${index + 1}`,
+    routeOrRpc: `/customer-files/${"route".repeat(150)}-${index}`,
+    currentOracle: `Current ${"ambiguous ".repeat(180)}`,
+    expectedOracle: `Expected ${"deterministic ".repeat(140)}`,
+    allowedSideEffects: `Allowed ${"none ".repeat(240)}`,
+    citationIds: [citation.id],
+  }));
+
+  const packet = buildResearchPacket({
+    request,
+    personaDispatches: [
+      personaResult("@ai-security", "a"),
+      personaResult("@ai-web", "c"),
+    ],
+    synthesisDispatch,
+  });
+  const description =
+    packet.proposedMutations.mutations[0].changes.descriptionHtml;
+  assert.ok(description.length <= 50_000);
+  assert.match(description, /route\/state\/credential matrix/i);
+  assert.match(description, /Showing \d+ of 50 rows/);
+  assert.match(description, /complete versioned matrix remains in the research packet/i);
+});
+
 test("rejects missing, reordered, or identity-drifted persona reports", () => {
   assert.throws(() =>
     buildResearchPacket({

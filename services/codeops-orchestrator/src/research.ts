@@ -8,6 +8,7 @@ import type {
 
 const MANAGED_HEADING = "<h3>CodeOps research synthesis</h3>";
 const TASK_MANAGED_HEADING = "<h3>CodeOps research finding</h3>";
+const DESCRIPTION_HTML_LIMIT = 50_000;
 
 function escapeHtml(value: string): string {
   return value
@@ -84,24 +85,53 @@ function decisionsHtml(
     .join("")}</ol>`;
 }
 
-function matrixHtml(
+function boundedMatrixHtml(
   request: ResearchRequest,
   synthesis: ResearchSynthesis,
+  available: number,
 ): string {
-  return `<p><strong>Route/state/credential matrix · ${synthesis.matrix.version}</strong></p><ol>${synthesis.matrix.rows
-    .map(
-      (row) =>
-        `<li><strong>${escapeHtml(row.routeOrRpc)}</strong> — ${escapeHtml(
-          `${row.lifecycleState} / ${row.credentialState} / ${row.status}`,
-        )}<br>Current oracle: ${escapeHtml(
-          row.currentOracle,
-        )}<br>Expected oracle: ${escapeHtml(
-          row.expectedOracle,
-        )}<br>Allowed side effects: ${escapeHtml(
-          row.allowedSideEffects,
-        )}<br>${citationLinks(request, synthesis, row.citationIds)}</li>`,
-    )
-    .join("")}</ol>`;
+  const header = `<p><strong>Route/state/credential matrix · ${synthesis.matrix.version}</strong></p><ol>`;
+  const footer = "</ol>";
+  if (header.length + footer.length > available) return "";
+
+  const rows: string[] = [];
+  let rowsLength = 0;
+  for (const row of synthesis.matrix.rows) {
+    const rendered =
+      `<li><strong>${escapeHtml(row.routeOrRpc)}</strong> — ${escapeHtml(
+        `${row.lifecycleState} / ${row.credentialState} / ${row.status}`,
+      )}<br>Current oracle: ${escapeHtml(
+        row.currentOracle,
+      )}<br>Expected oracle: ${escapeHtml(
+        row.expectedOracle,
+      )}<br>Allowed side effects: ${escapeHtml(
+        row.allowedSideEffects,
+      )}<br>${citationLinks(request, synthesis, row.citationIds)}</li>`;
+    const remainingCount = synthesis.matrix.rows.length - rows.length - 1;
+    const truncation =
+      remainingCount > 0
+        ? `<li><em>Showing ${rows.length + 1} of ${synthesis.matrix.rows.length} rows. The complete versioned matrix remains in the research packet.</em></li>`
+        : "";
+    if (
+      header.length +
+        rowsLength +
+        rendered.length +
+        truncation.length +
+        footer.length >
+      available
+    ) {
+      break;
+    }
+    rows.push(rendered);
+    rowsLength += rendered.length;
+  }
+  if (rows.length === 0) return "";
+  const omitted = synthesis.matrix.rows.length - rows.length;
+  const truncation =
+    omitted > 0
+      ? `<li><em>Showing ${rows.length} of ${synthesis.matrix.rows.length} rows. The complete versioned matrix remains in the research packet.</em></li>`
+      : "";
+  return `${header}${rows.join("")}${truncation}${footer}`;
 }
 
 function downstreamHtml(
@@ -166,20 +196,46 @@ function managedDescription(
   const original = request.ticketSnapshot.descriptionHtml
     .split(MANAGED_HEADING)[0]!
     .trim();
-  return [
+  const required = [
     original,
     MANAGED_HEADING,
     `<p><strong>Verdict:</strong> ${escapeHtml(
       synthesis.verdict,
     )}</p><p>${escapeHtml(synthesis.summary)}</p>`,
-    findingsHtml(request, synthesis),
-    matrixHtml(request, synthesis),
-    decisionsHtml(request, synthesis),
-    downstreamHtml(request, synthesis),
-    followUpTasksHtml(synthesis),
   ]
     .filter((value) => value.length > 0)
     .join("");
+  if (required.length > DESCRIPTION_HTML_LIMIT) {
+    throw new Error(
+      "source ticket has insufficient description capacity for the managed research header",
+    );
+  }
+
+  let description = required;
+  const appendIfFits = (block: string): void => {
+    if (
+      block.length > 0 &&
+      description.length + block.length <= DESCRIPTION_HTML_LIMIT
+    ) {
+      description += block;
+    }
+  };
+  appendIfFits(findingsHtml(request, synthesis));
+  appendIfFits(
+    boundedMatrixHtml(
+      request,
+      synthesis,
+      DESCRIPTION_HTML_LIMIT - description.length,
+    ),
+  );
+  for (const block of [
+    decisionsHtml(request, synthesis),
+    downstreamHtml(request, synthesis),
+    followUpTasksHtml(synthesis),
+  ]) {
+    appendIfFits(block);
+  }
+  return description;
 }
 
 function compactComment(
