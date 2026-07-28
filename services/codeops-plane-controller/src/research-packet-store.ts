@@ -16,6 +16,20 @@ import {
 import { z } from "zod";
 
 const uuid = z.string().uuid();
+const storedPacketMetadataSchema = z
+  .object({
+    version: z.string().min(1).max(128),
+    requestId: z.string().min(1).max(256),
+    projectId: uuid,
+    workItemId: uuid,
+    createdAt: z.string().datetime({ offset: true }),
+  })
+  .passthrough();
+
+type StoredPacket = Readonly<{
+  metadata: z.infer<typeof storedPacketMetadataSchema>;
+  packet: ResearchPacket | null;
+}>;
 
 export interface ResearchPacketStore {
   put(packet: ResearchPacket): Promise<void>;
@@ -44,11 +58,22 @@ export function createFileResearchPacketStore(input: {
     return path.join(input.rootDirectory, `${uuid.parse(workItemId)}.json`);
   }
 
-  async function readPacket(workItemId: string): Promise<ResearchPacket | null> {
+  async function readStoredPacket(
+    workItemId: string,
+  ): Promise<StoredPacket | null> {
     try {
-      return researchPacketSchema.parse(
-        JSON.parse(await readFile(packetPath(workItemId), "utf8")) as unknown,
-      );
+      const value = JSON.parse(
+        await readFile(packetPath(workItemId), "utf8"),
+      ) as unknown;
+      const metadata = storedPacketMetadataSchema.parse(value);
+      if (metadata.workItemId !== workItemId) {
+        throw new Error("research packet store work-item identity mismatch");
+      }
+      const current = researchPacketSchema.safeParse(value);
+      return {
+        metadata,
+        packet: current.success ? current.data : null,
+      };
     } catch (error) {
       if (
         error instanceof Error &&
@@ -65,15 +90,19 @@ export function createFileResearchPacketStore(input: {
     async put(value): Promise<void> {
       await ensureRoot();
       const packet = researchPacketSchema.parse(value);
-      const existing = await readPacket(packet.workItemId);
+      const existing = await readStoredPacket(packet.workItemId);
       if (existing !== null) {
         if (
-          existing.requestId === packet.requestId &&
-          canonicalSerialize(existing) === canonicalSerialize(packet)
+          existing.packet !== null &&
+          existing.packet.requestId === packet.requestId &&
+          canonicalSerialize(existing.packet) === canonicalSerialize(packet)
         ) {
           return;
         }
-        if (Date.parse(existing.createdAt) >= Date.parse(packet.createdAt)) {
+        if (
+          existing.metadata.projectId !== packet.projectId ||
+          Date.parse(existing.metadata.createdAt) >= Date.parse(packet.createdAt)
+        ) {
           throw new Error(
             "research packet store refused stale or conflicting replacement",
           );
@@ -103,12 +132,17 @@ export function createFileResearchPacketStore(input: {
 
     async getLatest(query): Promise<ResearchPacket | null> {
       await ensureRoot();
-      const packet = await readPacket(query.workItemId);
-      if (packet === null) return null;
-      if (packet.projectId !== uuid.parse(query.projectId)) {
+      const stored = await readStoredPacket(query.workItemId);
+      if (stored === null) return null;
+      if (stored.metadata.projectId !== uuid.parse(query.projectId)) {
         throw new Error("research packet store project identity mismatch");
       }
-      return packet;
+      if (stored.packet === null) {
+        throw new Error(
+          "research packet store contains an unsupported legacy packet",
+        );
+      }
+      return stored.packet;
     },
   };
 }

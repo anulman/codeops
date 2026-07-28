@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -72,6 +72,31 @@ test("persists one immutable latest research packet across restarts", async () =
         },
       }),
       /stale or conflicting replacement/,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a newer current packet replaces a retained legacy packet", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-packets-"));
+  try {
+    await writeFile(
+      path.join(root, `${workItemId}.json`),
+      `${JSON.stringify({
+        version: "codeops.research-packet/v2",
+        requestId: "research-request:legacy",
+        projectId,
+        workItemId,
+        createdAt: "2026-07-26T00:00:00.000Z",
+      })}\n`,
+      { mode: 0o600 },
+    );
+    const store = createFileResearchPacketStore({ rootDirectory: root });
+    await store.put(packet);
+    assert.deepEqual(
+      await store.getLatest({ projectId, workItemId }),
+      packet,
     );
   } finally {
     await rm(root, { recursive: true, force: true });

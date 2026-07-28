@@ -297,6 +297,96 @@ test("preserves live rich-text HTML while validating only the managed suffix", a
   );
 });
 
+test("reconciles Plane's safe rich-text normalization on retry", async () => {
+  const sourceMutation = batch().mutations[0];
+  const targetId = "88888888-8888-4888-8888-888888888888";
+  const taskDescription =
+    '<p>Task scope.</p><h3>CodeOps research finding</h3><p>See <a href="https://github.com/a/b/blob/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa/x.ts#L1-L2">evidence</a>.</p><p><code>[codeops-research-task:normalized-task]</code></p>';
+  const task = {
+    type: "task.upsert",
+    key: "normalized-task",
+    targetWorkItemId: targetId,
+    expectedDescriptionDigest: `sha256:${createHash("sha256")
+      .update("<p>Task scope.</p>")
+      .digest("hex")}`,
+    name: "Normalized task",
+    descriptionHtml: taskDescription,
+  };
+  const normalizedSource = `<div>${sourceMutation.changes.descriptionHtml.replace(
+    '">evidence</a>',
+    '" rel="noopener noreferrer">evidence</a>',
+  )}</div>`;
+  const normalizedTask = `<div>${taskDescription.replace(
+    '">evidence</a>',
+    '" rel="noopener noreferrer">evidence</a>',
+  )}</div>`;
+  const writes = [];
+  const liveClient = client(writes, [
+    {
+      id: targetId,
+      project: projectId,
+      labels: [],
+      name: task.name,
+      descriptionHtml: normalizedTask,
+    },
+  ]);
+  const originalGet = liveClient.getWorkItem;
+  liveClient.getWorkItem = async (actualProjectId, targetIdValue) =>
+    targetIdValue === workItemId
+      ? {
+          id: workItemId,
+          project: projectId,
+          labels: [],
+          name: "Source",
+          descriptionHtml: normalizedSource,
+        }
+      : originalGet(actualProjectId, targetIdValue);
+  await applyResearchMutationBatch({
+    batch: batch({
+      mutations: [sourceMutation, task, batch().mutations[1]],
+    }),
+    expected: { requestId, projectId, sourceWorkItemId: workItemId },
+    client: liveClient,
+  });
+  assert.deepEqual(
+    writes.map(([kind]) => kind),
+    ["comment"],
+  );
+});
+
+test("does not discard a human-authored outer div before first projection", async () => {
+  const humanSource = "<div><p>Human source.</p></div>";
+  const writes = [];
+  const liveClient = client(writes);
+  liveClient.getWorkItem = async (_actualProjectId, targetIdValue) => ({
+    id: targetIdValue,
+    project: projectId,
+    labels: [],
+    name: "Source",
+    descriptionHtml: humanSource,
+  });
+  await applyResearchMutationBatch({
+    batch: batch({
+      mutations: [
+        {
+          type: "ticket.update",
+          targetWorkItemId: workItemId,
+          changes: {
+            descriptionHtml: `${humanSource}<h3>CodeOps research synthesis</h3><p>Safe synthesis.</p>`,
+          },
+        },
+        batch().mutations[1],
+      ],
+    }),
+    expected: { requestId, projectId, sourceWorkItemId: workItemId },
+    client: liveClient,
+  });
+  assert.deepEqual(
+    writes.map(([kind]) => kind),
+    ["update", "comment"],
+  );
+});
+
 test("rejects changes to preserved human-authored HTML before writing", async () => {
   const writes = [];
   await assert.rejects(

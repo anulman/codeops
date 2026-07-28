@@ -127,23 +127,45 @@ function descriptionDigest(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+function normalizePlaneContentHtml(value: string): string {
+  let normalized = value.replaceAll(
+    /<a href="([^"]+)" rel="noopener noreferrer">/gi,
+    '<a href="$1">',
+  );
+  if (
+    normalized.startsWith("<div>") &&
+    normalized.endsWith("</div>") &&
+    (normalized.includes(RESEARCH_MANAGED_HEADING) ||
+      normalized.includes(RESEARCH_TASK_MANAGED_HEADING))
+  ) {
+    normalized = normalized.slice("<div>".length, -"</div>".length);
+  }
+  return normalized;
+}
+
+function descriptionsEquivalent(current: string, proposed: string): boolean {
+  return (
+    normalizePlaneContentHtml(current) === normalizePlaneContentHtml(proposed)
+  );
+}
+
 function assertPreservedContentAndSafeManagedHtml(input: {
   current: string;
   proposed: string;
   managedHeading: string;
 }): void {
-  const managedIndex = input.proposed.indexOf(input.managedHeading);
+  const current = normalizePlaneContentHtml(input.current);
+  const proposed = normalizePlaneContentHtml(input.proposed);
+  const managedIndex = proposed.indexOf(input.managedHeading);
   if (managedIndex < 0) {
     throw new Error("research mutation is missing its managed content boundary");
   }
-  const currentPreserved = input.current
-    .split(input.managedHeading)[0]!
-    .trim();
-  const proposedPreserved = input.proposed.slice(0, managedIndex).trim();
+  const currentPreserved = current.split(input.managedHeading)[0]!.trim();
+  const proposedPreserved = proposed.slice(0, managedIndex).trim();
   if (proposedPreserved !== currentPreserved) {
     throw new Error("research mutation changed preserved human-authored content");
   }
-  assertSafeContentHtml(input.proposed.slice(managedIndex));
+  assertSafeContentHtml(proposed.slice(managedIndex));
 }
 
 async function assertSourceTicket(
@@ -239,7 +261,10 @@ export async function applyResearchMutationBatch(input: {
       if (
         target !== undefined &&
         (target.name !== mutation.name ||
-          target.descriptionHtml !== mutation.descriptionHtml) &&
+          !descriptionsEquivalent(
+            target.descriptionHtml,
+            mutation.descriptionHtml,
+          )) &&
         (mutation.expectedDescriptionDigest === null ||
           descriptionDigest(target.descriptionHtml) !==
             mutation.expectedDescriptionDigest)
@@ -260,9 +285,20 @@ export async function applyResearchMutationBatch(input: {
   const results: MutationResult[] = [];
   for (const [index, mutation] of batch.mutations.entries()) {
     if (mutation.type === "ticket.update") {
-      await input.client.updateWorkItem(batch.projectId, batch.sourceWorkItemId, {
-        description_html: mutation.changes.descriptionHtml,
-      });
+      if (
+        !descriptionsEquivalent(
+          sourceTicket.descriptionHtml,
+          mutation.changes.descriptionHtml,
+        )
+      ) {
+        await input.client.updateWorkItem(
+          batch.projectId,
+          batch.sourceWorkItemId,
+          {
+            description_html: mutation.changes.descriptionHtml,
+          },
+        );
+      }
     } else if (mutation.type === "comment.create") {
       await input.client.createComment(
         batch.projectId,
@@ -294,7 +330,7 @@ export async function applyResearchMutationBatch(input: {
       }
       if (
         target.name !== mutation.name ||
-        target.descriptionHtml !== mutation.descriptionHtml
+        !descriptionsEquivalent(target.descriptionHtml, mutation.descriptionHtml)
       ) {
         await input.client.updateWorkItem(batch.projectId, target.id, {
           name: mutation.name,
