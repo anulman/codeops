@@ -128,116 +128,125 @@ export async function workItemWorkflow(
     return true;
   };
 
-  await move("started", "Temporal accepted the work item");
-  await move(
-    "planning",
-    workItem.role === "coding-agent"
-      ? "Ready authorizes routine planning and execution"
-      : "The admitted human persona request authorizes research execution",
-  );
-
-  if (await cancelIfRequested()) return snapshot;
-
-  await move("executing", "Dispatching the isolated Agent Job");
-  const dispatches: DispatchResult[] = [];
-  let synthesisDispatch: DispatchResult | undefined;
   try {
-    if (workItem.role === "coding-agent") {
-      dispatches.push(
-        await dispatchAgentJob({
-          version: "codeops.agent-job-dispatch/v1",
-          ...workItem,
-        }),
-      );
-    } else {
-      // Preserve the strict one-Agent-Job Trial 0 concurrency cap while still
-      // giving every tagged persona an isolated, terminal execution.
-      for (const persona of workItem.researchRequest.personas) {
+    await move("started", "Temporal accepted the work item");
+    await move(
+      "planning",
+      workItem.role === "coding-agent"
+        ? "Ready authorizes routine planning and execution"
+        : "The admitted human persona request authorizes research execution",
+    );
+
+    if (await cancelIfRequested()) return snapshot;
+
+    await move("executing", "Dispatching the isolated Agent Job");
+    const dispatches: DispatchResult[] = [];
+    let synthesisDispatch: DispatchResult | undefined;
+    try {
+      if (workItem.role === "coding-agent") {
         dispatches.push(
           await dispatchAgentJob({
             version: "codeops.agent-job-dispatch/v1",
             ...workItem,
-            researchStage: { kind: "persona", persona },
           }),
         );
-      }
-      const reports = dispatches.map((dispatch) => {
-        if (
-          dispatch.role !== "qa-contract-researcher" ||
-          dispatch.researchResult.kind !== "persona"
-        ) {
-          throw new Error("persona dispatch returned the wrong result kind");
+      } else {
+        // Preserve the strict one-Agent-Job Trial 0 concurrency cap while still
+        // giving every tagged persona an isolated, terminal execution.
+        for (const persona of workItem.researchRequest.personas) {
+          dispatches.push(
+            await dispatchAgentJob({
+              version: "codeops.agent-job-dispatch/v1",
+              ...workItem,
+              researchStage: { kind: "persona", persona },
+            }),
+          );
         }
-        return dispatch.researchResult.report;
-      });
-      synthesisDispatch = await dispatchAgentJob({
-        version: "codeops.agent-job-dispatch/v1",
-        ...workItem,
-        researchStage: { kind: "synthesis", reports },
-      });
-    }
-  } catch (error) {
-    if (isCancellation(error)) {
-      await CancellationScope.nonCancellable(() =>
-        move("cancelled", "Workflow cancellation requested"),
-      );
-      throw error;
-    }
-    await move(
-      "failed",
-      "Agent Job dispatch failed closed before workload execution",
-    );
-    return snapshot;
-  }
-  await move(
-    "evidence_ready",
-    `Checkpoints ready at ${[...dispatches, ...(synthesisDispatch ? [synthesisDispatch] : [])]
-      .map((dispatch) => dispatch.checkpointUri)
-      .join(", ")}`,
-  );
-  if (await cancelIfRequested()) return snapshot;
-  if (workItem.role === "qa-contract-researcher") {
-    let projection: ResearchProjectionResult;
-    try {
-      projection = await publishResearchPacket(
-        buildResearchPacket({
-          request: workItem.researchRequest,
-          personaDispatches: dispatches,
-          synthesisDispatch:
-            synthesisDispatch ??
-            (() => {
-              throw new Error("research synthesis checkpoint is missing");
-            })(),
-        }),
-      );
-    } catch {
+        const reports = dispatches.map((dispatch) => {
+          if (
+            dispatch.role !== "qa-contract-researcher" ||
+            dispatch.researchResult.kind !== "persona"
+          ) {
+            throw new Error("persona dispatch returned the wrong result kind");
+          }
+          return dispatch.researchResult.report;
+        });
+        synthesisDispatch = await dispatchAgentJob({
+          version: "codeops.agent-job-dispatch/v1",
+          ...workItem,
+          researchStage: { kind: "synthesis", reports },
+        });
+      }
+    } catch (error) {
+      if (isCancellation(error)) {
+        await CancellationScope.nonCancellable(() =>
+          move("cancelled", "Workflow cancellation requested"),
+        );
+        throw error;
+      }
       await move(
         "failed",
-        "Research evidence failed closed before Plane projection",
+        "Agent Job dispatch failed closed before workload execution",
       );
       return snapshot;
     }
-    await move("validating", "Validating trusted Plane research projection");
-    if (projection.passed) {
-      await move("completed", projection.summary);
+    await move(
+      "evidence_ready",
+      `Checkpoints ready at ${[...dispatches, ...(synthesisDispatch ? [synthesisDispatch] : [])]
+        .map((dispatch) => dispatch.checkpointUri)
+        .join(", ")}`,
+    );
+    if (await cancelIfRequested()) return snapshot;
+    if (workItem.role === "qa-contract-researcher") {
+      let projection: ResearchProjectionResult;
+      try {
+        projection = await publishResearchPacket(
+          buildResearchPacket({
+            request: workItem.researchRequest,
+            personaDispatches: dispatches,
+            synthesisDispatch:
+              synthesisDispatch ??
+              (() => {
+                throw new Error("research synthesis checkpoint is missing");
+              })(),
+          }),
+        );
+      } catch {
+        await move(
+          "failed",
+          "Research evidence failed closed before Plane projection",
+        );
+        return snapshot;
+      }
+      await move("validating", "Validating trusted Plane research projection");
+      if (projection.passed) {
+        await move("completed", projection.summary);
+      } else {
+        await move("failed", projection.summary);
+      }
+      return snapshot;
+    }
+    await move("validating", "Waiting for independent acceptance");
+    await condition(
+      () => external.acceptance !== null || cancellation.length > 0,
+    );
+
+    if (await cancelIfRequested()) return snapshot;
+    if (external.acceptance?.passed === true) {
+      await move("completed", external.acceptance.summary);
     } else {
-      await move("failed", projection.summary);
+      await move(
+        "failed",
+        external.acceptance?.summary ?? "Independent acceptance failed",
+      );
     }
     return snapshot;
+  } catch (error) {
+    if (isCancellation(error) && snapshot.state !== "cancelled") {
+      await CancellationScope.nonCancellable(() =>
+        move("cancelled", "Workflow cancellation requested"),
+      );
+    }
+    throw error;
   }
-  await move("validating", "Waiting for independent acceptance");
-  await condition(
-    () => external.acceptance !== null || cancellation.length > 0,
-  );
-
-  if (await cancelIfRequested()) return snapshot;
-  if (external.acceptance?.passed === true) {
-    await move("completed", external.acceptance.summary);
-  } else {
-    await move(
-      "failed",
-      external.acceptance?.summary ?? "Independent acceptance failed",
-    );
-  }
-  return snapshot;
 }

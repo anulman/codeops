@@ -166,16 +166,31 @@ function safeEvent(sequence: number, update: acp.SessionUpdate): SafeEvent {
 }
 
 export async function capturePatch(workspace: string): Promise<Buffer> {
+  const git = [
+    "-c",
+    `safe.directory=${workspace}`,
+    "-C",
+    workspace,
+  ];
+  // `git diff` omits untracked files, and a plain worktree diff also omits
+  // staged changes. Record non-ignored new paths as intent-to-add, then compare
+  // the complete index/worktree state with the immutable checkout.
+  await execFileAsync(
+    "git",
+    [...git, "add", "--intent-to-add", "--all", "--"],
+    {
+      encoding: "buffer",
+      maxBuffer: MAX_PATCH_BYTES + 1,
+    },
+  );
   const { stdout } = await execFileAsync(
     "git",
     [
-      "-c",
-      `safe.directory=${workspace}`,
-      "-C",
-      workspace,
+      ...git,
       "diff",
       "--binary",
       "--no-ext-diff",
+      "HEAD",
       "--",
     ],
     {

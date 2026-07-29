@@ -63,12 +63,21 @@ test("bounds retained agent text after redaction", () => {
   assert.equal(boundedText("a".repeat(128_001)).length, 128_000);
 });
 
-test("captures the exact checkout patch through an explicit safe-directory binding", async () => {
+test("captures staged, unstaged, and non-ignored new files from the exact checkout", async () => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-workspace-"));
   try {
     await execFileAsync("git", ["init", "--quiet", directory]);
     await writeFile(path.join(directory, "tracked.txt"), "before\n");
-    await execFileAsync("git", ["-C", directory, "add", "tracked.txt"]);
+    await writeFile(path.join(directory, "staged.txt"), "before staged\n");
+    await writeFile(path.join(directory, ".gitignore"), "ignored.txt\n");
+    await execFileAsync("git", [
+      "-C",
+      directory,
+      "add",
+      "tracked.txt",
+      "staged.txt",
+      ".gitignore",
+    ]);
     await execFileAsync("git", [
       "-C",
       directory,
@@ -82,8 +91,17 @@ test("captures the exact checkout patch through an explicit safe-directory bindi
       "fixture",
     ]);
     await writeFile(path.join(directory, "tracked.txt"), "after\n");
+    await writeFile(path.join(directory, "staged.txt"), "after staged\n");
+    await execFileAsync("git", ["-C", directory, "add", "staged.txt"]);
+    await writeFile(path.join(directory, "new file.txt"), "new\n");
+    await writeFile(path.join(directory, "ignored.txt"), "ignored\n");
     const patch = await capturePatch(directory);
-    assert.match(patch.toString("utf8"), /-before\n\+after/);
+    const text = patch.toString("utf8");
+    assert.match(text, /-before\n\+after/);
+    assert.match(text, /-before staged\n\+after staged/);
+    assert.match(text, /diff --git a\/new file\.txt b\/new file\.txt/);
+    assert.match(text, /\+new/);
+    assert.doesNotMatch(text, /ignored\.txt/);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
