@@ -40,6 +40,10 @@ This service owns the privileged Plane integration boundary. It implements:
 - accept only raw JSON `POST /webhooks/plane` requests using Plane's documented
   delivery, event, and signature headers, with a 1 MiB body limit and a
   separate credential-free `/healthz` liveness route;
+- consume Plane CE's live issue-update shape (`action: updated`,
+  `activity.field: state_id`, and an object-valued `data.state`) for Ready
+  admission; the configured Plane webhook must enable both Issue and Issue
+  comment events;
 - start the exact `workItemWorkflow` on the configured Temporal task queue with
   duplicate reuse rejected, running-workflow conflicts rejected, a one-hour
   bound for research or a 24-hour bound for coding, and the complete bound

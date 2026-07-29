@@ -107,7 +107,7 @@ const planeCeCommentWebhookSchema = z
 const planeCeIssueWebhookSchema = z
   .object({
     event: z.literal("issue"),
-    action: z.literal("update"),
+    action: z.literal("updated"),
     webhook_id: uuid,
     workspace_id: uuid,
     data: z
@@ -115,13 +115,17 @@ const planeCeIssueWebhookSchema = z
         id: uuid,
         project: uuid,
         workspace: uuid,
-        state: uuid,
+        state: z
+          .object({
+            id: uuid,
+          })
+          .passthrough(),
         updated_at: z.string().datetime({ offset: true }),
       })
       .passthrough(),
     activity: z
       .object({
-        field: z.literal("state"),
+        field: z.literal("state_id"),
         old_value: uuid,
         new_value: uuid,
         actor: z
@@ -594,7 +598,7 @@ export function identifyPlaneReadyTransition(input: {
   if (
     input.headers.event !== payload.event ||
     payload.data.workspace !== payload.workspace_id ||
-    payload.data.state !== payload.activity.new_value
+    payload.data.state.id !== payload.activity.new_value
   ) {
     throw new Error("Plane Ready webhook headers or identities do not match");
   }

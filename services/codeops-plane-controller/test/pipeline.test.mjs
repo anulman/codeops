@@ -74,16 +74,21 @@ const readyStateId = "cc8562ab-79c7-4f1c-b4a2-1ed51dfcd6aa";
 const readyUpdatedAt = "2026-07-27T02:45:00.000Z";
 const readyPayload = {
   event: "issue",
-  action: "update",
+  action: "updated",
   webhook_id: payload.webhook_id,
   workspace_id: payload.workspace_id,
   data: {
     ...source.workItem,
-    state: readyStateId,
+    state: {
+      id: readyStateId,
+      name: "Ready",
+      color: "#3B82F6",
+      group: "unstarted",
+    },
     updated_at: readyUpdatedAt,
   },
   activity: {
-    field: "state",
+    field: "state_id",
     old_value: source.workItem.state,
     new_value: readyStateId,
     actor: { id: actorId },

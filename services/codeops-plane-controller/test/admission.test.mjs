@@ -158,16 +158,21 @@ const backlogStateId = source.workItem.state;
 const readyUpdatedAt = "2026-07-27T02:45:00.000Z";
 const readyPayload = {
   event: "issue",
-  action: "update",
+  action: "updated",
   webhook_id: cePayload.webhook_id,
   workspace_id: payload.workspace_id,
   data: {
     ...source.workItem,
-    state: readyStateId,
+    state: {
+      id: readyStateId,
+      name: "Ready",
+      color: "#3B82F6",
+      group: "unstarted",
+    },
     updated_at: readyUpdatedAt,
   },
   activity: {
-    field: "state",
+    field: "state_id",
     old_value: backlogStateId,
     new_value: readyStateId,
     actor: {

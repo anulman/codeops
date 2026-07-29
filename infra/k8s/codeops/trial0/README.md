@@ -180,6 +180,10 @@ The trusted supervisor must create the Secret without logging either value,
 copy the preview wildcard TLS Secret, render and server-dry-run the exact
 manifest, and verify the PVC, rollout, private health route, public signed
 webhook path, and restart-persistent deduplication before configuring Plane.
+Plane's webhook record must enable both **Issue** and **Issue comment** events:
+Ready admission arrives as an `issue` update, while persona research triggers
+arrive as `issue_comment` creation. A live smoke must verify both event flags
+before a ticket may move to Ready.
 The controller credential is never mounted into the orchestrator or an Agent
 Job.
 
