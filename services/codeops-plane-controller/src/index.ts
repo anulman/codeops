@@ -144,7 +144,7 @@ const workItemSnapshotSchema = z
     project: uuid,
     workspace: uuid,
     name: z.string(),
-    description_html: z.string().nullable().optional(),
+    description_html: z.string().max(100_000).nullable().optional(),
     description_stripped: z.string().max(50_000).nullable().optional(),
     priority: z.string(),
     state: uuid,
@@ -285,6 +285,29 @@ function decodePlaneCommentText(value: string): string {
         ? String.fromCodePoint(codePoint)
         : "";
     });
+}
+
+function planeHtmlText(value: string): string {
+  return decodePlaneCommentText(
+    value
+      .replace(/<br\s*\/?>/gi, "\n")
+      .replace(/<\/(?:p|div|li|h[1-6])>/gi, "\n")
+      .replace(/<[^>]+>/g, " "),
+  )
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s*\n\s*/g, "\n")
+    .trim();
+}
+
+function workItemDescription(
+  workItem: z.infer<typeof workItemSnapshotSchema>,
+): string {
+  const stripped = (workItem.description_stripped ?? "").trim();
+  if (stripped !== "") return stripped;
+  return z
+    .string()
+    .max(50_000)
+    .parse(planeHtmlText(workItem.description_html ?? ""));
 }
 
 function planeCeCommentText(
@@ -549,7 +572,7 @@ export async function admitPlaneResearchComment(input: {
       planeRevisionDigest,
       projectContext,
       ticketSnapshot,
-      defaultBrief: [workItem.name, workItem.description_stripped ?? ""]
+      defaultBrief: [workItem.name, workItemDescription(workItem)]
         .filter((value) => value.trim().length > 0)
         .join("\n\n")
         .slice(0, 8_000),
@@ -781,7 +804,7 @@ export async function admitPlaneReadyTransition(input: {
     )
     .digest("hex");
   const requestId = `coding-${requestHash.slice(0, 57)}`;
-  const description = (workItem.description_stripped ?? "").trim();
+  const description = workItemDescription(workItem);
   if (description.length === 0) {
     throw new Error("Ready work item must define acceptance criteria");
   }

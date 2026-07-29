@@ -275,6 +275,10 @@ const listener = createPlaneWebhookRequestListener({
         enqueue,
       });
     } catch (error) {
+      console.error(
+        "Plane webhook processing failed:",
+        error instanceof Error ? error.message : "unknown error",
+      );
       if (readyIdentity !== null && !readyWorkflowEnqueued) {
         try {
           await planeClient.createComment(

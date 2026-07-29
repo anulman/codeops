@@ -391,6 +391,26 @@ test("admits only a signed allowlisted human transition into configured Ready", 
   assert.match(admission.planeRevisionDigest, /^sha256:[0-9a-f]{64}$/);
 });
 
+test("derives Ready acceptance criteria from Plane CE description HTML", async () => {
+  const input = signedReadyInput();
+  input.loadSource = async () => ({
+    project: source.project,
+    workItem: {
+      ...source.workItem,
+      state: readyStateId,
+      updated_at: readyUpdatedAt,
+      description_html:
+        "<p>Build every fixture.</p><ul><li>Verify exact creation &amp; reset.</li></ul>",
+      description_stripped: undefined,
+    },
+  });
+
+  const admission = await admitPlaneReadyTransition(input);
+  assert.deepEqual(admission.request.workItem.acceptanceCriteria, [
+    "Build every fixture.\nVerify exact creation & reset.",
+  ]);
+});
+
 test("Ready admission is stable across delivery retries", async () => {
   const first = await admitPlaneReadyTransition(signedReadyInput());
   const retry = await admitPlaneReadyTransition(
@@ -413,6 +433,7 @@ test("fails Ready admission closed without bounded acceptance criteria", async (
       ...source.workItem,
       state: readyStateId,
       updated_at: readyUpdatedAt,
+      description_html: "<p> </p>",
       description_stripped: " ",
     },
   });
