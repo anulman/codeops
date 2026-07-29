@@ -11,6 +11,10 @@
     "./managed-content": {
       "types": "./dist/managed-content.d.ts",
       "default": "./dist/managed-content.js"
+    },
+    "./adversarial-review": {
+      "types": "./dist/adversarial-review.d.ts",
+      "default": "./dist/adversarial-review.js"
     }
   },
   "scripts": {

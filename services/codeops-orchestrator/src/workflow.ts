@@ -4,6 +4,7 @@ import {
   defineQuery,
   defineSignal,
   isCancellation,
+  patched,
   proxyActivities,
   setHandler,
 } from "@temporalio/workflow";
@@ -12,12 +13,17 @@ import type {
   CodingRequest,
   ResearchRequest,
 } from "@renoconcierge/codeops-contracts";
+import {
+  adversarialReviewSchema,
+  type AdversarialReview,
+} from "@renoconcierge/codeops-contracts/adversarial-review";
 import type {
   DispatchResult,
   ResearchProjectionResult,
 } from "./activities.js";
 import { transition, type WorkflowSnapshot } from "./model.js";
 import { buildResearchPacket } from "./research.js";
+import { adversarialReviewMatchesCheckpoint } from "./review.js";
 
 interface WorkItemInputBase {
   readonly workItemId: string;
@@ -85,6 +91,8 @@ const { publishResearchPacket } = proxyActivities<
 export const cancelWorkItem = defineSignal<[string]>("cancelWorkItem");
 export const reportAcceptance =
   defineSignal<[AcceptanceResult]>("reportAcceptance");
+export const reportAdversarialReview =
+  defineSignal<[AdversarialReview]>("reportAdversarialReview");
 export const workflowStatus = defineQuery<WorkflowSnapshot>("workflowStatus");
 
 export async function workItemWorkflow(
@@ -106,12 +114,38 @@ export async function workItemWorkflow(
   };
   let cancellation = "";
   const external = {
+    adversarialReview: null as AdversarialReview | null,
     acceptance: null as AcceptanceResult | null,
   };
+  let codingCheckpoint: DispatchResult | null = null;
 
   setHandler(workflowStatus, () => snapshot);
   setHandler(cancelWorkItem, (reason) => {
     cancellation = reason;
+  });
+  setHandler(reportAdversarialReview, (value) => {
+    if (
+      snapshot.state !== "reviewing" ||
+      workItem.role !== "coding-agent" ||
+      external.adversarialReview !== null
+    ) {
+      return;
+    }
+    const parsed = adversarialReviewSchema.safeParse(value);
+    if (!parsed.success) {
+      return;
+    }
+    const review = parsed.data;
+    if (!adversarialReviewMatchesCheckpoint({
+      review,
+      workflowId: workItem.workflowId,
+      workItemId: workItem.workItemId,
+      baseSha: workItem.baseSha,
+      checkpoint: codingCheckpoint,
+    })) {
+      return;
+    }
+    external.adversarialReview = review;
   });
   setHandler(reportAcceptance, (result) => {
     if (snapshot.state === "validating") external.acceptance = result;
@@ -144,12 +178,11 @@ export async function workItemWorkflow(
     let synthesisDispatch: DispatchResult | undefined;
     try {
       if (workItem.role === "coding-agent") {
-        dispatches.push(
-          await dispatchAgentJob({
-            version: "codeops.agent-job-dispatch/v1",
-            ...workItem,
-          }),
-        );
+        codingCheckpoint = await dispatchAgentJob({
+          version: "codeops.agent-job-dispatch/v1",
+          ...workItem,
+        });
+        dispatches.push(codingCheckpoint);
       } else {
         // Preserve the strict one-Agent-Job Trial 0 concurrency cap while still
         // giving every tagged persona an isolated, terminal execution.
@@ -225,6 +258,21 @@ export async function workItemWorkflow(
         await move("failed", projection.summary);
       }
       return snapshot;
+    }
+    if (patched("coding-adversarial-review-v1")) {
+      await move(
+        "reviewing",
+        `Waiting for adversarial review of ${codingCheckpoint?.checkpointDigest ?? "the retained coding checkpoint"}`,
+      );
+      await condition(
+        () => external.adversarialReview !== null || cancellation.length > 0,
+      );
+
+      if (await cancelIfRequested()) return snapshot;
+      if (external.adversarialReview?.verdict === "revision-required") {
+        await move("failed", external.adversarialReview.summary);
+        return snapshot;
+      }
     }
     await move("validating", "Waiting for independent acceptance");
     await condition(

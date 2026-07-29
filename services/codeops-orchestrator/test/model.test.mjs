@@ -14,6 +14,7 @@ import {
   recordTransition,
 } from "../dist/activities.js";
 import { transition } from "../dist/model.js";
+import { adversarialReviewMatchesCheckpoint } from "../dist/review.js";
 
 const projectContext = {
   version: "codeops.project-context/v1",
@@ -139,13 +140,78 @@ test("accepts only the reviewed Trial 0 lifecycle", () => {
     "planning",
     "executing",
     "evidence_ready",
+    "reviewing",
     "validating",
     "completed",
   ]) {
     snapshot = transition(snapshot, state, state);
   }
   assert.equal(snapshot.state, "completed");
-  assert.equal(snapshot.sequence, 6);
+  assert.equal(snapshot.sequence, 7);
+});
+
+test("research evidence can proceed directly to projection validation", () => {
+  const validating = transition(
+    { state: "evidence_ready", sequence: 4, summary: "research evidence" },
+    "validating",
+    "validating trusted projection",
+  );
+  assert.equal(validating.state, "validating");
+});
+
+test("adversarial review must bind the exact retained coding checkpoint", () => {
+  const checkpoint = {
+    version: "codeops.agent-job-dispatch-result/v1",
+    role: "coding-agent",
+    runId: "agent-review-123",
+    checkpointUri: "artifact:///agent-runs/agent-review-123/checkpoint.json",
+    checkpointDigest: `sha256:${"d".repeat(64)}`,
+    checkpointSizeBytes: 4_096,
+  };
+  const review = {
+    version: "codeops.adversarial-review/v1",
+    workflowId: "coding-123",
+    workItemId: "22222222-2222-4222-8222-222222222222",
+    baseSha: "a".repeat(40),
+    reviewerId: "independent-reviewer",
+    reviewedAt: "2026-07-29T19:00:00.000Z",
+    checkpoint: {
+      uri: checkpoint.checkpointUri,
+      digest: checkpoint.checkpointDigest,
+      sizeBytes: checkpoint.checkpointSizeBytes,
+    },
+    lenses: {
+      unusedCode: { status: "clear", summary: "No unused code." },
+      maintainability: { status: "clear", summary: "No worthwhile simplification." },
+      userFacingBehavior: { status: "clear", summary: "No user regression." },
+      security: { status: "clear", summary: "No security regression." },
+    },
+    findings: [],
+    verdict: "pass",
+    summary: "Adversarial review passed.",
+  };
+  const identity = {
+    review,
+    workflowId: review.workflowId,
+    workItemId: review.workItemId,
+    baseSha: review.baseSha,
+    checkpoint,
+  };
+  assert.equal(adversarialReviewMatchesCheckpoint(identity), true);
+  assert.equal(adversarialReviewMatchesCheckpoint({
+    ...identity,
+    checkpoint: {
+      ...checkpoint,
+      checkpointDigest: `sha256:${"e".repeat(64)}`,
+    },
+  }), false);
+  assert.equal(adversarialReviewMatchesCheckpoint({
+    ...identity,
+    checkpoint: {
+      ...checkpoint,
+      role: "qa-contract-researcher",
+    },
+  }), false);
 });
 
 test("terminal states and skipped gates fail closed", () => {
@@ -155,6 +221,15 @@ test("terminal states and skipped gates fail closed", () => {
         { state: "planning", sequence: 2, summary: "plan" },
         "completed",
         "skip",
+      ),
+    /invalid CodeOps transition/,
+  );
+  assert.throws(
+    () =>
+      transition(
+        { state: "reviewing", sequence: 5, summary: "review" },
+        "completed",
+        "skip independent acceptance",
       ),
     /invalid CodeOps transition/,
   );

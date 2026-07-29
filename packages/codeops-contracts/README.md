@@ -29,6 +29,34 @@ providers.
   bounded same-project task index. Referenced decision tickets therefore cross
   the Agent Job boundary as digest-bound input instead of being inferred from
   an unavailable Plane board.
+- Every completed coding checkpoint must receive one
+  `codeops.adversarial-review/v1` report before independent acceptance. The
+  report binds the workflow, work item, base SHA, and exact checkpoint
+  URI/digest/size; separately records unused-code, maintainability,
+  user-facing-behavior, and security lenses; and retains structured findings
+  with explicit resolutions. Critical/high findings are always `must-fix`,
+  accepted tradeoffs and non-actionable findings require justification, and a
+  passing verdict is impossible while any must-fix finding remains.
+
+## Adversarial coding review
+
+The coding Agent Job cannot write its own adversarial-review report. A trusted
+external reviewer inspects the retained patch and relevant surrounding code,
+runs independent checks, validates the report with
+`adversarialReviewSchema`, and signals `reportAdversarialReview` to the exact
+Temporal workflow. Temporal ignores malformed, mistimed, or checkpoint-drifted
+signals.
+
+The workflow introduces this branch behind Temporal patch ID
+`coding-adversarial-review-v1`. Existing histories without that marker replay
+the former evidence-to-acceptance path; new executions record the marker and
+must pass adversarial review before acceptance.
+
+A `revision-required` review terminates the candidate as failed with the
+review summary. A passing review advances to the separate independent
+acceptance wait; adversarial review does not replace executable acceptance.
+Low/medium findings may pass only when they are explicitly classified as an
+accepted tradeoff or not actionable with a durable justification.
 
 ## QA Contract Researcher
 

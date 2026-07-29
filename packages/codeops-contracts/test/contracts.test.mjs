@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import { test } from "node:test";
 import {
+  adversarialReviewSchema,
   agentJobDispatchRequestSchema,
   agentJobDispatchResultSchema,
   canonicalSerialize,
@@ -188,6 +189,44 @@ const workItem = {
   requestedAt: now,
 };
 
+function makeAdversarialReview(overrides = {}) {
+  return {
+    version: contractVersions.adversarialReview,
+    workflowId: "workflow-123",
+    workItemId: workItem.workItemId,
+    baseSha: sha,
+    reviewerId: "independent-reviewer",
+    reviewedAt: now,
+    checkpoint: {
+      uri: "artifact:///agent-runs/agent-review-123/checkpoint.json",
+      digest: `sha256:${"d".repeat(64)}`,
+      sizeBytes: 4_096,
+    },
+    lenses: {
+      unusedCode: {
+        status: "clear",
+        summary: "Every introduced export has a concrete consumer.",
+      },
+      maintainability: {
+        status: "clear",
+        summary: "The smallest ownership boundary remains legible.",
+      },
+      userFacingBehavior: {
+        status: "clear",
+        summary: "No user-facing regression was found.",
+      },
+      security: {
+        status: "clear",
+        summary: "No concrete security regression was found.",
+      },
+    },
+    findings: [],
+    verdict: "pass",
+    summary: "All four adversarial review lenses pass.",
+    ...overrides,
+  };
+}
+
 function command(type, payload) {
   return {
     version: contractVersions.controlCommand,
@@ -203,6 +242,65 @@ function command(type, payload) {
 test("accepts the complete work-item and opaque secret-reference contracts", () => {
   assert.deepEqual(workItemRequestSchema.parse(workItem), workItem);
   assert.deepEqual(secretReferenceSchema.parse(secretReference), secretReference);
+});
+
+test("adversarial review binds all four lenses to one exact coding checkpoint", () => {
+  const passing = makeAdversarialReview();
+  assert.deepEqual(adversarialReviewSchema.parse(passing), passing);
+
+  const finding = {
+    id: "expired-cookie-not-sent",
+    category: "security",
+    severity: "high",
+    path: "services/acceptance-runner/scenarios/customer-file-routing/cookie.mjs",
+    lineStart: 72,
+    problem: "The browser discards the expired credential before the request.",
+    impact: "The security test exercises a missing cookie instead of server-side expiry rejection.",
+    recommendation: "Keep the browser cookie live while expiring only the signed JWT payload.",
+    resolution: "must-fix",
+  };
+  const revision = makeAdversarialReview({
+    lenses: {
+      ...passing.lenses,
+      security: {
+        status: "finding",
+        summary: "One high-severity security-test validity defect remains.",
+      },
+    },
+    findings: [finding],
+    verdict: "revision-required",
+    summary: "The candidate requires a bounded security-fixture revision.",
+  });
+  assert.deepEqual(adversarialReviewSchema.parse(revision), revision);
+  assert.throws(() =>
+    adversarialReviewSchema.parse({
+      ...revision,
+      verdict: "pass",
+    }),
+  );
+  assert.throws(() =>
+    adversarialReviewSchema.parse({
+      ...revision,
+      findings: [{
+        ...finding,
+        resolution: "accepted-tradeoff",
+        justification: "Convenient.",
+      }],
+      verdict: "pass",
+    }),
+  );
+  assert.throws(() =>
+    adversarialReviewSchema.parse({
+      ...passing,
+      lenses: {
+        ...passing.lenses,
+        unusedCode: {
+          status: "finding",
+          summary: "Unused code exists.",
+        },
+      },
+    }),
+  );
 });
 
 test("binds a coding request to one admitted Plane revision and workflow", () => {

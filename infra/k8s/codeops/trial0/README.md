@@ -75,9 +75,17 @@ explicit resources, non-root containers, and service accounts with token
 mounting disabled.
 
 The orchestrator implements the authoritative Trial 0 lifecycle through
-Ready-authorized planning and execution dispatch, followed by an externally
-reported independent acceptance verdict. The trusted supervisor reviews the
-result; the candidate never receives deployment authority.
+Ready-authorized planning and execution dispatch, a structured external
+adversarial review bound to the exact retained coding checkpoint, and then a
+separate externally reported independent acceptance verdict. The review must
+cover unused code, simplification/maintainability tradeoffs, user-facing
+regressions, and concrete security vulnerabilities. Unresolved findings stop
+the workflow before acceptance; malformed or checkpoint-drifted review signals
+are ignored. The trusted supervisor writes the review and acceptance verdicts;
+the candidate never receives either authority or deployment authority.
+The review branch is protected by Temporal patch ID
+`coding-adversarial-review-v1`: old histories keep their original
+evidence-to-acceptance path, while new executions must enter review.
 
 The tokenless orchestrator authenticates to a separately reviewed
 `codeops-control-gateway` through the file-mounted

@@ -4,6 +4,10 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { z } from "zod";
+export {
+  adversarialReviewSchema,
+  type AdversarialReview,
+} from "./adversarial-review.js";
 
 const VERSION = {
   workItem: "codeops.work-item/v1",
@@ -24,6 +28,7 @@ const VERSION = {
   codingRequest: "codeops.coding-request/v2",
   agentJobDispatch: "codeops.agent-job-dispatch/v1",
   agentJobDispatchResult: "codeops.agent-job-dispatch-result/v1",
+  adversarialReview: "codeops.adversarial-review/v1",
   workflowTransitionNotice: "codeops.workflow-transition-notice/v1",
 } as const;
 
@@ -807,13 +812,15 @@ export const agentJobDispatchRequestSchema = z
     }
   });
 
+const agentCheckpointUri = z
+  .string()
+  .regex(/^artifact:\/\/\/agent-runs\/[a-z0-9-]+\/checkpoint\.json$/);
+
 const agentJobDispatchResultBaseSchema = z
   .object({
     version: z.literal(VERSION.agentJobDispatchResult),
     runId: workflowRunIdentifier,
-    checkpointUri: z
-      .string()
-      .regex(/^artifact:\/\/\/agent-runs\/[a-z0-9-]+\/checkpoint\.json$/),
+    checkpointUri: agentCheckpointUri,
     checkpointDigest: sha256Digest,
     checkpointSizeBytes: z.number().int().positive().max(25_000_000),
   })
