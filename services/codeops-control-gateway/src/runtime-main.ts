@@ -161,7 +161,15 @@ const server = createServer((request, response) => {
     }
     try {
       const dispatch = parseDispatchRequest(await readJson(request));
-      const result = serial.then(() => run(dispatch));
+      const cancellation = new AbortController();
+      response.once("close", () => {
+        if (!response.writableEnded) {
+          cancellation.abort(
+            new Error("Agent Job dispatch client disconnected"),
+          );
+        }
+      });
+      const result = serial.then(() => run(dispatch, cancellation.signal));
       serial = result.catch(() => undefined);
       json(response, 200, await result);
     } catch {

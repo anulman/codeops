@@ -69,6 +69,7 @@ function makeTicketSnapshot(workItemId) {
     updatedAt: now,
     relevantComments: [],
     relations: [],
+    projectTasks: [],
   };
 }
 
@@ -220,6 +221,7 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
     requestedBy: "88fc36c8-73b0-4547-81c7-96b70f61835e",
     controlPlaneSha: sha,
     planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+    ticketSnapshot: makeTicketSnapshot(codingWorkItem.workItemId),
     researchDisposition: {
       mode: "optional",
       rationale: "The exact packet is useful but not required.",
@@ -239,6 +241,15 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
     codingRequestSchema.parse({
       ...request,
       workItem: { ...codingWorkItem, workflowId: "coding-drift" },
+    }),
+  );
+  assert.throws(() =>
+    codingRequestSchema.parse({
+      ...request,
+      ticketSnapshot: {
+        ...request.ticketSnapshot,
+        workItemId: "65d934ab-0c15-46aa-a3b7-f55125542fa3",
+      },
     }),
   );
   assert.throws(() =>

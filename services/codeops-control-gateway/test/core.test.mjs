@@ -80,6 +80,71 @@ const request = {
   },
 };
 
+const codingWorkItemId = "22222222-2222-4222-8222-222222222222";
+const codingRequest = {
+  version: "codeops.coding-request/v2",
+  requestId: "coding-request-1",
+  eventId: "ready-event:1",
+  workspaceId: projectContext.project.workspaceId,
+  projectId: projectContext.project.projectId,
+  projectContext,
+  requestedBy: "44444444-4444-4444-8444-444444444444",
+  controlPlaneSha: projectContext.controlPlaneSha,
+  planeRevisionDigest: `sha256:${"b".repeat(64)}`,
+  ticketSnapshot: {
+    workItemId: codingWorkItemId,
+    name: "Build routing fixtures",
+    descriptionHtml: "<p>Build every reachable routing cell.</p>",
+    priority: "high",
+    stateId: "66666666-6666-4666-8666-666666666666",
+    labelIds: [],
+    assigneeIds: [],
+    moduleId: null,
+    parentId: null,
+    updatedAt: "2026-07-26T00:00:00.000Z",
+    relevantComments: [],
+    relations: [],
+    projectTasks: [
+      {
+        workItemId: "77777777-7777-4777-8777-777777777777",
+        name: "Approved routing table",
+        descriptionHtml: "<p>Unauthenticated identified files stay on landing.</p>",
+        descriptionDigest: `sha256:${"c".repeat(64)}`,
+        priority: "high",
+        stateId: "88888888-8888-4888-8888-888888888888",
+        updatedAt: "2026-07-26T00:00:00.000Z",
+      },
+    ],
+  },
+  researchDisposition: {
+    mode: "skipped",
+    rationale: "The bounded ticket does not require standalone research.",
+  },
+  workItem: {
+    version: "codeops.work-item/v1",
+    workItemId: codingWorkItemId,
+    workflowId: "coding-request-1",
+    runId: "coding-request-1",
+    repository: { owner: "anulman", name: "renoconcierge" },
+    baseSha: projectContext.baseSha,
+    branch: "codeops/routing-fixtures",
+    summary: "Build routing fixtures",
+    acceptanceCriteria: ["Every reachable cell is deterministic."],
+    secretReferences: [],
+    requestedAt: "2026-07-26T00:00:00.000Z",
+  },
+};
+
+const codingDispatch = {
+  version: "codeops.agent-job-dispatch/v1",
+  workItemId: codingWorkItemId,
+  workflowId: codingRequest.requestId,
+  baseSha: projectContext.baseSha,
+  summary: codingRequest.workItem.summary,
+  role: "coding-agent",
+  codingRequest,
+};
+
 test("resolves only the exact GitHub main ref through the read-only boundary", async () => {
   const calls = [];
   const sha = "c".repeat(40);
@@ -206,6 +271,44 @@ test("states persona report cardinality and optional-field contracts explicitly"
   assert.match(prompt, /no more than 20 findings, 5 decisions, and 40 citations/);
   assert.match(prompt, /Omit citation\.testName when the citation is not a test/);
   assert.match(prompt, /never emit an empty string for an optional field/);
+});
+
+test("delivers immutable ticket and sibling decision context to coding jobs", () => {
+  const prompt = buildAgentPrompt(codingDispatch);
+  assert.match(prompt, /Read \/context\/coding-request\.json/);
+  assert.match(prompt, /bounded same-project task index/);
+  const resources = buildRunResources(
+    {
+      namespace: "codeops-trial",
+      ...createRunIdentity(codingDispatch),
+      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+      sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      repositoryReadToken: "repo-token",
+      modelAuth: { mode: "api-key", apiKey: "model-key" },
+    },
+    codingDispatch,
+  );
+  assert.doesNotThrow(() => assertRunResources(resources));
+  const runSecret = resources[0];
+  assert.deepEqual(
+    JSON.parse(
+      Buffer.from(runSecret.data["coding-request"], "base64").toString("utf8"),
+    ),
+    codingRequest,
+  );
+  const workspaceBuilder = resources[2].spec.template.spec.initContainers[0];
+  assert.equal(
+    workspaceBuilder.env.find(
+      (entry) => entry.name === "CODEOPS_CODING_REQUEST_FILE",
+    ).value,
+    "/input/coding-request.json",
+  );
+  assert.ok(
+    resources[2].spec.template.spec.volumes
+      .find((volume) => volume.name === "run-input")
+      .secret.items.some((item) => item.path === "coding-request.json"),
+  );
 });
 
 test("runs a distinct ticket-specific synthesis checkpoint after persona research", async () => {

@@ -689,6 +689,17 @@ export async function admitPlaneReadyTransition(input: {
   });
   const workItem = workItemSnapshotSchema.parse(source.workItem);
   const project = projectSnapshotSchema.parse(source.project);
+  const comments = z
+    .array(workItemCommentSnapshotSchema)
+    .parse(source.comments ?? []);
+  const relations = workItemRelationsSnapshotSchema.parse(
+    source.relations ??
+      Object.fromEntries(relationKinds.map((kind) => [kind, []])),
+  );
+  const projectWorkItems = z
+    .array(workItemSnapshotSchema)
+    .max(200)
+    .parse(source.projectWorkItems ?? []);
   if (
     workItem.id !== payload.data.id ||
     workItem.project !== payload.data.project ||
@@ -727,6 +738,60 @@ export async function admitPlaneReadyTransition(input: {
     newStateId: payload.activity.new_value,
     updatedAt: payload.data.updated_at,
   };
+  const ticketSnapshot = {
+    workItemId: workItem.id,
+    name: workItem.name,
+    descriptionHtml: workItem.description_html ?? "",
+    priority: workItem.priority,
+    stateId: workItem.state,
+    labelIds: [...workItem.labels].sort(),
+    assigneeIds: [...workItem.assignees].sort(),
+    moduleId: workItem.module ?? null,
+    parentId: workItem.parent ?? null,
+    updatedAt: workItem.updated_at,
+    relevantComments: comments
+      .filter((comment) => comment.external_source !== "codeops")
+      .sort((left, right) => left.created_at.localeCompare(right.created_at))
+      .slice(-20)
+      .map((comment) => ({
+        id: comment.id,
+        bodyHtml: comment.comment_html.slice(0, 8_000),
+        createdBy: comment.created_by,
+        createdAt: comment.created_at,
+      })),
+    relations: relationKinds
+      .flatMap((kind) =>
+        (
+          relations[kind] as readonly {
+            project_id: string;
+            issue_id: string;
+          }[]
+        ).map((relation) => ({
+          kind,
+          projectId: relation.project_id,
+          workItemId: relation.issue_id,
+        })),
+      )
+      .sort((left, right) =>
+        `${left.kind}:${left.projectId}:${left.workItemId}`.localeCompare(
+          `${right.kind}:${right.projectId}:${right.workItemId}`,
+        ),
+      ),
+    projectTasks: projectWorkItems
+      .filter((item) => item.id !== workItem.id)
+      .map((item) => ({
+        workItemId: item.id,
+        name: item.name,
+        descriptionHtml: item.description_html ?? "",
+        descriptionDigest: `sha256:${createHash("sha256")
+          .update(item.description_html ?? "")
+          .digest("hex")}`,
+        priority: item.priority,
+        stateId: item.state,
+        updatedAt: item.updated_at,
+      }))
+      .sort((left, right) => left.workItemId.localeCompare(right.workItemId)),
+  };
   const eventId = identified.eventId;
   const planeRevisionDigest = `sha256:${createHash("sha256")
     .update(
@@ -737,18 +802,7 @@ export async function admitPlaneReadyTransition(input: {
           descriptionHtml: project.description_html ?? null,
           updatedAt: project.updated_at,
         },
-        workItem: {
-          id: workItem.id,
-          name: workItem.name,
-          descriptionHtml: workItem.description_html ?? null,
-          priority: workItem.priority,
-          state: workItem.state,
-          labels: [...workItem.labels].sort(),
-          assignees: [...workItem.assignees].sort(),
-          module: workItem.module ?? null,
-          parent: workItem.parent ?? null,
-          updatedAt: workItem.updated_at,
-        },
+        ticketSnapshot,
         transition,
       }),
     )
@@ -825,6 +879,7 @@ export async function admitPlaneReadyTransition(input: {
       requestedBy: payload.activity.actor.id,
       controlPlaneSha,
       planeRevisionDigest,
+      ticketSnapshot,
       researchDisposition,
       ...(researchPacket === null ? {} : { researchPacket }),
       workItem: {

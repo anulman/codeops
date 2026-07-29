@@ -255,3 +255,51 @@ test("removes credentials/resources when an init failure prevents log retrieval"
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("cancellation aborts reconciliation and removes every exact run resource", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-cancel-"));
+  const deleted = [];
+  const kubernetes = {
+    async ensure() {},
+    async getJob() {
+      return { status: {} };
+    },
+    async listRunPods() {
+      throw new Error("cancelled reconciliation must not inspect Pod logs");
+    },
+    async getPodLogs() {
+      throw new Error("cancelled reconciliation must not inspect Pod logs");
+    },
+    async delete(resource) {
+      deleted.push(resource.kind);
+    },
+  };
+  const run = createAgentJobRunner({
+    kubernetes,
+    config: {
+      namespace: "codeops",
+      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+      sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      repositoryReadToken: "repo-token",
+      modelAuth: { mode: "api-key", apiKey: "model-key" },
+      evidenceRoot: root,
+      pollIntervalMs: 100,
+      timeoutMs: 1_000,
+    },
+  });
+  const cancellation = new AbortController();
+  try {
+    const result = run(request, cancellation.signal);
+    setTimeout(() => cancellation.abort(new Error("operator cancelled")), 5);
+    await assert.rejects(result, /operator cancelled|aborted/i);
+    assert.deepEqual(deleted.sort(), [
+      "Job",
+      "NetworkPolicy",
+      "Secret",
+      "ServiceAccount",
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

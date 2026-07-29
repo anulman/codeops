@@ -11,6 +11,7 @@ import {
   workflowTransitionNoticeSchema,
 } from "@renoconcierge/codeops-contracts";
 import { z } from "zod";
+import { cancellationSignal } from "@temporalio/activity";
 import type { WorkflowSnapshot } from "./model.js";
 import type {
   WorkItemInput,
@@ -37,6 +38,15 @@ function required(name: string): string {
   return value;
 }
 
+function activityCancellationSignal(): AbortSignal {
+  try {
+    return cancellationSignal();
+  } catch {
+    // Direct unit calls do not run inside a Temporal Activity context.
+    return new AbortController().signal;
+  }
+}
+
 async function postJson(
   endpoint: URL,
   token: string,
@@ -50,7 +60,10 @@ async function postJson(
       endpoint,
       {
         method: "POST",
-        signal: AbortSignal.timeout(timeoutMs),
+        signal: AbortSignal.any([
+          AbortSignal.timeout(timeoutMs),
+          activityCancellationSignal(),
+        ]),
         headers: {
           Authorization: `Bearer ${token}`,
           "Content-Type": "application/json",

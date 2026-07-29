@@ -1,7 +1,9 @@
 import {
+  CancellationScope,
   condition,
   defineQuery,
   defineSignal,
+  isCancellation,
   proxyActivities,
   setHandler,
 } from "@temporalio/workflow";
@@ -174,7 +176,13 @@ export async function workItemWorkflow(
         researchStage: { kind: "synthesis", reports },
       });
     }
-  } catch {
+  } catch (error) {
+    if (isCancellation(error)) {
+      await CancellationScope.nonCancellable(() =>
+        move("cancelled", "Workflow cancellation requested"),
+      );
+      throw error;
+    }
     await move(
       "failed",
       "Agent Job dispatch failed closed before workload execution",

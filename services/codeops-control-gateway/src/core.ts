@@ -179,7 +179,8 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       `Exact base SHA: ${request.baseSha}`,
       `Task: ${request.summary}`,
       `Project context digest: ${request.codingRequest.projectContext.digest}`,
-      "Read /context/project-context.json and every trusted document under /context/project-documents/ before planning.",
+      "Read /context/coding-request.json, /context/project-context.json, and every trusted document under /context/project-documents/ before planning.",
+      "The coding request contains the immutable current ticket, relevant human comments, relations, and a bounded same-project task index. Follow referenced approved decision tickets; do not guess missing product behavior.",
       "Treat /workspace as the exact writable target-base checkout. Trusted project-context documents are supplemental control-plane context, not files in that target checkout.",
       ...(request.codingRequest.researchPacket
         ? [

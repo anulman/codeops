@@ -21,7 +21,7 @@ const VERSION = {
   researchMutationBatch: "codeops.research-mutation-batch/v2",
   readinessGate: "codeops.readiness-gate/v1",
   projectContext: "codeops.project-context/v1",
-  codingRequest: "codeops.coding-request/v1",
+  codingRequest: "codeops.coding-request/v2",
   agentJobDispatch: "codeops.agent-job-dispatch/v1",
   agentJobDispatchResult: "codeops.agent-job-dispatch-result/v1",
   workflowTransitionNotice: "codeops.workflow-transition-notice/v1",
@@ -1039,6 +1039,7 @@ export const codingRequestSchema = z
     requestedBy: uuid,
     controlPlaneSha: gitSha,
     planeRevisionDigest: sha256Digest,
+    ticketSnapshot: ticketSnapshotSchema,
     researchDisposition: z
       .object({
         mode: z.enum(["required", "optional", "skipped"]),
@@ -1070,6 +1071,13 @@ export const codingRequestSchema = z
       },
       context,
     );
+    if (request.ticketSnapshot.workItemId !== request.workItem.workItemId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ticketSnapshot", "workItemId"],
+        message: "ticket snapshot does not match the coding request",
+      });
+    }
     if (request.researchDisposition.mode === "required" && !request.researchPacket) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

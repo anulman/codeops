@@ -25,7 +25,7 @@ const request = {
 };
 
 const codingRequest = {
-  version: "codeops.coding-request/v1",
+  version: "codeops.coding-request/v2",
   requestId: "coding-123",
   eventId: "ready-event:123",
   workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",

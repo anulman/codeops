@@ -24,6 +24,11 @@ providers.
   SHA, and a path-sorted SHA-256 manifest plus trusted content for the bounded
   context pack. Missing documents, digest drift, or a request/context identity
   mismatch fail before model execution.
+- Every `codeops.coding-request/v2` also carries the immutable admitted ticket snapshot:
+  the current work item, bounded non-CodeOps comments, relations, and the
+  bounded same-project task index. Referenced decision tickets therefore cross
+  the Agent Job boundary as digest-bound input instead of being inferred from
+  an unavailable Plane board.
 
 ## QA Contract Researcher
 

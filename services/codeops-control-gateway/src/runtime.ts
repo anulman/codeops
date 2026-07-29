@@ -63,8 +63,12 @@ function podName(pod: Record<string, unknown>): string | null {
 export function createAgentJobRunner(input: {
   kubernetes: KubernetesClient;
   config: RuntimeConfig;
-}): (request: AgentJobDispatchRequest) => Promise<AgentJobDispatchResult> {
-  return async (request) => {
+}): (
+  request: AgentJobDispatchRequest,
+  signal?: AbortSignal,
+) => Promise<AgentJobDispatchResult> {
+  return async (request, signal) => {
+    signal?.throwIfAborted();
     const identity = createRunIdentity(request);
     const resources = buildRunResources(
       {
@@ -85,11 +89,17 @@ export function createAgentJobRunner(input: {
       ...identity,
     });
     const cleanup = async (): Promise<void> => {
+      let firstError: unknown;
       for (const resource of [...resources].reverse()) {
-        await input.kubernetes.delete(
-          resource as unknown as Parameters<KubernetesClient["delete"]>[0],
-        );
+        try {
+          await input.kubernetes.delete(
+            resource as unknown as Parameters<KubernetesClient["delete"]>[0],
+          );
+        } catch (error) {
+          firstError ??= error;
+        }
       }
+      if (firstError !== undefined) throw firstError;
     };
     const retained = await readRetainedResult({
       rootDirectory: input.config.evidenceRoot,
@@ -99,28 +109,32 @@ export function createAgentJobRunner(input: {
       await cleanup();
       return retained;
     }
-    for (const resource of resources) {
-      await input.kubernetes.ensure(
-        resource as unknown as Parameters<KubernetesClient["ensure"]>[0],
-        identity.requestDigest,
-      );
-    }
-
-    const jobName = `codeops-agent-${identity.runId}`;
-    const deadline = Date.now() + (input.config.timeoutMs ?? 65 * 60 * 1_000);
-    let terminal: "succeeded" | "failed" | null = null;
-    while (Date.now() < deadline) {
-      const state = jobState(await input.kubernetes.getJob(jobName));
-      if (state !== "running") {
-        terminal = state;
-        break;
-      }
-      await delay(input.config.pollIntervalMs ?? 2_000);
-    }
-    if (!terminal) throw new Error("Agent Job reconciliation timed out");
-
     let logs = "";
     try {
+      for (const resource of resources) {
+        signal?.throwIfAborted();
+        await input.kubernetes.ensure(
+          resource as unknown as Parameters<KubernetesClient["ensure"]>[0],
+          identity.requestDigest,
+        );
+      }
+
+      const jobName = `codeops-agent-${identity.runId}`;
+      const deadline = Date.now() + (input.config.timeoutMs ?? 65 * 60 * 1_000);
+      let terminal: "succeeded" | "failed" | null = null;
+      while (Date.now() < deadline) {
+        signal?.throwIfAborted();
+        const state = jobState(await input.kubernetes.getJob(jobName));
+        if (state !== "running") {
+          terminal = state;
+          break;
+        }
+        await delay(input.config.pollIntervalMs ?? 2_000, undefined, {
+          signal,
+        });
+      }
+      if (!terminal) throw new Error("Agent Job reconciliation timed out");
+
       const pods = await input.kubernetes.listRunPods(identity.runId);
       const names = pods
         .map(podName)
@@ -149,12 +163,14 @@ export function createAgentJobRunner(input: {
         retained: checkpoint,
       });
     } catch (error) {
-      await retainFailure({
-        rootDirectory: input.config.evidenceRoot,
-        ...identity,
-        error,
-        logs,
-      });
+      if (!signal?.aborted) {
+        await retainFailure({
+          rootDirectory: input.config.evidenceRoot,
+          ...identity,
+          error,
+          logs,
+        });
+      }
       throw error;
     } finally {
       await cleanup();

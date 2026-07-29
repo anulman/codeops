@@ -28,9 +28,10 @@ This service owns the privileged Plane integration boundary. It implements:
   event identity for durable replay handling;
 - compile the admitted Ready revision into a strict coding request and
   work-item contract with deterministic workflow/run/branch identities,
-  bounded acceptance criteria, the same project-context digest, an explicit
-  `required | optional | skipped` research disposition, any compatible
-  immutable research packet, and no inline credentials;
+  bounded acceptance criteria, the same project-context digest, the immutable
+  current ticket plus comments/relations/bounded same-project task index, an
+  explicit `required | optional | skipped` research disposition, any
+  compatible immutable research packet, and no inline credentials;
 - persist event and request deduplication on a private durable volume with
   payload-digest collision checks, bounded processing leases, crash recovery,
   attempt counts, and explicit terminal outcomes;

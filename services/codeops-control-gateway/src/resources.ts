@@ -46,6 +46,8 @@ export function buildRunResources(
     request.role === "coding-agent"
       ? request.codingRequest.researchPacket
       : undefined;
+  const codingRequest =
+    request.role === "coding-agent" ? request.codingRequest : undefined;
   const researchDispatch =
     request.role === "qa-contract-researcher" ? request : undefined;
   const commonSecurity = {
@@ -80,6 +82,13 @@ export function buildRunResources(
         "project-context": Buffer.from(
           JSON.stringify(projectContext),
         ).toString("base64"),
+        ...(codingRequest === undefined
+          ? {}
+          : {
+              "coding-request": Buffer.from(
+                JSON.stringify(codingRequest),
+              ).toString("base64"),
+            }),
         ...(researchPacket === undefined
           ? {}
           : {
@@ -171,6 +180,14 @@ export function buildRunResources(
                     name: "CODEOPS_PROJECT_CONTEXT_FILE",
                     value: "/input/project-context.json",
                   },
+                  ...(codingRequest === undefined
+                    ? []
+                    : [
+                        {
+                          name: "CODEOPS_CODING_REQUEST_FILE",
+                          value: "/input/coding-request.json",
+                        },
+                      ]),
                   ...(researchPacket === undefined
                     ? []
                     : [
@@ -335,6 +352,14 @@ export function buildRunResources(
                       key: "project-context",
                       path: "project-context.json",
                     },
+                    ...(codingRequest === undefined
+                      ? []
+                      : [
+                          {
+                            key: "coding-request",
+                            path: "coding-request.json",
+                          },
+                        ]),
                     ...(researchPacket === undefined
                       ? []
                       : [

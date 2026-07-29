@@ -141,6 +141,34 @@ await writeFile(projectContextPath, `${JSON.stringify(projectContext)}\n`, {
 await chmod(projectContextPath, 0o400);
 
 if (
+  process.env.CODEOPS_CODING_REQUEST_B64 ||
+  process.env.CODEOPS_CODING_REQUEST_FILE
+) {
+  const codingRequest = await loadJson(
+    "CODEOPS_CODING_REQUEST_B64",
+    "CODEOPS_CODING_REQUEST_FILE",
+    "/input/coding-request.json",
+  );
+  if (
+    codingRequest?.version !== "codeops.coding-request/v2" ||
+    codingRequest.workItem?.baseSha !== projectContext.baseSha ||
+    codingRequest.controlPlaneSha !== projectContext.controlPlaneSha ||
+    codingRequest.projectId !== projectContext.project?.projectId ||
+    codingRequest.projectContext?.digest !== projectContext.digest ||
+    codingRequest.ticketSnapshot?.workItemId !==
+      codingRequest.workItem?.workItemId
+  ) {
+    throw new Error("coding request does not match the project context");
+  }
+  const codingRequestPath = path.join(contextDirectory, "coding-request.json");
+  await writeFile(codingRequestPath, `${JSON.stringify(codingRequest)}\n`, {
+    mode: 0o400,
+    flag: "wx",
+  });
+  await chmod(codingRequestPath, 0o400);
+}
+
+if (
   process.env.CODEOPS_RESEARCH_PACKET_B64 ||
   process.env.CODEOPS_RESEARCH_PACKET_FILE
 ) {

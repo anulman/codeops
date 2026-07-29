@@ -295,7 +295,7 @@ function signedReadyInput(overrides = {}) {
     projectContextDocuments,
     loadResearchPacket: async () => researchPacket(),
     loadSource: async () => ({
-      project: source.project,
+      ...source,
       workItem: {
         ...source.workItem,
         state: readyStateId,
@@ -387,6 +387,16 @@ test("admits only a signed allowlisted human transition into configured Ready", 
     admission.request.workItem.runId,
     admission.request.workItem.workflowId,
   );
+  assert.equal(
+    admission.request.ticketSnapshot.projectTasks[0].workItemId,
+    source.projectWorkItems[0].id,
+  );
+  assert.equal(
+    admission.request.ticketSnapshot.projectTasks[0].descriptionHtml,
+    "<p>Existing task.</p>",
+  );
+  assert.equal(admission.request.ticketSnapshot.relevantComments.length, 1);
+  assert.equal(admission.request.ticketSnapshot.relations.length, 1);
   assert.match(admission.eventId, /^ready-event:[0-9a-f]{64}$/);
   assert.match(admission.planeRevisionDigest, /^sha256:[0-9a-f]{64}$/);
 });

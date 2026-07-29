@@ -71,12 +71,19 @@ async function run(input) {
     input.researchPacket === undefined
       ? undefined
       : path.join(inputDirectory, "research-packet.json");
+  const codingRequestFile =
+    input.codingRequest === undefined
+      ? undefined
+      : path.join(inputDirectory, "coding-request.json");
   const researchDispatchFile =
     input.researchDispatch === undefined
       ? undefined
       : path.join(inputDirectory, "research-dispatch.json");
   if (researchPacketFile) {
     await writeFile(researchPacketFile, JSON.stringify(input.researchPacket));
+  }
+  if (codingRequestFile) {
+    await writeFile(codingRequestFile, JSON.stringify(input.codingRequest));
   }
   if (researchDispatchFile) {
     await writeFile(
@@ -93,6 +100,11 @@ async function run(input) {
       CODEOPS_BASE_SHA: "a".repeat(40),
       CODEOPS_CONTROL_PLANE_SHA: "b".repeat(40),
       CODEOPS_PROJECT_CONTEXT_FILE: projectContextFile,
+      ...(input.codingRequest === undefined
+        ? {}
+        : {
+            CODEOPS_CODING_REQUEST_FILE: codingRequestFile,
+          }),
       ...(input.researchPacket === undefined
         ? {}
         : {
@@ -141,6 +153,39 @@ test("materializes trusted context documents and rejects inline digest drift", a
         "utf8",
       ),
       bytes,
+    );
+    const codingOutput = path.join(root, "coding");
+    const codingWorkItemId = "33333333-3333-4333-8333-333333333333";
+    const codingRequest = {
+      version: "codeops.coding-request/v2",
+      controlPlaneSha: context.controlPlaneSha,
+      projectId: context.project.projectId,
+      projectContext: context,
+      ticketSnapshot: {
+        workItemId: codingWorkItemId,
+        projectTasks: [
+          {
+            workItemId: "44444444-4444-4444-8444-444444444444",
+            descriptionHtml: "<p>Approved landing-page routing table.</p>",
+          },
+        ],
+      },
+      workItem: {
+        workItemId: codingWorkItemId,
+        baseSha: context.baseSha,
+      },
+    };
+    await run({
+      workspace,
+      contextDirectory: codingOutput,
+      projectContext: context,
+      codingRequest,
+    });
+    assert.deepEqual(
+      JSON.parse(
+        await readFile(path.join(codingOutput, "coding-request.json"), "utf8"),
+      ),
+      codingRequest,
     );
     const dispatchOutput = path.join(root, "dispatch");
     const workItemId = "33333333-3333-4333-8333-333333333333";
