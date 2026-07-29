@@ -14,7 +14,11 @@ import {
   recordTransition,
 } from "../dist/activities.js";
 import { transition } from "../dist/model.js";
-import { adversarialReviewMatchesCheckpoint } from "../dist/review.js";
+import {
+  adversarialReviewMatchesCandidate,
+  candidateCheckpointFromDispatch,
+  criticLoopAction,
+} from "../dist/review.js";
 
 const projectContext = {
   version: "codeops.project-context/v1",
@@ -159,7 +163,7 @@ test("research evidence can proceed directly to projection validation", () => {
   assert.equal(validating.state, "validating");
 });
 
-test("adversarial review must bind the exact retained coding checkpoint", () => {
+test("autonomous critic loop binds exact candidate, test evidence, and bounded actions", () => {
   const checkpoint = {
     version: "codeops.agent-job-dispatch-result/v1",
     role: "coding-agent",
@@ -167,26 +171,44 @@ test("adversarial review must bind the exact retained coding checkpoint", () => 
     checkpointUri: "artifact:///agent-runs/agent-review-123/checkpoint.json",
     checkpointDigest: `sha256:${"d".repeat(64)}`,
     checkpointSizeBytes: 4_096,
+    patchUri: "artifact:///agent-runs/agent-review-123/changes.patch",
+    patchDigest: `sha256:${"e".repeat(64)}`,
+    patchSizeBytes: 2_048,
+    codingOutcome: {
+      version: "codeops.coding-outcome/v1",
+      summary: "Implemented the bounded ticket.",
+      tests: [{
+        command: "node --test test/auth.test.mjs",
+        status: "passed",
+        summary: "Focused auth contract is green.",
+      }],
+    },
   };
+  const candidate = candidateCheckpointFromDispatch(checkpoint, 1);
   const review = {
     version: "codeops.adversarial-review/v1",
     workflowId: "coding-123",
     workItemId: "22222222-2222-4222-8222-222222222222",
     baseSha: "a".repeat(40),
-    reviewerId: "independent-reviewer",
+    reviewerId: "critic-agent",
     reviewedAt: "2026-07-29T19:00:00.000Z",
-    checkpoint: {
-      uri: checkpoint.checkpointUri,
-      digest: checkpoint.checkpointDigest,
-      sizeBytes: checkpoint.checkpointSizeBytes,
-    },
+    candidate,
     lenses: {
+      ticketCompletion: { status: "clear", summary: "Ticket complete." },
       unusedCode: { status: "clear", summary: "No unused code." },
-      maintainability: { status: "clear", summary: "No worthwhile simplification." },
+      simplicityMaintainability: { status: "clear", summary: "No worthwhile simplification." },
+      existingSystems: { status: "clear", summary: "Existing systems reused." },
+      testEffectiveness: { status: "clear", summary: "Tests are effective." },
       userFacingBehavior: { status: "clear", summary: "No user regression." },
-      security: { status: "clear", summary: "No security regression." },
+      securityPrivacy: { status: "clear", summary: "No security regression." },
     },
     findings: [],
+    verificationTests: [{
+      command: "node --test test/auth.test.mjs",
+      status: "passed",
+      summary: "Critic independently reproduced the focused pass.",
+    }],
+    fastFollowRecommendations: [],
     verdict: "pass",
     summary: "Adversarial review passed.",
   };
@@ -195,23 +217,37 @@ test("adversarial review must bind the exact retained coding checkpoint", () => 
     workflowId: review.workflowId,
     workItemId: review.workItemId,
     baseSha: review.baseSha,
-    checkpoint,
+    candidate,
   };
-  assert.equal(adversarialReviewMatchesCheckpoint(identity), true);
-  assert.equal(adversarialReviewMatchesCheckpoint({
+  assert.equal(adversarialReviewMatchesCandidate(identity), true);
+  assert.equal(criticLoopAction({ review, round: 1 }), "accept");
+  assert.equal(adversarialReviewMatchesCandidate({
     ...identity,
-    checkpoint: {
-      ...checkpoint,
-      checkpointDigest: `sha256:${"e".repeat(64)}`,
+    candidate: {
+      ...candidate,
+      patch: {
+        ...candidate.patch,
+        digest: `sha256:${"f".repeat(64)}`,
+      },
     },
   }), false);
-  assert.equal(adversarialReviewMatchesCheckpoint({
-    ...identity,
-    checkpoint: {
+  const rejected = { ...review, verdict: "revision-required" };
+  assert.equal(criticLoopAction({ review: rejected, round: 1 }), "revise");
+  assert.equal(criticLoopAction({ review: rejected, round: 4 }), "exhausted");
+  assert.throws(
+    () => candidateCheckpointFromDispatch({
       ...checkpoint,
       role: "qa-contract-researcher",
-    },
-  }), false);
+    }, 1),
+    /coding Agent Job/,
+  );
+  assert.throws(
+    () => candidateCheckpointFromDispatch({
+      ...checkpoint,
+      codingOutcome: undefined,
+    }, 1),
+    /passing test evidence/,
+  );
 });
 
 test("terminal states and skipped gates fail closed", () => {
@@ -376,6 +412,9 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
           "artifact:///agent-runs/research-test/checkpoint.json",
         checkpointDigest: `sha256:${"a".repeat(64)}`,
         checkpointSizeBytes: 123,
+        patchUri: "artifact:///agent-runs/research-test/changes.patch",
+        patchDigest: `sha256:${"b".repeat(64)}`,
+        patchSizeBytes: 0,
         researchResult: {
           kind: "persona",
           report: {

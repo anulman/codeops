@@ -74,26 +74,31 @@ public Temporal ingress. Both workloads use the CodeOps-only node selector,
 explicit resources, non-root containers, and service accounts with token
 mounting disabled.
 
-The orchestrator implements the authoritative Trial 0 lifecycle through
-Ready-authorized planning and execution dispatch, a structured external
-adversarial review bound to the exact retained coding checkpoint, and then a
-separate externally reported independent acceptance verdict. The review must
-cover unused code, simplification/maintainability tradeoffs, user-facing
-regressions, and concrete security vulnerabilities. Unresolved findings stop
-the workflow before acceptance; malformed or checkpoint-drifted review signals
-are ignored. The trusted supervisor writes the review and acceptance verdicts;
-the candidate never receives either authority or deployment authority.
-The review branch is protected by Temporal patch ID
-`coding-adversarial-review-v1`: old histories keep their original
-evidence-to-acceptance path, while new executions must enter review.
+The orchestrator implements the authoritative Trial 0 lifecycle as
+Ready-authorized coding, structured passing-test evidence, and an automatically
+dispatched isolated critic before the separate externally reported independent
+human acceptance verdict. The critic evaluates narrow ticket completion in the
+broader project/product context across seven lenses: ticket completion, unused
+code, simplicity/maintainability, existing-system reuse, test effectiveness,
+user-facing behavior, and security/privacy. A rejected candidate loops through
+a fresh coding Job with the exact cumulative patch and critic findings, then
+tests/checkpoint/critic again. A pass reaches human review; four rejected coding
+rounds fail closed. The branch is protected by Temporal patch ID
+`coding-autonomous-critic-v1`: old histories keep their original
+evidence-to-acceptance path, while new coding executions record the marker
+before their first dispatch.
 
 The tokenless orchestrator authenticates to a separately reviewed
 `codeops-control-gateway` through the file-mounted
 `codeops-agent-dispatch-auth` Secret. The gateway—not the orchestrator or
 candidate Agent Job—holds the namespace-scoped Kubernetes identity. It accepts
-only the fixed Trial 0 research dispatch shape, creates the bounded tokenless
+only the fixed Trial 0 Agent dispatch shapes, creates the bounded tokenless
 Job, reconciles its terminal pod, validates the digest-bound checkpoint record,
-and persists that checkpoint before acknowledging the Temporal activity.
+and persists that checkpoint before acknowledging the Temporal activity. For
+critic and revision Jobs it reads only the exact prior `changes.patch` from
+the evidence PVC, mounts that file read-only by `subPath`, verifies its
+digest/size and clean application to the same base, and prevents runtime
+containers from mounting the evidence claim directly.
 Research comments are already human approval for the bounded read-only run;
 the trusted human Ready transition authorizes routine coding planning and
 execution without a second unsurfaced approval signal.

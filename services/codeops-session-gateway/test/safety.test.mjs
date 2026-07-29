@@ -120,6 +120,7 @@ test("validates run and immutable source identities", () => {
     assert.throws(() => requireLowerHex("base", sha, 40));
   }
   assert.equal(requireAgentRole("coding-agent"), "coding-agent");
+  assert.equal(requireAgentRole("critic-agent"), "critic-agent");
   assert.equal(
     requireAgentRole("qa-contract-researcher"),
     "qa-contract-researcher",

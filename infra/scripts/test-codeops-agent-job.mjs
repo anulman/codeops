@@ -102,6 +102,18 @@ test("mounts the source read-only for the QA Contract Researcher", () => {
   );
 });
 
+test("rejects critics without the control gateway candidate-evidence mount", () => {
+  assert.throws(
+    () =>
+      renderAgentJobManifest(template, {
+        ...input,
+        runId: "critic-qanbrdauth-2",
+        role: "critic-agent",
+      }),
+    /critics require the control gateway/,
+  );
+});
+
 test("uses an exact source SHA and only immutable images", () => {
   const rendered = renderAgentJobManifest(template, input);
   assert.equal(rendered.includes(input.baseSha), true);

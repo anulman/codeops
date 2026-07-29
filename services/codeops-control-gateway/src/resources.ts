@@ -1,4 +1,7 @@
-import type { AgentJobDispatchRequest } from "@renoconcierge/codeops-contracts";
+import type {
+  AgentJobDispatchRequest,
+  CandidateCheckpoint,
+} from "@renoconcierge/codeops-contracts";
 import { buildAgentPrompt } from "./core.js";
 
 interface ResourceConfig {
@@ -12,6 +15,7 @@ interface ResourceConfig {
   readonly modelAuth:
     | { readonly mode: "api-key"; readonly apiKey: string }
     | { readonly mode: "chatgpt"; readonly claimName: string };
+  readonly candidate?: CandidateCheckpoint;
 }
 
 function labels(input: ResourceConfig, request: AgentJobDispatchRequest) {
@@ -27,6 +31,19 @@ export function buildRunResources(
   input: ResourceConfig,
   request: AgentJobDispatchRequest,
 ): readonly Record<string, unknown>[] {
+  const requestedCandidate =
+    request.role === "critic-agent"
+      ? request.candidate
+      : request.role === "coding-agent"
+        ? request.revision?.candidate
+        : undefined;
+  if (
+    JSON.stringify(input.candidate) !== JSON.stringify(requestedCandidate)
+  ) {
+    throw new Error(
+      "resource candidate mount must exactly match the dispatch contract",
+    );
+  }
   const metadata = {
     namespace: input.namespace,
     labels: labels(input, request),
@@ -39,15 +56,17 @@ export function buildRunResources(
   const prompt = buildAgentPrompt(request);
   const workspaceReadOnly = request.role === "qa-contract-researcher";
   const projectContext =
-    request.role === "coding-agent"
+    request.role === "coding-agent" || request.role === "critic-agent"
       ? request.codingRequest.projectContext
       : request.researchRequest.projectContext;
   const researchPacket =
-    request.role === "coding-agent"
+    request.role === "coding-agent" || request.role === "critic-agent"
       ? request.codingRequest.researchPacket
       : undefined;
   const codingRequest =
-    request.role === "coding-agent" ? request.codingRequest : undefined;
+    request.role === "coding-agent" || request.role === "critic-agent"
+      ? request.codingRequest
+      : undefined;
   const researchDispatch =
     request.role === "qa-contract-researcher" ? request : undefined;
   const commonSecurity = {
@@ -66,6 +85,18 @@ export function buildRunResources(
     { name: "CODEOPS_PROJECT_CONTEXT_DIGEST", value: projectContext.digest },
     { name: "CODEOPS_MODEL", value: "gpt-5.6-sol" },
     { name: "CODEOPS_REASONING_EFFORT", value: "high" },
+    ...(input.candidate
+      ? [
+          {
+            name: "CODEOPS_CANDIDATE_PATCH_DIGEST",
+            value: input.candidate.patch.digest,
+          },
+          {
+            name: "CODEOPS_CANDIDATE_PATCH_SIZE",
+            value: String(input.candidate.patch.sizeBytes),
+          },
+        ]
+      : []),
   ];
   return [
     {
@@ -159,6 +190,15 @@ export function buildRunResources(
                     "git -c safe.directory=/workspace -C /workspace checkout --detach FETCH_HEAD",
                     "git -c safe.directory=/workspace -C /workspace remote remove origin",
                     "test \"$(git -c safe.directory=/workspace -C /workspace rev-parse HEAD)\" = \"$CODEOPS_BASE_SHA\"",
+                    ...(input.candidate
+                      ? [
+                          "test -f /candidate/changes.patch",
+                          "test \"$(wc -c < /candidate/changes.patch | tr -d ' ')\" = \"$CODEOPS_CANDIDATE_PATCH_SIZE\"",
+                          "test \"sha256:$(sha256sum /candidate/changes.patch | cut -d' ' -f1)\" = \"$CODEOPS_CANDIDATE_PATCH_DIGEST\"",
+                          "git -c safe.directory=/workspace -C /workspace apply --check /candidate/changes.patch",
+                          "git -c safe.directory=/workspace -C /workspace apply /candidate/changes.patch",
+                        ]
+                      : []),
                     "node /opt/codeops-agent/prepare-project-context.mjs",
                   ].join("\n"),
                 ],
@@ -218,6 +258,16 @@ export function buildRunResources(
                     mountPath: "/input",
                     readOnly: true,
                   },
+                  ...(input.candidate
+                    ? [
+                        {
+                          name: "candidate",
+                          mountPath: "/candidate/changes.patch",
+                          subPath: `agent-runs/${input.candidate.runId}/changes.patch`,
+                          readOnly: true,
+                        },
+                      ]
+                    : []),
                 ],
               },
             ],
@@ -380,6 +430,17 @@ export function buildRunResources(
                 },
               },
               { name: "temp", emptyDir: { sizeLimit: "256Mi" } },
+              ...(input.candidate
+                ? [
+                    {
+                      name: "candidate",
+                      persistentVolumeClaim: {
+                        claimName: "codeops-control-gateway-evidence",
+                        readOnly: true,
+                      },
+                    },
+                  ]
+                : []),
               ...(input.modelAuth.mode === "chatgpt"
                 ? [
                     {
@@ -469,8 +530,10 @@ export function assertRunResources(
   const claimReferences = [
     ...serialized.matchAll(/"persistentVolumeClaim"/g),
   ].length;
-  if (claimReferences > 1) {
-    throw new Error("Agent Job may mount at most one existing auth claim");
+  if (claimReferences > 2) {
+    throw new Error(
+      "Agent Job may mount only the exact auth and candidate-evidence claims",
+    );
   }
   const job = resources.find((resource) => resource.kind === "Job") as {
     spec: { template: { spec: Record<string, unknown> } };
@@ -490,16 +553,31 @@ export function assertRunResources(
       env?: { name?: string; value?: string }[];
       volumeMounts?: { name?: string; mountPath?: string }[];
     }[];
+    initContainers?: {
+      name?: string;
+      volumeMounts?: {
+        name?: string;
+        mountPath?: string;
+        subPath?: string;
+        readOnly?: boolean;
+      }[];
+    }[];
     volumes?: {
       name?: string;
-      persistentVolumeClaim?: { claimName?: string };
+      persistentVolumeClaim?: {
+        claimName?: string;
+        readOnly?: boolean;
+      };
     }[];
   };
   const agent = pod.containers?.find(
     (container) => container.name === "coding-agent",
   );
   const authVolume = pod.volumes?.find((volume) => volume.name === "codex-auth");
-  if (claimReferences === 1) {
+  const candidateVolume = pod.volumes?.find(
+    (volume) => volume.name === "candidate",
+  );
+  if (authVolume) {
     if (
       authVolume?.persistentVolumeClaim?.claimName !== "codeops-codex-auth" ||
       agent?.env?.find((entry) => entry.name === "CODEX_HOME")?.value !==
@@ -515,5 +593,36 @@ export function assertRunResources(
     ) {
       throw new Error("ChatGPT auth claim boundary drifted");
     }
+  }
+  if (candidateVolume) {
+    const builder = pod.initContainers?.find(
+      (container) => container.name === "workspace-builder",
+    );
+    const mount = builder?.volumeMounts?.find(
+      (candidate) => candidate.name === "candidate",
+    );
+    if (
+      candidateVolume.persistentVolumeClaim?.claimName !==
+        "codeops-control-gateway-evidence" ||
+      candidateVolume.persistentVolumeClaim?.readOnly !== true ||
+      mount?.mountPath !== "/candidate/changes.patch" ||
+      mount.readOnly !== true ||
+      !/^agent-runs\/[a-z0-9-]+\/changes\.patch$/.test(
+        mount.subPath ?? "",
+      ) ||
+      pod.containers?.some((container) =>
+        container.volumeMounts?.some(
+          (candidate) => candidate.name === "candidate",
+        ),
+      )
+    ) {
+      throw new Error("candidate evidence claim boundary drifted");
+    }
+  }
+  if (
+    claimReferences !==
+    Number(authVolume !== undefined) + Number(candidateVolume !== undefined)
+  ) {
+    throw new Error("unexpected Agent Job persistent claim");
   }
 }

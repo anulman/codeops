@@ -19,21 +19,80 @@ const repositoryPath = z
   .min(1)
   .max(500)
   .regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\/\/)[A-Za-z0-9.$_/-]+$/);
-const agentCheckpointUri = z
-  .string()
-  .regex(/^artifact:\/\/\/agent-runs\/[a-z0-9-]+\/checkpoint\.json$/);
+const agentArtifactUri = (fileName: "checkpoint.json" | "changes.patch") =>
+  z
+    .string()
+    .regex(
+      new RegExp(
+        `^artifact:\\/\\/\\/agent-runs\\/[a-z0-9-]+\\/${fileName.replace(".", "\\.")}$`,
+      ),
+    );
+
+const passingTestSchema = z
+  .object({
+    command: safeText(500),
+    status: z.literal("passed"),
+    summary: safeText(1_000),
+  })
+  .strict();
+
+export const codingOutcomeSchema = z
+  .object({
+    version: z.literal("codeops.coding-outcome/v1"),
+    summary: safeText(2_000),
+    tests: z.array(passingTestSchema).min(1).max(20),
+  })
+  .strict();
+
+export const candidateCheckpointSchema = z
+  .object({
+    round: z.number().int().min(1).max(4),
+    runId: workflowRunIdentifier,
+    checkpoint: z
+      .object({
+        uri: agentArtifactUri("checkpoint.json"),
+        digest: sha256Digest,
+        sizeBytes: z.number().int().positive().max(25_000_000),
+      })
+      .strict(),
+    patch: z
+      .object({
+        uri: agentArtifactUri("changes.patch"),
+        digest: sha256Digest,
+        sizeBytes: z.number().int().nonnegative().max(2_000_000),
+      })
+      .strict(),
+    codingOutcome: codingOutcomeSchema,
+  })
+  .strict()
+  .superRefine((candidate, context) => {
+    const expectedPrefix = `artifact:///agent-runs/${candidate.runId}/`;
+    if (
+      candidate.checkpoint.uri !== `${expectedPrefix}checkpoint.json` ||
+      candidate.patch.uri !== `${expectedPrefix}changes.patch`
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["runId"],
+        message: "candidate artifact URIs must match its exact coding run",
+      });
+    }
+  });
 
 const adversarialReviewCategorySchema = z.enum([
+  "ticket-completion",
   "unused-code",
-  "maintainability",
+  "simplicity-maintainability",
+  "existing-systems",
+  "test-effectiveness",
   "user-facing-behavior",
-  "security",
+  "security-privacy",
 ]);
 
 const adversarialReviewLensSchema = z
   .object({
     status: z.enum(["clear", "finding"]),
-    summary: safeText(2_000),
+    summary: safeText(1_500),
   })
   .strict();
 
@@ -45,11 +104,11 @@ const adversarialReviewFindingSchema = z
     path: repositoryPath,
     lineStart: z.number().int().positive().max(10_000_000).optional(),
     lineEnd: z.number().int().positive().max(10_000_000).optional(),
-    problem: safeText(4_000),
-    impact: safeText(4_000),
-    recommendation: safeText(4_000),
+    problem: safeText(2_000),
+    impact: safeText(2_000),
+    recommendation: safeText(2_000),
     resolution: z.enum(["must-fix", "accepted-tradeoff", "not-actionable"]),
-    justification: safeText(2_000).optional(),
+    justification: safeText(1_500).optional(),
   })
   .strict()
   .superRefine((finding, context) => {
@@ -84,7 +143,43 @@ const adversarialReviewFindingSchema = z
         message: "critical and high review findings cannot be accepted or dismissed",
       });
     }
+    if (
+      ["ticket-completion", "security-privacy"].includes(finding.category) &&
+      finding.resolution !== "must-fix"
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["resolution"],
+        message:
+          "ticket-completion and security/privacy findings must be fixed in the candidate",
+      });
+    }
   });
+
+const fastFollowRecommendationSchema = z
+  .object({
+    id: identifier,
+    area: z.enum([
+      "product",
+      "web",
+      "database",
+      "security",
+      "privacy",
+      "infrastructure",
+      "testing",
+      "other",
+    ]),
+    priority: z.enum(["high", "medium", "low"]),
+    reason: z.enum([
+      "out-of-scope",
+      "follow-on-improvement",
+      "operational-hardening",
+    ]),
+    title: safeText(300),
+    rationale: safeText(2_000),
+    planeMutationAuthorized: z.literal(false),
+  })
+  .strict();
 
 export const adversarialReviewSchema = z
   .object({
@@ -92,44 +187,55 @@ export const adversarialReviewSchema = z
     workflowId: workflowRunIdentifier,
     workItemId: identifier,
     baseSha: gitSha,
-    reviewerId: identifier,
+    reviewerId: z.literal("critic-agent"),
     reviewedAt: isoDateTime,
-    checkpoint: z
-      .object({
-        uri: agentCheckpointUri,
-        digest: sha256Digest,
-        sizeBytes: z.number().int().positive().max(25_000_000),
-      })
-      .strict(),
+    candidate: candidateCheckpointSchema,
     lenses: z
       .object({
+        ticketCompletion: adversarialReviewLensSchema,
         unusedCode: adversarialReviewLensSchema,
-        maintainability: adversarialReviewLensSchema,
+        simplicityMaintainability: adversarialReviewLensSchema,
+        existingSystems: adversarialReviewLensSchema,
+        testEffectiveness: adversarialReviewLensSchema,
         userFacingBehavior: adversarialReviewLensSchema,
-        security: adversarialReviewLensSchema,
+        securityPrivacy: adversarialReviewLensSchema,
       })
       .strict(),
-    findings: z.array(adversarialReviewFindingSchema).max(50),
+    findings: z.array(adversarialReviewFindingSchema).max(20),
+    verificationTests: z.array(passingTestSchema).min(1).max(20),
+    fastFollowRecommendations: z
+      .array(fastFollowRecommendationSchema)
+      .max(10),
     verdict: z.enum(["pass", "revision-required"]),
     summary: safeText(2_000),
   })
   .strict()
   .superRefine((review, context) => {
-    const ids = review.findings.map((finding) => finding.id);
+    const ids = [
+      ...review.findings.map((finding) => finding.id),
+      ...review.fastFollowRecommendations.map(
+        (recommendation) => recommendation.id,
+      ),
+    ];
     if (new Set(ids).size !== ids.length) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["findings"],
-        message: "adversarial review finding IDs must be unique",
+        message: "review finding and fast-follow IDs must be unique",
       });
     }
     const lensCategories = {
+      ticketCompletion: "ticket-completion",
       unusedCode: "unused-code",
-      maintainability: "maintainability",
+      simplicityMaintainability: "simplicity-maintainability",
+      existingSystems: "existing-systems",
+      testEffectiveness: "test-effectiveness",
       userFacingBehavior: "user-facing-behavior",
-      security: "security",
+      securityPrivacy: "security-privacy",
     } as const;
-    for (const lens of Object.keys(lensCategories) as (keyof typeof lensCategories)[]) {
+    for (const lens of Object.keys(
+      lensCategories,
+    ) as (keyof typeof lensCategories)[]) {
       const category = lensCategories[lens];
       const hasFinding = review.findings.some(
         (finding) => finding.category === category,
@@ -154,4 +260,6 @@ export const adversarialReviewSchema = z
     }
   });
 
+export type CandidateCheckpoint = z.infer<typeof candidateCheckpointSchema>;
+export type CodingOutcome = z.infer<typeof codingOutcomeSchema>;
 export type AdversarialReview = z.infer<typeof adversarialReviewSchema>;

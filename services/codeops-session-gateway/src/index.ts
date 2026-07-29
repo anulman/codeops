@@ -30,7 +30,10 @@ interface SafeEvent {
 interface Checkpoint {
   readonly schemaVersion: 3;
   readonly runId: string;
-  readonly agentRole: "coding-agent" | "qa-contract-researcher";
+  readonly agentRole:
+    | "coding-agent"
+    | "critic-agent"
+    | "qa-contract-researcher";
   readonly baseSha: string;
   readonly projectContextDigest: string;
   readonly model: "gpt-5.6-sol";
@@ -320,6 +323,24 @@ export async function runGateway(): Promise<void> {
     patch = await capturePatch(workspace);
     if (agentRole === "qa-contract-researcher" && patch.length !== 0) {
       failure ??= "QA Contract Researcher must leave the source workspace unchanged";
+    }
+    if (agentRole === "critic-agent") {
+      const expectedDigest = process.env.CODEOPS_CANDIDATE_PATCH_DIGEST;
+      const expectedSize = Number(process.env.CODEOPS_CANDIDATE_PATCH_SIZE);
+      const actualDigest = `sha256:${createHash("sha256")
+        .update(patch)
+        .digest("hex")}`;
+      if (
+        !expectedDigest ||
+        !/^sha256:[0-9a-f]{64}$/.test(expectedDigest) ||
+        !Number.isSafeInteger(expectedSize) ||
+        expectedSize < 0 ||
+        actualDigest !== expectedDigest ||
+        patch.length !== expectedSize
+      ) {
+        failure ??=
+          "Critic Agent must leave the exact cumulative candidate patch unchanged";
+      }
     }
   } catch (error) {
     failure ??= boundedText(

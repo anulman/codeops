@@ -77,6 +77,9 @@ function personaResult(persona, suffix) {
     checkpointUri: `artifact:///agent-runs/research-${suffix}/checkpoint.json`,
     checkpointDigest: `sha256:${suffix.repeat(64)}`,
     checkpointSizeBytes: 123,
+    patchUri: `artifact:///agent-runs/research-${suffix}/changes.patch`,
+    patchDigest: `sha256:${"0".repeat(64)}`,
+    patchSizeBytes: 0,
     researchResult: {
       kind: "persona",
       report: {
@@ -102,6 +105,9 @@ function synthesisResult() {
       "artifact:///agent-runs/research-synthesis/checkpoint.json",
     checkpointDigest: `sha256:${"d".repeat(64)}`,
     checkpointSizeBytes: 456,
+    patchUri: "artifact:///agent-runs/research-synthesis/changes.patch",
+    patchDigest: `sha256:${"0".repeat(64)}`,
+    patchSizeBytes: 0,
     researchResult: {
       kind: "synthesis",
       synthesis: {

@@ -19,7 +19,7 @@ const allowedTransitions: Readonly<Record<WorkflowState, readonly WorkflowState[
   planning: ["executing", "failed", "cancelled"],
   executing: ["evidence_ready", "failed", "cancelled"],
   evidence_ready: ["reviewing", "validating", "failed", "cancelled"],
-  reviewing: ["validating", "failed", "cancelled"],
+  reviewing: ["executing", "validating", "failed", "cancelled"],
   validating: ["completed", "failed", "cancelled"],
   completed: [],
   failed: [],

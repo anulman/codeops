@@ -7,6 +7,7 @@ import {
   createRunIdentity,
   claimRequest,
   parseCheckpointLogs,
+  readCandidatePatch,
   readRetainedResult,
   retainCheckpoint,
   retainFailure,
@@ -70,6 +71,10 @@ export function createAgentJobRunner(input: {
   return async (request, signal) => {
     signal?.throwIfAborted();
     const identity = createRunIdentity(request);
+    const retainedCandidate = await readCandidatePatch({
+      rootDirectory: input.config.evidenceRoot,
+      request,
+    });
     const resources = buildRunResources(
       {
         namespace: input.config.namespace,
@@ -79,6 +84,7 @@ export function createAgentJobRunner(input: {
         sessionGatewayImage: input.config.sessionGatewayImage,
         repositoryReadToken: input.config.repositoryReadToken,
         modelAuth: input.config.modelAuth,
+        candidate: retainedCandidate?.candidate,
       },
       request,
     );

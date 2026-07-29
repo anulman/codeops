@@ -10,6 +10,7 @@ import {
   buildAgentPrompt,
   createRunIdentity,
   parseCheckpointLogs,
+  readCandidatePatch,
   readRetainedResult,
   resolveGitHubBranchHead,
   retainCheckpoint,
@@ -250,6 +251,43 @@ function checkpointLogs(runId, overrides = {}) {
   ].join("\n");
 }
 
+function agentLogs({ dispatch, runId, response, patch }) {
+  const sha256 = createHash("sha256").update(patch).digest("hex");
+  const checkpoint = {
+    schemaVersion: 3,
+    runId,
+    agentRole: dispatch.role,
+    baseSha: dispatch.baseSha,
+    projectContextDigest: dispatch.codingRequest.projectContext.digest,
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
+    response: JSON.stringify(response),
+    events: [],
+    patch: {
+      path: "changes.patch",
+      sha256,
+      bytes: patch.length,
+    },
+  };
+  return [
+    JSON.stringify({
+      type: "codeops.patch-chunk",
+      runId,
+      sequence: 1,
+      total: 1,
+      patchDigest: `sha256:${sha256}`,
+      dataBase64: patch.toString("base64"),
+    }),
+    JSON.stringify({
+      type: "codeops.checkpoint",
+      checkpointDigest: `sha256:${createHash("sha256")
+        .update(JSON.stringify(checkpoint))
+        .digest("hex")}`,
+      checkpoint,
+    }),
+  ].join("\n");
+}
+
 test("authenticates one exact bearer token", () => {
   const token = "t".repeat(64);
   assert.equal(authenticateBearer(`Bearer ${token}`, token), true);
@@ -309,6 +347,196 @@ test("delivers immutable ticket and sibling decision context to coding jobs", ()
       .find((volume) => volume.name === "run-input")
       .secret.items.some((item) => item.path === "coding-request.json"),
   );
+});
+
+test("retains passing coding evidence and mounts the exact cumulative patch for an isolated critic", async () => {
+  const rootDirectory = await mkdtemp(path.join(os.tmpdir(), "codeops-critic-"));
+  const initial = { ...codingDispatch, codingRound: 1 };
+  const initialIdentity = createRunIdentity(initial);
+  const patch = Buffer.from(
+    "diff --git a/example.txt b/example.txt\nnew file mode 100644\n--- /dev/null\n+++ b/example.txt\n@@ -0,0 +1 @@\n+bounded\n",
+  );
+  const codingOutcome = {
+    version: "codeops.coding-outcome/v1",
+    summary: "Implemented the bounded fixture.",
+    tests: [{
+      command: "node --test test/routing.test.mjs",
+      status: "passed",
+      summary: "Focused routing behavior is green.",
+    }],
+  };
+  try {
+    const retainedCoding = parseCheckpointLogs({
+      logs: agentLogs({
+        dispatch: initial,
+        runId: initialIdentity.runId,
+        response: codingOutcome,
+        patch,
+      }),
+      request: initial,
+      runId: initialIdentity.runId,
+    });
+    const codingResult = await retainCheckpoint({
+      rootDirectory,
+      request: initial,
+      ...initialIdentity,
+      retained: retainedCoding,
+    });
+    assert.deepEqual(codingResult.codingOutcome, codingOutcome);
+    const candidate = {
+      round: 1,
+      runId: codingResult.runId,
+      checkpoint: {
+        uri: codingResult.checkpointUri,
+        digest: codingResult.checkpointDigest,
+        sizeBytes: codingResult.checkpointSizeBytes,
+      },
+      patch: {
+        uri: codingResult.patchUri,
+        digest: codingResult.patchDigest,
+        sizeBytes: codingResult.patchSizeBytes,
+      },
+      codingOutcome,
+    };
+    const critic = {
+      version: "codeops.agent-job-dispatch/v1",
+      workItemId: codingWorkItemId,
+      workflowId: codingRequest.requestId,
+      baseSha: projectContext.baseSha,
+      summary: codingRequest.workItem.summary,
+      role: "critic-agent",
+      codingRequest,
+      codingRound: 1,
+      candidate,
+    };
+    const source = await readCandidatePatch({
+      rootDirectory,
+      request: critic,
+    });
+    assert.equal(source.patch.equals(patch), true);
+    assert.match(buildAgentPrompt(critic), /seven|every lens independently/);
+
+    const criticIdentity = createRunIdentity(critic);
+    const resources = buildRunResources(
+      {
+        namespace: "codeops-trial",
+        ...criticIdentity,
+        repositoryUrl: "https://github.com/anulman/renoconcierge",
+        agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+        sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+        repositoryReadToken: "repo-token",
+        modelAuth: { mode: "api-key", apiKey: "model-key" },
+        candidate,
+      },
+      critic,
+    );
+    assert.doesNotThrow(() => assertRunResources(resources));
+    const pod = resources[2].spec.template.spec;
+    const candidateVolume = pod.volumes.find(
+      (volume) => volume.name === "candidate",
+    );
+    assert.deepEqual(candidateVolume.persistentVolumeClaim, {
+      claimName: "codeops-control-gateway-evidence",
+      readOnly: true,
+    });
+    const candidateMount = pod.initContainers[0].volumeMounts.find(
+      (mount) => mount.name === "candidate",
+    );
+    assert.equal(
+      candidateMount.subPath,
+      `agent-runs/${candidate.runId}/changes.patch`,
+    );
+    assert.equal(
+      pod.containers.some((container) =>
+        container.volumeMounts.some((mount) => mount.name === "candidate"),
+      ),
+      false,
+    );
+
+    const review = {
+      version: "codeops.adversarial-review/v1",
+      workflowId: critic.workflowId,
+      workItemId: critic.workItemId,
+      baseSha: critic.baseSha,
+      reviewerId: "critic-agent",
+      reviewedAt: "2026-07-29T20:00:00.000Z",
+      candidate,
+      lenses: {
+        ticketCompletion: { status: "clear", summary: "Ticket complete." },
+        unusedCode: { status: "clear", summary: "No unused code." },
+        simplicityMaintainability: {
+          status: "clear",
+          summary: "Implementation is simple.",
+        },
+        existingSystems: {
+          status: "clear",
+          summary: "Existing systems are reused.",
+        },
+        testEffectiveness: {
+          status: "clear",
+          summary: "Tests are effective.",
+        },
+        userFacingBehavior: {
+          status: "clear",
+          summary: "No user-facing regression.",
+        },
+        securityPrivacy: {
+          status: "clear",
+          summary: "No security or privacy regression.",
+        },
+      },
+      findings: [],
+      verificationTests: [{
+        command: "node --test test/routing.test.mjs",
+        status: "passed",
+        summary: "The critic independently reproduced the focused pass.",
+      }],
+      fastFollowRecommendations: [{
+        id: "follow-up-1",
+        area: "testing",
+        priority: "low",
+        reason: "follow-on-improvement",
+        title: "Add nightly fuzz coverage",
+        rationale: "Useful adjacent hardening, but not required by this ticket.",
+        planeMutationAuthorized: false,
+      }],
+      verdict: "pass",
+      summary: "Ready for human review.",
+    };
+    const retainedCritic = parseCheckpointLogs({
+      logs: agentLogs({
+        dispatch: critic,
+        runId: criticIdentity.runId,
+        response: review,
+        patch,
+      }),
+      request: critic,
+      runId: criticIdentity.runId,
+    });
+    const criticResult = await retainCheckpoint({
+      rootDirectory,
+      request: critic,
+      ...criticIdentity,
+      retained: retainedCritic,
+    });
+    assert.deepEqual(criticResult.criticReview, review);
+    assert.throws(
+      () =>
+        parseCheckpointLogs({
+          logs: agentLogs({
+            dispatch: critic,
+            runId: criticIdentity.runId,
+            response: review,
+            patch: Buffer.from(`${patch.toString()}+unauthorized\n`),
+          }),
+          request: critic,
+          runId: criticIdentity.runId,
+        }),
+      /changed the cumulative candidate patch/,
+    );
+  } finally {
+    await rm(rootDirectory, { recursive: true, force: true });
+  }
 });
 
 test("runs a distinct ticket-specific synthesis checkpoint after persona research", async () => {

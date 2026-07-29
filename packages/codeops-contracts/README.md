@@ -29,34 +29,48 @@ providers.
   bounded same-project task index. Referenced decision tickets therefore cross
   the Agent Job boundary as digest-bound input instead of being inferred from
   an unavailable Plane board.
-- Every completed coding checkpoint must receive one
-  `codeops.adversarial-review/v1` report before independent acceptance. The
-  report binds the workflow, work item, base SHA, and exact checkpoint
-  URI/digest/size; separately records unused-code, maintainability,
-  user-facing-behavior, and security lenses; and retains structured findings
-  with explicit resolutions. Critical/high findings are always `must-fix`,
-  accepted tradeoffs and non-actionable findings require justification, and a
-  passing verdict is impossible while any must-fix finding remains.
+- Every autonomous coding round must retain `codeops.coding-outcome/v1`
+  evidence naming at least one exact passing test command. A separate critic
+  then returns `codeops.adversarial-review/v1`, bound to that test evidence,
+  the workflow/work item/base SHA, and the exact cumulative checkpoint and
+  patch URI/digest/size. Its seven independent lenses are ticket completion,
+  unused code, simplicity/maintainability, effective use of existing systems,
+  test effectiveness, user-facing behavior, and security/privacy.
+  The critic must also retain at least one exact independently executed passing
+  verification command; a lens summary alone is not test evidence.
+  Critical/high findings are always `must-fix`; accepted tradeoffs and
+  non-actionable findings require justification; a passing verdict is
+  impossible while any must-fix finding remains.
 
 ## Adversarial coding review
 
-The coding Agent Job cannot write its own adversarial-review report. A trusted
-external reviewer inspects the retained patch and relevant surrounding code,
-runs independent checks, validates the report with
-`adversarialReviewSchema`, and signals `reportAdversarialReview` to the exact
-Temporal workflow. Temporal ignores malformed, mistimed, or checkpoint-drifted
-signals.
+The coding Agent Job cannot write its own adversarial-review report. Temporal
+automatically dispatches a distinct isolated `critic-agent` after every
+retained coding checkpoint. The gateway mounts the exact prior cumulative
+patch from durable evidence by a read-only file `subPath`, verifies its digest
+and size before applying it to the exact base, and rejects the critic if its
+final cumulative patch differs by one byte. The critic receives the immutable
+ticket, human comments/decisions, relations, bounded same-project task index,
+trusted project/product documents, structured passing test evidence, and exact
+candidate identity. It has no Plane, GitHub, merge, deployment, acceptance, or
+Kubernetes authority.
 
 The workflow introduces this branch behind Temporal patch ID
-`coding-adversarial-review-v1`. Existing histories without that marker replay
-the former evidence-to-acceptance path; new executions record the marker and
-must pass adversarial review before acceptance.
+`coding-autonomous-critic-v1`. Existing histories without that marker replay
+the former evidence-to-acceptance path; new coding executions record the
+marker before their first dispatch and must converge through the autonomous
+critic loop before acceptance.
 
-A `revision-required` review terminates the candidate as failed with the
-review summary. A passing review advances to the separate independent
-acceptance wait; adversarial review does not replace executable acceptance.
-Low/medium findings may pass only when they are explicitly classified as an
-accepted tradeoff or not actionable with a durable justification.
+A `revision-required` report automatically dispatches a fresh coding Agent Job
+with the rejected cumulative patch and exact structured findings already
+applied as immutable input. That job must resolve every must-fix item, rerun
+focused tests, and retain a new cumulative checkpoint before the next critic
+round. The loop allows at most four coding rounds and otherwise fails closed.
+A pass advances to the separate independent human acceptance wait;
+adversarial review does not replace executable acceptance. Non-blocking
+fast-follow recommendations are retained structurally but carry
+`planeMutationAuthorized: false`; ticket-required gaps and concrete
+security/privacy regressions can never be fast follows.
 
 ## QA Contract Researcher
 

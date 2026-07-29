@@ -13,17 +13,17 @@ import type {
   CodingRequest,
   ResearchRequest,
 } from "@renoconcierge/codeops-contracts";
-import {
-  adversarialReviewSchema,
-  type AdversarialReview,
-} from "@renoconcierge/codeops-contracts/adversarial-review";
 import type {
   DispatchResult,
   ResearchProjectionResult,
 } from "./activities.js";
 import { transition, type WorkflowSnapshot } from "./model.js";
 import { buildResearchPacket } from "./research.js";
-import { adversarialReviewMatchesCheckpoint } from "./review.js";
+import {
+  adversarialReviewMatchesCandidate,
+  candidateCheckpointFromDispatch,
+  criticLoopAction,
+} from "./review.js";
 
 interface WorkItemInputBase {
   readonly workItemId: string;
@@ -91,8 +91,6 @@ const { publishResearchPacket } = proxyActivities<
 export const cancelWorkItem = defineSignal<[string]>("cancelWorkItem");
 export const reportAcceptance =
   defineSignal<[AcceptanceResult]>("reportAcceptance");
-export const reportAdversarialReview =
-  defineSignal<[AdversarialReview]>("reportAdversarialReview");
 export const workflowStatus = defineQuery<WorkflowSnapshot>("workflowStatus");
 
 export async function workItemWorkflow(
@@ -107,6 +105,9 @@ export async function workItemWorkflow(
   ) {
     throw new Error("coding workflow identity does not match its request");
   }
+  const autonomousCritic =
+    workItem.role === "coding-agent" &&
+    patched("coding-autonomous-critic-v1");
   let snapshot: WorkflowSnapshot = {
     state: "requested",
     sequence: 0,
@@ -114,7 +115,6 @@ export async function workItemWorkflow(
   };
   let cancellation = "";
   const external = {
-    adversarialReview: null as AdversarialReview | null,
     acceptance: null as AcceptanceResult | null,
   };
   let codingCheckpoint: DispatchResult | null = null;
@@ -122,30 +122,6 @@ export async function workItemWorkflow(
   setHandler(workflowStatus, () => snapshot);
   setHandler(cancelWorkItem, (reason) => {
     cancellation = reason;
-  });
-  setHandler(reportAdversarialReview, (value) => {
-    if (
-      snapshot.state !== "reviewing" ||
-      workItem.role !== "coding-agent" ||
-      external.adversarialReview !== null
-    ) {
-      return;
-    }
-    const parsed = adversarialReviewSchema.safeParse(value);
-    if (!parsed.success) {
-      return;
-    }
-    const review = parsed.data;
-    if (!adversarialReviewMatchesCheckpoint({
-      review,
-      workflowId: workItem.workflowId,
-      workItemId: workItem.workItemId,
-      baseSha: workItem.baseSha,
-      checkpoint: codingCheckpoint,
-    })) {
-      return;
-    }
-    external.adversarialReview = review;
   });
   setHandler(reportAcceptance, (result) => {
     if (snapshot.state === "validating") external.acceptance = result;
@@ -181,6 +157,7 @@ export async function workItemWorkflow(
         codingCheckpoint = await dispatchAgentJob({
           version: "codeops.agent-job-dispatch/v1",
           ...workItem,
+          ...(autonomousCritic ? { codingRound: 1 } : {}),
         });
         dispatches.push(codingCheckpoint);
       } else {
@@ -259,22 +236,121 @@ export async function workItemWorkflow(
       }
       return snapshot;
     }
-    if (patched("coding-adversarial-review-v1")) {
-      await move(
-        "reviewing",
-        `Waiting for adversarial review of ${codingCheckpoint?.checkpointDigest ?? "the retained coding checkpoint"}`,
-      );
-      await condition(
-        () => external.adversarialReview !== null || cancellation.length > 0,
-      );
-
-      if (await cancelIfRequested()) return snapshot;
-      if (external.adversarialReview?.verdict === "revision-required") {
-        await move("failed", external.adversarialReview.summary);
+    if (workItem.role === "coding-agent" && autonomousCritic) {
+      let round = 1;
+      let candidateDispatch = codingCheckpoint;
+      if (!candidateDispatch || candidateDispatch.role !== "coding-agent") {
+        await move("failed", "Coding Agent Job returned no candidate checkpoint");
         return snapshot;
       }
+      while (true) {
+        const candidate = candidateCheckpointFromDispatch(
+          candidateDispatch,
+          round,
+        );
+        await move(
+          "reviewing",
+          `Dispatching critic round ${round} for ${candidate.patch.digest}`,
+        );
+        let criticDispatch: DispatchResult;
+        try {
+          criticDispatch = await dispatchAgentJob({
+            version: "codeops.agent-job-dispatch/v1",
+            role: "critic-agent",
+            workItemId: workItem.workItemId,
+            workflowId: workItem.workflowId,
+            baseSha: workItem.baseSha,
+            summary: workItem.summary,
+            codingRequest: workItem.codingRequest,
+            codingRound: round,
+            candidate,
+          });
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          await move("failed", `Critic Agent Job failed in round ${round}`);
+          return snapshot;
+        }
+        if (
+          criticDispatch.role !== "critic-agent" ||
+          !adversarialReviewMatchesCandidate({
+            review: criticDispatch.criticReview,
+            workflowId: workItem.workflowId,
+            workItemId: workItem.workItemId,
+            baseSha: workItem.baseSha,
+            candidate,
+          })
+        ) {
+          await move(
+            "failed",
+            `Critic report identity drifted in round ${round}`,
+          );
+          return snapshot;
+        }
+        const action = criticLoopAction({
+          review: criticDispatch.criticReview,
+          round,
+        });
+        if (action === "accept") {
+          if (await cancelIfRequested()) return snapshot;
+          break;
+        }
+        if (action === "exhausted") {
+          await move(
+            "failed",
+            `Autonomous critic loop exhausted after ${round} coding rounds: ${criticDispatch.criticReview.summary}`,
+          );
+          return snapshot;
+        }
+        if (await cancelIfRequested()) return snapshot;
+        const nextRound = round + 1;
+        await move(
+          "executing",
+          `Dispatching coding revision round ${nextRound} from critic findings`,
+        );
+        try {
+          candidateDispatch = await dispatchAgentJob({
+            version: "codeops.agent-job-dispatch/v1",
+            role: "coding-agent",
+            workItemId: workItem.workItemId,
+            workflowId: workItem.workflowId,
+            baseSha: workItem.baseSha,
+            summary: workItem.summary,
+            codingRequest: workItem.codingRequest,
+            codingRound: nextRound,
+            revision: {
+              candidate,
+              review: criticDispatch.criticReview,
+            },
+          });
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          await move(
+            "failed",
+            `Coding revision Agent Job failed in round ${nextRound}`,
+          );
+          return snapshot;
+        }
+        if (candidateDispatch.role !== "coding-agent") {
+          await move(
+            "failed",
+            `Coding revision returned the wrong result kind in round ${nextRound}`,
+          );
+          return snapshot;
+        }
+        round = nextRound;
+        await move(
+          "evidence_ready",
+          `Coding round ${round} checkpoint ready at ${candidateDispatch.checkpointUri}`,
+        );
+        if (await cancelIfRequested()) return snapshot;
+      }
+      await move(
+        "validating",
+        "Autonomous critic passed; waiting for independent human acceptance",
+      );
+    } else {
+      await move("validating", "Waiting for independent acceptance");
     }
-    await move("validating", "Waiting for independent acceptance");
     await condition(
       () => external.acceptance !== null || cancellation.length > 0,
     );

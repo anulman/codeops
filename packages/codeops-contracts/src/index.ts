@@ -4,9 +4,18 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { z } from "zod";
+import {
+  adversarialReviewSchema,
+  candidateCheckpointSchema,
+  codingOutcomeSchema,
+} from "./adversarial-review.js";
 export {
   adversarialReviewSchema,
+  candidateCheckpointSchema,
+  codingOutcomeSchema,
   type AdversarialReview,
+  type CandidateCheckpoint,
+  type CodingOutcome,
 } from "./adversarial-review.js";
 
 const VERSION = {
@@ -739,6 +748,23 @@ export const agentJobDispatchRequestSchema = z
         version: z.literal(VERSION.agentJobDispatch),
         role: z.literal("coding-agent"),
         codingRequest: z.lazy(() => codingRequestSchema),
+        codingRound: z.number().int().min(1).max(4).optional(),
+        revision: z
+          .object({
+            candidate: candidateCheckpointSchema,
+            review: adversarialReviewSchema,
+          })
+          .strict()
+          .optional(),
+      })
+      .strict(),
+    agentJobBaseSchema
+      .extend({
+        version: z.literal(VERSION.agentJobDispatch),
+        role: z.literal("critic-agent"),
+        codingRequest: z.lazy(() => codingRequestSchema),
+        codingRound: z.number().int().min(1).max(4),
+        candidate: candidateCheckpointSchema,
       })
       .strict(),
     agentJobBaseSchema
@@ -764,7 +790,7 @@ export const agentJobDispatchRequestSchema = z
       .strict(),
   ])
   .superRefine((value, context) => {
-    if (value.role === "coding-agent") {
+    if (value.role === "coding-agent" || value.role === "critic-agent") {
       if (
         value.workItemId !== value.codingRequest.workItem.workItemId ||
         value.workflowId !== value.codingRequest.requestId ||
@@ -775,6 +801,57 @@ export const agentJobDispatchRequestSchema = z
           path: ["codingRequest"],
           message: "coding dispatch identity does not match its request",
         });
+      }
+      if (value.role === "critic-agent") {
+        if (value.candidate.round !== value.codingRound) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["candidate", "round"],
+            message: "critic round must match the exact candidate round",
+          });
+        }
+        return;
+      }
+      if (value.codingRound === undefined) {
+        if (value.revision !== undefined) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["revision"],
+            message: "legacy coding dispatch cannot carry revision context",
+          });
+        }
+        return;
+      }
+      if (value.codingRound === 1 && value.revision !== undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["revision"],
+          message: "initial coding round cannot carry revision context",
+        });
+      }
+      if (value.codingRound > 1) {
+        if (value.revision === undefined) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["revision"],
+            message: "later coding rounds require exact critic revision context",
+          });
+        } else if (
+          value.revision.candidate.round !== value.codingRound - 1 ||
+          value.revision.review.candidate.round !== value.codingRound - 1 ||
+          value.revision.review.workflowId !== value.workflowId ||
+          value.revision.review.workItemId !== value.workItemId ||
+          value.revision.review.baseSha !== value.baseSha ||
+          canonicalSerialize(value.revision.review.candidate) !==
+            canonicalSerialize(value.revision.candidate) ||
+          value.revision.review.verdict !== "revision-required"
+        ) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["revision"],
+            message: "coding revision must bind the immediately prior rejected candidate",
+          });
+        }
       }
       return;
     }
@@ -823,6 +900,11 @@ const agentJobDispatchResultBaseSchema = z
     checkpointUri: agentCheckpointUri,
     checkpointDigest: sha256Digest,
     checkpointSizeBytes: z.number().int().positive().max(25_000_000),
+    patchUri: z
+      .string()
+      .regex(/^artifact:\/\/\/agent-runs\/[a-z0-9-]+\/changes\.patch$/),
+    patchDigest: sha256Digest,
+    patchSizeBytes: z.number().int().nonnegative().max(2_000_000),
   })
   .strict();
 
@@ -830,6 +912,13 @@ export const agentJobDispatchResultSchema = z.discriminatedUnion("role", [
   agentJobDispatchResultBaseSchema
     .extend({
       role: z.literal("coding-agent"),
+      codingOutcome: codingOutcomeSchema.optional(),
+    })
+    .strict(),
+  agentJobDispatchResultBaseSchema
+    .extend({
+      role: z.literal("critic-agent"),
+      criticReview: adversarialReviewSchema,
     })
     .strict(),
   agentJobDispatchResultBaseSchema
@@ -851,7 +940,19 @@ export const agentJobDispatchResultSchema = z.discriminatedUnion("role", [
       ]),
     })
     .strict(),
-]);
+]).superRefine((result, context) => {
+  const prefix = `artifact:///agent-runs/${result.runId}/`;
+  if (
+    result.checkpointUri !== `${prefix}checkpoint.json` ||
+    result.patchUri !== `${prefix}changes.patch`
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["runId"],
+      message: "Agent Job result artifact URIs must match its run ID",
+    });
+  }
+});
 
 const ticketChangesSchema = z
   .object({

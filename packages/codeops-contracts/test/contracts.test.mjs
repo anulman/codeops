@@ -190,39 +190,78 @@ const workItem = {
 };
 
 function makeAdversarialReview(overrides = {}) {
-  return {
-    version: contractVersions.adversarialReview,
-    workflowId: "workflow-123",
-    workItemId: workItem.workItemId,
-    baseSha: sha,
-    reviewerId: "independent-reviewer",
-    reviewedAt: now,
+  const candidate = {
+    round: 1,
+    runId: "agent-review-123",
     checkpoint: {
       uri: "artifact:///agent-runs/agent-review-123/checkpoint.json",
       digest: `sha256:${"d".repeat(64)}`,
       sizeBytes: 4_096,
     },
+    patch: {
+      uri: "artifact:///agent-runs/agent-review-123/changes.patch",
+      digest: `sha256:${"e".repeat(64)}`,
+      sizeBytes: 2_048,
+    },
+    codingOutcome: {
+      version: "codeops.coding-outcome/v1",
+      summary: "Implemented the exact ticket.",
+      tests: [
+        {
+          command: "node --test test/routing.test.mjs",
+          status: "passed",
+          summary: "The focused routing contract passes.",
+        },
+      ],
+    },
+  };
+  return {
+    version: contractVersions.adversarialReview,
+    workflowId: "workflow-123",
+    workItemId: workItem.workItemId,
+    baseSha: sha,
+    reviewerId: "critic-agent",
+    reviewedAt: now,
+    candidate,
     lenses: {
+      ticketCompletion: {
+        status: "clear",
+        summary: "The bounded ticket is complete.",
+      },
       unusedCode: {
         status: "clear",
         summary: "Every introduced export has a concrete consumer.",
       },
-      maintainability: {
+      simplicityMaintainability: {
         status: "clear",
         summary: "The smallest ownership boundary remains legible.",
+      },
+      existingSystems: {
+        status: "clear",
+        summary: "The existing ownership boundary is extended cleanly.",
+      },
+      testEffectiveness: {
+        status: "clear",
+        summary: "Focused executable tests prove the changed behavior.",
       },
       userFacingBehavior: {
         status: "clear",
         summary: "No user-facing regression was found.",
       },
-      security: {
+      securityPrivacy: {
         status: "clear",
         summary: "No concrete security regression was found.",
       },
     },
     findings: [],
+    verificationTests: [{
+      command: "node --test test/routing.test.mjs",
+      status: "passed",
+      summary: "The critic independently reproduced the focused pass.",
+    }],
+    fastFollowRecommendations: [],
     verdict: "pass",
-    summary: "All four adversarial review lenses pass.",
+    summary: "All seven adversarial review lenses pass.",
     ...overrides,
   };
 }
@@ -244,13 +283,13 @@ test("accepts the complete work-item and opaque secret-reference contracts", () 
   assert.deepEqual(secretReferenceSchema.parse(secretReference), secretReference);
 });
 
-test("adversarial review binds all four lenses to one exact coding checkpoint", () => {
+test("adversarial review binds all seven lenses and test evidence to one exact coding candidate", () => {
   const passing = makeAdversarialReview();
   assert.deepEqual(adversarialReviewSchema.parse(passing), passing);
 
   const finding = {
     id: "expired-cookie-not-sent",
-    category: "security",
+    category: "security-privacy",
     severity: "high",
     path: "services/acceptance-runner/scenarios/customer-file-routing/cookie.mjs",
     lineStart: 72,
@@ -262,7 +301,7 @@ test("adversarial review binds all four lenses to one exact coding checkpoint", 
   const revision = makeAdversarialReview({
     lenses: {
       ...passing.lenses,
-      security: {
+      securityPrivacy: {
         status: "finding",
         summary: "One high-severity security-test validity defect remains.",
       },
@@ -276,6 +315,51 @@ test("adversarial review binds all four lenses to one exact coding checkpoint", 
     adversarialReviewSchema.parse({
       ...revision,
       verdict: "pass",
+    }),
+  );
+  assert.throws(() =>
+    adversarialReviewSchema.parse({
+      ...revision,
+      findings: [{
+        ...finding,
+        severity: "medium",
+        resolution: "accepted-tradeoff",
+        justification: "Defer the security regression.",
+      }],
+      verdict: "pass",
+    }),
+  );
+  assert.throws(() =>
+    adversarialReviewSchema.parse({
+      ...revision,
+      lenses: {
+        ...revision.lenses,
+        securityPrivacy: passing.lenses.securityPrivacy,
+        ticketCompletion: {
+          status: "finding",
+          summary: "One bounded acceptance requirement remains.",
+        },
+      },
+      findings: [{
+        ...finding,
+        category: "ticket-completion",
+        severity: "low",
+        resolution: "not-actionable",
+        justification: "Ignore the acceptance gap.",
+      }],
+      verdict: "pass",
+    }),
+  );
+  assert.throws(() =>
+    adversarialReviewSchema.parse({
+      ...passing,
+      candidate: {
+        ...passing.candidate,
+        codingOutcome: {
+          ...passing.candidate.codingOutcome,
+          tests: [],
+        },
+      },
     }),
   );
   assert.throws(() =>
@@ -335,6 +419,97 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
     workItemId: codingWorkItem.workItemId,
   });
   assert.deepEqual(codingRequestSchema.parse(request), request);
+  const initialDispatch = {
+    version: contractVersions.agentJobDispatch,
+    role: "coding-agent",
+    workItemId: codingWorkItem.workItemId,
+    workflowId: codingWorkItem.workflowId,
+    baseSha: codingWorkItem.baseSha,
+    summary: codingWorkItem.summary,
+    codingRequest: request,
+    codingRound: 1,
+  };
+  assert.deepEqual(
+    agentJobDispatchRequestSchema.parse(initialDispatch),
+    initialDispatch,
+  );
+  const candidate = {
+    ...makeAdversarialReview().candidate,
+    round: 1,
+  };
+  const review = makeAdversarialReview({
+    workflowId: codingWorkItem.workflowId,
+    workItemId: codingWorkItem.workItemId,
+    baseSha: codingWorkItem.baseSha,
+    candidate,
+    verdict: "revision-required",
+    lenses: {
+      ...makeAdversarialReview().lenses,
+      ticketCompletion: {
+        status: "finding",
+        summary: "One bounded acceptance requirement remains.",
+      },
+    },
+    findings: [{
+      id: "ticket-gap",
+      category: "ticket-completion",
+      severity: "medium",
+      path: "sites/app/lib/auth.ts",
+      problem: "One accepted route is not implemented.",
+      impact: "The ticket is incomplete.",
+      recommendation: "Implement and test the missing route.",
+      resolution: "must-fix",
+    }],
+    summary: "One bounded revision is required.",
+  });
+  const criticDispatch = {
+    version: contractVersions.agentJobDispatch,
+    role: "critic-agent",
+    workItemId: codingWorkItem.workItemId,
+    workflowId: codingWorkItem.workflowId,
+    baseSha: codingWorkItem.baseSha,
+    summary: codingWorkItem.summary,
+    codingRequest: request,
+    codingRound: 1,
+    candidate,
+  };
+  assert.deepEqual(
+    agentJobDispatchRequestSchema.parse(criticDispatch),
+    criticDispatch,
+  );
+  const revisionDispatch = {
+    ...initialDispatch,
+    codingRound: 2,
+    revision: { candidate, review },
+  };
+  assert.deepEqual(
+    agentJobDispatchRequestSchema.parse(revisionDispatch),
+    revisionDispatch,
+  );
+  assert.throws(() =>
+    agentJobDispatchRequestSchema.parse({
+      ...revisionDispatch,
+      codingRound: 3,
+    }),
+  );
+  assert.throws(() =>
+    agentJobDispatchRequestSchema.parse({
+      ...revisionDispatch,
+      revision: {
+        candidate,
+        review: {
+          ...review,
+          candidate: {
+            ...candidate,
+            patch: {
+              ...candidate.patch,
+              digest: `sha256:${"f".repeat(64)}`,
+            },
+          },
+        },
+      },
+    }),
+  );
   assert.throws(() =>
     codingRequestSchema.parse({
       ...request,
@@ -715,6 +890,9 @@ test("binds strict Agent Job dispatch and result identities", () => {
       "artifact:///agent-runs/research-123/checkpoint.json",
     checkpointDigest: `sha256:${"c".repeat(64)}`,
     checkpointSizeBytes: 123,
+    patchUri: "artifact:///agent-runs/research-123/changes.patch",
+    patchDigest: `sha256:${"d".repeat(64)}`,
+    patchSizeBytes: 0,
     researchResult: {
       kind: "persona",
       report: {

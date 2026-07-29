@@ -5,7 +5,10 @@ const SHA = /^[0-9a-f]{40}$/;
 const RUN_ID = /^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/;
 const REPOSITORY =
   /^https:\/\/github\.com\/[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+(?:\.git)?$/;
-const AGENT_ROLES = new Set(["coding-agent", "qa-contract-researcher"]);
+const AGENT_ROLES = new Set([
+  "coding-agent",
+  "qa-contract-researcher",
+]);
 
 const TOKENS = {
   __CODEOPS_AGENT_DIGEST__: "agentDigest",
@@ -29,7 +32,9 @@ export function renderAgentJobManifest(template, input) {
     throw new Error("repository must be an HTTPS GitHub repository URL");
   }
   if (!AGENT_ROLES.has(input.role ?? "")) {
-    throw new Error("agent role must be coding-agent or qa-contract-researcher");
+    throw new Error(
+      "static manifest role must be coding-agent or qa-contract-researcher; critics require the control gateway's exact candidate mount",
+    );
   }
   for (const key of ["agentDigest", "sessionGatewayDigest"]) {
     if (!DIGEST.test(input[key] ?? "")) {

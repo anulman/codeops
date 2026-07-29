@@ -8,13 +8,16 @@ import {
 } from "node:fs/promises";
 import path from "node:path";
 import {
+  adversarialReviewSchema,
   agentJobDispatchRequestSchema,
   agentJobDispatchResultSchema,
   canonicalSerialize,
+  codingOutcomeSchema,
   researchPersonaReportSchema,
   researchSynthesisSchema,
   type AgentJobDispatchRequest,
   type AgentJobDispatchResult,
+  type CandidateCheckpoint,
 } from "@renoconcierge/codeops-contracts";
 import { z } from "zod";
 
@@ -36,7 +39,11 @@ const checkpointSchema = z
   .object({
     schemaVersion: z.literal(3),
     runId: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,38}[a-z0-9])?$/),
-    agentRole: z.enum(["coding-agent", "qa-contract-researcher"]),
+    agentRole: z.enum([
+      "coding-agent",
+      "critic-agent",
+      "qa-contract-researcher",
+    ]),
     baseSha: z.string().regex(/^[0-9a-f]{40}$/),
     projectContextDigest: z.string().regex(SHA256),
     model: z.literal("gpt-5.6-sol"),
@@ -178,6 +185,9 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       `Work item: ${request.workItemId}`,
       `Exact base SHA: ${request.baseSha}`,
       `Task: ${request.summary}`,
+      ...(request.codingRound === undefined
+        ? []
+        : [`Autonomous critic loop coding round: ${request.codingRound} of 4`]),
       `Project context digest: ${request.codingRequest.projectContext.digest}`,
       "Read /context/coding-request.json, /context/project-context.json, and every trusted document under /context/project-documents/ before planning.",
       "The coding request contains the immutable current ticket, relevant human comments, relations, and a bounded same-project task index. Follow referenced approved decision tickets; do not guess missing product behavior.",
@@ -192,9 +202,109 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       `Acceptance criteria: ${JSON.stringify(
         request.codingRequest.workItem.acceptanceCriteria,
       )}`,
+      ...(request.revision
+        ? [
+            "The previous cumulative candidate patch is already applied to /workspace.",
+            `The exact prior critic report is: ${JSON.stringify(request.revision.review)}`,
+            "Resolve every must-fix finding without expanding the ticket. Preserve valid prior work and re-run the relevant tests.",
+          ]
+        : []),
       "Make only the smallest source changes required by the task.",
+      "Run the focused tests required to prove the changed behavior before finishing. Add or strengthen tests when a critic finding exposes an unproved bug class.",
       "Do not push, open or merge a PR, deploy, or access Plane/Kubernetes.",
-      "Finish with a concise summary of changes and tests.",
+      ...(request.codingRound === undefined
+        ? ["Finish with a concise summary of changes and tests."]
+        : [
+            "Every reported test must have passed in this exact workspace after the final source edit. Do not report a skipped, failed, or stale test as passed.",
+            "Return only one JSON object, without Markdown fences, with exactly this shape:",
+            JSON.stringify({
+              version: "codeops.coding-outcome/v1",
+              summary: "bounded summary of the exact cumulative candidate",
+              tests: [
+                {
+                  command: "exact focused test command",
+                  status: "passed",
+                  summary: "what this passing command proves",
+                },
+              ],
+            }),
+          ]),
+    ].join("\n");
+  }
+  if (request.role === "critic-agent") {
+    const example = {
+      version: "codeops.adversarial-review/v1",
+      workflowId: request.workflowId,
+      workItemId: request.workItemId,
+      baseSha: request.baseSha,
+      reviewerId: "critic-agent",
+      reviewedAt: "2026-07-29T20:00:00.000Z",
+      candidate: request.candidate,
+      lenses: {
+        ticketCompletion: {
+          status: "clear",
+          summary: "The bounded ticket and acceptance criteria are complete.",
+        },
+        unusedCode: {
+          status: "clear",
+          summary: "Every introduced path is used or explicitly justified.",
+        },
+        simplicityMaintainability: {
+          status: "clear",
+          summary: "The change is the smallest maintainable implementation.",
+        },
+        existingSystems: {
+          status: "clear",
+          summary: "Existing ownership boundaries are reused or extended well.",
+        },
+        testEffectiveness: {
+          status: "clear",
+          summary: "Tests prove the behavior and meaningful regression cases.",
+        },
+        userFacingBehavior: {
+          status: "clear",
+          summary: "No concrete user-facing regression remains.",
+        },
+        securityPrivacy: {
+          status: "clear",
+          summary: "No concrete security or privacy regression remains.",
+        },
+      },
+      findings: [],
+      verificationTests: [
+        {
+          command: "exact independently executed focused test command",
+          status: "passed",
+          summary: "what this critic-run command verifies",
+        },
+      ],
+      fastFollowRecommendations: [],
+      verdict: "pass",
+      summary: "The exact cumulative candidate is ready for human review.",
+    };
+    return [
+      "You are the isolated RenoConcierge CodeOps critic agent.",
+      "Review only; do not edit source. The gateway will reject any source patch.",
+      `Work item: ${request.workItemId}`,
+      `Exact base SHA: ${request.baseSha}`,
+      `Candidate coding round: ${request.codingRound} of 4`,
+      `Exact candidate checkpoint: ${JSON.stringify(request.candidate)}`,
+      `Task: ${request.summary}`,
+      `Project context digest: ${request.codingRequest.projectContext.digest}`,
+      "The exact cumulative candidate patch is already applied to /workspace.",
+      "Read /context/coding-request.json, /context/project-context.json, and every trusted document under /context/project-documents/ before reviewing.",
+      "Use the immutable ticket, relevant human comments and decisions, relations, bounded same-project Plane task index, trusted project documents, and source tree to understand how this narrow ticket fits the broader Plane project and product.",
+      `Acceptance criteria: ${JSON.stringify(request.codingRequest.workItem.acceptanceCriteria)}`,
+      "Pursue narrow ticket completion. Do not demand adjacent roadmap work in this candidate.",
+      "Review every lens independently: ticket completion; unused/dead code; simplicity and maintainability; effective reuse or extension of existing systems; test effectiveness and likely bugs; user-facing behavior; and security/privacy.",
+      "Independently run at least one relevant focused test after inspecting the final source. Record every exact passing command in verificationTests; do not rely only on the coder's report.",
+      "A ticket-required acceptance gap or concrete security/privacy regression is a must-fix finding, never a fast follow.",
+      "Use fastFollowRecommendations for genuinely non-blocking next steps, especially valuable adjacent work discovered with evidence. Keep them narrow and actionable.",
+      "Recommendations do not authorize Plane mutations; set planeMutationAuthorized to false.",
+      "Critical/high findings must be must-fix. A pass is impossible while any must-fix finding remains.",
+      "Return only one JSON object, without Markdown fences, matching this shape:",
+      JSON.stringify(example),
+      "Use exact enum/category values from the example contract. Set each lens to finding iff at least one structured finding has its corresponding category. Use the current ISO-8601 time for reviewedAt.",
     ].join("\n");
   }
   if (request.researchStage.kind === "synthesis") {
@@ -409,7 +519,8 @@ export function parseCheckpointLogs(input: {
     checkpoint.agentRole !== input.request.role ||
     checkpoint.baseSha !== input.request.baseSha ||
     checkpoint.projectContextDigest !==
-      (input.request.role === "coding-agent"
+      (input.request.role === "coding-agent" ||
+      input.request.role === "critic-agent"
         ? input.request.codingRequest.projectContext.digest
         : input.request.researchRequest.projectContext.digest)
   ) {
@@ -453,6 +564,13 @@ export function parseCheckpointLogs(input: {
     (patch.length !== 0 || patchDigest !== EMPTY_PATCH_SHA256)
   ) {
     throw new Error("QA Contract Researcher produced a source patch");
+  }
+  if (
+    input.request.role === "critic-agent" &&
+    (`sha256:${patchDigest}` !== input.request.candidate.patch.digest ||
+      patch.length !== input.request.candidate.patch.sizeBytes)
+  ) {
+    throw new Error("Critic Agent changed the cumulative candidate patch");
   }
   return {
     checkpoint,
@@ -499,6 +617,19 @@ export async function retainCheckpoint(input: {
     input.request.role === "qa-contract-researcher"
       ? parseTerminalJsonObject(input.retained.checkpoint.response)
       : undefined;
+  const criticResponse =
+    input.request.role === "critic-agent"
+      ? adversarialReviewSchema.parse(
+          parseTerminalJsonObject(input.retained.checkpoint.response),
+        )
+      : undefined;
+  const codingResponse =
+    input.request.role === "coding-agent" &&
+    input.request.codingRound !== undefined
+      ? codingOutcomeSchema.parse(
+          parseTerminalJsonObject(input.retained.checkpoint.response),
+        )
+      : undefined;
   const result = agentJobDispatchResultSchema.parse({
     version: "codeops.agent-job-dispatch-result/v1",
     role: input.request.role,
@@ -508,6 +639,16 @@ export async function retainCheckpoint(input: {
     checkpointSizeBytes: Buffer.byteLength(
       JSON.stringify(input.retained.checkpoint),
     ),
+    patchUri: `artifact:///agent-runs/${input.runId}/changes.patch`,
+    patchDigest: `sha256:${input.retained.checkpoint.patch.sha256}`,
+    patchSizeBytes: input.retained.checkpoint.patch.bytes,
+    ...(input.request.role === "critic-agent"
+      ? { criticReview: criticResponse }
+      : {}),
+    ...(input.request.role === "coding-agent" &&
+    input.request.codingRound !== undefined
+      ? { codingOutcome: codingResponse }
+      : {}),
     ...(input.request.role === "qa-contract-researcher"
       ? {
           researchResult:
@@ -523,6 +664,20 @@ export async function retainCheckpoint(input: {
         }
       : {}),
   });
+  if (input.request.role === "critic-agent") {
+    if (
+      result.role !== "critic-agent" ||
+      result.criticReview.workflowId !== input.request.workflowId ||
+      result.criticReview.workItemId !== input.request.workItemId ||
+      result.criticReview.baseSha !== input.request.baseSha ||
+      result.criticReview.candidate.round !== input.request.codingRound ||
+      result.criticReview.candidate.runId !== input.request.candidate.runId ||
+      canonicalSerialize(result.criticReview.candidate) !==
+        canonicalSerialize(input.request.candidate)
+    ) {
+      throw new Error("critic report identity does not match its exact candidate");
+    }
+  }
   if (input.request.role === "qa-contract-researcher") {
     if (
       result.role !== "qa-contract-researcher" ||
@@ -573,7 +728,7 @@ function parseTerminalJsonObject(response: string): unknown {
   }
   if (candidates.length !== 1) {
     throw new Error(
-      "research response must end with exactly one complete JSON object",
+      "Agent response must end with exactly one complete JSON object",
     );
   }
   return candidates[0];
@@ -627,6 +782,76 @@ export async function readRetainedResult(input: {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;
   }
+}
+
+export async function readCandidatePatch(input: {
+  rootDirectory: string;
+  request: AgentJobDispatchRequest;
+}): Promise<
+  | {
+      readonly candidate: CandidateCheckpoint;
+      readonly patch: Buffer;
+    }
+  | null
+> {
+  if (input.request.role === "qa-contract-researcher") return null;
+  const candidate =
+    input.request.role === "critic-agent"
+      ? input.request.candidate
+      : input.request.revision?.candidate;
+  if (!candidate) return null;
+
+  const directory = path.join(
+    input.rootDirectory,
+    "agent-runs",
+    candidate.runId,
+  );
+  const retainedRequest = JSON.parse(
+    await readFile(path.join(directory, "request.json"), "utf8"),
+  ) as { request?: unknown };
+  const sourceRequest = agentJobDispatchRequestSchema.parse(
+    retainedRequest.request,
+  );
+  if (
+    sourceRequest.role !== "coding-agent" ||
+    sourceRequest.workItemId !== input.request.workItemId ||
+    sourceRequest.workflowId !== input.request.workflowId ||
+    sourceRequest.baseSha !== input.request.baseSha ||
+    canonicalSerialize(sourceRequest.codingRequest) !==
+      canonicalSerialize(input.request.codingRequest) ||
+    sourceRequest.codingRound !== candidate.round
+  ) {
+    throw new Error("candidate source request identity drifted");
+  }
+  const result = agentJobDispatchResultSchema.parse(
+    JSON.parse(
+      await readFile(path.join(directory, "result.json"), "utf8"),
+    ),
+  );
+  if (
+    result.role !== "coding-agent" ||
+    result.runId !== candidate.runId ||
+    result.checkpointUri !== candidate.checkpoint.uri ||
+    result.checkpointDigest !== candidate.checkpoint.digest ||
+    result.checkpointSizeBytes !== candidate.checkpoint.sizeBytes ||
+    result.patchUri !== candidate.patch.uri ||
+    result.patchDigest !== candidate.patch.digest ||
+    result.patchSizeBytes !== candidate.patch.sizeBytes ||
+    result.codingOutcome === undefined ||
+    canonicalSerialize(result.codingOutcome) !==
+      canonicalSerialize(candidate.codingOutcome)
+  ) {
+    throw new Error("candidate result identity drifted");
+  }
+  const patch = await readFile(path.join(directory, "changes.patch"));
+  const digest = `sha256:${createHash("sha256").update(patch).digest("hex")}`;
+  if (
+    digest !== candidate.patch.digest ||
+    patch.length !== candidate.patch.sizeBytes
+  ) {
+    throw new Error("candidate patch bytes drifted");
+  }
+  return { candidate, patch };
 }
 
 export async function retainFailure(input: {
