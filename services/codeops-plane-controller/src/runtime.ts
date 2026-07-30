@@ -10,6 +10,11 @@ import {
   type ResearchRequest,
   type WorkflowTransitionNotice,
 } from "@renoconcierge/codeops-contracts";
+import {
+  parseGitHubPullRequestEvent,
+  verifyGitHubWebhookSignature,
+  type GitHubPullRequestEvent,
+} from "./github-events.js";
 import type {
   CodingRequestEnqueueResult,
   ResearchRequestEnqueueResult,
@@ -154,6 +159,23 @@ export function createTemporalCodingEnqueuer(input: {
   };
 }
 
+export function createTemporalCodingCanceller(input: {
+  client: Pick<Client, "workflow">;
+}): (input: { workflowId: string; reason: string }) => Promise<void> {
+  return async ({ workflowId, reason }) => {
+    if (!/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/.test(workflowId)) {
+      throw new Error("invalid coding workflow identity");
+    }
+    const boundedReason = reason.replaceAll(/\s+/g, " ").trim();
+    if (boundedReason.length === 0 || boundedReason.length > 1_000) {
+      throw new Error("invalid coding cancellation reason");
+    }
+    await input.client.workflow
+      .getHandle(workflowId)
+      .signal("cancelWorkItem", boundedReason);
+  };
+}
+
 function requiredHeader(request: IncomingMessage, name: string): string {
   const value = request.headers[name];
   if (typeof value !== "string" || value.length === 0) {
@@ -223,6 +245,13 @@ export function createPlaneWebhookRequestListener(input: {
   transitionProjection?: {
     token: string;
     process: (notice: WorkflowTransitionNotice) => Promise<void>;
+  };
+  github?: {
+    secret: string;
+    process: (input: {
+      delivery: string;
+      event: GitHubPullRequestEvent;
+    }) => Promise<void>;
   };
 }): (request: IncomingMessage, response: ServerResponse) => Promise<void> {
   return async (request, response) => {
@@ -303,6 +332,46 @@ export function createPlaneWebhookRequestListener(input: {
           status: "applied",
           workflowId: notice.workflowId,
         });
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+    if (request.method === "POST" && request.url === "/webhooks/github") {
+      if (input.github === undefined) {
+        json(response, 404, { status: "not-found" });
+        return;
+      }
+      if (!request.headers["content-type"]?.startsWith("application/json")) {
+        json(response, 415, { status: "unsupported-media-type" });
+        return;
+      }
+      try {
+        const rawBody = await readRawBody(request);
+        const signature = requiredHeader(request, "x-hub-signature-256");
+        if (
+          !verifyGitHubWebhookSignature({
+            rawBody,
+            secret: input.github.secret,
+            signature,
+          })
+        ) {
+          json(response, 401, { status: "unauthorized" });
+          return;
+        }
+        const event = parseGitHubPullRequestEvent({
+          rawBody,
+          event: requiredHeader(request, "x-github-event"),
+        });
+        if (event === null) {
+          json(response, 200, { status: "ignored" });
+          return;
+        }
+        await input.github.process({
+          delivery: requiredHeader(request, "x-github-delivery"),
+          event,
+        });
+        json(response, 200, { status: "accepted" });
       } catch {
         json(response, 503, { status: "unavailable" });
       }

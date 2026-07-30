@@ -14,6 +14,45 @@ import { z } from "zod";
 import { compileProjectContext } from "./project-context.js";
 
 export {
+  evaluatePullRequestEvent,
+  evaluateTicketScheduling,
+  type PullRequestBinding,
+  type PullRequestEventDecision,
+  type SchedulerTicket,
+  type SchedulerTicketState,
+  type SchedulingDecision,
+} from "./scheduler.js";
+export {
+  reconcileProjectScheduling,
+  type ProjectSchedulingAction,
+} from "./scheduler-reconciler.js";
+export {
+  compileSchedulerProjectSnapshot,
+  type SchedulerStateIds,
+} from "./scheduler-snapshot.js";
+export {
+  createFilePullRequestBindingStore,
+  storedPullRequestBindingSchema,
+  type PullRequestBindingStore,
+  type StoredPullRequestBinding,
+} from "./pr-binding-store.js";
+export {
+  createFileWorkflowBindingStore,
+  storedWorkflowBindingSchema,
+  type StoredWorkflowBinding,
+  type WorkflowBindingStore,
+} from "./workflow-binding-store.js";
+export {
+  parseGitHubPullRequestEvent,
+  verifyGitHubWebhookSignature,
+  type GitHubPullRequestEvent,
+} from "./github-events.js";
+export {
+  reconcileGitHubPullRequestEvent,
+  type GitHubReconciliationResult,
+} from "./github-reconciler.js";
+
+export {
   applyResearchMutationBatch,
   type MutationResult,
   type PlaneContentClient,
@@ -25,6 +64,11 @@ export {
   type PlaneApiClient,
   type PlaneApiClientConfig,
 } from "./plane-api.js";
+export {
+  createPlaneLifecycleClient,
+  type PlaneLifecycleClient,
+  type PlaneLifecycleClientConfig,
+} from "./plane-lifecycle.js";
 export {
   createFileResearchDedupLedger,
   type DedupClaim,
@@ -47,6 +91,7 @@ export {
 export {
   createPlaneWebhookRequestListener,
   createRepositoryHeadResolver,
+  createTemporalCodingCanceller,
   createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "./runtime.js";
@@ -231,6 +276,17 @@ export type ReadyAdmission = Readonly<{
   eventId: string;
   request: CodingRequest;
   planeRevisionDigest: string;
+}>;
+
+export type PlaneStateTransition = Readonly<{
+  eventId: string;
+  workspaceId: string;
+  projectId: string;
+  workItemId: string;
+  actorId: string;
+  oldStateId: string;
+  newStateId: string;
+  updatedAt: string;
 }>;
 
 export type ResearchRequestEnqueueResult = "enqueued" | "already-enqueued";
@@ -588,20 +644,14 @@ export async function admitPlaneResearchComment(input: {
   };
 }
 
-export function identifyPlaneReadyTransition(input: {
+export function identifyPlaneStateTransition(input: {
   rawBody: Buffer;
   headers: PlaneWebhookHeaders;
   webhookSecret: string;
   allowedHumanActorIds: ReadonlySet<string>;
-  readyStateId: string;
-}):
-  | {
-      payload: z.infer<typeof planeCeIssueWebhookSchema>;
-      eventId: string;
-      projectId: string;
-      workItemId: string;
-    }
-  | null {
+}): (PlaneStateTransition & {
+  payload: z.infer<typeof planeCeIssueWebhookSchema>;
+}) | null {
   if (
     !verifyPlaneWebhookSignature({
       secret: input.webhookSecret,
@@ -623,20 +673,18 @@ export function identifyPlaneReadyTransition(input: {
     payload.data.workspace !== payload.workspace_id ||
     payload.data.state.id !== payload.activity.new_value
   ) {
-    throw new Error("Plane Ready webhook headers or identities do not match");
+    throw new Error("Plane state webhook headers or identities do not match");
   }
 
-  const readyStateId = uuid.parse(input.readyStateId);
   if (
     payload.activity.old_value === payload.activity.new_value ||
-    payload.activity.new_value !== readyStateId ||
     !input.allowedHumanActorIds.has(payload.activity.actor.id)
   ) {
     return null;
   }
   return {
     payload,
-    eventId: `ready-event:${createHash("sha256")
+    eventId: `state-event:${createHash("sha256")
       .update(
         canonicalSerialize({
           workspaceId: payload.workspace_id,
@@ -651,8 +699,42 @@ export function identifyPlaneReadyTransition(input: {
         }),
       )
       .digest("hex")}`,
+    workspaceId: payload.workspace_id,
     projectId: payload.data.project,
     workItemId: payload.data.id,
+    actorId: payload.activity.actor.id,
+    oldStateId: payload.activity.old_value,
+    newStateId: payload.activity.new_value,
+    updatedAt: payload.data.updated_at,
+  };
+}
+
+export function identifyPlaneReadyTransition(input: {
+  rawBody: Buffer;
+  headers: PlaneWebhookHeaders;
+  webhookSecret: string;
+  allowedHumanActorIds: ReadonlySet<string>;
+  readyStateId: string;
+}):
+  | {
+      payload: z.infer<typeof planeCeIssueWebhookSchema>;
+      eventId: string;
+      projectId: string;
+      workItemId: string;
+    }
+  | null {
+  const transition = identifyPlaneStateTransition(input);
+  if (
+    transition === null ||
+    transition.newStateId !== uuid.parse(input.readyStateId)
+  ) {
+    return null;
+  }
+  return {
+    payload: transition.payload,
+    eventId: transition.eventId.replace("state-event:", "ready-event:"),
+    projectId: transition.projectId,
+    workItemId: transition.workItemId,
   };
 }
 

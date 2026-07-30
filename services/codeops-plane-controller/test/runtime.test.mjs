@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHmac } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
 import { test } from "node:test";
@@ -245,6 +246,81 @@ test("serves health and preserves the exact raw Plane body and headers", async (
       event: "event",
       signature: "signature",
     });
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
+test("accepts only signed bounded GitHub pull-request events", async () => {
+  const seen = [];
+  const secret = "g".repeat(64);
+  const body = JSON.stringify({
+    action: "closed",
+    repository: { full_name: "anulman/renoconcierge" },
+    pull_request: {
+      number: 158,
+      merged: true,
+      head: { sha: "a".repeat(40), ref: "feat/a" },
+      base: { ref: "main" },
+    },
+  });
+  const signature = `sha256=${createHmac("sha256", secret)
+    .update(body)
+    .digest("hex")}`;
+  const listener = createPlaneWebhookRequestListener({
+    process: async () => ({ status: "ignored" }),
+    github: {
+      secret,
+      process: async (event) => seen.push(event),
+    },
+  });
+  const server = createServer((incoming, response) => {
+    void listener(incoming, response);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const address = server.address();
+    const url = `http://127.0.0.1:${address.port}/webhooks/github`;
+    const denied = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-GitHub-Delivery": "delivery-1",
+        "X-GitHub-Event": "pull_request",
+        "X-Hub-Signature-256": `sha256=${"0".repeat(64)}`,
+      },
+      body,
+    });
+    assert.equal(denied.status, 401);
+
+    const accepted = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-GitHub-Delivery": "delivery-1",
+        "X-GitHub-Event": "pull_request",
+        "X-Hub-Signature-256": signature,
+      },
+      body,
+    });
+    assert.equal(accepted.status, 200);
+    assert.deepEqual(await accepted.json(), { status: "accepted" });
+    assert.deepEqual(seen, [
+      {
+        delivery: "delivery-1",
+        event: {
+          repository: "anulman/renoconcierge",
+          number: 158,
+          action: "closed",
+          merged: true,
+          headSha: "a".repeat(40),
+          headRef: "feat/a",
+          baseRef: "main",
+        },
+      },
+    ]);
   } finally {
     server.close();
     await once(server, "close");

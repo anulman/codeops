@@ -6,6 +6,7 @@ import {
   admitPlaneResearchComment,
   compileProjectContext,
   identifyPlaneReadyTransition,
+  identifyPlaneStateTransition,
 } from "../dist/index.js";
 import { upgradeResearchPacket } from "./research-fixture.mjs";
 
@@ -399,6 +400,32 @@ test("admits only a signed allowlisted human transition into configured Ready", 
   assert.equal(admission.request.ticketSnapshot.relations.length, 1);
   assert.match(admission.eventId, /^ready-event:[0-9a-f]{64}$/);
   assert.match(admission.planeRevisionDigest, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("identifies every signed allowlisted human lifecycle transition", () => {
+  const input = signedReadyInput();
+  const identified = identifyPlaneStateTransition(input);
+  assert.deepEqual(
+    {
+      workspaceId: identified.workspaceId,
+      projectId: identified.projectId,
+      workItemId: identified.workItemId,
+      actorId: identified.actorId,
+      oldStateId: identified.oldStateId,
+      newStateId: identified.newStateId,
+      updatedAt: identified.updatedAt,
+    },
+    {
+      workspaceId: readyPayload.workspace_id,
+      projectId: readyPayload.data.project,
+      workItemId: readyPayload.data.id,
+      actorId,
+      oldStateId: backlogStateId,
+      newStateId: readyStateId,
+      updatedAt: readyUpdatedAt,
+    },
+  );
+  assert.match(identified.eventId, /^state-event:[0-9a-f]{64}$/);
 });
 
 test("derives Ready acceptance criteria from Plane CE description HTML", async () => {
