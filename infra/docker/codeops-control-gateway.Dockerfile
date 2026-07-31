@@ -22,6 +22,9 @@ RUN services/codeops-control-gateway/node_modules/.bin/tsc -p packages/codeops-c
 
 FROM node:24-bookworm-slim
 WORKDIR /app
+RUN apt-get update \
+  && apt-get install --yes --no-install-recommends ca-certificates git \
+  && rm -rf /var/lib/apt/lists/*
 COPY --from=build --chown=node:node /repo/services/codeops-control-gateway ./services/codeops-control-gateway
 ENV NODE_ENV=production
 USER node

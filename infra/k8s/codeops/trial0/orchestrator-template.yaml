@@ -48,6 +48,8 @@ spec:
               value: http://codeops-control-gateway:8080
             - name: CODEOPS_AGENT_DISPATCH_TOKEN_FILE
               value: /var/run/codeops-dispatch/token
+            - name: CODEOPS_PUBLICATION_TOKEN_FILE
+              value: /var/run/codeops-publication/token
             - name: CODEOPS_RESEARCH_PROJECTION_ORIGIN
               value: http://codeops-plane-controller:8080
             - name: CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE
@@ -72,6 +74,9 @@ spec:
             - name: projection-auth
               mountPath: /var/run/codeops-projection
               readOnly: true
+            - name: publication-auth
+              mountPath: /var/run/codeops-publication
+              readOnly: true
       volumes:
         - name: dispatch-auth
           secret:
@@ -80,6 +85,10 @@ spec:
         - name: projection-auth
           secret:
             secretName: codeops-research-projection-auth
+            defaultMode: 256
+        - name: publication-auth
+          secret:
+            secretName: codeops-publication-auth
             defaultMode: 256
 ---
 apiVersion: networking.k8s.io/v1

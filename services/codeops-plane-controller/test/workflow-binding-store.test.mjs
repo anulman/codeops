@@ -62,7 +62,35 @@ test("fails closed on workflow identity drift and unsafe roots", async () => {
         workflowId: "coding-other",
         updatedAt: "2026-07-30T22:00:00.000Z",
       }),
-      /identity is immutable/,
+      /only a terminal workflow/,
+    );
+  });
+});
+
+test("advances one terminal workflow to an exact active PR revision", async () => {
+  await withStore(async (store) => {
+    await store.put(binding);
+    await store.put({
+      ...binding,
+      status: "terminal",
+      updatedAt: "2026-07-30T22:00:00.000Z",
+    });
+    const revision = {
+      ...binding,
+      workflowId: "review-123",
+      baseSha: "b".repeat(40),
+      status: "active",
+      updatedAt: "2026-07-30T23:00:00.000Z",
+    };
+    await store.put(revision);
+    assert.deepEqual(await store.getByWorkItem(binding.workItemId), revision);
+    await assert.rejects(
+      store.put({
+        ...revision,
+        workflowId: "review-other",
+        updatedAt: "2026-07-30T23:01:00.000Z",
+      }),
+      /only a terminal workflow/,
     );
   });
 });

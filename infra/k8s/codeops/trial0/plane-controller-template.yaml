@@ -67,6 +67,8 @@ spec:
               value: /var/run/secrets/codeops/plane-api-key
             - name: CODEOPS_PLANE_WEBHOOK_SECRET_FILE
               value: /var/run/secrets/codeops/webhook-secret
+            - name: CODEOPS_GITHUB_WEBHOOK_SECRET_FILE
+              value: /var/run/secrets/codeops/github-webhook-secret
             - name: CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE
               value: /var/run/codeops-projection/token
             - name: CODEOPS_REPOSITORY_HEAD_ORIGIN
@@ -75,8 +77,16 @@ spec:
               value: /var/run/codeops-repository-head/token
             - name: CODEOPS_ALLOWED_HUMAN_ACTOR_IDS
               value: __CODEOPS_ALLOWED_HUMAN_ACTOR_IDS__
+            - name: CODEOPS_ALLOWED_GITHUB_REVIEWER_IDS
+              value: "__CODEOPS_ALLOWED_GITHUB_REVIEWER_IDS__"
             - name: CODEOPS_READY_STATE_ID
               value: __CODEOPS_READY_STATE_ID__
+            - name: CODEOPS_IN_PROGRESS_STATE_ID
+              value: __CODEOPS_IN_PROGRESS_STATE_ID__
+            - name: CODEOPS_NEEDS_ATTENTION_STATE_ID
+              value: __CODEOPS_NEEDS_ATTENTION_STATE_ID__
+            - name: CODEOPS_COMPLETE_STATE_ID
+              value: __CODEOPS_COMPLETE_STATE_ID__
             - name: CODEOPS_PERSONA_USER_IDS
               value: __CODEOPS_PERSONA_USER_IDS__
             - name: CODEOPS_REPOSITORY_OWNER
@@ -157,6 +167,8 @@ spec:
                 path: plane-api-key
               - key: webhook-secret
                 path: webhook-secret
+              - key: github-webhook-secret
+                path: github-webhook-secret
         - name: projection-auth
           secret:
             secretName: codeops-research-projection-auth
@@ -196,6 +208,13 @@ spec:
       http:
         paths:
           - path: /webhooks/plane
+            pathType: Exact
+            backend:
+              service:
+                name: codeops-plane-controller
+                port:
+                  name: http
+          - path: /webhooks/github
             pathType: Exact
             backend:
               service:

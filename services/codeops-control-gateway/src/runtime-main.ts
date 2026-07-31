@@ -2,10 +2,21 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   authenticateBearer,
+  loadGitHubReviewComments,
+  qualifyGitHubHead,
   parseDispatchRequest,
   resolveGitHubBranchHead,
 } from "./core.js";
+import {
+  candidatePublicationSchema,
+  githubPullRequestStackLinkSchema,
+} from "@renoconcierge/codeops-contracts";
+import {
+  linkGitHubPullRequestStack,
+  loadGitHubPullRequestStack,
+} from "./github-stacks.js";
 import { loadInClusterKubernetesClient } from "./kubernetes.js";
+import { publishCandidateRevision } from "./publication.js";
 import { createAgentJobRunner } from "./runtime.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -90,6 +101,19 @@ const repositoryUrl = required("CODEOPS_REPOSITORY_URL");
 const repositoryReadToken = await secretFile(
   "CODEOPS_REPOSITORY_READ_TOKEN_FILE",
 );
+const requiredReviewCheckNames = required(
+  "CODEOPS_REQUIRED_REVIEW_CHECK_NAMES",
+)
+  .split(",")
+  .map((value) => value.trim())
+  .filter(Boolean);
+const publicationToken = await secretFile("CODEOPS_PUBLICATION_TOKEN_FILE");
+if (publicationToken.length < 32 || publicationToken.length > 4_096) {
+  throw new Error("publication token length is invalid");
+}
+const repositoryWriteToken = await secretFile(
+  "CODEOPS_REPOSITORY_WRITE_TOKEN_FILE",
+);
 const run = createAgentJobRunner({
   kubernetes,
   config: {
@@ -135,6 +159,184 @@ const server = createServer((request, response) => {
             branch: "main",
           }),
         });
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+    const reviewCommentsMatch =
+      request.method === "GET"
+        ? request.url?.match(
+            /^\/v1\/pull-requests\/([1-9][0-9]{0,7})\/reviews\/([1-9][0-9]{0,15})\/comments$/,
+          )
+        : null;
+    if (reviewCommentsMatch) {
+      if (
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          repositoryHeadToken,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      try {
+        json(response, 200, {
+          version: "codeops.github-review-comments/v1",
+          comments: await loadGitHubReviewComments({
+            repositoryUrl,
+            repositoryReadToken,
+            pullRequestNumber: Number(reviewCommentsMatch[1]),
+            reviewId: Number(reviewCommentsMatch[2]),
+          }),
+        });
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+    const qualificationMatch =
+      request.method === "GET"
+        ? request.url?.match(
+            /^\/v1\/pull-requests\/([1-9][0-9]{0,7})\/heads\/([0-9a-f]{40})\/qualification$/,
+          )
+        : null;
+    if (qualificationMatch) {
+      if (
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          repositoryHeadToken,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      try {
+        const pullRequestNumber = Number(qualificationMatch[1]);
+        const headSha = qualificationMatch[2]!;
+        json(response, 200, {
+          version: "codeops.github-pull-request-qualification/v1",
+          pullRequestNumber,
+          headSha,
+          qualified: await qualifyGitHubHead({
+            repositoryUrl,
+            repositoryReadToken,
+            pullRequestNumber,
+            headSha,
+            requiredCheckNames: requiredReviewCheckNames,
+          }),
+        });
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+    const stackMatch =
+      request.method === "GET"
+        ? request.url?.match(
+            /^\/v1\/pull-request-stacks\/([1-9][0-9]{0,7})$/,
+          )
+        : null;
+    if (stackMatch) {
+      if (
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          repositoryHeadToken,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      try {
+        json(
+          response,
+          200,
+          await loadGitHubPullRequestStack({
+            repositoryUrl,
+            repositoryToken: repositoryReadToken,
+            stackNumber: Number(stackMatch[1]),
+          }),
+        );
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      request.url === "/v1/pull-request-stacks"
+    ) {
+      if (
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          publicationToken,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      if (!request.headers["content-type"]?.startsWith("application/json")) {
+        json(response, 415, { status: "unsupported-media-type" });
+        return;
+      }
+      try {
+        const link = githubPullRequestStackLinkSchema.parse(
+          await readJson(request),
+        );
+        const result = serial.then(() =>
+          linkGitHubPullRequestStack({
+            link,
+            repositoryUrl,
+            repositoryWriteToken,
+          }),
+        );
+        serial = result.catch(() => undefined);
+        json(response, 200, await result);
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      request.url === "/v1/candidate-publications"
+    ) {
+      if (
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          publicationToken,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      if (!request.headers["content-type"]?.startsWith("application/json")) {
+        json(response, 415, { status: "unsupported-media-type" });
+        return;
+      }
+      try {
+        const publication = candidatePublicationSchema.parse(
+          await readJson(request),
+        );
+        const result = serial.then(() =>
+          publishCandidateRevision({
+            publication,
+            evidenceRoot: required("CODEOPS_EVIDENCE_ROOT"),
+            repositoryWriteToken,
+          }),
+        );
+        serial = result.catch(() => undefined);
+        json(response, 200, await result);
       } catch {
         json(response, 503, { status: "unavailable" });
       }

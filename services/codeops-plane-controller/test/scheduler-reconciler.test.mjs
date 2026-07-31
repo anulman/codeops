@@ -38,15 +38,21 @@ test("starts eligible siblings on the exact review head in deterministic order",
     tickets,
     protectedMainSha: mainSha,
     async start({ ticket, decision }) {
-      calls.push(["start", ticket.id, decision.mode, decision.baseSha]);
+      calls.push([
+        "start",
+        ticket.id,
+        decision.mode,
+        decision.baseSha,
+        decision.stackStrategy,
+      ]);
     },
     async cancel() {
       throw new Error("unexpected cancellation");
     },
   });
   assert.deepEqual(calls, [
-    ["start", "b", "stacked", reviewSha],
-    ["start", "c", "stacked", reviewSha],
+    ["start", "b", "stacked", reviewSha, "native"],
+    ["start", "c", "stacked", reviewSha, "branch-only"],
   ]);
   assert.deepEqual(actions.map(({ ticketId }) => ticketId), ["b", "c"]);
 });

@@ -10,6 +10,7 @@ import { bundleWorkflowCode } from "@temporalio/worker";
 import { canonicalSerialize } from "@renoconcierge/codeops-contracts";
 import {
   dispatchAgentJob,
+  publishCandidateRevision,
   publishResearchPacket,
   recordTransition,
 } from "../dist/activities.js";
@@ -552,6 +553,114 @@ test("the Plane projection activity authenticates and binds the response identit
       delete process.env.CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE;
     } else {
       process.env.CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE = previous.tokenPath;
+    }
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("the publication activity uses its separate bearer capability and exact identity", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-publication-"));
+  const tokenPath = path.join(directory, "token");
+  const token = "u".repeat(64);
+  await writeFile(tokenPath, token);
+  const previous = {
+    origin: process.env.CODEOPS_AGENT_DISPATCH_ORIGIN,
+    tokenPath: process.env.CODEOPS_PUBLICATION_TOKEN_FILE,
+  };
+  const publication = {
+    version: "codeops.candidate-publication/v1",
+    workspaceId: "55555555-5555-4555-8555-555555555555",
+    projectId: "11111111-1111-4111-8111-111111111111",
+    workItemId: "22222222-2222-4222-8222-222222222222",
+    workflowId: "review-123",
+    repository: { owner: "anulman", name: "renoconcierge" },
+    pullRequestNumber: 158,
+    expectedHeadSha: "a".repeat(40),
+    headRef: "codeops/reviewed",
+    humanReview: {
+      version: "codeops.human-review-request/v1",
+      repository: "anulman/renoconcierge",
+      pullRequestNumber: 158,
+      reviewId: 9001,
+      reviewedHeadSha: "a".repeat(40),
+      headRef: "codeops/reviewed",
+      baseRef: "main",
+      reviewer: { id: 6723643628, login: "anulman" },
+      state: "changes_requested",
+      submittedAt: "2026-07-30T22:45:00.000Z",
+      summary: "Fix it.",
+      comments: [],
+    },
+    candidate: {
+      round: 1,
+      runId: "agent-review-123",
+      checkpoint: {
+        uri: "artifact:///agent-runs/agent-review-123/checkpoint.json",
+        digest: `sha256:${"c".repeat(64)}`,
+        sizeBytes: 100,
+      },
+      patch: {
+        uri: "artifact:///agent-runs/agent-review-123/changes.patch",
+        digest: `sha256:${"d".repeat(64)}`,
+        sizeBytes: 200,
+      },
+      codingOutcome: {
+        version: "codeops.coding-outcome/v1",
+        summary: "Resolved review.",
+        tests: [
+          {
+            command: "node --test",
+            status: "passed",
+            summary: "Focused tests pass.",
+          },
+        ],
+      },
+    },
+    commitMessage: "fix(codeops): address PR #158 review",
+  };
+  const server = createServer((request, response) => {
+    const chunks = [];
+    request.on("data", (chunk) => chunks.push(chunk));
+    request.on("end", () => {
+      assert.equal(request.url, "/v1/candidate-publications");
+      assert.equal(request.headers.authorization, `Bearer ${token}`);
+      assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), publication);
+      response.writeHead(200, { "Content-Type": "application/json" });
+      response.end(
+        JSON.stringify({
+          version: "codeops.candidate-publication-result/v1",
+          workflowId: publication.workflowId,
+          workItemId: publication.workItemId,
+          pullRequestNumber: publication.pullRequestNumber,
+          previousHeadSha: publication.expectedHeadSha,
+          publishedHeadSha: "b".repeat(40),
+          headRef: publication.headRef,
+          patchDigest: publication.candidate.patch.digest,
+        }),
+      );
+    });
+  });
+  server.listen(0, "127.0.0.1");
+  await new Promise((resolve) => server.once("listening", resolve));
+  const address = server.address();
+  process.env.CODEOPS_AGENT_DISPATCH_ORIGIN =
+    `http://127.0.0.1:${address.port}`;
+  process.env.CODEOPS_PUBLICATION_TOKEN_FILE = tokenPath;
+  try {
+    assert.equal(
+      (await publishCandidateRevision(publication)).publishedHeadSha,
+      "b".repeat(40),
+    );
+  } finally {
+    await new Promise((resolve, reject) =>
+      server.close((error) => (error ? reject(error) : resolve())),
+    );
+    if (previous.origin === undefined) delete process.env.CODEOPS_AGENT_DISPATCH_ORIGIN;
+    else process.env.CODEOPS_AGENT_DISPATCH_ORIGIN = previous.origin;
+    if (previous.tokenPath === undefined) {
+      delete process.env.CODEOPS_PUBLICATION_TOKEN_FILE;
+    } else {
+      process.env.CODEOPS_PUBLICATION_TOKEN_FILE = previous.tokenPath;
     }
     await rm(directory, { recursive: true, force: true });
   }

@@ -109,6 +109,23 @@ separate externally created `codeops-repository-head-auth` Secret; the
 controller never receives `codeops-agent-dispatch-auth` and therefore cannot
 bypass Temporal to create an Agent Job directly.
 
+The gateway also owns the bounded GitHub write boundary for candidate
+publication and public-preview native stacks. Candidate publication requires
+an exact current branch/head match and can only fast-forward the already-bound
+pull-request branch. The stack adapter reloads and validates both pull
+requests, then may create a two-layer stack or append one child only when the
+bound parent is the current top layer. It rejects sibling fan-out, topology
+drift, redirects, and unverified 422 races. Stack reads and writes use separate
+internal bearer capabilities; the Plane controller never receives the GitHub
+repository credential.
+
+Native stacks complement rather than replace scheduler policy. Linear
+dependencies use GitHub's retarget/rebase mechanics, while independent direct
+siblings may remain branch-only stacks. A merged native-stack event reloads
+the exact stack so all pull requests merged by GitHub's atomic higher-layer
+merge are projected to their tickets idempotently. None of these routes can
+merge a pull request or deploy a candidate.
+
 The gateway mounts only the repository token from the externally created
 `codeops-agent-source-credentials` Secret. ChatGPT subscription authentication
 lives on the separate `codeops-codex-auth` RWO claim, which the gateway itself

@@ -17,12 +17,16 @@ const PERSONA_HANDLES = new Set([
 
 const TOKENS = {
   __CODEOPS_ALLOWED_HUMAN_ACTOR_IDS__: "allowedHumanActorIds",
+  __CODEOPS_ALLOWED_GITHUB_REVIEWER_IDS__: "allowedGithubReviewerIds",
+  __CODEOPS_COMPLETE_STATE_ID__: "completeStateId",
   __CODEOPS_CONTROL_PLANE_SHA__: "controlPlaneSha",
   __CODEOPS_PERSONA_USER_IDS__: "personaUserIds",
   __CODEOPS_PLANE_CONTROLLER_DIGEST__: "controllerDigest",
   __CODEOPS_PLANE_CONTROLLER_HOST__: "controllerHost",
   __CODEOPS_PLANE_WORKSPACE_SLUG__: "workspaceSlug",
   __CODEOPS_READY_STATE_ID__: "readyStateId",
+  __CODEOPS_IN_PROGRESS_STATE_ID__: "inProgressStateId",
+  __CODEOPS_NEEDS_ATTENTION_STATE_ID__: "needsAttentionStateId",
 };
 
 function exactResources(resources) {
@@ -53,6 +57,23 @@ export function renderPlaneControllerManifest(template, input) {
   }
   if (!UUID.test(input.readyStateId ?? "")) {
     throw new Error("Ready state ID must be a lowercase UUID");
+  }
+  for (const [label, value] of [
+    ["In progress", input.inProgressStateId],
+    ["Needs attention", input.needsAttentionStateId],
+    ["Complete", input.completeStateId],
+  ]) {
+    if (!UUID.test(value ?? "")) {
+      throw new Error(`${label} state ID must be a lowercase UUID`);
+    }
+  }
+  const reviewerIds = (input.allowedGithubReviewerIds ?? "").split(",");
+  if (
+    reviewerIds.length < 1 ||
+    reviewerIds.some((value) => !/^[1-9][0-9]{0,15}$/.test(value)) ||
+    new Set(reviewerIds).size !== reviewerIds.length
+  ) {
+    throw new Error("allowed GitHub reviewer IDs must be unique positive integers");
   }
   const personaMappings = (input.personaUserIds ?? "")
     .split(",")
@@ -130,16 +151,22 @@ export function renderPlaneControllerManifest(template, input) {
   );
   const expectedEnv = {
     CODEOPS_ALLOWED_HUMAN_ACTOR_IDS: input.allowedHumanActorIds,
+    CODEOPS_ALLOWED_GITHUB_REVIEWER_IDS: input.allowedGithubReviewerIds,
+    CODEOPS_COMPLETE_STATE_ID: input.completeStateId,
     CODEOPS_CONTROL_PLANE_SHA: input.controlPlaneSha,
     CODEOPS_DEDUP_ROOT: "/var/lib/codeops/dedup",
     CODEOPS_HTTP_HOST: "0.0.0.0",
     CODEOPS_HTTP_PORT: "8080",
     CODEOPS_PERSONA_USER_IDS: input.personaUserIds,
     CODEOPS_READY_STATE_ID: input.readyStateId,
+    CODEOPS_IN_PROGRESS_STATE_ID: input.inProgressStateId,
+    CODEOPS_NEEDS_ATTENTION_STATE_ID: input.needsAttentionStateId,
     CODEOPS_PLANE_API_KEY_FILE: "/var/run/secrets/codeops/plane-api-key",
     CODEOPS_PLANE_API_ORIGIN: "https://work.renoconcierge.ca",
     CODEOPS_PLANE_WEBHOOK_SECRET_FILE:
       "/var/run/secrets/codeops/webhook-secret",
+    CODEOPS_GITHUB_WEBHOOK_SECRET_FILE:
+      "/var/run/secrets/codeops/github-webhook-secret",
     CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE:
       "/var/run/codeops-projection/token",
     CODEOPS_REPOSITORY_HEAD_ORIGIN: "http://codeops-control-gateway:8080",
@@ -198,7 +225,7 @@ export function renderPlaneControllerManifest(template, input) {
   if (
     secretVolume?.secret?.secretName !== "codeops-plane-controller-secrets" ||
     secretVolume.secret.defaultMode !== 288 ||
-    secretVolume.secret.items?.length !== 2 ||
+    secretVolume.secret.items?.length !== 3 ||
     projectionVolume?.secret?.secretName !==
       "codeops-research-projection-auth" ||
     projectionVolume.secret.defaultMode !== 256 ||
@@ -220,9 +247,13 @@ export function renderPlaneControllerManifest(template, input) {
   if (
     ingress.spec.rules.length !== 1 ||
     ingress.spec.rules[0].host !== input.controllerHost ||
-    ingress.spec.rules[0].http.paths.length !== 1 ||
-    ingress.spec.rules[0].http.paths[0].path !== "/webhooks/plane" ||
-    ingress.spec.rules[0].http.paths[0].pathType !== "Exact" ||
+    ingress.spec.rules[0].http.paths.length !== 2 ||
+    !ingress.spec.rules[0].http.paths.some(
+      (path) => path.path === "/webhooks/plane" && path.pathType === "Exact",
+    ) ||
+    !ingress.spec.rules[0].http.paths.some(
+      (path) => path.path === "/webhooks/github" && path.pathType === "Exact",
+    ) ||
     ingress.spec.tls[0].hosts[0] !== input.controllerHost ||
     ingress.spec.tls[0].secretName !== "codeops-plane-work-tls"
   ) {

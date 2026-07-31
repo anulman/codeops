@@ -1,8 +1,17 @@
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { Client, Connection } from "@temporalio/client";
+import { z } from "zod";
 import {
   createFileResearchDedupLedger,
+  createFileCodingRequestStore,
+  createFilePullRequestBindingStore,
+  createFileWorkflowBindingStore,
+  createGitHubHeadQualifier,
+  createGitHubReviewCommentsLoader,
+  createGitHubStackLoader,
+  createPlaneLifecycleClient,
+  createTemporalCodingCanceller,
   createFileResearchPacketStore,
   createPlaneApiClient,
   identifyPlaneReadyTransition,
@@ -10,6 +19,8 @@ import {
   projectResearchPacket,
   processPlaneReadyWebhook,
   processPlaneResearchWebhook,
+  reconcileGitHubPullRequestReviewEvent,
+  reconcileGitHubPullRequestMergeGroup,
 } from "./index.js";
 import {
   createPlaneWebhookRequestListener,
@@ -39,10 +50,11 @@ const temporalClient = new Client({
   connection: temporalConnection,
   namespace: process.env.CODEOPS_TEMPORAL_NAMESPACE ?? "codeops",
 });
+const planeApiKey = await secretFile("CODEOPS_PLANE_API_KEY_FILE");
 const planeClient = createPlaneApiClient({
   baseUrl: required("CODEOPS_PLANE_API_ORIGIN"),
   workspaceSlug: required("CODEOPS_PLANE_WORKSPACE_SLUG"),
-  apiKey: await secretFile("CODEOPS_PLANE_API_KEY_FILE"),
+  apiKey: planeApiKey,
 });
 const webhookSecret = await secretFile("CODEOPS_PLANE_WEBHOOK_SECRET_FILE");
 const projectionToken = await secretFile(
@@ -54,6 +66,36 @@ if (projectionToken.length < 32 || projectionToken.length > 4_096) {
 const repositoryHeadToken = await secretFile(
   "CODEOPS_REPOSITORY_HEAD_TOKEN_FILE",
 );
+const githubWebhookSecret = await secretFile(
+  "CODEOPS_GITHUB_WEBHOOK_SECRET_FILE",
+);
+const repositoryFullName = `${required("CODEOPS_REPOSITORY_OWNER")}/${required("CODEOPS_REPOSITORY_NAME")}`;
+const loadGitHubReviewComments = createGitHubReviewCommentsLoader({
+  origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
+  token: repositoryHeadToken,
+  repository: repositoryFullName,
+});
+const qualifyGitHubHead = createGitHubHeadQualifier({
+  origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
+  token: repositoryHeadToken,
+});
+const loadGitHubStack = createGitHubStackLoader({
+  origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
+  token: repositoryHeadToken,
+});
+const allowedGitHubReviewerIds = new Set(
+  required("CODEOPS_ALLOWED_GITHUB_REVIEWER_IDS")
+    .split(",")
+    .map((value) => Number(value.trim())),
+);
+if (
+  allowedGitHubReviewerIds.size === 0 ||
+  [...allowedGitHubReviewerIds].some(
+    (value) => !Number.isSafeInteger(value) || value <= 0,
+  )
+) {
+  throw new Error("CODEOPS_ALLOWED_GITHUB_REVIEWER_IDS must contain positive integers");
+}
 const resolveTargetBaseSha = createRepositoryHeadResolver({
   origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
   token: repositoryHeadToken,
@@ -139,6 +181,29 @@ const ledger = createFileResearchDedupLedger({
 const packetStore = createFileResearchPacketStore({
   rootDirectory: `${dedupRoot}/research-packets`,
 });
+const codingRequestStore = createFileCodingRequestStore({
+  rootDirectory: `${dedupRoot}/coding-requests`,
+});
+const pullRequestBindings = createFilePullRequestBindingStore({
+  rootDirectory: `${dedupRoot}/pull-request-bindings`,
+});
+const workflowBindings = createFileWorkflowBindingStore({
+  rootDirectory: `${dedupRoot}/workflow-bindings`,
+});
+const cancelCoding = createTemporalCodingCanceller({ client: temporalClient });
+const needsAttentionStateId = required("CODEOPS_NEEDS_ATTENTION_STATE_ID");
+const inProgressStateId = required("CODEOPS_IN_PROGRESS_STATE_ID");
+const completeStateId = required("CODEOPS_COMPLETE_STATE_ID");
+const lifecycle = createPlaneLifecycleClient({
+  baseUrl: required("CODEOPS_PLANE_API_ORIGIN"),
+  workspaceSlug: required("CODEOPS_PLANE_WORKSPACE_SLUG"),
+  apiKey: planeApiKey,
+  allowedTargetStateIds: [
+    needsAttentionStateId,
+    inProgressStateId,
+    completeStateId,
+  ],
+});
 const enqueue = createTemporalResearchEnqueuer({
   client: temporalClient,
   taskQueue: process.env.CODEOPS_TEMPORAL_TASK_QUEUE ?? "codeops-trial0",
@@ -158,6 +223,118 @@ function escapeHtml(value: string): string {
     .replaceAll("'", "&#39;");
 }
 
+const lifecycleSnapshotSchema = z
+  .object({
+    id: z.string().uuid(),
+    project: z.string().uuid(),
+    state: z.union([
+      z.string().uuid(),
+      z.object({ id: z.string().uuid() }).passthrough(),
+    ]),
+    updated_at: z.string().datetime({ offset: true }),
+  })
+  .passthrough();
+const blockerRelationsSchema = z
+  .object({
+    blocked_by: z
+      .array(
+        z
+          .object({
+            project_id: z.string().uuid(),
+            issue_id: z.string().uuid(),
+          })
+          .passthrough(),
+      )
+      .default([]),
+  })
+  .passthrough();
+
+async function transitionWorkItem(input: {
+  projectId: string;
+  workItemId: string;
+  expectedStateId: string;
+  targetStateId: string;
+}): Promise<void> {
+  const snapshot = lifecycleSnapshotSchema.parse(
+    await planeClient.getWorkItemSnapshot(input.projectId, input.workItemId),
+  );
+  const actualState =
+    typeof snapshot.state === "string" ? snapshot.state : snapshot.state.id;
+  if (actualState === input.targetStateId) return;
+  if (actualState !== input.expectedStateId) {
+    throw new Error("GitHub lifecycle event observed an unexpected Plane state");
+  }
+  await lifecycle.transition({
+    projectId: input.projectId,
+    workItemId: input.workItemId,
+    expectedStateId: actualState,
+    expectedUpdatedAt: snapshot.updated_at,
+    targetStateId: input.targetStateId,
+  });
+}
+
+async function transitionWorkItemFrom(input: {
+  projectId: string;
+  workItemId: string;
+  expectedStateIds: readonly string[];
+  targetStateId: string;
+}): Promise<void> {
+  const snapshot = lifecycleSnapshotSchema.parse(
+    await planeClient.getWorkItemSnapshot(input.projectId, input.workItemId),
+  );
+  const actualState =
+    typeof snapshot.state === "string" ? snapshot.state : snapshot.state.id;
+  if (actualState === input.targetStateId) return;
+  if (!input.expectedStateIds.includes(actualState)) {
+    throw new Error("GitHub lifecycle event observed an unexpected Plane state");
+  }
+  await lifecycle.transition({
+    projectId: input.projectId,
+    workItemId: input.workItemId,
+    expectedStateId: actualState,
+    expectedUpdatedAt: snapshot.updated_at,
+    targetStateId: input.targetStateId,
+  });
+}
+
+async function cancelDescendantWork(input: {
+  projectId: string;
+  blockerId: string;
+  reason: string;
+}): Promise<void> {
+  const items = z
+    .array(z.object({ id: z.string().uuid() }).passthrough())
+    .max(200)
+    .parse(await planeClient.listProjectWorkItemSnapshots(input.projectId));
+  const descendants = new Map<string, Set<string>>();
+  for (const item of items) {
+    const relations = blockerRelationsSchema.parse(
+      await planeClient.getWorkItemRelations(input.projectId, item.id),
+    );
+    for (const blocker of relations.blocked_by) {
+      if (blocker.project_id !== input.projectId) continue;
+      const children = descendants.get(blocker.issue_id) ?? new Set<string>();
+      children.add(item.id);
+      descendants.set(blocker.issue_id, children);
+    }
+  }
+  const pending = [...(descendants.get(input.blockerId) ?? [])].sort();
+  const visited = new Set<string>();
+  while (pending.length > 0) {
+    const workItemId = pending.shift()!;
+    if (visited.has(workItemId)) continue;
+    visited.add(workItemId);
+    const workflow = await workflowBindings.getByWorkItem(workItemId);
+    if (workflow?.status === "active") {
+      await cancelCoding({
+        workflowId: workflow.workflowId,
+        reason: input.reason,
+      });
+    }
+    pending.push(...[...(descendants.get(workItemId) ?? [])].sort());
+  }
+}
+
 const listener = createPlaneWebhookRequestListener({
   projection: {
     token: projectionToken,
@@ -172,6 +349,33 @@ const listener = createPlaneWebhookRequestListener({
   transitionProjection: {
     token: projectionToken,
     process: async (notice) => {
+      const workflowBinding = await workflowBindings.getByWorkItem(
+        notice.workItemId,
+      );
+      if (
+        workflowBinding !== null &&
+        workflowBinding.workflowId === notice.workflowId &&
+        workflowBinding.status === "active"
+      ) {
+        const pullRequestBinding =
+          await pullRequestBindings.getByWorkItem(notice.workItemId);
+        if (pullRequestBinding !== null) {
+          await transitionWorkItemFrom({
+            projectId: notice.projectId,
+            workItemId: notice.workItemId,
+            expectedStateIds: [
+              inProgressStateId,
+              needsAttentionStateId,
+            ],
+            targetStateId: needsAttentionStateId,
+          });
+        }
+        await workflowBindings.put({
+          ...workflowBinding,
+          status: "terminal",
+          updatedAt: new Date().toISOString(),
+        });
+      }
       const label =
         notice.state === "failed"
           ? "failed"
@@ -190,6 +394,91 @@ const listener = createPlaneWebhookRequestListener({
           external_id: `workflow-terminal:${notice.workflowId}:${notice.state}`,
         },
       );
+    },
+  },
+  github: {
+    secret: githubWebhookSecret,
+    process: async ({ event }) => {
+      const receivedAt = new Date().toISOString();
+      if (event.kind === "pull_request_review") {
+        await reconcileGitHubPullRequestReviewEvent({
+          event,
+          receivedAt,
+          allowedReviewerIds: allowedGitHubReviewerIds,
+          bindings: pullRequestBindings,
+          ledger,
+          loadComments: loadGitHubReviewComments,
+          loadInitialRequest: (workItemId) =>
+            codingRequestStore.getInitialByWorkItem(workItemId),
+          enqueueRevision: async ({ request }) => {
+            const enqueueResult = await enqueueCoding({
+              workflowId: request.workItem.workflowId,
+              request,
+            });
+            await workflowBindings.put({
+              version: "codeops.workflow-binding/v1",
+              workspaceId: request.workspaceId,
+              projectId: request.projectId,
+              workItemId: request.workItem.workItemId,
+              workflowId: request.workItem.workflowId,
+              status: "active",
+              baseSha: request.workItem.baseSha,
+              branch: request.workItem.branch,
+              updatedAt: new Date().toISOString(),
+            });
+            return enqueueResult;
+          },
+          beginRevision: async ({ binding }) => {
+            await transitionWorkItem({
+              projectId: binding.projectId,
+              workItemId: binding.workItemId,
+              expectedStateId: needsAttentionStateId,
+              targetStateId: inProgressStateId,
+            });
+            await cancelDescendantWork({
+              projectId: binding.projectId,
+              blockerId: binding.workItemId,
+              reason:
+                "An exact human PR review requested revisions; the prior qualified head is stale.",
+            });
+          },
+          qualify: ({ event: review }) =>
+            qualifyGitHubHead({
+              pullRequestNumber: review.number,
+              headSha: review.reviewedHeadSha,
+            }),
+          reevaluateProject: async () => {
+            // Review invalidation cancels descendants above. Positive admission
+            // remains owned by the dependency scheduler's Ready reconciliation.
+          },
+        });
+        return;
+      }
+      await reconcileGitHubPullRequestMergeGroup({
+        event,
+        receivedAt,
+        bindings: pullRequestBindings,
+        loadStack: loadGitHubStack,
+        completeTicket: async ({ binding }) => {
+          await transitionWorkItemFrom({
+            projectId: binding.projectId,
+            workItemId: binding.workItemId,
+            expectedStateIds: [needsAttentionStateId],
+            targetStateId: completeStateId,
+          });
+        },
+        requireAttention: async ({ binding }) => {
+          await transitionWorkItemFrom({
+            projectId: binding.projectId,
+            workItemId: binding.workItemId,
+            expectedStateIds: [inProgressStateId, needsAttentionStateId],
+            targetStateId: needsAttentionStateId,
+          });
+        },
+        reevaluateProject: async () => {
+          // Positive dependent admission is performed by the scheduler pass.
+        },
+      });
     },
   },
   process: async ({ rawBody, headers }) => {
@@ -253,6 +542,18 @@ const listener = createPlaneWebhookRequestListener({
         enqueue: enqueueCoding,
         publishAccepted: async ({ request, enqueueResult }) => {
           readyWorkflowEnqueued = true;
+          await codingRequestStore.put(request);
+          await workflowBindings.put({
+            version: "codeops.workflow-binding/v1",
+            workspaceId: request.workspaceId,
+            projectId: request.projectId,
+            workItemId: request.workItem.workItemId,
+            workflowId: request.workItem.workflowId,
+            status: "active",
+            baseSha: request.workItem.baseSha,
+            branch: request.workItem.branch,
+            updatedAt: new Date().toISOString(),
+          });
           await planeClient.createComment(
             request.projectId,
             request.workItem.workItemId,

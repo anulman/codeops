@@ -102,6 +102,12 @@ spec:
               value: /var/run/secrets/codeops-repository-head/token
             - name: CODEOPS_REPOSITORY_READ_TOKEN_FILE
               value: /var/run/secrets/codeops-runtime/repository-read-token
+            - name: CODEOPS_PUBLICATION_TOKEN_FILE
+              value: /var/run/secrets/codeops-publication/token
+            - name: CODEOPS_REPOSITORY_WRITE_TOKEN_FILE
+              value: /var/run/secrets/codeops-publisher/repository-write-token
+            - name: CODEOPS_REQUIRED_REVIEW_CHECK_NAMES
+              value: Acceptance Runner Guardrails,PR Guardrails,Release
             - name: CODEOPS_MODEL_AUTH_MODE
               value: chatgpt
             - name: CODEOPS_CODEX_AUTH_CLAIM
@@ -156,6 +162,12 @@ spec:
             - name: runtime-credentials
               mountPath: /var/run/secrets/codeops-runtime
               readOnly: true
+            - name: publication-auth
+              mountPath: /var/run/secrets/codeops-publication
+              readOnly: true
+            - name: publisher-credentials
+              mountPath: /var/run/secrets/codeops-publisher
+              readOnly: true
             - name: temp
               mountPath: /tmp
       volumes:
@@ -183,6 +195,20 @@ spec:
             items:
               - key: repository-read-token
                 path: repository-read-token
+        - name: publication-auth
+          secret:
+            secretName: codeops-publication-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: publisher-credentials
+          secret:
+            secretName: codeops-publisher-credentials
+            defaultMode: 256
+            items:
+              - key: repository-write-token
+                path: repository-write-token
         - name: temp
           emptyDir:
             sizeLimit: 64Mi

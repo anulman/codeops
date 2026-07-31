@@ -21,6 +21,24 @@ const gitRef = z
   .min(1)
   .max(200)
   .regex(/^(?!\/|.*(?:\/\/|@\{|\\|\.\.))(?!.*\/$)[A-Za-z0-9._/-]+$/);
+const nativeStack = z
+  .object({
+    number: z.number().int().positive().max(10_000_000),
+    size: z.number().int().min(2).max(100),
+    position: z.number().int().positive().max(100),
+    base: z
+      .object({
+        ref: gitRef,
+        sha: gitSha,
+      })
+      .strict(),
+    active: z.boolean(),
+  })
+  .strict()
+  .refine(
+    (stack) => stack.position <= stack.size,
+    "pull-request stack position must not exceed its size",
+  );
 
 export const storedPullRequestBindingSchema = z
   .object({
@@ -36,6 +54,7 @@ export const storedPullRequestBindingSchema = z
     headRef: gitRef,
     baseRef: gitRef,
     baseTicketId: uuid.optional(),
+    nativeStack: nativeStack.optional(),
     qualified: z.boolean(),
     updatedAt: z.string().datetime({ offset: true }),
   })
@@ -53,6 +72,13 @@ export const storedPullRequestBindingSchema = z
         code: z.ZodIssueCode.custom,
         path: ["qualified"],
         message: "only an open PR may be qualified for stacking",
+      });
+    }
+    if (binding.nativeStack?.active === false && binding.qualified) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["qualified"],
+        message: "an inactive native stack cannot qualify a PR for stacking",
       });
     }
   });
@@ -129,6 +155,33 @@ export function createFilePullRequestBindingStore(input: {
           existing.baseTicketId !== binding.baseTicketId
         ) {
           throw new Error("pull-request binding identity is immutable");
+        }
+        if (
+          (existing.nativeStack !== undefined &&
+            binding.nativeStack === undefined) ||
+          (existing.nativeStack !== undefined &&
+            binding.nativeStack !== undefined &&
+            (existing.nativeStack.number !== binding.nativeStack.number ||
+              existing.nativeStack.position !== binding.nativeStack.position))
+        ) {
+          throw new Error("pull-request native stack provenance is immutable");
+        }
+        if (
+          existing.nativeStack !== undefined &&
+          binding.nativeStack !== undefined &&
+          binding.nativeStack.active &&
+          binding.nativeStack.size < existing.nativeStack.size
+        ) {
+          throw new Error("active pull-request native stack size cannot shrink");
+        }
+        if (
+          existing.nativeStack === undefined &&
+          binding.nativeStack !== undefined &&
+          binding.qualified
+        ) {
+          throw new Error(
+            "new native stack membership must be requalified before stacking",
+          );
         }
         if (
           existing.baseRef !== binding.baseRef &&

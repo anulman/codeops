@@ -164,3 +164,61 @@ test("rejects unsafe roots and closed qualified bindings", () => {
     /only an open PR/,
   );
 });
+
+test("retains immutable native-stack provenance across rewrites and unstacking", async () => {
+  await withStore(async (store) => {
+    await store.put(binding);
+    const stacked = {
+      ...binding,
+      qualified: false,
+      nativeStack: {
+        number: 42,
+        size: 2,
+        position: 2,
+        base: { ref: "main", sha: "0".repeat(40) },
+        active: true,
+      },
+      updatedAt: "2026-07-30T21:01:00.000Z",
+    };
+    await store.put(stacked);
+    await store.put({
+      ...stacked,
+      headSha: "b".repeat(40),
+      nativeStack: {
+        ...stacked.nativeStack,
+        base: { ref: "main", sha: "1".repeat(40) },
+      },
+      updatedAt: "2026-07-30T21:02:00.000Z",
+    });
+    await store.put({
+      ...stacked,
+      headSha: "b".repeat(40),
+      nativeStack: {
+        ...stacked.nativeStack,
+        active: false,
+      },
+      updatedAt: "2026-07-30T21:03:00.000Z",
+    });
+    const unstacked = await store.getByWorkItem(binding.workItemId);
+    assert.equal(unstacked.nativeStack.number, 42);
+    assert.equal(unstacked.nativeStack.active, false);
+    await assert.rejects(
+      store.put({
+        ...unstacked,
+        nativeStack: {
+          ...unstacked.nativeStack,
+          number: 43,
+          active: true,
+        },
+        updatedAt: "2026-07-30T21:04:00.000Z",
+      }),
+      /provenance is immutable/,
+    );
+    assert.throws(() =>
+      storedPullRequestBindingSchema.parse({
+        ...unstacked,
+        qualified: true,
+      }),
+    );
+  });
+});

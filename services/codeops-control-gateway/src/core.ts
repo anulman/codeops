@@ -18,6 +18,8 @@ import {
   type AgentJobDispatchRequest,
   type AgentJobDispatchResult,
   type CandidateCheckpoint,
+  githubReviewCommentSchema,
+  type GitHubReviewComment,
 } from "@renoconcierge/codeops-contracts";
 import { z } from "zod";
 
@@ -165,6 +167,273 @@ export async function resolveGitHubBranchHead(input: {
   return body.object.sha;
 }
 
+function parseGitHubRepositoryUrl(value: string): {
+  owner: string;
+  name: string;
+} {
+  const repository = new URL(value);
+  const match = repository.pathname.match(
+    /^\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?$/,
+  );
+  if (
+    repository.protocol !== "https:" ||
+    repository.hostname !== "github.com" ||
+    repository.username !== "" ||
+    repository.password !== "" ||
+    repository.search !== "" ||
+    repository.hash !== "" ||
+    match === null
+  ) {
+    throw new Error("GitHub operation requires an exact HTTPS repository");
+  }
+  return { owner: match[1]!, name: match[2]! };
+}
+
+export async function loadGitHubReviewComments(input: {
+  repositoryUrl: string;
+  repositoryReadToken: string;
+  pullRequestNumber: number;
+  reviewId: number;
+  fetch?: typeof fetch;
+}): Promise<readonly GitHubReviewComment[]> {
+  const { owner, name } = parseGitHubRepositoryUrl(input.repositoryUrl);
+  const pullRequestNumber = z
+    .number()
+    .int()
+    .positive()
+    .max(10_000_000)
+    .parse(input.pullRequestNumber);
+  const reviewId = z
+    .number()
+    .int()
+    .positive()
+    .max(Number.MAX_SAFE_INTEGER)
+    .parse(input.reviewId);
+  if (
+    input.repositoryReadToken.length < 16 ||
+    /\s/.test(input.repositoryReadToken)
+  ) {
+    throw new Error("GitHub review reader token is invalid");
+  }
+  const requestFetch = input.fetch ?? fetch;
+  async function page(number: number): Promise<readonly GitHubReviewComment[]> {
+    const response = await requestFetch(
+      `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${pullRequestNumber}/reviews/${reviewId}/comments?per_page=100&page=${number}`,
+      {
+        redirect: "error",
+        headers: {
+          Accept: "application/vnd.github+json",
+          Authorization: `Bearer ${input.repositoryReadToken}`,
+          "User-Agent": "renoconcierge-codeops-control-gateway",
+          "X-GitHub-Api-Version": "2022-11-28",
+        },
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub review comment read failed with ${response.status}`);
+    }
+    return z
+      .array(
+        z
+          .object({
+            id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+            body: z.string().min(1).max(20_000),
+            path: z.string(),
+            line: z.number().int().positive().max(10_000_000).nullable(),
+            side: z.enum(["LEFT", "RIGHT"]).nullable(),
+            created_at: z.string().datetime({ offset: true }),
+          })
+          .passthrough(),
+      )
+      .max(100)
+      .parse(await response.json())
+      .map((comment) =>
+        githubReviewCommentSchema.parse({
+          id: comment.id,
+          body: comment.body,
+          path: comment.path,
+          line: comment.line,
+          side: comment.side,
+          createdAt: comment.created_at,
+        }),
+      );
+  }
+  const first = await page(1);
+  if (first.length === 100 && (await page(2)).length > 0) {
+    throw new Error("GitHub review contains more than 100 inline comments");
+  }
+  return [...first].sort((left, right) => left.id - right.id);
+}
+
+export async function qualifyGitHubHead(input: {
+  repositoryUrl: string;
+  repositoryReadToken: string;
+  pullRequestNumber: number;
+  headSha: string;
+  requiredCheckNames: readonly string[];
+  fetch?: typeof fetch;
+}): Promise<boolean> {
+  const { owner, name } = parseGitHubRepositoryUrl(input.repositoryUrl);
+  const pullRequestNumber = z
+    .number()
+    .int()
+    .positive()
+    .max(10_000_000)
+    .parse(input.pullRequestNumber);
+  const headSha = z.string().regex(/^[0-9a-f]{40}$/).parse(input.headSha);
+  const required = new Set(
+    z
+      .array(z.string().min(1).max(200))
+      .min(1)
+      .max(20)
+      .parse(input.requiredCheckNames),
+  );
+  if (required.size !== input.requiredCheckNames.length) {
+    throw new Error("required GitHub checks must be unique");
+  }
+  if (
+    input.repositoryReadToken.length < 16 ||
+    /\s/.test(input.repositoryReadToken)
+  ) {
+    throw new Error("GitHub qualification token is invalid");
+  }
+  const requestFetch = input.fetch ?? fetch;
+  const response = await requestFetch(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/commits/${headSha}/check-runs?per_page=100`,
+    {
+      redirect: "error",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${input.repositoryReadToken}`,
+        "User-Agent": "renoconcierge-codeops-control-gateway",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`GitHub head qualification failed with ${response.status}`);
+  }
+  const body = z
+    .object({
+      total_count: z.number().int().nonnegative().max(100),
+      check_runs: z
+        .array(
+          z
+            .object({
+              name: z.string().min(1).max(200),
+              status: z.string().min(1).max(50),
+              conclusion: z.string().max(50).nullable(),
+              head_sha: z.string().regex(/^[0-9a-f]{40}$/),
+            })
+            .passthrough(),
+        )
+        .max(100),
+    })
+    .passthrough()
+    .parse(await response.json());
+  if (
+    body.total_count !== body.check_runs.length ||
+    body.check_runs.some(
+      (check) =>
+        check.head_sha !== headSha ||
+        check.status !== "completed" ||
+        check.conclusion !== "success",
+    )
+  ) {
+    return false;
+  }
+  const passing = new Set(body.check_runs.map((check) => check.name));
+  if (![...required].every((name) => passing.has(name))) return false;
+
+  const reviewResponse = await requestFetch("https://api.github.com/graphql", {
+    method: "POST",
+    redirect: "error",
+    headers: {
+      Accept: "application/vnd.github+json",
+      Authorization: `Bearer ${input.repositoryReadToken}`,
+      "Content-Type": "application/json",
+      "User-Agent": "renoconcierge-codeops-control-gateway",
+      "X-GitHub-Api-Version": "2022-11-28",
+    },
+    body: JSON.stringify({
+      query: [
+        "query CodeOpsPullRequestQualification($owner: String!, $name: String!, $number: Int!) {",
+        "  repository(owner: $owner, name: $name) {",
+        "    pullRequest(number: $number) {",
+        "      number state isDraft headRefOid reviewDecision",
+        "      reviewThreads(first: 100) {",
+        "        nodes { isResolved }",
+        "        pageInfo { hasNextPage }",
+        "      }",
+        "    }",
+        "  }",
+        "}",
+      ].join("\n"),
+      variables: { owner, name, number: pullRequestNumber },
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+  if (!reviewResponse.ok) {
+    throw new Error(
+      `GitHub pull-request qualification failed with ${reviewResponse.status}`,
+    );
+  }
+  const review = z
+    .object({
+      data: z
+        .object({
+          repository: z
+            .object({
+              pullRequest: z
+                .object({
+                  number: z.number().int().positive().max(10_000_000),
+                  state: z.literal("OPEN"),
+                  isDraft: z.boolean(),
+                  headRefOid: z.string().regex(/^[0-9a-f]{40}$/),
+                  reviewDecision: z
+                    .enum(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"])
+                    .nullable(),
+                  reviewThreads: z
+                    .object({
+                      nodes: z
+                        .array(
+                          z
+                            .object({ isResolved: z.boolean() })
+                            .passthrough(),
+                        )
+                        .max(100),
+                      pageInfo: z
+                        .object({ hasNextPage: z.boolean() })
+                        .passthrough(),
+                    })
+                    .passthrough(),
+                })
+                .passthrough()
+                .nullable(),
+            })
+            .passthrough()
+            .nullable(),
+        })
+        .passthrough(),
+      errors: z.array(z.unknown()).optional(),
+    })
+    .passthrough()
+    .parse(await reviewResponse.json());
+  const pullRequest = review.data.repository?.pullRequest ?? null;
+  return (
+    review.errors === undefined &&
+    pullRequest !== null &&
+    pullRequest.number === pullRequestNumber &&
+    pullRequest.headRefOid === headSha &&
+    !pullRequest.isDraft &&
+    pullRequest.reviewDecision === "APPROVED" &&
+    !pullRequest.reviewThreads.pageInfo.hasNextPage &&
+    pullRequest.reviewThreads.nodes.every((thread) => thread.isResolved)
+  );
+}
+
 export function createRunIdentity(request: AgentJobDispatchRequest): {
   readonly runId: string;
   readonly requestDigest: string;
@@ -202,6 +471,13 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       `Acceptance criteria: ${JSON.stringify(
         request.codingRequest.workItem.acceptanceCriteria,
       )}`,
+      ...(request.codingRequest.humanReview
+        ? [
+            "This workflow is an exact human-requested PR revision.",
+            `The immutable submitted GitHub review is: ${JSON.stringify(request.codingRequest.humanReview)}`,
+            "Resolve every concrete request in the review summary and inline comments. Preserve valid existing PR work, keep the change within the ticket, and explicitly cover each request with code or passing evidence.",
+          ]
+        : []),
       ...(request.revision
         ? [
             "The previous cumulative candidate patch is already applied to /workspace.",
@@ -295,6 +571,12 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       "Read /context/coding-request.json, /context/project-context.json, and every trusted document under /context/project-documents/ before reviewing.",
       "Use the immutable ticket, relevant human comments and decisions, relations, bounded same-project Plane task index, trusted project documents, and source tree to understand how this narrow ticket fits the broader Plane project and product.",
       `Acceptance criteria: ${JSON.stringify(request.codingRequest.workItem.acceptanceCriteria)}`,
+      ...(request.codingRequest.humanReview
+        ? [
+            `The exact human review being addressed is: ${JSON.stringify(request.codingRequest.humanReview)}`,
+            "Independently verify that every concrete human review request is resolved in the cumulative candidate.",
+          ]
+        : []),
       "Pursue narrow ticket completion. Do not demand adjacent roadmap work in this candidate.",
       "Review every lens independently: ticket completion; unused/dead code; simplicity and maintainability; effective reuse or extension of existing systems; test effectiveness and likely bugs; user-facing behavior; and security/privacy.",
       "Independently run at least one relevant focused test after inspecting the final source. Record every exact passing command in verificationTests; do not rely only on the coder's report.",

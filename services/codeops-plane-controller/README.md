@@ -78,6 +78,40 @@ Ready admission starts the coding workflow only after durable event/request
 claims. A trusted human Ready transition authorizes routine planning and Agent
 Job execution; merge and production deployment remain separate human gates.
 
+## GitHub review and stack reconciliation
+
+The controller also accepts exact GitHub pull-request and submitted-review
+events through the separately authenticated GitHub webhook route. A review
+request is admitted only when the reviewer is allowlisted, the review names the
+current bound repository, pull request, branch, and head SHA, and the delivery
+has not already been claimed. The review body and inline comments are retained
+as one immutable coding request, so one submitted review starts one revision
+workflow rather than one workflow per comment.
+
+Requesting changes immediately removes qualification from that exact head and
+causes scheduler re-evaluation. The revision workflow works on the same branch,
+publishes only by exact-head fast-forward, reruns the isolated critic loop, and
+returns the ticket to Needs attention. An exact-head approval may restore
+qualification only after the required GitHub checks are successful. Bot,
+edited, stale-head, duplicate, and foreign-repository review events fail
+closed.
+
+GitHub's public-preview native stack object is treated as a verified execution
+primitive, not as the dependency source of truth. Plane relations and the
+CodeOps scheduler still decide admission and enforce at most two unmerged pull
+requests in a chain. A linear child can use a native stack; sibling fan-out
+keeps one deterministic native child and uses branch-only stacking for the
+others because a GitHub stack is linear. Native stack number and position are
+retained as immutable provenance even after GitHub retargets, rebases, or
+dissolves the live stack.
+
+When GitHub reports a merged pull request in a native stack, the controller
+reloads the exact bounded stack and reconciles every merged member
+idempotently. This covers GitHub's atomic higher-layer merge behavior, where
+one merge operation may merge the selected pull request and all unmerged
+layers below it. No review, stack, or reconciliation path grants auto-merge or
+deployment authority.
+
 The context pack and latest research packet are stored on the controller's
 single-writer durable volume. A compatible packet may be attached as optional
 implementation context. Missing or stale research is recorded as skipped and

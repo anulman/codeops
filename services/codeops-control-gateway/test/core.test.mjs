@@ -9,7 +9,9 @@ import {
   authenticateBearer,
   buildAgentPrompt,
   createRunIdentity,
+  loadGitHubReviewComments,
   parseCheckpointLogs,
+  qualifyGitHubHead,
   readCandidatePatch,
   readRetainedResult,
   resolveGitHubBranchHead,
@@ -38,6 +40,164 @@ const projectContext = createProjectContext({
       content: "# Repository guidance\n",
     },
   ],
+});
+
+test("loads and bounds the exact submitted review's inline comments", async () => {
+  const calls = [];
+  const comments = await loadGitHubReviewComments({
+    repositoryUrl: "https://github.com/anulman/renoconcierge",
+    repositoryReadToken: "r".repeat(32),
+    pullRequestNumber: 158,
+    reviewId: 9001,
+    fetch: async (url, init) => {
+      calls.push({ url, init });
+      return new Response(
+        JSON.stringify([
+          {
+            id: 7001,
+            body: "Cover this branch.",
+            path: "services/codeops-plane-controller/src/github-events.ts",
+            line: 42,
+            side: "RIGHT",
+            created_at: "2026-07-30T22:45:00.000Z",
+          },
+        ]),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    },
+  });
+  assert.deepEqual(comments, [
+    {
+      id: 7001,
+      body: "Cover this branch.",
+      path: "services/codeops-plane-controller/src/github-events.ts",
+      line: 42,
+      side: "RIGHT",
+      createdAt: "2026-07-30T22:45:00.000Z",
+    },
+  ]);
+  assert.equal(
+    calls[0].url,
+    "https://api.github.com/repos/anulman/renoconcierge/pulls/158/reviews/9001/comments?per_page=100&page=1",
+  );
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(32)}`);
+});
+
+test("qualifies only an approved exact PR head with passing checks and resolved threads", async () => {
+  const calls = [];
+  const qualified = await qualifyGitHubHead({
+    repositoryUrl: "https://github.com/anulman/renoconcierge",
+    repositoryReadToken: "r".repeat(32),
+    pullRequestNumber: 155,
+    headSha: "a".repeat(40),
+    requiredCheckNames: ["PR Guardrails", "Release"],
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      if (String(url).endsWith("/check-runs?per_page=100")) {
+        return new Response(
+          JSON.stringify({
+            total_count: 2,
+            check_runs: [
+              {
+                name: "PR Guardrails",
+                status: "completed",
+                conclusion: "success",
+                head_sha: "a".repeat(40),
+              },
+              {
+                name: "Release",
+                status: "completed",
+                conclusion: "success",
+                head_sha: "a".repeat(40),
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(
+        JSON.stringify({
+          data: {
+            repository: {
+              pullRequest: {
+                number: 155,
+                state: "OPEN",
+                isDraft: false,
+                headRefOid: "a".repeat(40),
+                reviewDecision: "APPROVED",
+                reviewThreads: {
+                  nodes: [{ isResolved: true }],
+                  pageInfo: { hasNextPage: false },
+                },
+              },
+            },
+          },
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    },
+  });
+  assert.equal(qualified, true);
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].url, "https://api.github.com/graphql");
+  assert.equal(calls[1].init.method, "POST");
+  assert.deepEqual(JSON.parse(calls[1].init.body).variables, {
+    owner: "anulman",
+    name: "renoconcierge",
+    number: 155,
+  });
+});
+
+test("rejects approval qualification while any review thread is unresolved", async () => {
+  let calls = 0;
+  assert.equal(
+    await qualifyGitHubHead({
+      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryReadToken: "r".repeat(32),
+      pullRequestNumber: 155,
+      headSha: "a".repeat(40),
+      requiredCheckNames: ["PR Guardrails"],
+      fetch: async () => {
+        calls += 1;
+        return calls === 1
+          ? new Response(
+              JSON.stringify({
+                total_count: 1,
+                check_runs: [
+                  {
+                    name: "PR Guardrails",
+                    status: "completed",
+                    conclusion: "success",
+                    head_sha: "a".repeat(40),
+                  },
+                ],
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            )
+          : new Response(
+              JSON.stringify({
+                data: {
+                  repository: {
+                    pullRequest: {
+                      number: 155,
+                      state: "OPEN",
+                      isDraft: false,
+                      headRefOid: "a".repeat(40),
+                      reviewDecision: "APPROVED",
+                      reviewThreads: {
+                        nodes: [{ isResolved: false }],
+                        pageInfo: { hasNextPage: false },
+                      },
+                    },
+                  },
+                },
+              }),
+              { status: 200, headers: { "Content-Type": "application/json" } },
+            );
+      },
+    }),
+    false,
+  );
 });
 
 const request = {

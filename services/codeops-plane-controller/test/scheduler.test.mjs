@@ -57,7 +57,7 @@ test("holds Ready descendants for every unresolved non-review blocker state", ()
   }
 });
 
-test("starts direct Ready siblings as independent stacks on a qualified review PR", () => {
+test("uses one native stack and branch-only fallback for direct Ready siblings", () => {
   const parent = ticket("A", {
     state: "needs_attention",
     pullRequest: {
@@ -70,7 +70,10 @@ test("starts direct Ready siblings as independent stacks on a qualified review P
       qualified: true,
     },
   });
-  for (const childId of ["B", "C"]) {
+  for (const [childId, stackStrategy] of [
+    ["B", "native"],
+    ["C", "branch-only"],
+  ]) {
     assert.deepEqual(
       decide(childId, [
         parent,
@@ -83,6 +86,7 @@ test("starts direct Ready siblings as independent stacks on a qualified review P
         baseSha: A_HEAD,
         baseRef: "feat/a",
         parentTicketId: "A",
+        stackStrategy,
         reason: "qualified-direct-blocker-review",
       },
     );
@@ -210,6 +214,7 @@ test("allows the next stack after the older ancestor becomes Complete", () => {
       baseSha: B_HEAD,
       baseRef: "feat/b",
       parentTicketId: "B",
+      stackStrategy: "native",
       reason: "qualified-direct-blocker-review",
     },
   );
@@ -250,8 +255,42 @@ test("retains integration provenance when a completed child landed in an open pa
       baseSha: UPDATED_A_HEAD,
       baseRef: "feat/a",
       parentTicketId: "A",
+      stackStrategy: "branch-only",
       reason: "qualified-direct-blocker-review",
     },
+  );
+});
+
+test("extends a native stack only from its exact current top", () => {
+  const parent = (position, size) =>
+    ticket("A", {
+      state: "needs_attention",
+      pullRequest: {
+        repository: "anulman/renoconcierge",
+        number: 158,
+        state: "open",
+        headSha: A_HEAD,
+        headRef: "feat/a",
+        baseRef: "main",
+        nativeStack: {
+          number: 42,
+          position,
+          size,
+          base: { ref: "main", sha: MAIN },
+          active: true,
+        },
+        qualified: true,
+      },
+    });
+  assert.equal(
+    decide("B", [parent(2, 2), ticket("B", { blockedBy: ["A"] })])
+      .stackStrategy,
+    "native",
+  );
+  assert.equal(
+    decide("B", [parent(1, 2), ticket("B", { blockedBy: ["A"] })])
+      .stackStrategy,
+    "branch-only",
   );
 });
 

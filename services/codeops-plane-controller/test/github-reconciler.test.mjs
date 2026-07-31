@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { reconcileGitHubPullRequestEvent } from "../dist/index.js";
+import {
+  reconcileGitHubPullRequestEvent,
+  reconcileGitHubPullRequestMergeGroup,
+} from "../dist/index.js";
 
 const binding = {
   version: "codeops.pull-request-binding/v1",
@@ -148,4 +151,135 @@ test("ignores PRs without a durable ticket binding", async () => {
     { status: "ignored", reason: "pull-request-is-not-bound" },
   );
   assert.deepEqual(run.calls, []);
+});
+
+test("adopts native stack membership only as an unqualified topology change", async () => {
+  const run = harness();
+  const result = await reconcileGitHubPullRequestEvent({
+    ...run.input,
+    event: event({
+      action: "edited",
+      merged: false,
+      stack: {
+        number: 42,
+        size: 2,
+        position: 2,
+        base: { ref: "main", sha: "0".repeat(40) },
+      },
+    }),
+  });
+  assert.equal(result.status, "attention-required");
+  assert.equal(run.stored.nativeStack.number, 42);
+  assert.equal(run.stored.nativeStack.active, true);
+  assert.equal(run.stored.qualified, false);
+  assert.deepEqual(run.calls.slice(0, 2), [
+    ["put", "open", binding.headSha, false],
+    ["attention", "bound-pr-native-stack-requires-requalification"],
+  ]);
+});
+
+test("one native stack merge event completes every exact merged layer idempotently", async () => {
+  const parentBinding = {
+    ...binding,
+    workItemId: "11111111-1111-4111-8111-111111111111",
+    number: 155,
+    headSha: "c".repeat(40),
+    headRef: "codeops/ticket-a",
+    baseRef: "main",
+    baseTicketId: undefined,
+    nativeStack: {
+      number: 42,
+      size: 2,
+      position: 1,
+      base: { ref: "main", sha: "0".repeat(40) },
+      active: true,
+    },
+  };
+  const childBinding = {
+    ...binding,
+    nativeStack: {
+      number: 42,
+      size: 2,
+      position: 2,
+      base: { ref: "main", sha: "0".repeat(40) },
+      active: true,
+    },
+  };
+  const stored = new Map([
+    [155, parentBinding],
+    [158, childBinding],
+  ]);
+  const completed = [];
+  const results = await reconcileGitHubPullRequestMergeGroup({
+    event: event({
+      stack: {
+        number: 42,
+        size: 2,
+        position: 2,
+        base: { ref: "main", sha: "0".repeat(40) },
+      },
+    }),
+    receivedAt: "2026-07-30T21:30:00.000Z",
+    bindings: {
+      async getByPullRequest({ number }) {
+        return stored.get(number) ?? null;
+      },
+      async getByWorkItem() {
+        throw new Error("not used");
+      },
+      async put(value) {
+        stored.set(value.number, value);
+      },
+    },
+    async loadStack() {
+      return {
+        version: "codeops.github-pull-request-stack-snapshot/v1",
+        repository: binding.repository,
+        number: 42,
+        baseRef: "main",
+        open: false,
+        pullRequests: [
+          {
+            number: 155,
+            state: "closed",
+            draft: false,
+            mergedAt: "2026-07-30T21:29:00.000Z",
+            head: {
+              ref: parentBinding.headRef,
+              sha: parentBinding.headSha,
+            },
+            base: { ref: "main", sha: "0".repeat(40) },
+          },
+          {
+            number: 158,
+            state: "closed",
+            draft: false,
+            mergedAt: "2026-07-30T21:29:01.000Z",
+            head: {
+              ref: childBinding.headRef,
+              sha: childBinding.headSha,
+            },
+            base: {
+              ref: parentBinding.headRef,
+              sha: parentBinding.headSha,
+            },
+          },
+        ],
+      };
+    },
+    async completeTicket({ binding: found }) {
+      completed.push(found.number);
+    },
+    async requireAttention() {
+      throw new Error("not expected");
+    },
+    async reevaluateProject() {},
+  });
+  assert.deepEqual(
+    results.map((result) => result.status),
+    ["completed", "completed"],
+  );
+  assert.deepEqual(completed, [155, 158]);
+  assert.equal(stored.get(155).state, "merged");
+  assert.equal(stored.get(158).state, "merged");
 });

@@ -70,17 +70,30 @@ export function createFileWorkflowBindingStore(input: {
         if (JSON.stringify(existing) === JSON.stringify(binding)) return;
         if (
           existing.workspaceId !== binding.workspaceId ||
-          existing.projectId !== binding.projectId ||
-          existing.workflowId !== binding.workflowId ||
-          existing.baseSha !== binding.baseSha ||
-          existing.branch !== binding.branch
+          existing.projectId !== binding.projectId
         ) {
           throw new Error("workflow binding identity is immutable");
         }
         if (Date.parse(existing.updatedAt) >= Date.parse(binding.updatedAt)) {
           throw new Error("workflow binding refused stale replacement");
         }
-        if (existing.status === "terminal") {
+        if (existing.workflowId !== binding.workflowId) {
+          if (existing.status !== "terminal" || binding.status !== "active") {
+            throw new Error(
+              "only a terminal workflow may advance to a new active revision",
+            );
+          }
+          if (existing.branch !== binding.branch) {
+            throw new Error(
+              "workflow revision must retain the bound pull-request branch",
+            );
+          }
+        } else if (
+          existing.baseSha !== binding.baseSha ||
+          existing.branch !== binding.branch
+        ) {
+          throw new Error("workflow binding identity is immutable");
+        } else if (existing.status === "terminal") {
           throw new Error("terminal workflow binding is immutable");
         }
       }

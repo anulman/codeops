@@ -16,6 +16,13 @@ export type PullRequestBinding = Readonly<{
   headRef: string;
   baseRef: string;
   baseTicketId?: string;
+  nativeStack?: Readonly<{
+    number: number;
+    size: number;
+    position: number;
+    base: Readonly<{ ref: string; sha: string }>;
+    active: boolean;
+  }>;
   qualified: boolean;
 }>;
 
@@ -41,6 +48,7 @@ export type SchedulingDecision =
       baseSha: string;
       baseRef: string;
       parentTicketId: string;
+      stackStrategy: "native" | "branch-only";
       reason: "qualified-direct-blocker-review";
     }>
   | Readonly<{ action: "continue"; reason: "workflow-remains-eligible" }>
@@ -75,6 +83,30 @@ function hasUnmergedReviewAncestor(
     if (hasUnmergedReviewAncestor(blockerId, tickets, next)) return true;
   }
   return false;
+}
+
+function nativeStackStrategy(input: {
+  ticket: SchedulerTicket;
+  parent: SchedulerTicket;
+  tickets: ReadonlyMap<string, SchedulerTicket>;
+}): "native" | "branch-only" {
+  const stack = input.parent.pullRequest?.nativeStack;
+  if (stack !== undefined) {
+    return stack.active && stack.position === stack.size
+      ? "native"
+      : "branch-only";
+  }
+  const eligibleSiblings = [...input.tickets.values()]
+    .filter(
+      (candidate) =>
+        (candidate.state === "ready" || candidate.state === "in_progress") &&
+        candidate.blockedBy.includes(input.parent.id),
+    )
+    .map((candidate) => candidate.id)
+    .sort();
+  return eligibleSiblings[0] === input.ticket.id
+    ? "native"
+    : "branch-only";
 }
 
 /**
@@ -145,6 +177,7 @@ export function evaluateTicketScheduling(input: {
         baseSha: string;
         baseRef: string;
         parentTicketId: string;
+        stackStrategy: "native" | "branch-only";
       }>;
 
   const uniqueReviewBases = [
@@ -177,6 +210,11 @@ export function evaluateTicketScheduling(input: {
       baseSha: pullRequest.headSha,
       baseRef: pullRequest.headRef,
       parentTicketId: parent.id,
+      stackStrategy: nativeStackStrategy({
+        ticket,
+        parent,
+        tickets: input.tickets,
+      }),
     };
   }
 
@@ -202,7 +240,13 @@ export function evaluatePullRequestEvent(input: {
   event: Readonly<{
     repository: string;
     number: number;
-    action: "closed" | "reopened" | "synchronize";
+    action:
+      | "closed"
+      | "reopened"
+      | "synchronize"
+      | "edited"
+      | "converted_to_draft"
+      | "ready_for_review";
     merged: boolean;
     headSha: string;
   }>;
@@ -240,6 +284,10 @@ export function evaluatePullRequestEvent(input: {
     reason:
       input.event.action === "synchronize"
         ? "bound-pr-head-requires-requalification"
-        : "bound-pr-reopened-requires-requalification",
+        : input.event.action === "reopened"
+          ? "bound-pr-reopened-requires-requalification"
+          : input.event.action === "converted_to_draft"
+            ? "bound-pr-draft-requires-attention"
+            : "bound-pr-metadata-requires-requalification",
   };
 }

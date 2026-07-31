@@ -29,6 +29,16 @@ providers.
   bounded same-project task index. Referenced decision tickets therefore cross
   the Agent Job boundary as digest-bound input instead of being inferred from
   an unavailable Plane board.
+- Human GitHub revision requests bind one submitted review, its summary and
+  inline comments, the allowlisted reviewer, and the exact current
+  repository/pull-request/head identity into one immutable coding request.
+  Qualification and publication contracts cannot silently cross a rewritten
+  head.
+- Native GitHub stack snapshots are bounded, ordered, and structurally linear:
+  each child base ref must equal the preceding pull request's head ref.
+  Durable stack links also bind exact parent and child pull-request identities.
+  These preview contracts describe execution topology only; they do not replace
+  Plane dependency relations or grant merge authority.
 - Every autonomous coding round must retain `codeops.coding-outcome/v1`
   evidence naming at least one exact passing test command. A separate critic
   then returns `codeops.adversarial-review/v1`, bound to that test evidence,

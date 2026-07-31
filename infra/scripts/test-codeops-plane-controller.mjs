@@ -19,6 +19,10 @@ const input = {
   allowedHumanActorIds:
     "123e4567-e89b-12d3-a456-426614174000,223e4567-e89b-12d3-a456-426614174001",
   readyStateId: "a23e4567-e89b-12d3-a456-426614174009",
+  allowedGithubReviewerIds: "6723643628",
+  inProgressStateId: "b23e4567-e89b-12d3-a456-426614174010",
+  needsAttentionStateId: "c23e4567-e89b-12d3-a456-426614174011",
+  completeStateId: "d23e4567-e89b-12d3-a456-426614174012",
   personaUserIds: [
     "323e4567-e89b-12d3-a456-426614174002=@ai-web",
     "423e4567-e89b-12d3-a456-426614174003=@ai-security",
@@ -123,7 +127,10 @@ test("exposes only the exact signed webhook and keeps liveness private", () => {
       path.path,
       path.pathType,
     ]),
-    [["/webhooks/plane", "Exact"]],
+    [
+      ["/webhooks/plane", "Exact"],
+      ["/webhooks/github", "Exact"],
+    ],
   );
   assert.equal(JSON.stringify(ingress).includes("/healthz"), false);
 });
@@ -169,6 +176,10 @@ test("fails closed on malformed identity, image, host, or resource drift", () =>
     { workspaceSlug: "Upper" },
     { allowedHumanActorIds: "" },
     { readyStateId: "ready" },
+    { allowedGithubReviewerIds: "" },
+    { inProgressStateId: "in-progress" },
+    { needsAttentionStateId: "review" },
+    { completeStateId: "done" },
     { personaUserIds: "" },
     {
       personaUserIds: [

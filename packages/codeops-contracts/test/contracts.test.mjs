@@ -15,6 +15,9 @@ import {
   createResearchRequestFromPlaneComment,
   createTransitionId,
   evidenceReferenceSchema,
+  githubPullRequestStackLinkSchema,
+  githubPullRequestStackPositionSchema,
+  githubPullRequestStackSnapshotSchema,
   planeCommentEventSchema,
   qaContractResearcherPolicy,
   readinessGateSchema,
@@ -419,6 +422,46 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
     workItemId: codingWorkItem.workItemId,
   });
   assert.deepEqual(codingRequestSchema.parse(request), request);
+  const humanReviewRequest = {
+    ...request,
+    requestedBy: "github:6723643628",
+    humanReview: {
+      version: "codeops.human-review-request/v1",
+      repository: "anulman/renoconcierge",
+      pullRequestNumber: 158,
+      reviewId: 9001,
+      reviewedHeadSha: codingWorkItem.baseSha,
+      headRef: codingWorkItem.branch,
+      baseRef: "main",
+      reviewer: { id: 6723643628, login: "anulman" },
+      state: "changes_requested",
+      submittedAt: now,
+      summary: "Tighten the exact-head assertion.",
+      comments: [
+        {
+          id: 7001,
+          body: "Add a regression test.",
+          path: "services/codeops-plane-controller/src/github-events.ts",
+          line: 42,
+          side: "RIGHT",
+          createdAt: now,
+        },
+      ],
+    },
+  };
+  assert.deepEqual(
+    codingRequestSchema.parse(humanReviewRequest),
+    humanReviewRequest,
+  );
+  assert.throws(() =>
+    codingRequestSchema.parse({
+      ...humanReviewRequest,
+      humanReview: {
+        ...humanReviewRequest.humanReview,
+        reviewedHeadSha: "f".repeat(40),
+      },
+    }),
+  );
   const initialDispatch = {
     version: contractVersions.agentJobDispatch,
     role: "coding-agent",
@@ -1261,6 +1304,88 @@ test("compiles applicability-aware readiness gates without adding Plane lifecycl
       ],
       blockingProductDecisions: 0,
       ready: true,
+    }),
+  );
+});
+
+test("binds native GitHub stacks to one exact linear pull-request chain", () => {
+  assert.deepEqual(
+    githubPullRequestStackPositionSchema.parse({
+      number: 42,
+      size: 2,
+      position: 2,
+      base: { ref: "main", sha },
+    }),
+    {
+      number: 42,
+      size: 2,
+      position: 2,
+      base: { ref: "main", sha },
+    },
+  );
+  assert.equal(
+    githubPullRequestStackSnapshotSchema.parse({
+      version: contractVersions.githubPullRequestStackSnapshot,
+      repository: "anulman/renoconcierge",
+      number: 42,
+      baseRef: "main",
+      open: true,
+      pullRequests: [
+        {
+          number: 155,
+          state: "open",
+          draft: true,
+          mergedAt: null,
+          head: { ref: "feat/base", sha: "a".repeat(40) },
+          base: { ref: "main", sha },
+        },
+        {
+          number: 158,
+          state: "open",
+          draft: false,
+          mergedAt: null,
+          head: { ref: "feat/child", sha: "b".repeat(40) },
+          base: { ref: "feat/base", sha: "a".repeat(40) },
+        },
+      ],
+    }).pullRequests.length,
+    2,
+  );
+  assert.equal(
+    githubPullRequestStackLinkSchema.parse({
+      version: contractVersions.githubPullRequestStackLink,
+      repository: { owner: "anulman", name: "renoconcierge" },
+      parent: {
+        number: 155,
+        headSha: "a".repeat(40),
+        headRef: "feat/base",
+        baseRef: "main",
+      },
+      child: {
+        number: 158,
+        headSha: "b".repeat(40),
+        headRef: "feat/child",
+        baseRef: "feat/base",
+      },
+    }).child.number,
+    158,
+  );
+  assert.throws(() =>
+    githubPullRequestStackLinkSchema.parse({
+      version: contractVersions.githubPullRequestStackLink,
+      repository: { owner: "anulman", name: "renoconcierge" },
+      parent: {
+        number: 155,
+        headSha: "a".repeat(40),
+        headRef: "feat/base",
+        baseRef: "main",
+      },
+      child: {
+        number: 158,
+        headSha: "b".repeat(40),
+        headRef: "feat/child",
+        baseRef: "main",
+      },
     }),
   );
 });

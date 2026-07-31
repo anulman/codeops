@@ -9,6 +9,10 @@ import {
   researchPacketSchema,
   type ResearchPacket,
   workflowTransitionNoticeSchema,
+  candidatePublicationResultSchema,
+  candidatePublicationSchema,
+  type CandidatePublication,
+  type CandidatePublicationResult,
 } from "@renoconcierge/codeops-contracts";
 import { z } from "zod";
 import { cancellationSignal } from "@temporalio/activity";
@@ -233,4 +237,38 @@ export async function publishResearchPacket(
     passed: true,
     summary: `Plane research packet ${result.status} with ${result.mutationCount} content mutation(s)`,
   };
+}
+
+export async function publishCandidateRevision(
+  publication: CandidatePublication,
+): Promise<CandidatePublicationResult> {
+  const endpoint = new URL(
+    "/v1/candidate-publications",
+    required("CODEOPS_AGENT_DISPATCH_ORIGIN"),
+  );
+  const token = (
+    await readFile(required("CODEOPS_PUBLICATION_TOKEN_FILE"), "utf8")
+  ).trim();
+  if (token.length < 32 || token.length > 4_096) {
+    throw new Error("CodeOps publication token is invalid");
+  }
+  const request = candidatePublicationSchema.parse(publication);
+  const response = await postJson(endpoint, token, request, 10 * 60 * 1_000);
+  if (response.statusCode < 200 || response.statusCode >= 300) {
+    throw new Error(
+      `CodeOps candidate publication failed with status ${response.statusCode}`,
+    );
+  }
+  const result = candidatePublicationResultSchema.parse(response.body);
+  if (
+    result.workflowId !== request.workflowId ||
+    result.workItemId !== request.workItemId ||
+    result.pullRequestNumber !== request.pullRequestNumber ||
+    result.previousHeadSha !== request.expectedHeadSha ||
+    result.headRef !== request.headRef ||
+    result.patchDigest !== request.candidate.patch.digest
+  ) {
+    throw new Error("CodeOps candidate publication identity mismatch");
+  }
+  return result;
 }

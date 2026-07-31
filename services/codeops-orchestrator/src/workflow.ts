@@ -10,6 +10,9 @@ import {
 } from "@temporalio/workflow";
 import type {
   AgentJobDispatchRequest,
+  CandidateCheckpoint,
+  CandidatePublication,
+  CandidatePublicationResult,
   CodingRequest,
   ResearchRequest,
 } from "@renoconcierge/codeops-contracts";
@@ -58,6 +61,9 @@ interface Activities {
   publishResearchPacket(
     packet: ReturnType<typeof buildResearchPacket>,
   ): Promise<ResearchProjectionResult>;
+  publishCandidateRevision(
+    publication: CandidatePublication,
+  ): Promise<CandidatePublicationResult>;
 }
 
 const { recordTransition } = proxyActivities<
@@ -84,6 +90,15 @@ const { publishResearchPacket } = proxyActivities<
   startToCloseTimeout: "5 minutes",
   retry: {
     initialInterval: "2 seconds",
+    maximumAttempts: 3,
+  },
+});
+const { publishCandidateRevision } = proxyActivities<
+  Pick<Activities, "publishCandidateRevision">
+>({
+  startToCloseTimeout: "10 minutes",
+  retry: {
+    initialInterval: "5 seconds",
     maximumAttempts: 3,
   },
 });
@@ -238,6 +253,7 @@ export async function workItemWorkflow(
     }
     if (workItem.role === "coding-agent" && autonomousCritic) {
       let round = 1;
+      let acceptedCandidate: CandidateCheckpoint | null = null;
       let candidateDispatch = codingCheckpoint;
       if (!candidateDispatch || candidateDispatch.role !== "coding-agent") {
         await move("failed", "Coding Agent Job returned no candidate checkpoint");
@@ -291,6 +307,7 @@ export async function workItemWorkflow(
           round,
         });
         if (action === "accept") {
+          acceptedCandidate = candidate;
           if (await cancelIfRequested()) return snapshot;
           break;
         }
@@ -343,6 +360,43 @@ export async function workItemWorkflow(
           `Coding round ${round} checkpoint ready at ${candidateDispatch.checkpointUri}`,
         );
         if (await cancelIfRequested()) return snapshot;
+      }
+      if (
+        workItem.codingRequest.humanReview !== undefined &&
+        acceptedCandidate !== null
+      ) {
+        await move(
+          "validating",
+          "Autonomous critic passed; publishing the exact human-review revision",
+        );
+        try {
+          const publication = await publishCandidateRevision({
+            version: "codeops.candidate-publication/v1",
+            workspaceId: workItem.codingRequest.workspaceId,
+            projectId: workItem.codingRequest.projectId,
+            workItemId: workItem.workItemId,
+            workflowId: workItem.workflowId,
+            repository: workItem.codingRequest.workItem.repository,
+            pullRequestNumber:
+              workItem.codingRequest.humanReview.pullRequestNumber,
+            expectedHeadSha: workItem.baseSha,
+            headRef: workItem.codingRequest.workItem.branch,
+            humanReview: workItem.codingRequest.humanReview,
+            candidate: acceptedCandidate,
+            commitMessage: `fix(codeops): address PR #${workItem.codingRequest.humanReview.pullRequestNumber} review`,
+          });
+          await move(
+            "completed",
+            `Published review revision ${publication.publishedHeadSha} to ${publication.headRef}`,
+          );
+        } catch (error) {
+          if (isCancellation(error)) throw error;
+          await move(
+            "failed",
+            "Critic-approved review revision failed closed before publication",
+          );
+        }
+        return snapshot;
       }
       await move(
         "validating",

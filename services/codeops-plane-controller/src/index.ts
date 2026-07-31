@@ -43,14 +43,27 @@ export {
   type WorkflowBindingStore,
 } from "./workflow-binding-store.js";
 export {
+  parseGitHubEvent,
   parseGitHubPullRequestEvent,
   verifyGitHubWebhookSignature,
+  type GitHubEvent,
   type GitHubPullRequestEvent,
+  type GitHubPullRequestReviewEvent,
 } from "./github-events.js";
 export {
+  reconcileGitHubPullRequestMergeGroup,
   reconcileGitHubPullRequestEvent,
   type GitHubReconciliationResult,
 } from "./github-reconciler.js";
+export {
+  createHumanReviewCodingRequest,
+  reconcileGitHubPullRequestReviewEvent,
+  type GitHubReviewReconciliationResult,
+} from "./github-review-reconciler.js";
+export {
+  createFileCodingRequestStore,
+  type CodingRequestStore,
+} from "./coding-request-store.js";
 
 export {
   applyResearchMutationBatch,
@@ -90,6 +103,10 @@ export {
 } from "./projection.js";
 export {
   createPlaneWebhookRequestListener,
+  createGitHubReviewCommentsLoader,
+  createGitHubHeadQualifier,
+  createGitHubStackLinker,
+  createGitHubStackLoader,
   createRepositoryHeadResolver,
   createTemporalCodingCanceller,
   createTemporalCodingEnqueuer,

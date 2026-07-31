@@ -94,6 +94,9 @@ export async function compileSchedulerProjectSnapshot(input: {
               ...(binding.baseTicketId === undefined
                 ? {}
                 : { baseTicketId: binding.baseTicketId }),
+              ...(binding.nativeStack === undefined
+                ? {}
+                : { nativeStack: binding.nativeStack }),
               qualified: binding.qualified,
             },
           }),

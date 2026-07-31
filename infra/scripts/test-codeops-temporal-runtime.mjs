@@ -116,6 +116,22 @@ test("renders exactly one immutable orchestrator image", () => {
     ).value,
     "http://codeops-plane-controller:8080",
   );
+  assert.equal(
+    pod.containers[0].env.find(
+      (entry) => entry.name === "CODEOPS_PUBLICATION_TOKEN_FILE",
+    ).value,
+    "/var/run/codeops-publication/token",
+  );
+  assert.deepEqual(
+    pod.containers[0].volumeMounts.find(
+      (entry) => entry.name === "publication-auth",
+    ),
+    {
+      name: "publication-auth",
+      mountPath: "/var/run/codeops-publication",
+      readOnly: true,
+    },
+  );
   assert.deepEqual(pod.volumes, [
     {
       name: "dispatch-auth",
@@ -128,6 +144,13 @@ test("renders exactly one immutable orchestrator image", () => {
       name: "projection-auth",
       secret: {
         secretName: "codeops-research-projection-auth",
+        defaultMode: 256,
+      },
+    },
+    {
+      name: "publication-auth",
+      secret: {
+        secretName: "codeops-publication-auth",
         defaultMode: 256,
       },
     },

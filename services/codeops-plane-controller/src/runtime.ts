@@ -6,14 +6,20 @@ import {
 } from "@temporalio/client";
 import {
   workflowTransitionNoticeSchema,
+  githubReviewCommentSchema,
+  githubPullRequestStackLinkSchema,
+  githubPullRequestStackSnapshotSchema,
+  type GitHubReviewComment,
+  type GitHubPullRequestStackLink,
+  type GitHubPullRequestStackSnapshot,
   type CodingRequest,
   type ResearchRequest,
   type WorkflowTransitionNotice,
 } from "@renoconcierge/codeops-contracts";
 import {
-  parseGitHubPullRequestEvent,
+  parseGitHubEvent,
   verifyGitHubWebhookSignature,
-  type GitHubPullRequestEvent,
+  type GitHubEvent,
 } from "./github-events.js";
 import type {
   CodingRequestEnqueueResult,
@@ -21,6 +27,7 @@ import type {
   ResearchWebhookProcessingResult,
 } from "./index.js";
 import type { ResearchProjectionResult } from "./projection.js";
+import { z } from "zod";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 const GIT_SHA = /^[0-9a-f]{40}$/;
@@ -75,6 +82,236 @@ export function createRepositoryHeadResolver(input: {
       throw new Error("repository head response is invalid");
     }
     return body.sha;
+  };
+}
+
+export function createGitHubReviewCommentsLoader(input: {
+  origin: string;
+  token: string;
+  repository: string;
+  fetch?: typeof fetch;
+}): (input: {
+  repository: string;
+  number: number;
+  reviewId: number;
+}) => Promise<readonly GitHubReviewComment[]> {
+  const origin = new URL(input.origin);
+  if (
+    origin.protocol !== "http:" ||
+    origin.hostname !== "codeops-control-gateway" ||
+    origin.port !== "8080" ||
+    origin.username !== "" ||
+    origin.password !== "" ||
+    origin.pathname !== "/" ||
+    origin.search !== "" ||
+    origin.hash !== ""
+  ) {
+    throw new Error("GitHub review origin must be the internal control gateway");
+  }
+  if (input.token.length < 32 || input.token.length > 4_096) {
+    throw new Error("GitHub review reader token is invalid");
+  }
+  if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(input.repository)) {
+    throw new Error("GitHub review repository identity is invalid");
+  }
+  return async (review) => {
+    if (review.repository !== input.repository) {
+      throw new Error("GitHub review repository is outside configured scope");
+    }
+    const number = z
+      .number()
+      .int()
+      .positive()
+      .max(10_000_000)
+      .parse(review.number);
+    const reviewId = z
+      .number()
+      .int()
+      .positive()
+      .max(Number.MAX_SAFE_INTEGER)
+      .parse(review.reviewId);
+    const response = await (input.fetch ?? fetch)(
+      new URL(
+        `/v1/pull-requests/${number}/reviews/${reviewId}/comments`,
+        origin,
+      ),
+      {
+        redirect: "error",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${input.token}`,
+        },
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `GitHub review comment resolution failed with ${response.status}`,
+      );
+    }
+    return z
+      .object({
+        version: z.literal("codeops.github-review-comments/v1"),
+        comments: z.array(githubReviewCommentSchema).max(100),
+      })
+      .strict()
+      .parse(await response.json()).comments;
+  };
+}
+
+export function createGitHubHeadQualifier(input: {
+  origin: string;
+  token: string;
+  fetch?: typeof fetch;
+}): (input: {
+  pullRequestNumber: number;
+  headSha: string;
+}) => Promise<boolean> {
+  const origin = new URL(input.origin);
+  if (
+    origin.protocol !== "http:" ||
+    origin.hostname !== "codeops-control-gateway" ||
+    origin.port !== "8080" ||
+    origin.pathname !== "/" ||
+    origin.username !== "" ||
+    origin.password !== "" ||
+    origin.search !== "" ||
+    origin.hash !== ""
+  ) {
+    throw new Error("GitHub qualification origin must be the internal control gateway");
+  }
+  if (input.token.length < 32 || input.token.length > 4_096) {
+    throw new Error("GitHub qualification token is invalid");
+  }
+  return async (value) => {
+    const pullRequestNumber = z
+      .number()
+      .int()
+      .positive()
+      .max(10_000_000)
+      .parse(value.pullRequestNumber);
+    const headSha = z.string().regex(/^[0-9a-f]{40}$/).parse(value.headSha);
+    const response = await (input.fetch ?? fetch)(
+      new URL(
+        `/v1/pull-requests/${pullRequestNumber}/heads/${headSha}/qualification`,
+        origin,
+      ),
+      {
+        redirect: "error",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${input.token}`,
+        },
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub qualification failed with ${response.status}`);
+    }
+    const result = z
+      .object({
+        version: z.literal("codeops.github-pull-request-qualification/v1"),
+        pullRequestNumber: z.number().int().positive().max(10_000_000),
+        headSha: z.string().regex(/^[0-9a-f]{40}$/),
+        qualified: z.boolean(),
+      })
+      .strict()
+      .parse(await response.json());
+    if (
+      result.pullRequestNumber !== pullRequestNumber ||
+      result.headSha !== headSha
+    ) {
+      throw new Error("GitHub qualification identity mismatch");
+    }
+    return result.qualified;
+  };
+}
+
+function internalControlGatewayOrigin(value: string, capability: string): URL {
+  const origin = new URL(value);
+  if (
+    origin.protocol !== "http:" ||
+    origin.hostname !== "codeops-control-gateway" ||
+    origin.port !== "8080" ||
+    origin.pathname !== "/" ||
+    origin.username !== "" ||
+    origin.password !== "" ||
+    origin.search !== "" ||
+    origin.hash !== ""
+  ) {
+    throw new Error(`${capability} origin must be the internal control gateway`);
+  }
+  return origin;
+}
+
+function internalCapabilityToken(value: string, capability: string): string {
+  if (value.length < 32 || value.length > 4_096) {
+    throw new Error(`${capability} token is invalid`);
+  }
+  return value;
+}
+
+export function createGitHubStackLoader(input: {
+  origin: string;
+  token: string;
+  fetch?: typeof fetch;
+}): (stackNumber: number) => Promise<GitHubPullRequestStackSnapshot> {
+  const origin = internalControlGatewayOrigin(input.origin, "GitHub stack");
+  const token = internalCapabilityToken(input.token, "GitHub stack");
+  return async (value) => {
+    const stackNumber = z
+      .number()
+      .int()
+      .positive()
+      .max(10_000_000)
+      .parse(value);
+    const response = await (input.fetch ?? fetch)(
+      new URL(`/v1/pull-request-stacks/${stackNumber}`, origin),
+      {
+        redirect: "error",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub stack resolution failed with ${response.status}`);
+    }
+    return githubPullRequestStackSnapshotSchema.parse(await response.json());
+  };
+}
+
+export function createGitHubStackLinker(input: {
+  origin: string;
+  token: string;
+  fetch?: typeof fetch;
+}): (
+  link: GitHubPullRequestStackLink,
+) => Promise<GitHubPullRequestStackSnapshot> {
+  const origin = internalControlGatewayOrigin(input.origin, "GitHub stack link");
+  const token = internalCapabilityToken(input.token, "GitHub stack link");
+  return async (value) => {
+    const link = githubPullRequestStackLinkSchema.parse(value);
+    const response = await (input.fetch ?? fetch)(
+      new URL("/v1/pull-request-stacks", origin),
+      {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(link),
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub stack link failed with ${response.status}`);
+    }
+    return githubPullRequestStackSnapshotSchema.parse(await response.json());
   };
 }
 
@@ -250,7 +487,7 @@ export function createPlaneWebhookRequestListener(input: {
     secret: string;
     process: (input: {
       delivery: string;
-      event: GitHubPullRequestEvent;
+      event: GitHubEvent;
     }) => Promise<void>;
   };
 }): (request: IncomingMessage, response: ServerResponse) => Promise<void> {
@@ -359,7 +596,7 @@ export function createPlaneWebhookRequestListener(input: {
           json(response, 401, { status: "unauthorized" });
           return;
         }
-        const event = parseGitHubPullRequestEvent({
+        const event = parseGitHubEvent({
           rawBody,
           event: requiredHeader(request, "x-github-event"),
         });

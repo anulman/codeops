@@ -6,9 +6,169 @@ import { test } from "node:test";
 import { WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
 import {
   createPlaneWebhookRequestListener,
+  createGitHubHeadQualifier,
+  createGitHubReviewCommentsLoader,
+  createGitHubStackLinker,
+  createGitHubStackLoader,
   createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "../dist/index.js";
+
+test("reads and links native stacks only through bounded internal capabilities", async () => {
+  const stack = {
+    version: "codeops.github-pull-request-stack-snapshot/v1",
+    repository: "anulman/renoconcierge",
+    number: 42,
+    baseRef: "main",
+    open: true,
+    pullRequests: [
+      {
+        number: 155,
+        state: "open",
+        draft: true,
+        mergedAt: null,
+        head: { ref: "feat/base", sha: "a".repeat(40) },
+        base: { ref: "main", sha: "0".repeat(40) },
+      },
+      {
+        number: 158,
+        state: "open",
+        draft: false,
+        mergedAt: null,
+        head: { ref: "feat/child", sha: "b".repeat(40) },
+        base: { ref: "feat/base", sha: "a".repeat(40) },
+      },
+    ],
+  };
+  const calls = [];
+  const load = createGitHubStackLoader({
+    origin: "http://codeops-control-gateway:8080",
+    token: "r".repeat(64),
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return Response.json(stack);
+    },
+  });
+  assert.equal((await load(42)).number, 42);
+  const link = createGitHubStackLinker({
+    origin: "http://codeops-control-gateway:8080",
+    token: "p".repeat(64),
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return Response.json(stack);
+    },
+  });
+  assert.equal(
+    (
+      await link({
+        version: "codeops.github-pull-request-stack-link/v1",
+        repository: { owner: "anulman", name: "renoconcierge" },
+        parent: {
+          number: 155,
+          headSha: "a".repeat(40),
+          headRef: "feat/base",
+          baseRef: "main",
+        },
+        child: {
+          number: 158,
+          headSha: "b".repeat(40),
+          headRef: "feat/child",
+          baseRef: "feat/base",
+        },
+      })
+    ).number,
+    42,
+  );
+  assert.equal(
+    calls[0].url,
+    "http://codeops-control-gateway:8080/v1/pull-request-stacks/42",
+  );
+  assert.equal(calls[1].init.method, "POST");
+  assert.equal(calls[1].init.headers.Authorization, `Bearer ${"p".repeat(64)}`);
+});
+
+test("loads review comments only through the bounded internal repository reader", async () => {
+  const calls = [];
+  const load = createGitHubReviewCommentsLoader({
+    origin: "http://codeops-control-gateway:8080",
+    token: "r".repeat(64),
+    repository: "anulman/renoconcierge",
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(
+        JSON.stringify({
+          version: "codeops.github-review-comments/v1",
+          comments: [
+            {
+              id: 7001,
+              body: "Cover this branch.",
+              path: "services/codeops-plane-controller/src/github-events.ts",
+              line: 42,
+              side: "RIGHT",
+              createdAt: "2026-07-30T22:45:00.000Z",
+            },
+          ],
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    },
+  });
+  assert.equal(
+    (
+      await load({
+        repository: "anulman/renoconcierge",
+        number: 158,
+        reviewId: 9001,
+      })
+    )[0].id,
+    7001,
+  );
+  assert.equal(
+    calls[0].url,
+    "http://codeops-control-gateway:8080/v1/pull-requests/158/reviews/9001/comments",
+  );
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
+  await assert.rejects(
+    load({
+      repository: "other/repository",
+      number: 158,
+      reviewId: 9001,
+    }),
+    /outside configured scope/,
+  );
+});
+
+test("qualifies one exact pull request and head through the bounded internal reader", async () => {
+  const calls = [];
+  const qualify = createGitHubHeadQualifier({
+    origin: "http://codeops-control-gateway:8080",
+    token: "r".repeat(64),
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return new Response(
+        JSON.stringify({
+          version: "codeops.github-pull-request-qualification/v1",
+          pullRequestNumber: 155,
+          headSha: "a".repeat(40),
+          qualified: true,
+        }),
+        { status: 200, headers: { "Content-Type": "application/json" } },
+      );
+    },
+  });
+  assert.equal(
+    await qualify({
+      pullRequestNumber: 155,
+      headSha: "a".repeat(40),
+    }),
+    true,
+  );
+  assert.equal(
+    calls[0].url,
+    `http://codeops-control-gateway:8080/v1/pull-requests/155/heads/${"a".repeat(40)}/qualification`,
+  );
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
+});
 
 const request = {
   version: "codeops.research-request/v2",
@@ -307,10 +467,41 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
     });
     assert.equal(accepted.status, 200);
     assert.deepEqual(await accepted.json(), { status: "accepted" });
+    const reviewBody = JSON.stringify({
+      action: "submitted",
+      repository: { full_name: "anulman/renoconcierge" },
+      pull_request: {
+        number: 158,
+        head: { sha: "b".repeat(40), ref: "feat/reviewed" },
+        base: { ref: "main" },
+      },
+      review: {
+        id: 9001,
+        body: "Please cover the stale-head case.",
+        commit_id: "b".repeat(40),
+        state: "changes_requested",
+        submitted_at: "2026-07-30T22:45:00.000Z",
+        user: { id: 6723643628, login: "anulman", type: "User" },
+      },
+    });
+    const reviewResponse = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "X-GitHub-Delivery": "delivery-2",
+        "X-GitHub-Event": "pull_request_review",
+        "X-Hub-Signature-256": `sha256=${createHmac("sha256", secret)
+          .update(reviewBody)
+          .digest("hex")}`,
+      },
+      body: reviewBody,
+    });
+    assert.equal(reviewResponse.status, 200);
     assert.deepEqual(seen, [
       {
         delivery: "delivery-1",
         event: {
+          kind: "pull_request",
           repository: "anulman/renoconcierge",
           number: 158,
           action: "closed",
@@ -318,6 +509,27 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
           headSha: "a".repeat(40),
           headRef: "feat/a",
           baseRef: "main",
+          stack: null,
+        },
+      },
+      {
+        delivery: "delivery-2",
+        event: {
+          kind: "pull_request_review",
+          repository: "anulman/renoconcierge",
+          number: 158,
+          action: "submitted",
+          reviewId: 9001,
+          state: "changes_requested",
+          body: "Please cover the stale-head case.",
+          reviewerId: 6723643628,
+          reviewerLogin: "anulman",
+          reviewedHeadSha: "b".repeat(40),
+          currentHeadSha: "b".repeat(40),
+          headRef: "feat/reviewed",
+          baseRef: "main",
+          stack: null,
+          submittedAt: "2026-07-30T22:45:00.000Z",
         },
       },
     ]);

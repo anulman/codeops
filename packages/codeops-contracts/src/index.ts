@@ -39,6 +39,11 @@ const VERSION = {
   agentJobDispatchResult: "codeops.agent-job-dispatch-result/v1",
   adversarialReview: "codeops.adversarial-review/v1",
   workflowTransitionNotice: "codeops.workflow-transition-notice/v1",
+  candidatePublication: "codeops.candidate-publication/v1",
+  candidatePublicationResult: "codeops.candidate-publication-result/v1",
+  githubPullRequestStackLink: "codeops.github-pull-request-stack-link/v1",
+  githubPullRequestStackSnapshot:
+    "codeops.github-pull-request-stack-snapshot/v1",
 } as const;
 
 const identifier = z
@@ -81,6 +86,243 @@ const repositoryPath = z
   .min(1)
   .max(500)
   .regex(/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\/\/)[A-Za-z0-9.$_/-]+$/);
+
+const githubActor = z
+  .object({
+    id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    login: z
+      .string()
+      .min(1)
+      .max(100)
+      .regex(/^[A-Za-z0-9](?:[A-Za-z0-9-]{0,38}[A-Za-z0-9])?$/),
+  })
+  .strict();
+
+export const githubReviewCommentSchema = z
+  .object({
+    id: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    body: safeText(20_000),
+    path: repositoryPath,
+    line: z.number().int().positive().max(10_000_000).nullable(),
+    side: z.enum(["LEFT", "RIGHT"]).nullable(),
+    createdAt: isoDateTime,
+  })
+  .strict();
+
+export const humanReviewRequestSchema = z
+  .object({
+    version: z.literal("codeops.human-review-request/v1"),
+    repository: z
+      .string()
+      .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+    pullRequestNumber: z.number().int().positive().max(10_000_000),
+    reviewId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    reviewedHeadSha: gitSha,
+    headRef: branchName,
+    baseRef: branchName,
+    reviewer: githubActor,
+    state: z.enum(["changes_requested", "commented"]),
+    submittedAt: isoDateTime,
+    summary: z.string().max(65_536),
+    comments: z.array(githubReviewCommentSchema).max(100),
+  })
+  .strict()
+  .superRefine((review, context) => {
+    if (
+      review.summary.trim().length === 0 &&
+      review.comments.length === 0
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["comments"],
+        message: "human review request must contain a summary or inline comment",
+      });
+    }
+    const ids = review.comments.map((comment) => comment.id);
+    if (new Set(ids).size !== ids.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["comments"],
+        message: "human review comments must be unique",
+      });
+    }
+  });
+
+export const candidatePublicationSchema = z
+  .object({
+    version: z.literal(VERSION.candidatePublication),
+    workspaceId: uuid,
+    projectId: uuid,
+    workItemId: uuid,
+    workflowId: workflowRunIdentifier,
+    repository,
+    pullRequestNumber: z.number().int().positive().max(10_000_000),
+    expectedHeadSha: gitSha,
+    headRef: branchName,
+    humanReview: humanReviewRequestSchema,
+    candidate: candidateCheckpointSchema,
+    commitMessage: safeText(500),
+  })
+  .strict()
+  .superRefine((publication, context) => {
+    if (
+      publication.humanReview.repository !==
+        `${publication.repository.owner}/${publication.repository.name}` ||
+      publication.humanReview.pullRequestNumber !==
+        publication.pullRequestNumber ||
+      publication.humanReview.reviewedHeadSha !==
+        publication.expectedHeadSha ||
+      publication.humanReview.headRef !== publication.headRef ||
+      publication.candidate.runId.length === 0
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["humanReview"],
+        message: "candidate publication identity does not match its review",
+      });
+    }
+  });
+
+export const candidatePublicationResultSchema = z
+  .object({
+    version: z.literal(VERSION.candidatePublicationResult),
+    workflowId: workflowRunIdentifier,
+    workItemId: uuid,
+    pullRequestNumber: z.number().int().positive().max(10_000_000),
+    previousHeadSha: gitSha,
+    publishedHeadSha: gitSha,
+    headRef: branchName,
+    patchDigest: sha256Digest,
+  })
+  .strict()
+  .refine(
+    (result) => result.previousHeadSha !== result.publishedHeadSha,
+    "candidate publication must advance the PR head",
+  );
+
+export const githubPullRequestStackPositionSchema = z
+  .object({
+    number: z.number().int().positive().max(10_000_000),
+    size: z.number().int().min(2).max(100),
+    position: z.number().int().positive().max(100),
+    base: z
+      .object({
+        ref: branchName,
+        sha: gitSha,
+      })
+      .strict(),
+  })
+  .strict()
+  .refine(
+    (stack) => stack.position <= stack.size,
+    "pull-request stack position must not exceed its size",
+  );
+
+const githubPullRequestStackEntryIdentitySchema = z
+  .object({
+    number: z.number().int().positive().max(10_000_000),
+    state: z.enum(["open", "closed"]),
+    draft: z.boolean(),
+    mergedAt: isoDateTime.nullable(),
+    head: z
+      .object({
+        ref: branchName,
+        sha: gitSha,
+      })
+      .strict(),
+    base: z
+      .object({
+        ref: branchName,
+        sha: gitSha,
+      })
+      .strict(),
+  })
+  .strict()
+  .superRefine((entry, context) => {
+    if (entry.mergedAt !== null && entry.state !== "closed") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["state"],
+        message: "a merged stack entry must be closed",
+      });
+    }
+  });
+
+export const githubPullRequestStackSnapshotSchema = z
+  .object({
+    version: z.literal(VERSION.githubPullRequestStackSnapshot),
+    repository: z
+      .string()
+      .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+    number: z.number().int().positive().max(10_000_000),
+    baseRef: branchName,
+    open: z.boolean(),
+    pullRequests: z
+      .array(githubPullRequestStackEntryIdentitySchema)
+      .min(2)
+      .max(100),
+  })
+  .strict()
+  .superRefine((stack, context) => {
+    const numbers = stack.pullRequests.map((entry) => entry.number);
+    if (new Set(numbers).size !== numbers.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["pullRequests"],
+        message: "pull-request stack entries must be unique",
+      });
+    }
+    if (stack.pullRequests[0]?.base.ref !== stack.baseRef) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["baseRef"],
+        message: "pull-request stack base must match its bottom entry",
+      });
+    }
+    for (let index = 1; index < stack.pullRequests.length; index += 1) {
+      if (
+        stack.pullRequests[index]!.base.ref !==
+        stack.pullRequests[index - 1]!.head.ref
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["pullRequests", index, "base", "ref"],
+          message: "pull-request stack entries must form a linear ref chain",
+        });
+      }
+    }
+  });
+
+const exactPullRequestIdentitySchema = z
+  .object({
+    number: z.number().int().positive().max(10_000_000),
+    headSha: gitSha,
+    headRef: branchName,
+    baseRef: branchName,
+  })
+  .strict();
+
+export const githubPullRequestStackLinkSchema = z
+  .object({
+    version: z.literal(VERSION.githubPullRequestStackLink),
+    repository,
+    parent: exactPullRequestIdentitySchema,
+    child: exactPullRequestIdentitySchema,
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (
+      request.parent.number === request.child.number ||
+      request.parent.headRef !== request.child.baseRef
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["child", "baseRef"],
+        message:
+          "native stack link must identify a distinct child based on the exact parent head ref",
+      });
+    }
+  });
 
 function hasSafeEvidenceUri(value: string): boolean {
   if (value.length > 2_048) return false;
@@ -1144,7 +1386,10 @@ export const codingRequestSchema = z
     requestId: identifier,
     eventId: identifier,
     ...requestProjectIdentity,
-    requestedBy: uuid,
+    requestedBy: z.union([
+      uuid,
+      z.string().regex(/^github:[1-9][0-9]{0,15}$/),
+    ]),
     controlPlaneSha: gitSha,
     planeRevisionDigest: sha256Digest,
     ticketSnapshot: ticketSnapshotSchema,
@@ -1155,6 +1400,7 @@ export const codingRequestSchema = z
       })
       .strict(),
     researchPacket: researchPacketSchema.optional(),
+    humanReview: humanReviewRequestSchema.optional(),
     workItem: workItemRequestSchema,
   })
   .strict()
@@ -1184,6 +1430,19 @@ export const codingRequestSchema = z
         code: z.ZodIssueCode.custom,
         path: ["ticketSnapshot", "workItemId"],
         message: "ticket snapshot does not match the coding request",
+      });
+    }
+    if (
+      request.humanReview !== undefined &&
+      (request.humanReview.reviewedHeadSha !== request.workItem.baseSha ||
+        request.humanReview.headRef !== request.workItem.branch ||
+        request.humanReview.repository !==
+          `${request.workItem.repository.owner}/${request.workItem.repository.name}`)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["humanReview"],
+        message: "human review identity does not match its coding target",
       });
     }
     if (request.researchDisposition.mode === "required" && !request.researchPacket) {
@@ -1462,6 +1721,21 @@ export type ProjectContextDocument = z.infer<
 >;
 export type ProjectContext = z.infer<typeof projectContextSchema>;
 export type CodingRequest = z.infer<typeof codingRequestSchema>;
+export type HumanReviewRequest = z.infer<typeof humanReviewRequestSchema>;
+export type GitHubReviewComment = z.infer<typeof githubReviewCommentSchema>;
+export type CandidatePublication = z.infer<typeof candidatePublicationSchema>;
+export type CandidatePublicationResult = z.infer<
+  typeof candidatePublicationResultSchema
+>;
+export type GitHubPullRequestStackPosition = z.infer<
+  typeof githubPullRequestStackPositionSchema
+>;
+export type GitHubPullRequestStackSnapshot = z.infer<
+  typeof githubPullRequestStackSnapshotSchema
+>;
+export type GitHubPullRequestStackLink = z.infer<
+  typeof githubPullRequestStackLinkSchema
+>;
 export type WorkflowTransitionNotice = z.infer<
   typeof workflowTransitionNoticeSchema
 >;
