@@ -33,6 +33,7 @@ import {
 import {
   ImmutableSessionCommandConflictError,
   SessionCompareAndSwapError,
+  SessionForkConflictError,
   SessionNotFoundError,
 } from "./session-broker-repository.js";
 
@@ -191,7 +192,8 @@ const server = createServer((request, response) => {
           : error instanceof SessionNotFoundError
             ? 404
             : error instanceof ImmutableSessionCommandConflictError ||
-                error instanceof SessionCompareAndSwapError
+                error instanceof SessionCompareAndSwapError ||
+                error instanceof SessionForkConflictError
               ? 409
               : 503;
       json(response, status, {

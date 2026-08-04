@@ -31,6 +31,7 @@ export class ImmutableSessionCommandConflictError extends Error {
 
 export class SessionNotFoundError extends Error {}
 export class SessionCompareAndSwapError extends Error {}
+export class SessionForkConflictError extends Error {}
 
 const sessionIdentifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -175,6 +176,26 @@ function requireResultIdentity(
   }
 }
 
+function requireForkIdentity(
+  snapshot: SessionSnapshot,
+  command: Extract<SessionCommand, { readonly type: "fork" }>,
+  result: SessionCommandResult,
+): void {
+  if (
+    snapshot.checkpoint?.checkpointId !== command.checkpointId ||
+    snapshot.eventCursor !== command.parentEventCursor ||
+    result.snapshot.identity.parentSessionId !== snapshot.sessionId ||
+    result.snapshot.identity.forkedAtCursor !== snapshot.eventCursor ||
+    result.snapshot.identity.repository !== snapshot.identity.repository ||
+    result.snapshot.identity.baseSha !== snapshot.identity.baseSha ||
+    result.snapshot.generation !== 1
+  ) {
+    throw new Error(
+      "fork must bind the exact parent checkpoint, cursor, repository, and base SHA",
+    );
+  }
+}
+
 function duplicateResult(result: SessionCommandResult): SessionCommandResult {
   if (result.disposition !== "committed") return result;
   return sessionCommandResultSchema.parse({
@@ -257,8 +278,33 @@ async function persistEvents(
   }
 }
 
+async function persistForkedSession(
+  client: TransactionClient,
+  snapshot: SessionSnapshot,
+): Promise<void> {
+  const inserted = await client.query(
+    `INSERT INTO codeops.sessions
+       (session_id, generation, lease_id, snapshot_json, updated_at)
+     VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz)
+     ON CONFLICT (session_id) DO NOTHING`,
+    [
+      snapshot.sessionId,
+      snapshot.generation,
+      snapshot.lease?.leaseId ?? null,
+      canonical(snapshot),
+      snapshot.updatedAt,
+    ],
+  );
+  if (inserted.rowCount !== 1) {
+    throw new SessionForkConflictError(
+      `fork child session ${snapshot.sessionId} already exists`,
+    );
+  }
+}
+
 function requireOrderedEvents(
   snapshot: SessionSnapshot,
+  command: SessionCommand,
   result: SessionCommandResult,
   rawEvents: readonly SessionEvent[],
 ): readonly SessionEvent[] {
@@ -266,11 +312,15 @@ function requireOrderedEvents(
     throw new Error("a committed session mutation must persist at least one event");
   }
   const events = rawEvents.map((event) => sessionEventSchema.parse(event));
+  // A fork begins a new independently pageable event stream. Parent lineage
+  // lives in identity.forkedAtCursor; copying the parent's cursor into the
+  // child stream would make loadSessionEvents(child, afterCursor=0) fail.
+  const previousCursor = command.type === "fork" ? 0 : snapshot.eventCursor;
   for (const [index, event] of events.entries()) {
     if (
       event.sessionId !== result.snapshot.sessionId ||
       event.generation !== result.snapshot.generation ||
-      event.cursor !== snapshot.eventCursor + index + 1
+      event.cursor !== previousCursor + index + 1
     ) {
       throw new Error("session mutation events must form one ordered snapshot history");
     }
@@ -380,31 +430,44 @@ export async function executeSessionCommandTransaction(
         if (result.disposition !== "committed") {
           throw new Error("session mutator must return a committed result");
         }
-        const events = requireOrderedEvents(snapshot, result, mutation.events);
-        await persistEvents(client, result.commandId, events);
-        const updated = await client.query(
-          `UPDATE codeops.sessions
-              SET snapshot_json = $1::jsonb,
-                  generation = $2,
-                  lease_id = $3,
-                  updated_at = $4::timestamptz
-            WHERE session_id = $5
-              AND generation = $6
-              AND lease_id = $7`,
-          [
-            canonical(result.snapshot),
-            result.snapshot.generation,
-            result.snapshot.lease?.leaseId ?? null,
-            result.snapshot.updatedAt,
-            command.sessionId,
-            command.generation,
-            command.leaseId,
-          ],
+        if (command.type === "fork") {
+          requireForkIdentity(snapshot, command, result);
+        }
+        const events = requireOrderedEvents(
+          snapshot,
+          command,
+          result,
+          mutation.events,
         );
-        if (updated.rowCount !== 1) {
-          throw new SessionCompareAndSwapError(
-            `session ${command.sessionId} changed during command commit`,
+        if (command.type === "fork") {
+          await persistForkedSession(client, result.snapshot);
+        }
+        await persistEvents(client, result.commandId, events);
+        if (command.type !== "fork") {
+          const updated = await client.query(
+            `UPDATE codeops.sessions
+                SET snapshot_json = $1::jsonb,
+                    generation = $2,
+                    lease_id = $3,
+                    updated_at = $4::timestamptz
+              WHERE session_id = $5
+                AND generation = $6
+                AND lease_id = $7`,
+            [
+              canonical(result.snapshot),
+              result.snapshot.generation,
+              result.snapshot.lease?.leaseId ?? null,
+              result.snapshot.updatedAt,
+              command.sessionId,
+              command.generation,
+              command.leaseId,
+            ],
           );
+          if (updated.rowCount !== 1) {
+            throw new SessionCompareAndSwapError(
+              `session ${command.sessionId} changed during command commit`,
+            );
+          }
         }
       }
     }

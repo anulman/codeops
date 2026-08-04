@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ImmutableSessionCommandConflictError,
+  SessionForkConflictError,
   executeSessionCommandTransaction,
   listSessionSnapshots,
   loadSessionEvents,
@@ -164,10 +165,11 @@ test("loads strict ordered events after one bounded cursor", async () => {
 });
 
 class FakeClient {
-  constructor({ current = snapshot(), existing = null, updateCount = 1 } = {}) {
+  constructor({ current = snapshot(), existing = null, updateCount = 1, forkInsertCount = 1 } = {}) {
     this.current = current;
     this.existing = existing;
     this.updateCount = updateCount;
+    this.forkInsertCount = forkInsertCount;
     this.calls = [];
   }
   async query(text, values = []) {
@@ -180,6 +182,9 @@ class FakeClient {
     }
     if (text.startsWith("UPDATE codeops.sessions")) {
       return { rowCount: this.updateCount, rows: [] };
+    }
+    if (text.startsWith("INSERT INTO codeops.sessions")) {
+      return { rowCount: this.forkInsertCount, rows: [] };
     }
     return { rowCount: 1, rows: [] };
   }
@@ -278,4 +283,187 @@ test("rolls back snapshots that advance without a complete ordered event history
     assert.equal(client.calls.some(({ text }) => text.startsWith("UPDATE codeops.sessions")), false);
     assert.equal(client.calls.at(-1).text, "ROLLBACK");
   }
+});
+
+test("atomically inserts a fork child without overwriting its parent", async () => {
+  const checkpointId = "22222222-2222-4222-8222-222222222222";
+  const childLeaseId = "77777777-7777-4777-8777-777777777777";
+  const parent = snapshot({
+    state: "completed",
+    lease: {
+      leaseId,
+      generation: 3,
+      status: "released",
+      releasedAt: "2026-08-04T03:04:00.000Z",
+    },
+    checkpoint: {
+      version: "codeops.session-checkpoint/v1",
+      checkpointId,
+      sessionId: "ses_91a4",
+      generation: 3,
+      baseSha: "a".repeat(40),
+      patchDigest: `sha256:${"b".repeat(64)}`,
+      acpSessionId: "acp-parent",
+      eventCursor: 184,
+      evidenceReferences: [],
+      createdAt: "2026-08-04T03:04:00.000Z",
+    },
+    capabilities: capabilities(["fork", "archive"]),
+  });
+  const forkCommand = {
+    version: "codeops.session-command/v1",
+    sessionId: "ses_91a4",
+    generation: 3,
+    leaseId,
+    idempotencyKey,
+    type: "fork",
+    checkpointId,
+    parentEventCursor: 184,
+    title: "Alternative implementation",
+  };
+  const child = snapshot({
+    sessionId: "ses_child",
+    generation: 1,
+    identity: {
+      ...parent.identity,
+      branch: "feat/agents-ui-child",
+      workflowId: "workflow-child",
+      runId: "run-child",
+      parentSessionId: parent.sessionId,
+      forkedAtCursor: 184,
+    },
+    lease: {
+      leaseId: childLeaseId,
+      generation: 1,
+      status: "active",
+      holderId: "worker-child",
+      acquiredAt: "2026-08-04T03:04:01.000Z",
+      expiresAt: "2026-08-04T03:24:01.000Z",
+    },
+    checkpoint: null,
+    eventCursor: 1,
+    updatedAt: "2026-08-04T03:04:01.000Z",
+  });
+  const result = {
+    ...committed(parent),
+    type: "fork",
+    eventCursor: child.eventCursor,
+    snapshot: child,
+  };
+  const childEvent = event({
+    sessionId: child.sessionId,
+    generation: child.generation,
+    cursor: 1,
+    type: "session_created",
+  });
+  const client = new FakeClient({ current: parent });
+
+  const committedFork = await execute(client, {
+    command: forkCommand,
+    mutate: () => mutation(result, [childEvent]),
+  });
+
+  assert.equal(committedFork.snapshot.sessionId, "ses_child");
+  const insertIndex = client.calls.findIndex(({ text }) =>
+    text.startsWith("INSERT INTO codeops.sessions"));
+  const eventIndex = client.calls.findIndex(({ text }) =>
+    text.includes("INSERT INTO codeops.session_events"));
+  assert.ok(insertIndex > 0 && insertIndex < eventIndex);
+  assert.equal(
+    client.calls.some(({ text }) => text.startsWith("UPDATE codeops.sessions")),
+    false,
+  );
+  assert.equal(client.calls[insertIndex].values[0], "ses_child");
+  assert.equal(client.calls.at(-1).text, "COMMIT");
+});
+
+test("fails closed on fork lineage drift or an existing child identity", async () => {
+  const checkpointId = "22222222-2222-4222-8222-222222222222";
+  const parent = snapshot({
+    state: "completed",
+    lease: {
+      leaseId,
+      generation: 3,
+      status: "released",
+      releasedAt: "2026-08-04T03:04:00.000Z",
+    },
+    checkpoint: {
+      version: "codeops.session-checkpoint/v1",
+      checkpointId,
+      sessionId: "ses_91a4",
+      generation: 3,
+      baseSha: "a".repeat(40),
+      patchDigest: `sha256:${"b".repeat(64)}`,
+      acpSessionId: "acp-parent",
+      eventCursor: 184,
+      evidenceReferences: [],
+      createdAt: "2026-08-04T03:04:00.000Z",
+    },
+    capabilities: capabilities(["fork", "archive"]),
+  });
+  const forkCommand = {
+    version: "codeops.session-command/v1",
+    sessionId: "ses_91a4",
+    generation: 3,
+    leaseId,
+    idempotencyKey,
+    type: "fork",
+    checkpointId,
+    parentEventCursor: 184,
+    title: "Alternative implementation",
+  };
+  const child = snapshot({
+    sessionId: "ses_child",
+    generation: 1,
+    identity: {
+      ...parent.identity,
+      workflowId: "workflow-child",
+      runId: "run-child",
+      parentSessionId: parent.sessionId,
+      forkedAtCursor: 184,
+    },
+    lease: {
+      leaseId: "77777777-7777-4777-8777-777777777777",
+      generation: 1,
+      status: "active",
+      holderId: "worker-child",
+      acquiredAt: "2026-08-04T03:04:01.000Z",
+      expiresAt: "2026-08-04T03:24:01.000Z",
+    },
+    checkpoint: null,
+    eventCursor: 1,
+    updatedAt: "2026-08-04T03:04:01.000Z",
+  });
+  const result = {
+    ...committed(parent),
+    type: "fork",
+    eventCursor: child.eventCursor,
+    snapshot: child,
+  };
+  const childEvent = event({
+    sessionId: child.sessionId,
+    generation: child.generation,
+    cursor: 1,
+    type: "session_created",
+  });
+
+  const drifted = new FakeClient({ current: parent });
+  await assert.rejects(
+    execute(drifted, {
+      command: { ...forkCommand, parentEventCursor: 183 },
+      mutate: () => mutation(result, [childEvent]),
+    }),
+    /exact parent checkpoint, cursor/,
+  );
+  assert.equal(drifted.calls.at(-1).text, "ROLLBACK");
+
+  const existing = new FakeClient({ current: parent, forkInsertCount: 0 });
+  await assert.rejects(
+    execute(existing, {
+      command: forkCommand,
+      mutate: () => mutation(result, [childEvent]),
+    }),
+    SessionForkConflictError,
+  );
+  assert.equal(existing.calls.at(-1).text, "ROLLBACK");
 });
