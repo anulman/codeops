@@ -12,6 +12,13 @@ lease, or fork material. Dispatch, session, generation, lease, idempotency,
 event-cursor, and completion-time identity are copied from the validated live
 claim, so a future ACP adapter cannot substitute broker-owned identity.
 
+The lifecycle executor receives only the immutable dispatch, never the worker
+bearer token, claim token, claim count, or claim expiry. Its receipt store must
+durably compare-and-create a digest-bound result before completion submission;
+an expired/reclaimed dispatch therefore replays prepared ACP/workspace work
+instead of repeating prompt, checkpoint, hibernate, resume, or fork side
+effects.
+
 The package deliberately does not contain an ACP executor or a runnable polling
 entrypoint yet. Runtime command admission remains fail-closed until the ACP
 session/workspace lifecycle and the exact Kubernetes caller are packaged and

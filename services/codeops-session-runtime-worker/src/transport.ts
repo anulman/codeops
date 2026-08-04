@@ -9,6 +9,7 @@ import {
   sessionRuntimeLeaseMaterialSchema,
   type SessionCommandResult,
   type SessionRuntimeCompletion,
+  type SessionRuntimeDispatch,
   type SessionRuntimeDispatchClaim,
 } from "@renoconcierge/codeops-contracts";
 import { z } from "zod";
@@ -18,7 +19,7 @@ const TOKEN_PATTERN = /^[\x21-\x7e]{32,4096}$/;
 
 export class SessionRuntimeTransportError extends Error {}
 
-const runtimeExecutionResultSchema = z.discriminatedUnion("type", [
+export const runtimeExecutionResultSchema = z.discriminatedUnion("type", [
   z.object({ type: z.literal("prompt") }).strict(),
   z
     .object({
@@ -51,7 +52,7 @@ export type RuntimeExecutionResult = z.infer<
 >;
 
 export type RuntimeExecutor = (
-  claim: SessionRuntimeDispatchClaim,
+  dispatch: SessionRuntimeDispatch,
 ) => Promise<RuntimeExecutionResult>;
 
 export function buildSessionRuntimeCompletion(
@@ -300,7 +301,9 @@ export class SessionRuntimeTransport {
         "session runtime claim expired before execution began",
       );
     }
-    const execution = await input.execute(claim);
+    // The executor owns ACP/workspace side effects, not broker claim authority.
+    // Never expose the claim token or its completion lease to that boundary.
+    const execution = await input.execute(claim.dispatch);
     const completedAt = now();
     if (completedAt.getTime() >= Date.parse(claim.claimExpiresAt)) {
       throw new SessionRuntimeTransportError(

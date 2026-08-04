@@ -126,7 +126,11 @@ test("claims and completes one exact dispatch through the worker-only boundary",
   const result = await transport.runOne({
     leaseMs: 300_000,
     now: () => new Date("2026-08-04T20:03:00.000Z"),
-    execute: async () => ({ type: "prompt" }),
+    execute: async (runtimeDispatch) => {
+      assert.deepEqual(runtimeDispatch, claim().dispatch);
+      assert.equal("claimToken" in runtimeDispatch, false);
+      return { type: "prompt" };
+    },
   });
   assert.equal(result.disposition, "committed");
   assert.equal(requests.length, 2);
