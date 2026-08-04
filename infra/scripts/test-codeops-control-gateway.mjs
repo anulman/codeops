@@ -178,6 +178,12 @@ test("admits only the orchestrator/controller and exact API /32", () => {
     ],
     "codeops-plane-controller",
   );
+  assert.equal(
+    policy.spec.ingress[0].from[2].podSelector.matchLabels[
+      "app.kubernetes.io/name"
+    ],
+    "codeops-agents-ui",
+  );
   assert.equal(policy.spec.egress[0].to[0].ipBlock.cidr, "10.3.0.1/32");
   assert.deepEqual(policy.spec.egress[0].ports, [
     { protocol: "TCP", port: 443 },

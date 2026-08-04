@@ -42,6 +42,10 @@ Required Secret names and keys:
   session broker. It must target the stable
   `renoconcierge-postgres-cnpg-pgbouncer` service and must not reuse the
   shared application owner credential.
+- `codeops-session-broker-read-auth`: `token`. This read-only bearer
+  capability is mounted by the control gateway and Agent Sessions UI only.
+- `codeops-session-broker-write-auth`: `token`. This distinct write bearer
+  capability is mounted by the control gateway and Agent Sessions UI only.
 
 The candidate has no Kubernetes credential. Cleanup must remove the Helm
 release, namespace, PVCs, copied TLS material, generated Secrets, node label,
@@ -183,6 +187,22 @@ CODEOPS_ORCHESTRATOR_DIGEST=sha256:<64-lowercase-hex> \
 
 Rendering rejects missing, mutable, malformed, or duplicated image
 substitutions. The candidate still receives no Kubernetes credential.
+
+## Agent Sessions UI
+
+The internal Agent Sessions UI is packaged as the `agents-ui-runtime` Docker
+target and runs with a tokenless ServiceAccount, a read-only root filesystem,
+and only the distinct session-broker read/write bearer capabilities. Its
+NetworkPolicy admits HTTP only from `ingress-nginx` and allows egress only to
+the control gateway and cluster DNS. The checked-in manifest intentionally has
+no Ingress: `HARDEN-13` owns the Cloudflare Access policy and public hostname,
+and that boundary must be completed before an ingress is added.
+
+```bash
+CODEOPS_AGENTS_UI_DIGEST=sha256:<64-lowercase-hex> \
+  node infra/scripts/render-codeops-agents-ui.mjs \
+  > "$CODEOPS_AGENTS_UI_MANIFEST"
+```
 
 ## Plane research controller
 

@@ -1,0 +1,154 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codeops-agents-ui
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codeops-agents-ui
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: codeops-agents-ui
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: codeops-agents-ui
+        app.kubernetes.io/part-of: codeops-trial0
+    spec:
+      serviceAccountName: codeops-agents-ui
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        - name: ghcr-renoconcierge
+      nodeSelector:
+        renoconcierge.ca/codeops: "true"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: agents-ui
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agents-ui@CODEOPS_AGENTS_UI_DIGEST
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: HOST
+              value: 0.0.0.0
+            - name: PORT
+              value: "3000"
+            - name: AGENTS_UI_ACCESS_REQUIRED
+              value: "true"
+            - name: CODEOPS_SESSION_BROKER_URL
+              value: http://codeops-control-gateway:8080
+            - name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE
+              value: /var/run/secrets/codeops-session-read/token
+            - name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE
+              value: /var/run/secrets/codeops-session-write/token
+          ports:
+            - name: http
+              containerPort: 3000
+          startupProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            tcpSocket:
+              port: http
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 25m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: session-broker-read-auth
+              mountPath: /var/run/secrets/codeops-session-read
+              readOnly: true
+            - name: session-broker-write-auth
+              mountPath: /var/run/secrets/codeops-session-write
+              readOnly: true
+            - name: temp
+              mountPath: /tmp
+      volumes:
+        - name: session-broker-read-auth
+          secret:
+            secretName: codeops-session-broker-read-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: session-broker-write-auth
+          secret:
+            secretName: codeops-session-broker-write-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: temp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: codeops-agents-ui
+spec:
+  selector:
+    app.kubernetes.io/name: codeops-agents-ui
+  ports:
+    - name: http
+      port: 3000
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codeops-agents-ui
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: codeops-agents-ui
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ingress-nginx
+      ports:
+        - { protocol: TCP, port: 3000 }
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-control-gateway
+      ports:
+        - { protocol: TCP, port: 8080 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }

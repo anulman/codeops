@@ -288,6 +288,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: codeops-plane-controller
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-agents-ui
       ports:
         - { protocol: TCP, port: 8080 }
   egress:
