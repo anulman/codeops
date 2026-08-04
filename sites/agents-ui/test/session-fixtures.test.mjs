@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { readFile } from "node:fs/promises";
 
-test("fleet and cockpit routes retain the v1 operator contract", async () => {
+test("fleet and cockpit routes use the live broker while retaining the v1 operator contract", async () => {
   const [fleet, cockpit] = await Promise.all([
     readFile(new URL("../src/routes/index.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/sessions.$sessionId.tsx", import.meta.url), "utf8"),
@@ -15,5 +15,10 @@ test("fleet and cockpit routes retain the v1 operator contract", async () => {
     assert.match(cockpit, new RegExp(label));
   }
   assert.match(cockpit, /grid-cols-2/);
-  assert.match(cockpit, /broker\.capabilities\.map/);
+  assert.match(fleet, /getSessionFleet/);
+  assert.match(cockpit, /getSessionDetail/);
+  assert.match(cockpit, /getSessionEvents/);
+  assert.match(cockpit, /session\.capabilities\.map/);
+  assert.doesNotMatch(fleet, /sessionFixtures/);
+  assert.doesNotMatch(cockpit, /sessionFixtures/);
 });

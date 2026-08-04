@@ -2,9 +2,11 @@ import { useMemo, useState } from "react";
 import { Link, createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
-import { sessions, stateCounts, type SessionState } from "@/lib/sessionFixtures";
+import { getSessionFleet } from "@/lib/sessionBroker.data";
+import type { SessionSnapshot } from "@renoconcierge/codeops-contracts/session-broker";
 
 export const Route = createFileRoute("/")({
+  loader: () => getSessionFleet(),
   component: SessionsPage,
 });
 
@@ -12,12 +14,13 @@ const filters = ["all", "running", "attention", "completed", "archived"] as cons
 type Filter = (typeof filters)[number];
 
 function SessionsPage() {
+  const sessions = Route.useLoaderData();
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const counts = stateCounts(sessions);
   const visibleSessions = useMemo(() => sessions.filter((session) => {
-    const matchesState = filter === "all" || session.state === filter || (filter === "running" && session.state === "queued");
-    const searchable = `${session.title} ${session.role} ${session.branch} ${session.sha}`.toLowerCase();
+    const matchesState = matchesFilter(session, filter);
+    const searchable = `${session.identity.workflowId} ${session.identity.runId} ${session.identity.branch} ${session.identity.baseSha}`.toLowerCase();
     return matchesState && searchable.includes(query.trim().toLowerCase());
   }), [filter, query]);
 
@@ -70,7 +73,7 @@ function SessionsPage() {
             <span>Session</span><span>Now</span><span>State</span><span>Evidence</span><span>Updated</span>
           </div>
           <div className="mt-2 divide-y divide-white/6 border-y border-white/8">
-            {visibleSessions.map((session) => <SessionRow key={session.id} session={session} />)}
+            {visibleSessions.map((session) => <SessionRow key={session.sessionId} session={session} />)}
             {visibleSessions.length === 0 ? <div className="py-20 text-center text-sm text-white/35">No sessions match this view.</div> : null}
           </div>
         </section>
@@ -84,27 +87,43 @@ function Metric({ label, value, tone = "quiet" }: Readonly<{ label: string; valu
   return <div className="min-w-24 bg-[#0c0f13] px-4 py-3.5"><div className={`text-2xl font-medium tracking-[-0.04em] ${valueStyle}`}>{value}</div><div className="mt-1 max-w-24 text-[9px] font-semibold uppercase leading-4 tracking-[0.13em] text-white/30">{label}</div></div>;
 }
 
-function SessionRow({ session }: Readonly<{ session: (typeof sessions)[number] }>) {
+function SessionRow({ session }: Readonly<{ session: SessionSnapshot }>) {
   return (
-    <Link to="/sessions/$sessionId" params={{ sessionId: session.id }} className="group grid gap-4 px-3 py-5 transition hover:bg-white/[0.025] sm:px-4 lg:grid-cols-[minmax(280px,1.5fr)_minmax(180px,0.9fr)_120px_120px_100px] lg:items-center">
+    <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="group grid gap-4 px-3 py-5 transition hover:bg-white/[0.025] sm:px-4 lg:grid-cols-[minmax(280px,1.5fr)_minmax(180px,0.9fr)_120px_120px_100px] lg:items-center">
       <div className="min-w-0">
         <div className="flex items-center gap-2">
-          <span className={`size-1.5 shrink-0 rounded-full ${stateDot(session.state)}`} />
-          <span className="truncate text-sm font-medium tracking-[-0.01em] text-white/88 group-hover:text-white">{session.role}</span>
+          <span className={`size-1.5 shrink-0 rounded-full ${stateDot(session)}`} />
+          <span className="truncate text-sm font-medium tracking-[-0.01em] text-white/88 group-hover:text-white">{session.identity.runId}</span>
         </div>
-        <div className="mt-1.5 truncate pl-3.5 text-xs text-white/36">{session.title} · <span className="font-mono">{session.sha.slice(0, 7)}</span></div>
+        <div className="mt-1.5 truncate pl-3.5 text-xs text-white/36">{session.identity.workflowId} · <span className="font-mono">{session.identity.baseSha.slice(0, 7)}</span></div>
       </div>
-      <div><div className="text-xs text-white/65">{session.phase}</div><div className="mt-1 text-[11px] text-white/28">{session.elapsed}</div></div>
+      <div><div className="text-xs capitalize text-white/65">{session.state.replaceAll("_", " ")}</div><div className="mt-1 text-[11px] text-white/28">generation {session.generation}</div></div>
       <div><StatusBadge state={session.state} /></div>
-      <div className="text-xs text-white/46">{session.verdict}<span className="ml-1 text-white/24">· {session.findings}</span></div>
-      <div className="flex items-center justify-between text-xs text-white/32"><span>{session.updated}</span><span className="translate-x-0 text-white/20 transition group-hover:translate-x-1 group-hover:text-[#c8ff5a]">→</span></div>
+      <div className="text-xs text-white/46">{session.checkpoint ? "Checkpointed" : "Live state"}<span className="ml-1 text-white/24">· {session.eventCursor}</span></div>
+      <div className="flex items-center justify-between text-xs text-white/32"><span>{session.updatedAt.slice(11, 16)} UTC</span><span className="translate-x-0 text-white/20 transition group-hover:translate-x-1 group-hover:text-[#c8ff5a]">→</span></div>
     </Link>
   );
 }
 
-function stateDot(state: SessionState) {
-  if (state === "running") return "bg-[#c8ff5a] shadow-[0_0_8px_rgba(200,255,90,0.8)]";
-  if (state === "attention") return "bg-[#ff9f6e] shadow-[0_0_8px_rgba(255,159,110,0.7)]";
-  if (state === "queued") return "bg-[#8cb8ff]";
+function stateDot(session: SessionSnapshot) {
+  if (session.state === "running") return "bg-[#c8ff5a] shadow-[0_0_8px_rgba(200,255,90,0.8)]";
+  if (session.state === "waiting_permission" || session.state === "failed") return "bg-[#ff9f6e] shadow-[0_0_8px_rgba(255,159,110,0.7)]";
+  if (session.state === "queued" || session.state === "checkpointing") return "bg-[#8cb8ff]";
   return "bg-white/25";
+}
+
+function matchesFilter(session: SessionSnapshot, filter: Filter): boolean {
+  if (filter === "all") return true;
+  if (filter === "running") return ["queued", "running", "checkpointing"].includes(session.state);
+  if (filter === "attention") return ["waiting_permission", "failed"].includes(session.state);
+  if (filter === "completed") return ["completed", "cancelled"].includes(session.state);
+  return ["hibernated", "archived", "deleted"].includes(session.state);
+}
+
+function stateCounts(items: readonly SessionSnapshot[]) {
+  return {
+    active: items.filter((item) => matchesFilter(item, "running")).length,
+    attention: items.filter((item) => matchesFilter(item, "attention")).length,
+    archived: items.filter((item) => matchesFilter(item, "archived")).length,
+  };
 }

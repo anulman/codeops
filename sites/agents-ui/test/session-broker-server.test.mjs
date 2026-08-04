@@ -1,0 +1,139 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import test from "node:test";
+import {
+  createSessionBrokerClient,
+  parseSessionBrokerBaseUrl,
+} from "../src/lib/sessionBroker.server.ts";
+
+const token = "t".repeat(32);
+const leaseId = "11111111-1111-4111-8111-111111111111";
+
+function capabilities() {
+  return [
+    "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
+    "resume", "fork", "archive", "delete",
+  ].map((action) => ["prompt", "cancel", "checkpoint", "hibernate"].includes(action)
+    ? { action, availability: "enabled" }
+    : { action, availability: "disabled", reason: "Unavailable." });
+}
+
+function snapshot() {
+  return {
+    version: "codeops.session-snapshot/v1",
+    sessionId: "ses_91a4",
+    generation: 3,
+    state: "running",
+    identity: {
+      repository: "anulman/renoconcierge",
+      branch: "feat/agents-ui",
+      baseSha: "a".repeat(40),
+      workflowId: "workflow-155",
+      runId: "run-155",
+      parentSessionId: null,
+      forkedAtCursor: null,
+    },
+    lease: {
+      leaseId,
+      generation: 3,
+      status: "active",
+      holderId: "worker-3",
+      acquiredAt: "2026-08-04T03:00:00.000Z",
+      expiresAt: "2026-08-04T03:05:00.000Z",
+    },
+    checkpoint: null,
+    pendingPermission: null,
+    eventCursor: 184,
+    capabilities: capabilities(),
+    updatedAt: "2026-08-04T03:04:00.000Z",
+  };
+}
+
+function event(overrides = {}) {
+  return {
+    version: "codeops.session-event/v1",
+    eventId: `sha256:${"c".repeat(64)}`,
+    sessionId: "ses_91a4",
+    generation: 3,
+    cursor: 185,
+    type: "command_committed",
+    occurredAt: "2026-08-04T03:04:01.000Z",
+    ...overrides,
+  };
+}
+
+function json(body, status = 200) {
+  return new Response(JSON.stringify(body), {
+    status,
+    headers: { "content-type": "application/json" },
+  });
+}
+
+test("keeps the read token server-side and validates all fleet snapshots", async () => {
+  const calls = [];
+  const client = createSessionBrokerClient({
+    baseUrl: parseSessionBrokerBaseUrl("http://codeops-control-gateway:8080", "production"),
+    token,
+    async fetch(url, init) {
+      calls.push({ url: String(url), init });
+      return json({ version: "codeops.session-fleet/v1", sessions: [snapshot()] });
+    },
+  });
+  assert.equal((await client.listSessions(25))[0].sessionId, "ses_91a4");
+  assert.equal(calls[0].url, "http://codeops-control-gateway:8080/v1/sessions?limit=25");
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${token}`);
+  assert.equal(calls[0].init.redirect, "error");
+  await assert.rejects(client.listSessions(201));
+});
+
+test("rejects wrong identities and discontinuous event pages", async () => {
+  const wrongSession = createSessionBrokerClient({
+    baseUrl: new URL("https://broker.example/"),
+    token,
+    fetch: async () => json({
+      version: "codeops.session-detail/v1",
+      session: { ...snapshot(), sessionId: "ses_foreign" },
+    }),
+  });
+  await assert.rejects(wrongSession.getSession("ses_91a4"), /wrong session identity/);
+
+  const skippedEvent = createSessionBrokerClient({
+    baseUrl: new URL("https://broker.example/"),
+    token,
+    fetch: async () => json({
+      version: "codeops.session-events/v1",
+      sessionId: "ses_91a4",
+      afterCursor: 184,
+      nextCursor: 186,
+      events: [event({ cursor: 186 })],
+    }),
+  });
+  await assert.rejects(
+    skippedEvent.getEvents({ sessionId: "ses_91a4", afterCursor: 184 }),
+    /contiguous/,
+  );
+});
+
+test("allows an explicit missing session but fails closed on other upstream responses", async () => {
+  const missing = createSessionBrokerClient({
+    baseUrl: new URL("https://broker.example/"),
+    token,
+    fetch: async () => json({ status: "not-found" }, 404),
+  });
+  assert.equal(await missing.getSession("ses_missing"), null);
+  await assert.rejects(missing.listSessions(), /status 404/);
+
+  assert.throws(() => parseSessionBrokerBaseUrl("http://example.com:8080/", "production"), /HTTPS/);
+  assert.throws(() => parseSessionBrokerBaseUrl("https://broker.example/path", "production"), /exact service origin/);
+  assert.throws(() => createSessionBrokerClient({ baseUrl: new URL("https://broker.example/"), token: "short" }));
+});
+
+test("server functions require Access middleware and never read the token in browser code", async () => {
+  const dataSource = await readFile(new URL("../src/lib/sessionBroker.data.ts", import.meta.url), "utf8");
+  const authSource = await readFile(new URL("../src/lib/agentsAuth.ts", import.meta.url), "utf8");
+  assert.equal((dataSource.match(/\.middleware\(\[agentsAuthMiddleware\]\)/g) ?? []).length, 3);
+  assert.doesNotMatch(dataSource, /READ_TOKEN_FILE|readFile/);
+  assert.match(authSource, /NODE_ENV === "production"/);
+  assert.match(authSource, /cf-access-authenticated-user-email/);
+  assert.doesNotMatch(authSource, /cf-access-jwt-assertion/);
+});
