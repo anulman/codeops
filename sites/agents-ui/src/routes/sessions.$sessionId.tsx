@@ -1,8 +1,10 @@
-import { createFileRoute, Link } from "@tanstack/react-router";
+import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
+import { useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
-import { getSessionDetail, getSessionEvents, getSessionFleet } from "@/lib/sessionBroker.data";
+import { executeSessionCommand, getSessionDetail, getSessionEvents, getSessionFleet } from "@/lib/sessionBroker.data";
 import type {
+  SessionCommand,
   SessionActionType,
   SessionCapability,
   SessionEvent,
@@ -51,7 +53,7 @@ function SessionCockpit() {
           </div>
           <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 xl:w-auto xl:grid-cols-5" aria-label="Session actions">
             {session.capabilities.map((capability) => (
-              <ActionButton key={capability.action} capability={capability} />
+              <ActionButton key={capability.action} capability={capability} session={session} />
             ))}
           </div>
         </div>
@@ -99,13 +101,76 @@ const actionLabels: Record<SessionActionType, string> = {
   delete: "Delete",
 };
 
-function ActionButton({ capability }: Readonly<{ capability: SessionCapability }>) {
-  const disabled = capability.availability === "disabled";
+const locallyExecutableActions = new Set<SessionActionType>([
+  "respond_permission",
+  "cancel",
+  "archive",
+  "delete",
+]);
+
+function commandForAction(
+  session: SessionSnapshot,
+  action: SessionActionType,
+): SessionCommand | null {
+  if (!session.lease) throw new Error("This session no longer has a durable lease identity.");
+  const base = {
+    version: "codeops.session-command/v1" as const,
+    sessionId: session.sessionId,
+    generation: session.generation,
+    leaseId: session.lease.leaseId,
+    idempotencyKey: crypto.randomUUID(),
+  };
+  if (action === "respond_permission") {
+    const request = session.pendingPermission;
+    if (!request) throw new Error("There is no pending permission request.");
+    const choices = request.options.map((option, index) => `${index + 1}. ${option.label}`).join("\n");
+    const answer = window.prompt(`${request.title}\n\n${request.description}\n\n${choices}\n\nEnter an option number, or \"deny\".`)?.trim();
+    if (!answer) return null;
+    if (answer.toLowerCase() === "deny") {
+      return { ...base, type: action, permissionRequestId: request.requestId, decision: { outcome: "denied" } };
+    }
+    const selected = request.options[Number(answer) - 1];
+    if (!selected) throw new Error("Choose one of the listed option numbers, or deny.");
+    return { ...base, type: action, permissionRequestId: request.requestId, decision: { outcome: "selected", optionId: selected.optionId } };
+  }
+  if (action === "cancel" || action === "archive" || action === "delete") {
+    if (action === "delete" && !window.confirm("Permanently delete this archived session and its checkpoint material?")) return null;
+    const reason = window.prompt(`Reason to ${action} this session:`)?.trim();
+    if (!reason) return null;
+    if (action === "delete") {
+      return { ...base, type: action, reason, destructiveAuthorizationId: crypto.randomUUID() };
+    }
+    return { ...base, type: action, reason };
+  }
+  return null;
+}
+
+function ActionButton({ capability, session }: Readonly<{ capability: SessionCapability; session: SessionSnapshot }>) {
+  const router = useRouter();
+  const [pending, setPending] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const runtimePending = !locallyExecutableActions.has(capability.action);
+  const disabled = capability.availability === "disabled" || runtimePending || pending;
   const danger = capability.action === "cancel" || capability.action === "delete";
   const active = capability.action === "prompt" && !disabled;
   const style = disabled ? "cursor-not-allowed border-white/6 text-white/18" : active ? "border-[#c8ff5a]/30 bg-[#c8ff5a] text-[#151a0c] hover:bg-[#d5ff80]" : danger ? "border-[#ff9f6e]/20 text-[#ffb18b] hover:bg-[#ff9f6e]/8" : "border-white/10 text-white/55 hover:bg-white/5 hover:text-white/80";
   const label = actionLabels[capability.action];
-  return <button type="button" disabled={disabled} title={disabled ? capability.reason : undefined} aria-label={disabled ? `${label} unavailable: ${capability.reason}` : label} className={`min-h-10 rounded-lg border px-3 py-2 text-xs font-semibold transition ${style}`}>{label}</button>;
+  const unavailableReason = runtimePending ? "ACP runtime adapter pending." : capability.availability === "disabled" ? capability.reason : undefined;
+  const run = async () => {
+    setError(null);
+    try {
+      const command = commandForAction(session, capability.action);
+      if (!command) return;
+      setPending(true);
+      await executeSessionCommand({ data: command });
+      await router.invalidate();
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : "Session command failed.");
+    } finally {
+      setPending(false);
+    }
+  };
+  return <div className="min-w-0"><button type="button" disabled={disabled} onClick={() => void run()} title={unavailableReason ?? error ?? undefined} aria-label={disabled ? `${label} unavailable: ${unavailableReason ?? "Command in progress."}` : label} className={`min-h-10 w-full rounded-lg border px-3 py-2 text-xs font-semibold transition ${style}`}>{pending ? "Working…" : label}</button>{error ? <p role="alert" className="mt-1 text-[10px] leading-4 text-[#ffb18b]">{error}</p> : null}</div>;
 }
 
 function Panel({ title, children }: Readonly<{ title: string; children: React.ReactNode }>) { return <section className="rounded-xl border border-white/8 bg-[#0c0f13] p-4"><h2 className="mb-4 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/30">{title}</h2><div className="space-y-3">{children}</div></section>; }

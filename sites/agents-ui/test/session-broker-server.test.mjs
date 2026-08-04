@@ -7,6 +7,7 @@ import {
 } from "../src/lib/sessionBroker.server.ts";
 
 const token = "t".repeat(32);
+const writeToken = "w".repeat(32);
 const leaseId = "11111111-1111-4111-8111-111111111111";
 
 function capabilities() {
@@ -73,7 +74,8 @@ test("keeps the read token server-side and validates all fleet snapshots", async
   const calls = [];
   const client = createSessionBrokerClient({
     baseUrl: parseSessionBrokerBaseUrl("http://codeops-control-gateway:8080", "production"),
-    token,
+    readToken: token,
+    writeToken,
     async fetch(url, init) {
       calls.push({ url: String(url), init });
       return json({ version: "codeops.session-fleet/v1", sessions: [snapshot()] });
@@ -89,7 +91,8 @@ test("keeps the read token server-side and validates all fleet snapshots", async
 test("rejects wrong identities and discontinuous event pages", async () => {
   const wrongSession = createSessionBrokerClient({
     baseUrl: new URL("https://broker.example/"),
-    token,
+    readToken: token,
+    writeToken,
     fetch: async () => json({
       version: "codeops.session-detail/v1",
       session: { ...snapshot(), sessionId: "ses_foreign" },
@@ -99,7 +102,8 @@ test("rejects wrong identities and discontinuous event pages", async () => {
 
   const skippedEvent = createSessionBrokerClient({
     baseUrl: new URL("https://broker.example/"),
-    token,
+    readToken: token,
+    writeToken,
     fetch: async () => json({
       version: "codeops.session-events/v1",
       sessionId: "ses_91a4",
@@ -117,7 +121,8 @@ test("rejects wrong identities and discontinuous event pages", async () => {
 test("allows an explicit missing session but fails closed on other upstream responses", async () => {
   const missing = createSessionBrokerClient({
     baseUrl: new URL("https://broker.example/"),
-    token,
+    readToken: token,
+    writeToken,
     fetch: async () => json({ status: "not-found" }, 404),
   });
   assert.equal(await missing.getSession("ses_missing"), null);
@@ -125,14 +130,72 @@ test("allows an explicit missing session but fails closed on other upstream resp
 
   assert.throws(() => parseSessionBrokerBaseUrl("http://example.com:8080/", "production"), /HTTPS/);
   assert.throws(() => parseSessionBrokerBaseUrl("https://broker.example/path", "production"), /exact service origin/);
-  assert.throws(() => createSessionBrokerClient({ baseUrl: new URL("https://broker.example/"), token: "short" }));
+  assert.throws(() => createSessionBrokerClient({ baseUrl: new URL("https://broker.example/"), readToken: "short", writeToken }));
+  assert.throws(() => createSessionBrokerClient({ baseUrl: new URL("https://broker.example/"), readToken: token, writeToken: token }), /must be distinct/);
+});
+
+test("uses the separate write credential and binds command responses", async () => {
+  const calls = [];
+  const command = {
+    version: "codeops.session-command/v1",
+    sessionId: "ses_91a4",
+    generation: 3,
+    leaseId,
+    idempotencyKey: "22222222-2222-4222-8222-222222222222",
+    type: "cancel",
+    reason: "Operator cancelled the run.",
+  };
+  const client = createSessionBrokerClient({
+    baseUrl: new URL("https://broker.example/"),
+    readToken: token,
+    writeToken,
+    async fetch(url, init) {
+      calls.push({ url: String(url), init });
+      return json({
+        version: "codeops.session-command-result/v1",
+        commandId: "33333333-3333-4333-8333-333333333333",
+        sessionId: command.sessionId,
+        generation: command.generation,
+        leaseId: command.leaseId,
+        idempotencyKey: command.idempotencyKey,
+        type: command.type,
+        eventCursor: 185,
+        snapshot: {
+          ...snapshot(),
+          state: "cancelled",
+          lease: {
+            leaseId,
+            generation: 3,
+            status: "released",
+            releasedAt: "2026-08-04T03:04:01.000Z",
+          },
+          eventCursor: 185,
+          capabilities: capabilities().map(({ action }) =>
+            ["fork", "archive"].includes(action)
+              ? { action, availability: action === "archive" ? "enabled" : "disabled", ...(action === "fork" ? { reason: "A checkpoint is required." } : {}) }
+              : { action, availability: "disabled", reason: "Unavailable." },
+          ),
+          updatedAt: "2026-08-04T03:04:01.000Z",
+        },
+        committedAt: "2026-08-04T03:04:01.000Z",
+        disposition: "committed",
+      });
+    },
+  });
+  const result = await client.executeCommand({ command, principalId: "operator@example.com" });
+  assert.equal(result.disposition, "committed");
+  assert.equal(calls[0].url, "https://broker.example/v1/sessions/ses_91a4/commands");
+  assert.equal(calls[0].init.method, "POST");
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${writeToken}`);
+  assert.equal(calls[0].init.headers["X-CodeOps-Principal"], "operator@example.com");
+  assert.deepEqual(JSON.parse(calls[0].init.body), command);
 });
 
 test("server functions require Access middleware and never read the token in browser code", async () => {
   const dataSource = await readFile(new URL("../src/lib/sessionBroker.data.ts", import.meta.url), "utf8");
   const authSource = await readFile(new URL("../src/lib/agentsAuth.ts", import.meta.url), "utf8");
-  assert.equal((dataSource.match(/\.middleware\(\[agentsAuthMiddleware\]\)/g) ?? []).length, 3);
-  assert.doesNotMatch(dataSource, /READ_TOKEN_FILE|readFile/);
+  assert.equal((dataSource.match(/\.middleware\(\[agentsAuthMiddleware\]\)/g) ?? []).length, 4);
+  assert.doesNotMatch(dataSource, /TOKEN_FILE|readFile/);
   assert.match(authSource, /NODE_ENV === "production"/);
   assert.match(authSource, /cf-access-authenticated-user-email/);
   assert.doesNotMatch(authSource, /cf-access-jwt-assertion/);

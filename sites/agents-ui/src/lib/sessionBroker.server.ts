@@ -1,7 +1,11 @@
 import { readFile } from "node:fs/promises";
 import {
+  sessionCommandResultSchema,
+  sessionCommandSchema,
   sessionEventSchema,
   sessionSnapshotSchema,
+  type SessionCommand,
+  type SessionCommandResult,
   type SessionEvent,
   type SessionSnapshot,
 } from "@renoconcierge/codeops-contracts/session-broker";
@@ -76,6 +80,10 @@ export interface SessionBrokerClient {
     readonly afterCursor?: number;
     readonly limit?: number;
   }): Promise<SessionEventPage>;
+  executeCommand(input: {
+    readonly command: SessionCommand;
+    readonly principalId: string;
+  }): Promise<SessionCommandResult>;
 }
 
 export function parseSessionBrokerBaseUrl(
@@ -112,24 +120,42 @@ export function parseSessionBrokerBaseUrl(
 
 export function createSessionBrokerClient(input: {
   readonly baseUrl: URL;
-  readonly token: string;
+  readonly readToken: string;
+  readonly writeToken: string;
   readonly fetch?: typeof fetch;
 }): SessionBrokerClient {
-  if (input.token.length < 32 || input.token.length > 4_096) {
-    throw new Error("session broker read token length is invalid");
+  for (const [purpose, token] of [["read", input.readToken], ["write", input.writeToken]] as const) {
+    if (token.length < 32 || token.length > 4_096) {
+      throw new Error(`session broker ${purpose} token length is invalid`);
+    }
   }
-  const request = async (path: string, allowMissing = false): Promise<unknown> => {
+  if (input.readToken === input.writeToken) {
+    throw new Error("session broker read and write tokens must be distinct");
+  }
+  const request = async (
+    path: string,
+    options: {
+      readonly method?: "GET" | "POST";
+      readonly token?: string;
+      readonly principalId?: string;
+      readonly body?: string;
+      readonly allowMissing?: boolean;
+    } = {},
+  ): Promise<unknown> => {
     const response = await (input.fetch ?? fetch)(new URL(path, input.baseUrl), {
-      method: "GET",
+      method: options.method ?? "GET",
       headers: {
         Accept: "application/json",
-        Authorization: `Bearer ${input.token}`,
+        Authorization: `Bearer ${options.token ?? input.readToken}`,
+        ...(options.body === undefined ? {} : { "Content-Type": "application/json" }),
+        ...(options.principalId === undefined ? {} : { "X-CodeOps-Principal": options.principalId }),
       },
+      body: options.body,
       redirect: "error",
       cache: "no-store",
       signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
     });
-    if (allowMissing && response.status === 404) return null;
+    if (options.allowMissing && response.status === 404) return null;
     if (response.status !== 200) {
       throw new Error(`session broker returned status ${response.status}`);
     }
@@ -157,7 +183,9 @@ export function createSessionBrokerClient(input: {
     },
     async getSession(sessionId) {
       const parsedSessionId = identifier.parse(sessionId);
-      const body = await request(`/v1/sessions/${parsedSessionId}`, true);
+      const body = await request(`/v1/sessions/${parsedSessionId}`, {
+        allowMissing: true,
+      });
       if (body === null) return null;
       const response = detailResponseSchema.parse(body);
       if (response.session.sessionId !== parsedSessionId) {
@@ -179,6 +207,33 @@ export function createSessionBrokerClient(input: {
       }
       return response;
     },
+    async executeCommand({ command, principalId }) {
+      const parsedCommand = sessionCommandSchema.parse(command);
+      const parsedPrincipal = z
+        .string()
+        .min(1)
+        .max(256)
+        .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/)
+        .parse(principalId);
+      const result = sessionCommandResultSchema.parse(
+        await request(`/v1/sessions/${parsedCommand.sessionId}/commands`, {
+          method: "POST",
+          token: input.writeToken,
+          principalId: parsedPrincipal,
+          body: JSON.stringify(parsedCommand),
+        }),
+      );
+      if (
+        result.sessionId !== parsedCommand.sessionId ||
+        result.generation !== parsedCommand.generation ||
+        result.leaseId !== parsedCommand.leaseId ||
+        result.idempotencyKey !== parsedCommand.idempotencyKey ||
+        result.type !== parsedCommand.type
+      ) {
+        throw new Error("session broker returned the wrong command identity");
+      }
+      return result;
+    },
   };
 }
 
@@ -187,14 +242,19 @@ let client: Promise<SessionBrokerClient> | null = null;
 export function sessionBrokerClient(): Promise<SessionBrokerClient> {
   client ??= (async () => {
     const tokenPath = process.env.CODEOPS_SESSION_BROKER_READ_TOKEN_FILE?.trim();
+    const writeTokenPath = process.env.CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE?.trim();
     const baseUrl = process.env.CODEOPS_SESSION_BROKER_URL?.trim();
-    if (!tokenPath || !baseUrl) {
+    if (!tokenPath || !writeTokenPath || !baseUrl) {
       throw new Error("session broker server configuration is incomplete");
     }
-    const token = (await readFile(tokenPath, "utf8")).trim();
+    const [readToken, writeToken] = await Promise.all([
+      readFile(tokenPath, "utf8").then((value) => value.trim()),
+      readFile(writeTokenPath, "utf8").then((value) => value.trim()),
+    ]);
     return createSessionBrokerClient({
       baseUrl: parseSessionBrokerBaseUrl(baseUrl),
-      token,
+      readToken,
+      writeToken,
     });
   })().catch((error) => {
     client = null;

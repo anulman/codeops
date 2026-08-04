@@ -16,6 +16,8 @@ Server configuration:
 
 - `CODEOPS_SESSION_BROKER_URL` — exact internal control-gateway origin.
 - `CODEOPS_SESSION_BROKER_READ_TOKEN_FILE` — mounted read-token path.
+- `CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE` — mounted write-token path; it
+  must be distinct from the read credential.
 - `AGENTS_UI_ACCESS_REQUIRED` — optional local override; production always
   requires Access.
 

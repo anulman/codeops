@@ -1,6 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
+import { sessionCommandSchema } from "@renoconcierge/codeops-contracts/session-broker";
 import { agentsAuthMiddleware } from "./agentsAuth";
 import { sessionBrokerClient } from "./sessionBroker.server";
 
@@ -49,4 +50,18 @@ export const getSessionEvents = createServerFn({ method: "GET" })
   .handler(async ({ data }) => {
     protectResponse();
     return (await sessionBrokerClient()).getEvents(data);
+  });
+
+export const executeSessionCommand = createServerFn({ method: "POST" })
+  .middleware([agentsAuthMiddleware])
+  .inputValidator((value: unknown) => sessionCommandSchema.parse(value))
+  .handler(async ({ data, context }) => {
+    protectResponse();
+    const principalId = context.agentsPrincipal ??
+      (process.env.NODE_ENV === "production" ? null : "agents-ui-local");
+    if (!principalId) throw new Response("Unauthorized", { status: 401 });
+    return (await sessionBrokerClient()).executeCommand({
+      command: data,
+      principalId,
+    });
   });
