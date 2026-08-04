@@ -11,6 +11,7 @@ RUN npm ci --ignore-scripts --prefix services/codeops-control-gateway \
   && ln -s services/codeops-control-gateway/node_modules node_modules
 COPY services/codeops-control-gateway/tsconfig.json services/codeops-control-gateway/tsconfig.build.json ./services/codeops-control-gateway/
 COPY services/codeops-control-gateway/src ./services/codeops-control-gateway/src
+COPY services/codeops-control-gateway/sql ./services/codeops-control-gateway/sql
 RUN services/codeops-control-gateway/node_modules/.bin/tsc -p packages/codeops-contracts/tsconfig.build.json \
   && npm run build --prefix services/codeops-control-gateway \
   && npm prune --omit=dev --prefix services/codeops-control-gateway \

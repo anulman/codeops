@@ -1,5 +1,6 @@
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
+import { Pool } from "pg";
 import {
   authenticateBearer,
   loadGitHubReviewComments,
@@ -19,6 +20,7 @@ import {
 import { loadInClusterKubernetesClient } from "./kubernetes.js";
 import { publishCandidateRevision } from "./publication.js";
 import { createAgentJobRunner } from "./runtime.js";
+import { migrateSessionBroker } from "./session-broker-migration.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -103,6 +105,16 @@ if (publicationToken.length < 32 || publicationToken.length > 4_096) {
 const repositoryWriteToken = await secretFile(
   "CODEOPS_REPOSITORY_WRITE_TOKEN_FILE",
 );
+const database = new Pool({
+  connectionString: await secretFile("CODEOPS_DATABASE_URL_FILE"),
+  max: 4,
+});
+const migrationClient = await database.connect();
+try {
+  await migrateSessionBroker(migrationClient);
+} finally {
+  migrationClient.release();
+}
 const run = createAgentJobRunner({
   kubernetes,
   config: {

@@ -11,10 +11,12 @@
   },
   "dependencies": {
     "@renoconcierge/codeops-contracts": "file:../../packages/codeops-contracts",
+    "pg": "^8.22.0",
     "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/node": "25.7.0",
+    "@types/pg": "^8.20.3",
     "typescript": "6.0.3"
   }
 }
