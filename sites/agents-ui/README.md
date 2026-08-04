@@ -31,8 +31,13 @@ the control gateway. A dispatch binds the authenticated principal, complete
 command, exact observed snapshot/cursor, generation, lease, and capability.
 The completion must echo that identity before trusted prompt, checkpoint,
 hibernate, resume, or fork material can be adapted for the existing serializable
-command transaction. Production dispatch remains fail-closed until a durable outbox and
-ACP transport can guarantee idempotent side effects outside that transaction.
+command transaction. The gateway now persists that dispatch in a separately
+versioned runtime outbox before any side effect. One worker can atomically claim
+the oldest available dispatch with a bounded lease; an expired lease makes the
+same immutable dispatch claimable again without minting a second identity.
+Local commands and runtime dispatches share one session/idempotency namespace.
+Production dispatch remains fail-closed until the ACP transport and exact
+claim-bound completion ingestion are wired.
 
 Run focused checks from the repository root:
 

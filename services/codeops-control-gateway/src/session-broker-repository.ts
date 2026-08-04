@@ -362,6 +362,20 @@ export async function executeSessionCommandTransaction(
     }
     const snapshot = sessionSnapshotSchema.parse(locked.rows[0].snapshot_json);
 
+    const reservedRuntimeDispatch = await client.query(
+      `SELECT dispatch_id
+         FROM codeops.session_runtime_outbox
+        WHERE session_id = $1 AND idempotency_key = $2
+        FOR UPDATE`,
+      [command.sessionId, command.idempotencyKey],
+    );
+    if (reservedRuntimeDispatch.rows[0]) {
+      throw new ImmutableSessionCommandConflictError(
+        command.sessionId,
+        command.idempotencyKey,
+      );
+    }
+
     const existing = await client.query<StoredCommandRow>(
       `SELECT command_json, result_json
          FROM codeops.session_commands

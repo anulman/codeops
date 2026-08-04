@@ -3,8 +3,16 @@ import { readFile } from "node:fs/promises";
 
 import type { TransactionClient } from "./session-broker-repository.js";
 
-const MIGRATION_NAME = "session-broker-v1";
-const migrationUrl = new URL("../sql/session-broker.sql", import.meta.url);
+const migrations = [
+  {
+    name: "session-broker-v1",
+    url: new URL("../sql/session-broker.sql", import.meta.url),
+  },
+  {
+    name: "session-broker-runtime-outbox-v1",
+    url: new URL("../sql/session-broker-runtime-outbox.sql", import.meta.url),
+  },
+] as const;
 
 function migrationDigest(sql: string): string {
   return createHash("sha256").update(sql).digest("hex");
@@ -23,6 +31,7 @@ export function stripTransactionEnvelope(sql: string): string {
 export async function applySessionBrokerMigration(
   client: TransactionClient,
   sql: string,
+  migrationName = "session-broker-v1",
 ): Promise<"applied" | "current"> {
   const sha256 = migrationDigest(sql);
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
@@ -41,7 +50,7 @@ export async function applySessionBrokerMigration(
          FROM codeops.schema_migrations
         WHERE migration_name = $1
         FOR UPDATE`,
-      [MIGRATION_NAME],
+      [migrationName],
     );
     if (existing.rows[0]) {
       if (existing.rows[0].sha256 !== sha256) {
@@ -57,7 +66,7 @@ export async function applySessionBrokerMigration(
     await client.query(
       `INSERT INTO codeops.schema_migrations (migration_name, sha256)
        VALUES ($1, $2)`,
-      [MIGRATION_NAME, sha256],
+      [migrationName, sha256],
     );
     await client.query("COMMIT");
     return "applied";
@@ -69,9 +78,16 @@ export async function applySessionBrokerMigration(
 
 export async function migrateSessionBroker(
   client: TransactionClient,
-): Promise<"applied" | "current"> {
-  return applySessionBrokerMigration(
-    client,
-    await readFile(migrationUrl, "utf8"),
-  );
+): Promise<readonly ("applied" | "current")[]> {
+  const results: ("applied" | "current")[] = [];
+  for (const migration of migrations) {
+    results.push(
+      await applySessionBrokerMigration(
+        client,
+        await readFile(migration.url, "utf8"),
+        migration.name,
+      ),
+    );
+  }
+  return results;
 }

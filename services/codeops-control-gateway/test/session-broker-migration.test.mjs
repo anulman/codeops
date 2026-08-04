@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   applySessionBrokerMigration,
+  migrateSessionBroker,
   stripTransactionEnvelope,
 } from "../dist/session-broker-migration.js";
 
@@ -76,4 +77,29 @@ test("rolls back when stored migration bytes drift", async () => {
     /migration digest drift/,
   );
   assert.equal(client.calls.at(-1).text, "ROLLBACK");
+});
+
+test("records a caller-supplied immutable migration identity", async () => {
+  const client = fakeClient();
+  await applySessionBrokerMigration(
+    client,
+    migration,
+    "session-broker-runtime-outbox-v1",
+  );
+  const insert = client.calls.find(({ text }) =>
+    text.includes("INSERT INTO codeops.schema_migrations"));
+  assert.equal(insert.values[0], "session-broker-runtime-outbox-v1");
+});
+
+test("applies the base and outbox migrations in order", async () => {
+  const client = fakeClient();
+  const results = await migrateSessionBroker(client);
+  assert.deepEqual(results, ["applied", "applied"]);
+  const inserts = client.calls
+    .filter(({ text }) => text.includes("INSERT INTO codeops.schema_migrations"))
+    .map(({ values }) => values[0]);
+  assert.deepEqual(inserts, [
+    "session-broker-v1",
+    "session-broker-runtime-outbox-v1",
+  ]);
 });

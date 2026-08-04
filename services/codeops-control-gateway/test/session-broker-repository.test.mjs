@@ -11,6 +11,7 @@ import {
 
 const leaseId = "11111111-1111-4111-8111-111111111111";
 const idempotencyKey = "33333333-3333-4333-8333-333333333333";
+const dispatchId = "44444444-4444-4444-8444-444444444444";
 
 function capabilities(enabled = ["prompt", "cancel", "checkpoint", "hibernate"]) {
   return [
@@ -165,9 +166,10 @@ test("loads strict ordered events after one bounded cursor", async () => {
 });
 
 class FakeClient {
-  constructor({ current = snapshot(), existing = null, updateCount = 1, forkInsertCount = 1 } = {}) {
+  constructor({ current = snapshot(), existing = null, reservedRuntimeDispatch = null, updateCount = 1, forkInsertCount = 1 } = {}) {
     this.current = current;
     this.existing = existing;
+    this.reservedRuntimeDispatch = reservedRuntimeDispatch;
     this.updateCount = updateCount;
     this.forkInsertCount = forkInsertCount;
     this.calls = [];
@@ -179,6 +181,14 @@ class FakeClient {
     }
     if (text.includes("FROM codeops.session_commands")) {
       return { rowCount: this.existing ? 1 : 0, rows: this.existing ? [this.existing] : [] };
+    }
+    if (text.includes("FROM codeops.session_runtime_outbox")) {
+      return {
+        rowCount: this.reservedRuntimeDispatch ? 1 : 0,
+        rows: this.reservedRuntimeDispatch
+          ? [{ dispatch_id: this.reservedRuntimeDispatch }]
+          : [],
+      };
     }
     if (text.startsWith("UPDATE codeops.sessions")) {
       return { rowCount: this.updateCount, rows: [] };
@@ -205,11 +215,18 @@ test("locks, compare-and-swaps, audits, and commits one command transaction", as
   assert.equal(result.disposition, "committed");
   assert.equal(client.calls[0].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
   assert.match(client.calls[1].text, /codeops\.sessions[\s\S]*FOR UPDATE/);
-  assert.match(client.calls[2].text, /session_commands[\s\S]*FOR UPDATE/);
-  assert.match(client.calls[3].text, /INSERT INTO codeops\.session_events/);
-  assert.match(client.calls[4].text, /generation = \$6[\s\S]*lease_id = \$7/);
-  assert.equal(client.calls[5].values[5], "user:aidan");
+  assert.match(client.calls[2].text, /session_runtime_outbox[\s\S]*FOR UPDATE/);
+  assert.match(client.calls[3].text, /session_commands[\s\S]*FOR UPDATE/);
+  assert.match(client.calls[4].text, /INSERT INTO codeops\.session_events/);
+  assert.match(client.calls[5].text, /generation = \$6[\s\S]*lease_id = \$7/);
+  assert.equal(client.calls[6].values[5], "user:aidan");
   assert.equal(client.calls.at(-1).text, "COMMIT");
+});
+
+test("rejects a local command that collides with a reserved runtime dispatch", async () => {
+  const client = new FakeClient({ reservedRuntimeDispatch: dispatchId });
+  await assert.rejects(execute(client), ImmutableSessionCommandConflictError);
+  assert.equal(client.calls.at(-1).text, "ROLLBACK");
 });
 
 test("replays an identical idempotency key without invoking the mutator", async () => {
