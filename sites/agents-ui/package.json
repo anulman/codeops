@@ -12,7 +12,7 @@
     "dev": "vite dev",
     "build": "vite build",
     "start": "node .output/server/index.mjs",
-    "test": "node --test test/*.test.mjs",
+    "test": "nub run --filter @renoconcierge/codeops-contracts build && node --test test/*.test.mjs",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
