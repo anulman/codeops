@@ -17,6 +17,10 @@ CREATE TABLE codeops.session_runtime_outbox (
   claimed_at timestamptz,
   claim_expires_at timestamptz,
   claim_count integer NOT NULL DEFAULT 0 CHECK (claim_count >= 0),
+  completion_json jsonb,
+  result_json jsonb,
+  completed_by text
+    CHECK (completed_by IS NULL OR completed_by ~ '^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$'),
   completed_at timestamptz,
   UNIQUE (session_id, idempotency_key),
   CHECK (dispatch_json ?& ARRAY['version', 'dispatchId', 'principalId', 'command', 'snapshot', 'dispatchedAt']),
@@ -29,15 +33,32 @@ CREATE TABLE codeops.session_runtime_outbox (
   CHECK (available_at >= created_at),
   CHECK (
     (status = 'pending' AND claim_token IS NULL AND claimed_by IS NULL
-      AND claimed_at IS NULL AND claim_expires_at IS NULL AND completed_at IS NULL)
+      AND claimed_at IS NULL AND claim_expires_at IS NULL
+      AND completion_json IS NULL AND result_json IS NULL
+      AND completed_by IS NULL AND completed_at IS NULL)
     OR
     (status = 'claimed' AND claim_token IS NOT NULL AND claimed_by IS NOT NULL
       AND claimed_at IS NOT NULL AND claim_expires_at > claimed_at
-      AND completed_at IS NULL)
+      AND completion_json IS NULL AND result_json IS NULL
+      AND completed_by IS NULL AND completed_at IS NULL)
     OR
     (status = 'completed' AND claim_token IS NULL AND claimed_by IS NULL
       AND claimed_at IS NULL AND claim_expires_at IS NULL
-      AND completed_at IS NOT NULL)
+      AND completion_json IS NOT NULL AND result_json IS NOT NULL
+      AND completed_by IS NOT NULL AND completed_at IS NOT NULL)
+  ),
+  CHECK (
+    completion_json IS NULL OR (
+      completion_json->>'version' = 'codeops.session-runtime-completion/v1'
+      AND (completion_json->>'dispatchId')::uuid = dispatch_id
+    )
+  ),
+  CHECK (
+    result_json IS NULL OR (
+      result_json->>'version' = 'codeops.session-command-result/v1'
+      AND result_json->>'sessionId' = session_id
+      AND (result_json->>'idempotencyKey')::uuid = idempotency_key
+    )
   )
 );
 

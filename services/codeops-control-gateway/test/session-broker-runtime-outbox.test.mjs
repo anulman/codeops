@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   ImmutableSessionRuntimeDispatchConflictError,
   claimSessionRuntimeDispatch,
+  completeSessionRuntimeDispatch,
   enqueueSessionRuntimeDispatch,
 } from "../dist/session-broker-runtime-outbox.js";
 
@@ -11,7 +12,7 @@ const idempotencyKey = "33333333-3333-4333-8333-333333333333";
 const dispatchId = "44444444-4444-4444-8444-444444444444";
 const claimToken = "55555555-5555-4555-8555-555555555555";
 
-function snapshot() {
+function snapshot(overrides = {}) {
   const enabled = new Set(["prompt", "cancel", "checkpoint", "hibernate"]);
   return {
     version: "codeops.session-snapshot/v1",
@@ -45,6 +46,7 @@ function snapshot() {
       ? { action, availability: "enabled" }
       : { action, availability: "disabled", reason: "Unavailable." }),
     updatedAt: "2026-08-04T17:40:00.000Z",
+    ...overrides,
   };
 }
 
@@ -211,4 +213,178 @@ test("returns null when no dispatch is claimable and validates claim bounds", as
     workerId: "acp-worker:7",
     leaseMs: 999,
   }), /between 1 second and 15 minutes/);
+});
+
+function completion(overrides = {}) {
+  return {
+    version: "codeops.session-runtime-completion/v1",
+    dispatchId,
+    sessionId: "ses_91a4",
+    generation: 3,
+    leaseId,
+    idempotencyKey,
+    observedEventCursor: 184,
+    type: "prompt",
+    completedAt: "2026-08-04T19:05:00.000Z",
+    ...overrides,
+  };
+}
+
+function reverseObjectKeys(value) {
+  if (Array.isArray(value)) return value.map(reverseObjectKeys);
+  if (value !== null && typeof value === "object") {
+    return Object.fromEntries(
+      Object.entries(value).reverse().map(([key, nested]) => [key, reverseObjectKeys(nested)]),
+    );
+  }
+  return value;
+}
+
+class CompletionClient {
+  constructor({ dispatch, reservedDispatch = dispatch, status = "claimed", token = claimToken, workerId = "acp-worker:7", expiresAt = "2026-08-04T19:20:00.000Z", current = snapshot(), completed = null, completionValue = null, completeCount = 1 } = {}) {
+    this.dispatch = dispatch;
+    this.reservedDispatch = reservedDispatch;
+    this.status = status;
+    this.token = token;
+    this.workerId = workerId;
+    this.expiresAt = expiresAt;
+    this.current = current;
+    this.completed = completed;
+    this.completionValue = completionValue;
+    this.completeCount = completeCount;
+    this.calls = [];
+  }
+  async query(text, values = []) {
+    this.calls.push({ text, values });
+    if (text.includes("WHERE dispatch_id = $1") && text.startsWith("SELECT")) {
+      return {
+        rowCount: this.dispatch ? 1 : 0,
+        rows: this.dispatch ? [{
+          dispatch_json: this.dispatch,
+          status: this.status,
+          completion_json: this.completionValue,
+          result_json: this.completed,
+          completed_by: this.workerId,
+        }] : [],
+      };
+    }
+    if (text.includes("FROM codeops.sessions")) {
+      return { rowCount: 1, rows: [{ snapshot_json: this.current }] };
+    }
+    if (text.includes("FROM codeops.session_runtime_outbox")) {
+      return {
+        rowCount: 1,
+        rows: [{
+          dispatch_id: dispatchId,
+          dispatch_json: this.reservedDispatch,
+          status: this.status,
+          claim_token: this.token,
+          claimed_by: this.workerId,
+          claim_expires_at: this.expiresAt,
+        }],
+      };
+    }
+    if (text.includes("FROM codeops.session_commands")) {
+      return { rowCount: 0, rows: [] };
+    }
+    if (text.startsWith("UPDATE codeops.session_runtime_outbox")) {
+      return { rowCount: this.completeCount, rows: [] };
+    }
+    return { rowCount: 1, rows: [] };
+  }
+}
+
+async function runtimeDispatch() {
+  return enqueue(new EnqueueClient(), {
+    now: () => new Date("2026-08-04T19:00:00.000Z"),
+  });
+}
+
+test("atomically commits only an exact unexpired claim completion", async () => {
+  const dispatch = await runtimeDispatch();
+  const client = new CompletionClient({
+    dispatch,
+    reservedDispatch: reverseObjectKeys(dispatch),
+    current: reverseObjectKeys(snapshot()),
+  });
+  const result = await completeSessionRuntimeDispatch(client, {
+    dispatchId,
+    claimToken,
+    workerId: "acp-worker:7",
+    completion: completion(),
+    now: () => new Date("2026-08-04T19:10:00.000Z"),
+    commandId: () => "66666666-6666-4666-8666-666666666666",
+  });
+  assert.equal(result.disposition, "committed");
+  assert.equal(result.eventCursor, 185);
+  assert.equal(client.calls[1].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
+  assert.match(client.calls[2].text, /codeops\.sessions[\s\S]*FOR UPDATE/);
+  assert.match(client.calls[3].text, /session_runtime_outbox[\s\S]*FOR UPDATE/);
+  const completed = client.calls.find(({ text }) =>
+    text.startsWith("UPDATE codeops.session_runtime_outbox"));
+  assert.match(completed.text, /status = 'completed'/);
+  assert.match(completed.text, /claim_token = NULL/);
+  assert.match(completed.text, /claimed_by = \$3/);
+  assert.match(completed.text, /claim_expires_at > \$4/);
+  assert.equal(completed.values[2], "acp-worker:7");
+  assert.equal(completed.values[4], dispatchId);
+  assert.equal(completed.values[5], claimToken);
+  assert.equal(client.calls.at(-1).text, "COMMIT");
+});
+
+test("rolls back stale tokens, expired claims, and changed snapshots", async () => {
+  const dispatch = await runtimeDispatch();
+  for (const client of [
+    new CompletionClient({ dispatch, token: "77777777-7777-4777-8777-777777777777" }),
+    new CompletionClient({ dispatch, workerId: "acp-worker:8" }),
+    new CompletionClient({ dispatch, expiresAt: "2026-08-04T19:09:59.000Z" }),
+    new CompletionClient({ dispatch, current: snapshot({ eventCursor: 185 }) }),
+  ]) {
+    await assert.rejects(completeSessionRuntimeDispatch(client, {
+      dispatchId,
+      claimToken,
+      workerId: "acp-worker:7",
+      completion: completion(),
+      now: () => new Date("2026-08-04T19:10:00.000Z"),
+    }), /claim|snapshot/);
+    assert.equal(
+      client.calls.some(({ text }) => text.includes("INSERT INTO codeops.session_events")),
+      false,
+    );
+    assert.equal(client.calls.at(-1).text, "ROLLBACK");
+  }
+});
+
+test("replays one exact persisted completion and rejects completion drift", async () => {
+  const dispatch = await runtimeDispatch();
+  const first = new CompletionClient({ dispatch });
+  const committed = await completeSessionRuntimeDispatch(first, {
+    dispatchId,
+    claimToken,
+    workerId: "acp-worker:7",
+    completion: completion(),
+    now: () => new Date("2026-08-04T19:10:00.000Z"),
+    commandId: () => "66666666-6666-4666-8666-666666666666",
+  });
+  const replay = new CompletionClient({
+    dispatch,
+    status: "completed",
+    completed: committed,
+    completionValue: completion(),
+  });
+  const result = await completeSessionRuntimeDispatch(replay, {
+    dispatchId,
+    claimToken,
+    workerId: "acp-worker:7",
+    completion: completion(),
+  });
+  assert.equal(result.disposition, "duplicate");
+  assert.equal(result.originalCommandId, committed.commandId);
+  assert.equal(replay.calls.length, 1);
+  await assert.rejects(completeSessionRuntimeDispatch(replay, {
+    dispatchId,
+    claimToken,
+    workerId: "acp-worker:7",
+    completion: completion({ completedAt: "2026-08-04T19:06:00.000Z" }),
+  }), ImmutableSessionRuntimeDispatchConflictError);
 });

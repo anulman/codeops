@@ -31,6 +31,11 @@ test("defines an immutable lease-claimed runtime outbox", async () => {
   assert.match(sql, /UNIQUE \(session_id, idempotency_key\)/);
   assert.match(sql, /status IN \('pending', 'claimed', 'completed'\)/);
   assert.match(sql, /claim_expires_at > claimed_at/);
+  assert.match(sql, /completion_json jsonb/);
+  assert.match(sql, /result_json jsonb/);
+  assert.match(sql, /completed_by text/);
+  assert.match(sql, /completion_json->>'dispatchId'/);
+  assert.match(sql, /result_json->>'idempotencyKey'/);
   assert.match(sql, /dispatch_json#>>'\{command,sessionId\}' = session_id/);
   assert.match(sql, /CREATE INDEX session_runtime_outbox_claim_idx/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);

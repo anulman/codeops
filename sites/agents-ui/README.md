@@ -36,8 +36,13 @@ versioned runtime outbox before any side effect. One worker can atomically claim
 the oldest available dispatch with a bounded lease; an expired lease makes the
 same immutable dispatch claimable again without minting a second identity.
 Local commands and runtime dispatches share one session/idempotency namespace.
-Production dispatch remains fail-closed until the ACP transport and exact
-claim-bound completion ingestion are wired.
+Completion ingestion accepts only the exact current claim token before lease
+expiry and only while the broker snapshot still equals the dispatch snapshot;
+the command result, ordered events, snapshot transition, immutable completion,
+and completed outbox state commit atomically. Exact completion retries replay
+the retained result, while token, lease, snapshot, or payload drift rolls back.
+Production dispatch remains fail-closed until the ACP transport and its
+authenticated worker endpoints are wired.
 
 Run focused checks from the repository root:
 

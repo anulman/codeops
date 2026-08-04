@@ -1,8 +1,17 @@
 import { randomUUID } from "node:crypto";
-import type { SessionSnapshot } from "@renoconcierge/codeops-contracts";
-import type { TransactionClient } from "./session-broker-repository.js";
 import {
+  sessionCommandResultSchema,
+  type SessionCommandResult,
+  type SessionSnapshot,
+} from "@renoconcierge/codeops-contracts";
+import {
+  executeSessionCommandTransaction,
+  type TransactionClient,
+} from "./session-broker-repository.js";
+import {
+  applySessionRuntimeCompletion,
   buildSessionRuntimeDispatch,
+  sessionRuntimeCompletionSchema,
   sessionRuntimeDispatchSchema,
   type SessionRuntimeDispatch,
 } from "./session-broker-runtime.js";
@@ -25,8 +34,26 @@ interface ClaimedDispatchRow extends StoredDispatchRow {
   readonly claim_count: unknown;
 }
 
+interface CompletedDispatchRow extends StoredDispatchRow {
+  readonly status: unknown;
+  readonly completion_json: unknown;
+  readonly result_json: unknown;
+  readonly completed_by: unknown;
+}
+
 function canonical(value: unknown): string {
-  return JSON.stringify(value);
+  const normalize = (entry: unknown): unknown => {
+    if (Array.isArray(entry)) return entry.map(normalize);
+    if (entry !== null && typeof entry === "object") {
+      return Object.fromEntries(
+        Object.entries(entry as Record<string, unknown>)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, nested]) => [key, normalize(nested)]),
+      );
+    }
+    return entry;
+  };
+  return JSON.stringify(normalize(value));
 }
 
 function requireWorkerId(workerId: string): void {
@@ -200,4 +227,77 @@ export async function claimSessionRuntimeDispatch(
     claimExpiresAt,
     claimCount: Number(row.claim_count),
   };
+}
+
+function duplicateRuntimeResult(
+  result: SessionCommandResult,
+): SessionCommandResult {
+  if (result.disposition !== "committed") return result;
+  return sessionCommandResultSchema.parse({
+    ...result,
+    disposition: "duplicate",
+    originalCommandId: result.commandId,
+  });
+}
+
+export async function completeSessionRuntimeDispatch(
+  client: TransactionClient,
+  input: {
+    readonly dispatchId: string;
+    readonly claimToken: string;
+    readonly workerId: string;
+    readonly completion: unknown;
+    readonly now?: () => Date;
+    readonly commandId?: () => string;
+  },
+): Promise<SessionCommandResult> {
+  const completion = sessionRuntimeCompletionSchema.parse(input.completion);
+  requireWorkerId(input.workerId);
+  if (completion.dispatchId !== input.dispatchId) {
+    throw new Error("runtime completion does not match the requested dispatch");
+  }
+  const stored = await client.query<CompletedDispatchRow>(
+    `SELECT dispatch_json, status, completion_json, result_json, completed_by
+       FROM codeops.session_runtime_outbox
+      WHERE dispatch_id = $1`,
+    [input.dispatchId],
+  );
+  if (!stored.rows[0]) {
+    throw new Error(`runtime dispatch ${input.dispatchId} was not found`);
+  }
+  const row = stored.rows[0];
+  const dispatch = sessionRuntimeDispatchSchema.parse(row.dispatch_json);
+  if (row.status === "completed") {
+    const persistedCompletion = sessionRuntimeCompletionSchema.parse(
+      row.completion_json,
+    );
+    if (
+      row.completed_by !== input.workerId ||
+      canonical(persistedCompletion) !== canonical(completion)
+    ) {
+      throw new ImmutableSessionRuntimeDispatchConflictError(
+        `runtime dispatch ${input.dispatchId} already has a different immutable completion`,
+      );
+    }
+    return duplicateRuntimeResult(
+      sessionCommandResultSchema.parse(row.result_json),
+    );
+  }
+
+  return executeSessionCommandTransaction(client, {
+    command: dispatch.command,
+    principalId: dispatch.principalId,
+    now: input.now,
+    commandId: input.commandId,
+    mutate: (_snapshot, _command, context) =>
+      applySessionRuntimeCompletion(dispatch, completion, context),
+    runtimeReservation: {
+      dispatchId: dispatch.dispatchId,
+      claimToken: input.claimToken,
+      workerId: input.workerId,
+      expectedSnapshot: dispatch.snapshot,
+      dispatchJson: dispatch,
+      completionJson: completion,
+    },
+  });
 }

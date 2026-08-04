@@ -32,6 +32,7 @@ export class ImmutableSessionCommandConflictError extends Error {
 export class SessionNotFoundError extends Error {}
 export class SessionCompareAndSwapError extends Error {}
 export class SessionForkConflictError extends Error {}
+export class SessionRuntimeClaimConflictError extends Error {}
 
 const sessionIdentifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 
@@ -136,6 +137,14 @@ interface ExecuteSessionCommandInput {
     command: SessionCommand,
     context: SessionMutationContext,
   ) => Promise<SessionMutation> | SessionMutation;
+  readonly runtimeReservation?: {
+    readonly dispatchId: string;
+    readonly claimToken: string;
+    readonly workerId: string;
+    readonly expectedSnapshot: SessionSnapshot;
+    readonly dispatchJson: unknown;
+    readonly completionJson: unknown;
+  };
 }
 
 export interface SessionMutationContext {
@@ -153,12 +162,32 @@ interface StoredCommandRow extends Record<string, unknown> {
   readonly result_json: unknown;
 }
 
+interface StoredRuntimeDispatchRow extends Record<string, unknown> {
+  readonly dispatch_id: unknown;
+  readonly dispatch_json: unknown;
+  readonly status: unknown;
+  readonly claim_token: unknown;
+  readonly claimed_by: unknown;
+  readonly claim_expires_at: unknown;
+}
+
 interface StoredSessionRow extends Record<string, unknown> {
   readonly snapshot_json: unknown;
 }
 
 function canonical(value: unknown): string {
-  return JSON.stringify(value);
+  const normalize = (entry: unknown): unknown => {
+    if (Array.isArray(entry)) return entry.map(normalize);
+    if (entry !== null && typeof entry === "object") {
+      return Object.fromEntries(
+        Object.entries(entry as Record<string, unknown>)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, nested]) => [key, normalize(nested)]),
+      );
+    }
+    return entry;
+  };
+  return JSON.stringify(normalize(value));
 }
 
 function requireResultIdentity(
@@ -334,6 +363,44 @@ function requireOrderedEvents(
   return events;
 }
 
+async function completeRuntimeReservation(
+  client: TransactionClient,
+  reservation: NonNullable<ExecuteSessionCommandInput["runtimeReservation"]>,
+  result: SessionCommandResult,
+  completedAt: string,
+): Promise<void> {
+  const completed = await client.query(
+    `UPDATE codeops.session_runtime_outbox
+        SET status = 'completed',
+            claim_token = NULL,
+            claimed_by = NULL,
+            claimed_at = NULL,
+            claim_expires_at = NULL,
+            completion_json = $1::jsonb,
+            result_json = $2::jsonb,
+            completed_by = $3,
+            completed_at = $4::timestamptz
+      WHERE dispatch_id = $5
+        AND status = 'claimed'
+        AND claim_token = $6
+        AND claimed_by = $3
+        AND claim_expires_at > $4::timestamptz`,
+    [
+      canonical(reservation.completionJson),
+      canonical(result),
+      reservation.workerId,
+      completedAt,
+      reservation.dispatchId,
+      reservation.claimToken,
+    ],
+  );
+  if (completed.rowCount !== 1) {
+    throw new SessionRuntimeClaimConflictError(
+      `runtime claim ${reservation.claimToken} expired before completion committed`,
+    );
+  }
+}
+
 export async function executeSessionCommandTransaction(
   client: TransactionClient,
   input: ExecuteSessionCommandInput,
@@ -362,18 +429,40 @@ export async function executeSessionCommandTransaction(
     }
     const snapshot = sessionSnapshotSchema.parse(locked.rows[0].snapshot_json);
 
-    const reservedRuntimeDispatch = await client.query(
-      `SELECT dispatch_id
+    const reservedRuntimeDispatch = await client.query<StoredRuntimeDispatchRow>(
+      `SELECT dispatch_id, dispatch_json, status, claim_token, claimed_by,
+              claim_expires_at
          FROM codeops.session_runtime_outbox
         WHERE session_id = $1 AND idempotency_key = $2
         FOR UPDATE`,
       [command.sessionId, command.idempotencyKey],
     );
-    if (reservedRuntimeDispatch.rows[0]) {
-      throw new ImmutableSessionCommandConflictError(
-        command.sessionId,
-        command.idempotencyKey,
-      );
+    const runtimeRow = reservedRuntimeDispatch.rows[0];
+    if (runtimeRow || input.runtimeReservation) {
+      const reservation = input.runtimeReservation;
+      if (
+        !runtimeRow ||
+        !reservation ||
+        runtimeRow.dispatch_id !== reservation.dispatchId ||
+        runtimeRow.status !== "claimed" ||
+        runtimeRow.claim_token !== reservation.claimToken ||
+        runtimeRow.claimed_by !== reservation.workerId ||
+        canonical(runtimeRow.dispatch_json) !==
+          canonical(reservation.dispatchJson) ||
+        canonical(snapshot) !== canonical(reservation.expectedSnapshot) ||
+        new Date(String(runtimeRow.claim_expires_at)).getTime() <=
+          Date.parse(committedAt)
+      ) {
+        if (!reservation) {
+          throw new ImmutableSessionCommandConflictError(
+            command.sessionId,
+            command.idempotencyKey,
+          );
+        }
+        throw new SessionRuntimeClaimConflictError(
+          `runtime claim ${reservation.claimToken} is stale or does not bind the exact dispatch snapshot`,
+        );
+      }
     }
 
     const existing = await client.query<StoredCommandRow>(
@@ -396,6 +485,14 @@ export async function executeSessionCommandTransaction(
       const result = duplicateResult(
         sessionCommandResultSchema.parse(existing.rows[0].result_json),
       );
+      if (input.runtimeReservation) {
+        await completeRuntimeReservation(
+          client,
+          input.runtimeReservation,
+          result,
+          committedAt,
+        );
+      }
       await client.query("COMMIT");
       return result;
     }
@@ -487,6 +584,14 @@ export async function executeSessionCommandTransaction(
     }
 
     await persistCommand(client, command, result, input.principalId);
+    if (input.runtimeReservation) {
+      await completeRuntimeReservation(
+        client,
+        input.runtimeReservation,
+        result,
+        committedAt,
+      );
+    }
     await client.query("COMMIT");
     return result;
   } catch (error) {
