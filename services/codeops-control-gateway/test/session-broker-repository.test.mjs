@@ -3,6 +3,9 @@ import test from "node:test";
 import {
   ImmutableSessionCommandConflictError,
   executeSessionCommandTransaction,
+  listSessionSnapshots,
+  loadSessionEvents,
+  loadSessionSnapshot,
 } from "../dist/session-broker-repository.js";
 
 const leaseId = "11111111-1111-4111-8111-111111111111";
@@ -92,6 +95,73 @@ function event(overrides = {}) {
 }
 
 const mutation = (result = committed(), events = [event()]) => ({ result, events });
+
+class FakeReadClient {
+  constructor(rows) {
+    this.rows = rows;
+    this.calls = [];
+  }
+  async query(text, values = []) {
+    this.calls.push({ text, values });
+    return { rowCount: this.rows.length, rows: this.rows };
+  }
+}
+
+test("loads one strict session snapshot without locking", async () => {
+  const client = new FakeReadClient([{ snapshot_json: snapshot() }]);
+  assert.equal((await loadSessionSnapshot(client, "ses_91a4")).sessionId, "ses_91a4");
+  assert.deepEqual(client.calls[0].values, ["ses_91a4"]);
+  assert.doesNotMatch(client.calls[0].text, /FOR UPDATE/);
+  assert.equal(await loadSessionSnapshot(new FakeReadClient([]), "ses_missing"), null);
+  await assert.rejects(loadSessionSnapshot(client, "../unsafe"), /identifier/);
+  await assert.rejects(
+    loadSessionSnapshot(
+      new FakeReadClient([
+        { snapshot_json: snapshot({ sessionId: "ses_foreign" }) },
+      ]),
+      "ses_91a4",
+    ),
+    /requested session/,
+  );
+});
+
+test("bounds and revalidates the fleet snapshot read", async () => {
+  const client = new FakeReadClient([{ snapshot_json: snapshot() }]);
+  assert.equal((await listSessionSnapshots(client, 25)).length, 1);
+  assert.deepEqual(client.calls[0].values, [25]);
+  assert.match(client.calls[0].text, /updated_at DESC, session_id ASC/);
+  await assert.rejects(listSessionSnapshots(client, 201), /between 1 and 200/);
+  await assert.rejects(
+    listSessionSnapshots(new FakeReadClient([{ snapshot_json: { unsafe: true } }])),
+  );
+});
+
+test("loads strict ordered events after one bounded cursor", async () => {
+  const client = new FakeReadClient([{ event_json: event() }]);
+  const events = await loadSessionEvents(client, {
+    sessionId: "ses_91a4",
+    afterCursor: 184,
+    limit: 50,
+  });
+  assert.equal(events[0].cursor, 185);
+  assert.deepEqual(client.calls[0].values, ["ses_91a4", 184, 50]);
+  assert.match(client.calls[0].text, /cursor > \$2[\s\S]*ORDER BY cursor ASC/);
+  await assert.rejects(
+    loadSessionEvents(client, { sessionId: "ses_91a4", afterCursor: -1 }),
+    /cursor/,
+  );
+  await assert.rejects(
+    loadSessionEvents(client, { sessionId: "ses_91a4", limit: 501 }),
+    /between 1 and 500/,
+  );
+  await assert.rejects(
+    loadSessionEvents(
+      new FakeReadClient([{ event_json: event({ cursor: 186 }) }]),
+      { sessionId: "ses_91a4", afterCursor: 184 },
+    ),
+    /contiguous cursor/,
+  );
+});
 
 class FakeClient {
   constructor({ current = snapshot(), existing = null, updateCount = 1 } = {}) {

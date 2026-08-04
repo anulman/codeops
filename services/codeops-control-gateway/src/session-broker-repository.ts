@@ -32,6 +32,99 @@ export class ImmutableSessionCommandConflictError extends Error {
 export class SessionNotFoundError extends Error {}
 export class SessionCompareAndSwapError extends Error {}
 
+const sessionIdentifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+
+function requireSessionIdentifier(sessionId: string): void {
+  if (!sessionIdentifier.test(sessionId)) {
+    throw new Error("session identifier is invalid");
+  }
+}
+
+function requireReadLimit(limit: number, maximum: number): void {
+  if (!Number.isSafeInteger(limit) || limit < 1 || limit > maximum) {
+    throw new Error(`read limit must be between 1 and ${maximum}`);
+  }
+}
+
+export async function loadSessionSnapshot(
+  client: TransactionClient,
+  sessionId: string,
+): Promise<SessionSnapshot | null> {
+  requireSessionIdentifier(sessionId);
+  const result = await client.query<StoredSessionRow>(
+    `SELECT snapshot_json
+       FROM codeops.sessions
+      WHERE session_id = $1`,
+    [sessionId],
+  );
+  if (!result.rows[0]) return null;
+  const snapshot = sessionSnapshotSchema.parse(result.rows[0].snapshot_json);
+  if (snapshot.sessionId !== sessionId) {
+    throw new Error("stored snapshot does not match the requested session");
+  }
+  return snapshot;
+}
+
+export async function listSessionSnapshots(
+  client: TransactionClient,
+  limit = 100,
+): Promise<readonly SessionSnapshot[]> {
+  requireReadLimit(limit, 200);
+  const result = await client.query<StoredSessionRow>(
+    `SELECT snapshot_json
+       FROM codeops.sessions
+      ORDER BY updated_at DESC, session_id ASC
+      LIMIT $1`,
+    [limit],
+  );
+  return result.rows.map(({ snapshot_json }) =>
+    sessionSnapshotSchema.parse(snapshot_json),
+  );
+}
+
+interface StoredEventRow extends Record<string, unknown> {
+  readonly event_json: unknown;
+}
+
+export async function loadSessionEvents(
+  client: TransactionClient,
+  input: {
+    readonly sessionId: string;
+    readonly afterCursor?: number;
+    readonly limit?: number;
+  },
+): Promise<readonly SessionEvent[]> {
+  requireSessionIdentifier(input.sessionId);
+  const afterCursor = input.afterCursor ?? 0;
+  const limit = input.limit ?? 100;
+  if (!Number.isSafeInteger(afterCursor) || afterCursor < 0) {
+    throw new Error("event cursor must be a non-negative safe integer");
+  }
+  requireReadLimit(limit, 500);
+  const result = await client.query<StoredEventRow>(
+    `SELECT event_json
+       FROM codeops.session_events
+      WHERE session_id = $1 AND cursor > $2
+      ORDER BY cursor ASC
+      LIMIT $3`,
+    [input.sessionId, afterCursor, limit],
+  );
+  const events = result.rows.map(({ event_json }) =>
+    sessionEventSchema.parse(event_json),
+  );
+  for (const [index, event] of events.entries()) {
+    if (
+      event.sessionId !== input.sessionId ||
+      event.cursor !== afterCursor + index + 1
+    ) {
+      throw new Error(
+        "stored events must match the requested session and contiguous cursor",
+      );
+    }
+  }
+  return events;
+}
+
 interface ExecuteSessionCommandInput {
   readonly command: unknown;
   readonly principalId: string;
