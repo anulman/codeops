@@ -23,6 +23,7 @@ type PermissionCommand = Extract<
 >;
 type ResumeCommand = Extract<SessionCommand, { readonly type: "resume" }>;
 type ForkCommand = Extract<SessionCommand, { readonly type: "fork" }>;
+type PromptCommand = Extract<SessionCommand, { readonly type: "prompt" }>;
 
 export interface RuntimeCheckpointMaterial {
   readonly checkpointId: string;
@@ -168,6 +169,37 @@ export function applyPermissionSessionTransition(
     generation: snapshot.generation,
     cursor,
     type: "command_committed",
+    occurredAt,
+  } as const;
+  return {
+    snapshot: nextSnapshot,
+    event: sessionEventSchema.parse({
+      version: SESSION_BROKER_VERSION.event,
+      eventId: eventId(eventBody),
+      ...eventBody,
+    }),
+  };
+}
+
+export function applyPromptSessionTransition(
+  snapshot: SessionSnapshot,
+  _command: PromptCommand,
+  occurredAt: string,
+): LocalSessionTransition {
+  if (snapshot.state !== "running") {
+    throw new Error("prompt completion requires a running session");
+  }
+  const cursor = snapshot.eventCursor + 1;
+  const nextSnapshot = sessionSnapshotSchema.parse({
+    ...snapshot,
+    eventCursor: cursor,
+    updatedAt: occurredAt,
+  });
+  const eventBody = {
+    sessionId: snapshot.sessionId,
+    generation: snapshot.generation,
+    cursor,
+    type: "acp_update",
     occurredAt,
   } as const;
   return {

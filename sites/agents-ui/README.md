@@ -26,6 +26,14 @@ The shared wire boundary lives at
 exact session generation, durable lease ID, and an idempotency key, then render
 the broker's committed command result.
 
+ACP-dependent actions cross a separate strict dispatch/completion adapter in
+the control gateway. A dispatch binds the authenticated principal, complete
+command, exact observed snapshot/cursor, generation, lease, and capability.
+The completion must echo that identity before trusted prompt, checkpoint,
+hibernate, resume, or fork material can be adapted for the existing serializable
+command transaction. Production dispatch remains fail-closed until a durable outbox and
+ACP transport can guarantee idempotent side effects outside that transaction.
+
 Run focused checks from the repository root:
 
 ```sh
@@ -33,4 +41,5 @@ nub run --filter @renoconcierge/codeops-contracts test
 nub run --filter @renoconcierge/agents-ui test
 nub run --filter @renoconcierge/agents-ui typecheck
 nub run --filter @renoconcierge/agents-ui build
+nub run --filter @renoconcierge/codeops-control-gateway test
 ```
