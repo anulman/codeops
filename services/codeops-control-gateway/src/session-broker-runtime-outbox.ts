@@ -19,6 +19,7 @@ import {
 const workerPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 
 export class ImmutableSessionRuntimeDispatchConflictError extends Error {}
+export class SessionRuntimeDispatchNotFoundError extends Error {}
 
 interface StoredSessionRow extends Record<string, unknown> {
   readonly snapshot_json: unknown;
@@ -263,7 +264,9 @@ export async function completeSessionRuntimeDispatch(
     [input.dispatchId],
   );
   if (!stored.rows[0]) {
-    throw new Error(`runtime dispatch ${input.dispatchId} was not found`);
+    throw new SessionRuntimeDispatchNotFoundError(
+      `runtime dispatch ${input.dispatchId} was not found`,
+    );
   }
   const row = stored.rows[0];
   const dispatch = sessionRuntimeDispatchSchema.parse(row.dispatch_json);

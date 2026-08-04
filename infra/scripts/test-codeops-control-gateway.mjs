@@ -142,6 +142,36 @@ test("renders one namespace-scoped authenticated gateway", () => {
     writeAuthVolume.secret.secretName,
     readAuthVolume.secret.secretName,
   );
+  const workerAuthVolume = deployment.spec.template.spec.volumes.find(
+    (volume) => volume.name === "session-runtime-worker-auth",
+  );
+  assert.equal(
+    workerAuthVolume.secret.secretName,
+    "codeops-session-runtime-worker-auth",
+  );
+  assert.deepEqual(workerAuthVolume.secret.items, [
+    { key: "token", path: "token" },
+  ]);
+  assert.equal(
+    deployment.spec.template.spec.containers[0].env.find(
+      (entry) => entry.name === "CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE",
+    ).value,
+    "/var/run/secrets/codeops-session-runtime-worker/token",
+  );
+  assert.equal(
+    deployment.spec.template.spec.containers[0].env.find(
+      (entry) => entry.name === "CODEOPS_SESSION_RUNTIME_WORKER_ID",
+    ).value,
+    "acp-worker:primary",
+  );
+  assert.notEqual(
+    workerAuthVolume.secret.secretName,
+    readAuthVolume.secret.secretName,
+  );
+  assert.notEqual(
+    workerAuthVolume.secret.secretName,
+    writeAuthVolume.secret.secretName,
+  );
 });
 
 test("grants only fixed run-resource and log operations", () => {
@@ -237,6 +267,15 @@ test("fails closed on mutable images, broad API CIDRs, or template drift", () =>
       template.replace(
         "secretName: codeops-session-broker-read-auth",
         "secretName: codeops-agent-dispatch-auth",
+      ),
+      input,
+    ),
+  );
+  assert.throws(() =>
+    renderControlGatewayManifest(
+      template.replace(
+        "secretName: codeops-session-runtime-worker-auth",
+        "secretName: codeops-session-broker-write-auth",
       ),
       input,
     ),

@@ -41,8 +41,15 @@ expiry and only while the broker snapshot still equals the dispatch snapshot;
 the command result, ordered events, snapshot transition, immutable completion,
 and completed outbox state commit atomically. Exact completion retries replay
 the retained result, while token, lease, snapshot, or payload drift rolls back.
-Production dispatch remains fail-closed until the ACP transport and its
-authenticated worker endpoints are wired.
+The control gateway exposes two strict worker-only POST boundaries: one claims
+the oldest available dispatch with a bounded lease, and one submits a
+claim-token-bound completion for an exact dispatch UUID. A dedicated bearer
+capability maps to one server-configured audit worker identity and is distinct
+from broker read, write, Agent Job dispatch, repository-head, and publication
+authority. Bodies are versioned, strict, size-bounded JSON; query parameters,
+identity drift, expired claims, and completion drift fail closed. Production
+dispatch remains fail-closed until the ACP worker transport is packaged and
+the command admission path enqueues runtime actions through this boundary.
 
 Run focused checks from the repository root:
 

@@ -31,10 +31,21 @@ import {
   serveSessionBrokerRead,
 } from "./session-broker-http.js";
 import {
+  InvalidSessionRuntimeRequestError,
+  serveSessionRuntime,
+} from "./session-broker-runtime-http.js";
+import {
+  ImmutableSessionRuntimeDispatchConflictError,
+  SessionRuntimeDispatchNotFoundError,
+  claimSessionRuntimeDispatch,
+  completeSessionRuntimeDispatch,
+} from "./session-broker-runtime-outbox.js";
+import {
   ImmutableSessionCommandConflictError,
   SessionCompareAndSwapError,
   SessionForkConflictError,
   SessionNotFoundError,
+  SessionRuntimeClaimConflictError,
 } from "./session-broker-repository.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -129,6 +140,28 @@ const sessionBrokerWriteToken = await secretFile(
 if (sessionBrokerWriteToken.length < 32 || sessionBrokerWriteToken.length > 4_096) {
   throw new Error("session broker write token length is invalid");
 }
+const sessionRuntimeWorkerToken = await secretFile(
+  "CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE",
+);
+if (
+  sessionRuntimeWorkerToken.length < 32 ||
+  sessionRuntimeWorkerToken.length > 4_096
+) {
+  throw new Error("session runtime worker token length is invalid");
+}
+if (
+  sessionRuntimeWorkerToken === sessionBrokerReadToken ||
+  sessionRuntimeWorkerToken === sessionBrokerWriteToken ||
+  sessionRuntimeWorkerToken === token ||
+  sessionRuntimeWorkerToken === repositoryHeadToken ||
+  sessionRuntimeWorkerToken === publicationToken
+) {
+  throw new Error("session runtime worker token must have a distinct authority");
+}
+const sessionRuntimeWorkerId = required("CODEOPS_SESSION_RUNTIME_WORKER_ID");
+if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(sessionRuntimeWorkerId)) {
+  throw new Error("session runtime worker identity is invalid");
+}
 const repositoryWriteToken = await secretFile(
   "CODEOPS_REPOSITORY_WRITE_TOKEN_FILE",
 );
@@ -160,6 +193,60 @@ const server = createServer((request, response) => {
   void (async () => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    try {
+      const sessionRuntime = await serveSessionRuntime({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        token: sessionRuntimeWorkerToken,
+        workerId: sessionRuntimeWorkerId,
+        readBody: () => readJson(request),
+        claim: async (claimInput) => {
+          const client = await database.connect();
+          try {
+            return await claimSessionRuntimeDispatch(client, claimInput);
+          } finally {
+            client.release();
+          }
+        },
+        complete: async (completionInput) => {
+          const client = await database.connect();
+          try {
+            return await completeSessionRuntimeDispatch(
+              client,
+              completionInput,
+            );
+          } finally {
+            client.release();
+          }
+        },
+      });
+      if (sessionRuntime !== null) {
+        json(response, sessionRuntime.status, sessionRuntime.body);
+        return;
+      }
+    } catch (error) {
+      const status =
+        error instanceof InvalidSessionRuntimeRequestError
+          ? 400
+          : error instanceof SessionRuntimeDispatchNotFoundError
+            ? 404
+            : error instanceof ImmutableSessionRuntimeDispatchConflictError ||
+                error instanceof SessionRuntimeClaimConflictError
+              ? 409
+              : 503;
+      json(response, status, {
+        status:
+          status === 400
+            ? "invalid-request"
+            : status === 404
+              ? "not-found"
+              : status === 409
+                ? "conflict"
+                : "unavailable",
+      });
       return;
     }
     try {

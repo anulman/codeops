@@ -118,6 +118,15 @@ separate externally created `codeops-repository-head-auth` Secret; the
 controller never receives `codeops-agent-dispatch-auth` and therefore cannot
 bypass Temporal to create an Agent Job directly.
 
+Agent Sessions runtime claims and completions use the separate externally
+created `codeops-session-runtime-worker-auth` Secret. The gateway binds that
+capability to the fixed `acp-worker:primary` audit identity; it is not shared
+with session read/write, Agent Job dispatch, repository-head, or publication
+routes. The current NetworkPolicy does not admit an ACP worker workload yet,
+so the endpoints remain unreachable until the reviewed transport package adds
+that exact caller. Do not reuse one of the existing endpoint tokens or broaden
+gateway ingress to activate the transport.
+
 The gateway also owns the bounded GitHub write boundary for candidate
 publication and public-preview native stacks. Candidate publication requires
 an exact current branch/head match and can only fast-forward the already-bound

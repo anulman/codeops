@@ -120,6 +120,10 @@ spec:
               value: /var/run/secrets/codeops-session-read/token
             - name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE
               value: /var/run/secrets/codeops-session-write/token
+            - name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE
+              value: /var/run/secrets/codeops-session-runtime-worker/token
+            - name: CODEOPS_SESSION_RUNTIME_WORKER_ID
+              value: acp-worker:primary
             - name: CODEOPS_HTTP_HOST
               value: 0.0.0.0
             - name: CODEOPS_HTTP_PORT
@@ -186,6 +190,9 @@ spec:
             - name: session-broker-write-auth
               mountPath: /var/run/secrets/codeops-session-write
               readOnly: true
+            - name: session-runtime-worker-auth
+              mountPath: /var/run/secrets/codeops-session-runtime-worker
+              readOnly: true
             - name: temp
               mountPath: /tmp
       volumes:
@@ -251,6 +258,13 @@ spec:
         - name: session-broker-write-auth
           secret:
             secretName: codeops-session-broker-write-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: session-runtime-worker-auth
+          secret:
+            secretName: codeops-session-runtime-worker-auth
             defaultMode: 256
             items:
               - key: token

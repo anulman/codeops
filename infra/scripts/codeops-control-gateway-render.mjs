@@ -82,6 +82,9 @@ export function renderControlGatewayManifest(template, input) {
   const sessionBrokerWriteAuth = deployment.spec.template.spec.volumes.find(
     (volume) => volume.name === "session-broker-write-auth",
   );
+  const sessionRuntimeWorkerAuth = deployment.spec.template.spec.volumes.find(
+    (volume) => volume.name === "session-runtime-worker-auth",
+  );
   const image = deployment.spec.template.spec.containers[0].image;
   if (!/@sha256:[0-9a-f]{64}$/.test(image)) {
     throw new Error("control gateway image must be immutable");
@@ -138,6 +141,22 @@ export function renderControlGatewayManifest(template, input) {
   ) {
     throw new Error("control gateway session write auth binding drifted");
   }
+  if (
+    sessionRuntimeWorkerAuth?.secret?.secretName !==
+      "codeops-session-runtime-worker-auth" ||
+    sessionRuntimeWorkerAuth.secret.items
+      ?.map((item) => `${item.key}:${item.path}`)
+      .join(",") !== "token:token" ||
+    [
+      sessionBrokerReadAuth.secret.secretName,
+      sessionBrokerWriteAuth.secret.secretName,
+      dispatchAuth.secret.secretName,
+      repositoryHeadAuth.secret.secretName,
+      "codeops-publication-auth",
+    ].includes(sessionRuntimeWorkerAuth.secret.secretName)
+  ) {
+    throw new Error("control gateway runtime worker auth binding drifted");
+  }
   const env = deployment.spec.template.spec.containers[0].env;
   if (
     env.find((item) => item.name === "CODEOPS_MODEL_PROXY_ORIGIN")?.value !==
@@ -172,7 +191,13 @@ export function renderControlGatewayManifest(template, input) {
     )?.value !== "/var/run/secrets/codeops-session-read/token" ||
     env.find(
       (item) => item.name === "CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE",
-    )?.value !== "/var/run/secrets/codeops-session-write/token"
+    )?.value !== "/var/run/secrets/codeops-session-write/token" ||
+    env.find(
+      (item) => item.name === "CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE",
+    )?.value !== "/var/run/secrets/codeops-session-runtime-worker/token" ||
+    env.find(
+      (item) => item.name === "CODEOPS_SESSION_RUNTIME_WORKER_ID",
+    )?.value !== "acp-worker:primary"
   ) {
     throw new Error("control gateway session secret paths drifted");
   }
