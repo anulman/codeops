@@ -79,6 +79,9 @@ export function renderControlGatewayManifest(template, input) {
   const sessionBrokerReadAuth = deployment.spec.template.spec.volumes.find(
     (volume) => volume.name === "session-broker-read-auth",
   );
+  const sessionBrokerWriteAuth = deployment.spec.template.spec.volumes.find(
+    (volume) => volume.name === "session-broker-write-auth",
+  );
   const image = deployment.spec.template.spec.containers[0].image;
   if (!/@sha256:[0-9a-f]{64}$/.test(image)) {
     throw new Error("control gateway image must be immutable");
@@ -121,6 +124,20 @@ export function renderControlGatewayManifest(template, input) {
   ) {
     throw new Error("control gateway session read auth binding drifted");
   }
+  if (
+    sessionBrokerWriteAuth?.secret?.secretName !==
+      "codeops-session-broker-write-auth" ||
+    sessionBrokerWriteAuth.secret.items
+      ?.map((item) => `${item.key}:${item.path}`)
+      .join(",") !== "token:token" ||
+    sessionBrokerWriteAuth.secret.secretName ===
+      sessionBrokerReadAuth.secret.secretName ||
+    sessionBrokerWriteAuth.secret.secretName === dispatchAuth.secret.secretName ||
+    sessionBrokerWriteAuth.secret.secretName ===
+      repositoryHeadAuth.secret.secretName
+  ) {
+    throw new Error("control gateway session write auth binding drifted");
+  }
   const env = deployment.spec.template.spec.containers[0].env;
   if (
     env.find((item) => item.name === "CODEOPS_MODEL_PROXY_ORIGIN")?.value !==
@@ -152,7 +169,10 @@ export function renderControlGatewayManifest(template, input) {
       "/var/run/secrets/codeops-session-broker/database-url" ||
     env.find(
       (item) => item.name === "CODEOPS_SESSION_BROKER_READ_TOKEN_FILE",
-    )?.value !== "/var/run/secrets/codeops-session-read/token"
+    )?.value !== "/var/run/secrets/codeops-session-read/token" ||
+    env.find(
+      (item) => item.name === "CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE",
+    )?.value !== "/var/run/secrets/codeops-session-write/token"
   ) {
     throw new Error("control gateway session secret paths drifted");
   }

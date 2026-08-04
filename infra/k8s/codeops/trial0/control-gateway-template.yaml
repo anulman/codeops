@@ -118,6 +118,8 @@ spec:
               value: /var/run/secrets/codeops-session-broker/database-url
             - name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE
               value: /var/run/secrets/codeops-session-read/token
+            - name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE
+              value: /var/run/secrets/codeops-session-write/token
             - name: CODEOPS_HTTP_HOST
               value: 0.0.0.0
             - name: CODEOPS_HTTP_PORT
@@ -181,6 +183,9 @@ spec:
             - name: session-broker-read-auth
               mountPath: /var/run/secrets/codeops-session-read
               readOnly: true
+            - name: session-broker-write-auth
+              mountPath: /var/run/secrets/codeops-session-write
+              readOnly: true
             - name: temp
               mountPath: /tmp
       volumes:
@@ -239,6 +244,13 @@ spec:
         - name: session-broker-read-auth
           secret:
             secretName: codeops-session-broker-read-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: session-broker-write-auth
+          secret:
+            secretName: codeops-session-broker-write-auth
             defaultMode: 256
             items:
               - key: token

@@ -22,9 +22,19 @@ import { publishCandidateRevision } from "./publication.js";
 import { createAgentJobRunner } from "./runtime.js";
 import { migrateSessionBroker } from "./session-broker-migration.js";
 import {
+  InvalidSessionCommandRequestError,
+  executeLocalSessionCommandTransaction,
+  serveSessionBrokerCommand,
+} from "./session-broker-command.js";
+import {
   InvalidSessionReadRequestError,
   serveSessionBrokerRead,
 } from "./session-broker-http.js";
+import {
+  ImmutableSessionCommandConflictError,
+  SessionCompareAndSwapError,
+  SessionNotFoundError,
+} from "./session-broker-repository.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -112,6 +122,12 @@ const sessionBrokerReadToken = await secretFile(
 if (sessionBrokerReadToken.length < 32 || sessionBrokerReadToken.length > 4_096) {
   throw new Error("session broker read token length is invalid");
 }
+const sessionBrokerWriteToken = await secretFile(
+  "CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE",
+);
+if (sessionBrokerWriteToken.length < 32 || sessionBrokerWriteToken.length > 4_096) {
+  throw new Error("session broker write token length is invalid");
+}
 const repositoryWriteToken = await secretFile(
   "CODEOPS_REPOSITORY_WRITE_TOKEN_FILE",
 );
@@ -143,6 +159,51 @@ const server = createServer((request, response) => {
   void (async () => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    try {
+      const sessionCommand = await serveSessionBrokerCommand({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        token: sessionBrokerWriteToken,
+        readBody: () => readJson(request),
+        execute: async (commandInput) => {
+          const client = await database.connect();
+          try {
+            return await executeLocalSessionCommandTransaction(
+              client,
+              commandInput,
+            );
+          } finally {
+            client.release();
+          }
+        },
+      });
+      if (sessionCommand !== null) {
+        json(response, sessionCommand.status, sessionCommand.body);
+        return;
+      }
+    } catch (error) {
+      const status =
+        error instanceof InvalidSessionCommandRequestError
+          ? 400
+          : error instanceof SessionNotFoundError
+            ? 404
+            : error instanceof ImmutableSessionCommandConflictError ||
+                error instanceof SessionCompareAndSwapError
+              ? 409
+              : 503;
+      json(response, status, {
+        status:
+          status === 400
+            ? "invalid-request"
+            : status === 404
+              ? "not-found"
+              : status === 409
+                ? "conflict"
+                : "unavailable",
+      });
       return;
     }
     try {

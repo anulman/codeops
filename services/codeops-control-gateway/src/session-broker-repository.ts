@@ -133,7 +133,13 @@ interface ExecuteSessionCommandInput {
   readonly mutate: (
     snapshot: SessionSnapshot,
     command: SessionCommand,
+    context: SessionMutationContext,
   ) => Promise<SessionMutation> | SessionMutation;
+}
+
+export interface SessionMutationContext {
+  readonly commandId: string;
+  readonly committedAt: string;
 }
 
 export interface SessionMutation {
@@ -183,12 +189,12 @@ function rejectedResult(
   command: SessionCommand,
   code: "generation_conflict" | "lease_conflict" | "capability_unavailable",
   reason: string,
-  now: () => Date,
-  commandId: () => string,
+  committedAt: string,
+  commandId: string,
 ): SessionCommandResult {
   return sessionCommandResultSchema.parse({
     version: SESSION_BROKER_VERSION.commandResult,
-    commandId: commandId(),
+    commandId,
     sessionId: command.sessionId,
     generation: command.generation,
     leaseId: command.leaseId,
@@ -196,7 +202,7 @@ function rejectedResult(
     type: command.type,
     eventCursor: snapshot.eventCursor,
     snapshot,
-    committedAt: now().toISOString(),
+    committedAt,
     disposition: "rejected",
     rejectionCode: code,
     reason,
@@ -286,8 +292,8 @@ export async function executeSessionCommandTransaction(
   if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(input.principalId)) {
     throw new Error("session command principal must be a bounded audit identity");
   }
-  const now = input.now ?? (() => new Date());
-  const commandId = input.commandId ?? randomUUID;
+  const committedAt = (input.now ?? (() => new Date()))().toISOString();
+  const commandId = (input.commandId ?? randomUUID)();
 
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
@@ -337,7 +343,7 @@ export async function executeSessionCommandTransaction(
         command,
         "generation_conflict",
         "The session generation changed before this command committed.",
-        now,
+        committedAt,
         commandId,
       );
     } else if (snapshot.lease?.leaseId !== command.leaseId) {
@@ -346,7 +352,7 @@ export async function executeSessionCommandTransaction(
         command,
         "lease_conflict",
         "The command does not hold the current session lease.",
-        now,
+        committedAt,
         commandId,
       );
     } else {
@@ -361,11 +367,14 @@ export async function executeSessionCommandTransaction(
           capability?.availability === "disabled"
             ? capability.reason
             : "The action is unavailable in this session state.",
-          now,
+          committedAt,
           commandId,
         );
       } else {
-        const mutation = await input.mutate(snapshot, command);
+        const mutation = await input.mutate(snapshot, command, {
+          commandId,
+          committedAt,
+        });
         result = sessionCommandResultSchema.parse(mutation.result);
         requireResultIdentity(result, command);
         if (result.disposition !== "committed") {
