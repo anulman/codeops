@@ -17,6 +17,27 @@ export {
   type CandidateCheckpoint,
   type CodingOutcome,
 } from "./adversarial-review.js";
+export {
+  SESSION_BROKER_VERSION,
+  sessionActionTypeSchema,
+  sessionCapabilitySchema,
+  sessionCheckpointSchema,
+  sessionCommandResultSchema,
+  sessionCommandSchema,
+  sessionEventSchema,
+  sessionLeaseSchema,
+  sessionSnapshotSchema,
+  sessionStateSchema,
+  type SessionActionType,
+  type SessionCapability,
+  type SessionCheckpoint,
+  type SessionCommand,
+  type SessionCommandResult,
+  type SessionEvent,
+  type SessionLease,
+  type SessionSnapshot,
+  type SessionState,
+} from "./session-broker.js";
 
 const VERSION = {
   workItem: "codeops.work-item/v1",

@@ -92,7 +92,7 @@ function SessionRow({ session }: Readonly<{ session: (typeof sessions)[number] }
           <span className={`size-1.5 shrink-0 rounded-full ${stateDot(session.state)}`} />
           <span className="truncate text-sm font-medium tracking-[-0.01em] text-white/88 group-hover:text-white">{session.role}</span>
         </div>
-        <div className="mt-1.5 truncate pl-3.5 text-xs text-white/36">{session.title} · <span className="font-mono">{session.sha}</span></div>
+        <div className="mt-1.5 truncate pl-3.5 text-xs text-white/36">{session.title} · <span className="font-mono">{session.sha.slice(0, 7)}</span></div>
       </div>
       <div><div className="text-xs text-white/65">{session.phase}</div><div className="mt-1 text-[11px] text-white/28">{session.elapsed}</div></div>
       <div><StatusBadge state={session.state} /></div>

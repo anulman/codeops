@@ -39,6 +39,13 @@ providers.
   Durable stack links also bind exact parent and child pull-request identities.
   These preview contracts describe execution topology only; they do not replace
   Plane dependency relations or grant merge authority.
+- Agent-session broker snapshots expose one explicit capability decision for
+  every operator action. Each non-deleted session retains a generation-bound
+  durable lease identity, and resume/fork capability requires a committed,
+  exact-session checkpoint. Every mutation carries the target generation,
+  lease ID, and idempotency key; command results return the committed snapshot
+  or a structured fail-closed rejection. Browser clients must not infer
+  capabilities or report optimistic success.
 - Every autonomous coding round must retain `codeops.coding-outcome/v1`
   evidence naming at least one exact passing test command. A separate critic
   then returns `codeops.adversarial-review/v1`, bound to that test evidence,
@@ -81,6 +88,23 @@ adversarial review does not replace executable acceptance. Non-blocking
 fast-follow recommendations are retained structurally but carry
 `planeMutationAuthorized: false`; ticket-required gaps and concrete
 security/privacy regressions can never be fast follows.
+
+## Agent session broker
+
+Import the browser-safe session boundary from
+`@renoconcierge/codeops-contracts/session-broker`. The subpath intentionally
+avoids pulling Node-only contract helpers into client bundles.
+
+The boundary covers session snapshots, active/released lease epochs, immutable
+workspace/ACP checkpoints, the complete prompt/permission/cancel/checkpoint/
+hibernate/resume/fork/archive/delete command surface, committed or replayed
+command results, and safe ordered events. Archive is reversible; delete is a
+separate command that requires an explicit destructive authorization ID.
+
+These schemas define the wire contract, not the storage implementation. The
+broker must still enforce lease compare-and-swap, persist command idempotency
+and checkpoints transactionally, audit the authenticated principal, and return
+only a committed result after durable state changes.
 
 ## QA Contract Researcher
 

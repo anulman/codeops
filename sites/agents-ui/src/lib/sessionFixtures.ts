@@ -1,3 +1,9 @@
+import type {
+  SessionActionType,
+  SessionCapability,
+  SessionSnapshot,
+} from "@renoconcierge/codeops-contracts/session-broker";
+
 export type SessionState = "running" | "attention" | "queued" | "completed" | "archived";
 
 export type SessionSummary = {
@@ -14,7 +20,97 @@ export type SessionSummary = {
   verdict: string;
   findings: number;
   parentRun: string;
+  broker: SessionSnapshot;
 };
+
+const allActions: readonly SessionActionType[] = [
+  "prompt",
+  "respond_permission",
+  "cancel",
+  "checkpoint",
+  "hibernate",
+  "resume",
+  "fork",
+  "archive",
+  "delete",
+];
+
+function capabilities(
+  enabled: readonly SessionActionType[],
+): readonly SessionCapability[] {
+  return allActions.map((action) =>
+    enabled.includes(action)
+      ? { action, availability: "enabled" as const }
+      : {
+          action,
+          availability: "disabled" as const,
+          reason: "The current broker state does not authorize this action.",
+        },
+  );
+}
+
+function brokerSnapshot(input: {
+  sessionId: string;
+  state: "queued" | "running" | "waiting_permission" | "completed" | "archived";
+  branch: string;
+  sha: string;
+  runId: string;
+  eventCursor: number;
+  enabled: readonly SessionActionType[];
+}): SessionSnapshot {
+  const generation = 3;
+  const leaseId = "11111111-1111-4111-8111-111111111111";
+  return {
+    version: "codeops.session-snapshot/v1",
+    sessionId: input.sessionId,
+    generation,
+    state: input.state,
+    identity: {
+      repository: "anulman/renoconcierge",
+      branch: input.branch,
+      baseSha: input.sha,
+      workflowId: input.runId,
+      runId: input.runId,
+      parentSessionId: null,
+      forkedAtCursor: null,
+    },
+    lease: input.state === "running" || input.state === "waiting_permission"
+      ? {
+          leaseId,
+          generation,
+          status: "active",
+          holderId: "codeops-agent-7c8d9",
+          acquiredAt: "2026-08-04T03:14:00.000Z",
+          expiresAt: "2026-08-04T03:24:00.000Z",
+        }
+      : {
+          leaseId,
+          generation,
+          status: "released",
+          releasedAt: "2026-08-04T03:20:11.000Z",
+        },
+    checkpoint: input.enabled.includes("resume") || input.enabled.includes("fork")
+      ? {
+          version: "codeops.session-checkpoint/v1",
+          checkpointId: "22222222-2222-4222-8222-222222222222",
+          sessionId: input.sessionId,
+          generation,
+          baseSha: input.sha,
+          patchDigest: `sha256:${"a".repeat(64)}`,
+          acpSessionId: `acp-${input.sessionId}`,
+          eventCursor: input.eventCursor,
+          evidenceReferences: [],
+          createdAt: "2026-08-04T03:20:11.000Z",
+        }
+      : null,
+    eventCursor: input.eventCursor,
+    capabilities: [...capabilities(input.enabled)],
+    updatedAt: "2026-08-04T03:20:11.000Z",
+  };
+}
+
+const schedulerSha = "04e48f7f6bf1a872530e288e5bf0f5a0fb479aa8";
+const fixtureSha = "bbea48444317465fbe8d731d5cdf648277540517";
 
 export const sessions: readonly SessionSummary[] = [
   {
@@ -23,7 +119,7 @@ export const sessions: readonly SessionSummary[] = [
     role: "Correctness reviewer",
     repo: "anulman/renoconcierge",
     branch: "feat/codeops-contracts-ci",
-    sha: "04e48f7",
+    sha: schedulerSha,
     state: "running",
     phase: "Running controller tests",
     updated: "12s ago",
@@ -31,6 +127,7 @@ export const sessions: readonly SessionSummary[] = [
     verdict: "Pending",
     findings: 2,
     parentRun: "run_155_04e48f7",
+    broker: brokerSnapshot({ sessionId: "ses_91a4", state: "running", branch: "feat/codeops-contracts-ci", sha: schedulerSha, runId: "run-155-04e48f7", eventCursor: 184, enabled: ["prompt", "cancel", "checkpoint", "hibernate"] }),
   },
   {
     id: "ses_f840",
@@ -38,7 +135,7 @@ export const sessions: readonly SessionSummary[] = [
     role: "Security reviewer",
     repo: "anulman/renoconcierge",
     branch: "feat/codeops-contracts-ci",
-    sha: "04e48f7",
+    sha: schedulerSha,
     state: "attention",
     phase: "Waiting for approval",
     updated: "1m ago",
@@ -46,6 +143,7 @@ export const sessions: readonly SessionSummary[] = [
     verdict: "Blocked",
     findings: 1,
     parentRun: "run_155_04e48f7",
+    broker: brokerSnapshot({ sessionId: "ses_f840", state: "waiting_permission", branch: "feat/codeops-contracts-ci", sha: schedulerSha, runId: "run-155-security", eventCursor: 92, enabled: ["respond_permission", "cancel", "checkpoint", "hibernate"] }),
   },
   {
     id: "ses_6cd2",
@@ -53,7 +151,7 @@ export const sessions: readonly SessionSummary[] = [
     role: "Product reviewer",
     repo: "anulman/renoconcierge",
     branch: "feat/codeops-contracts-ci",
-    sha: "04e48f7",
+    sha: schedulerSha,
     state: "completed",
     phase: "Review complete",
     updated: "3m ago",
@@ -61,6 +159,7 @@ export const sessions: readonly SessionSummary[] = [
     verdict: "Passed",
     findings: 0,
     parentRun: "run_155_04e48f7",
+    broker: brokerSnapshot({ sessionId: "ses_6cd2", state: "completed", branch: "feat/codeops-contracts-ci", sha: schedulerSha, runId: "run-155-product", eventCursor: 137, enabled: ["fork", "archive"] }),
   },
   {
     id: "ses_b22e",
@@ -68,7 +167,7 @@ export const sessions: readonly SessionSummary[] = [
     role: "Synthesis",
     repo: "anulman/renoconcierge",
     branch: "feat/codeops-contracts-ci",
-    sha: "04e48f7",
+    sha: schedulerSha,
     state: "queued",
     phase: "Waiting for reviewers",
     updated: "4m ago",
@@ -76,6 +175,7 @@ export const sessions: readonly SessionSummary[] = [
     verdict: "Pending",
     findings: 0,
     parentRun: "run_155_04e48f7",
+    broker: brokerSnapshot({ sessionId: "ses_b22e", state: "queued", branch: "feat/codeops-contracts-ci", sha: schedulerSha, runId: "run-155-synthesis", eventCursor: 1, enabled: ["cancel"] }),
   },
   {
     id: "ses_31bc",
@@ -83,7 +183,7 @@ export const sessions: readonly SessionSummary[] = [
     role: "Coding agent",
     repo: "anulman/renoconcierge",
     branch: "feat/qanbrdauth-routing-fixtures",
-    sha: "bbea484",
+    sha: fixtureSha,
     state: "archived",
     phase: "Evidence retained",
     updated: "6d ago",
@@ -91,6 +191,7 @@ export const sessions: readonly SessionSummary[] = [
     verdict: "Passed",
     findings: 0,
     parentRun: "run_qanbrdauth_2",
+    broker: brokerSnapshot({ sessionId: "ses_31bc", state: "archived", branch: "feat/qanbrdauth-routing-fixtures", sha: fixtureSha, runId: "run-qanbrdauth-2", eventCursor: 311, enabled: ["resume", "fork", "delete"] }),
   },
 ];
 

@@ -2,6 +2,10 @@ import { createFileRoute, Link } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { selectedSession, sessions, timeline } from "@/lib/sessionFixtures";
+import type {
+  SessionActionType,
+  SessionCapability,
+} from "@renoconcierge/codeops-contracts/session-broker";
 
 export const Route = createFileRoute("/sessions/$sessionId")({
   component: SessionCockpit,
@@ -19,14 +23,12 @@ function SessionCockpit() {
             <Link to="/" className="mb-4 inline-flex items-center gap-2 text-xs text-white/35 transition hover:text-white/70"><span>←</span> All sessions</Link>
             <div className="flex flex-wrap items-center gap-3"><StatusBadge state={session.state} /><span className="font-mono text-[11px] text-white/28">{session.id}</span></div>
             <h1 className="mt-3 text-2xl font-medium tracking-[-0.035em] text-white sm:text-3xl">{session.role}</h1>
-            <p className="mt-2 text-sm text-white/42">{session.title} · <span className="font-mono">{session.sha}</span></p>
+            <p className="mt-2 text-sm text-white/42">{session.title} · <span className="font-mono">{session.sha.slice(0, 7)}</span></p>
           </div>
-          <div className="flex flex-wrap gap-2">
-            <ActionButton label="Prompt" active />
-            <ActionButton label="Approve / deny" />
-            <ActionButton label="Cancel" danger />
-            <ActionButton label="Resume" disabled />
-            <ActionButton label="Fork" disabled />
+          <div className="grid w-full grid-cols-2 gap-2 sm:grid-cols-3 xl:w-auto xl:grid-cols-5" aria-label="Session actions">
+            {session.broker.capabilities.map((capability) => (
+              <ActionButton key={capability.action} capability={capability} />
+            ))}
           </div>
         </div>
 
@@ -34,7 +36,7 @@ function SessionCockpit() {
           <section className="min-w-0 rounded-xl border border-white/8 bg-[#0c0f13]">
             <div className="sticky top-16 z-20 flex flex-col gap-3 border-b border-white/8 bg-[#0c0f13]/95 px-4 py-4 backdrop-blur-md sm:flex-row sm:items-center sm:justify-between sm:px-6">
               <div><div className="text-[10px] font-semibold uppercase tracking-[0.16em] text-white/30">Now</div><div className="mt-1 flex items-center gap-2 text-sm text-white/80"><span className="size-1.5 animate-pulse rounded-full bg-[#c8ff5a]" />{session.phase}</div></div>
-              <div className="font-mono text-[11px] text-white/30">event cursor · 000184</div>
+              <div className="font-mono text-[11px] text-white/30">event cursor · {String(session.broker.eventCursor).padStart(6, "0")}</div>
             </div>
             <div className="px-4 py-3 sm:px-6">
               {timeline.map((event, index) => (
@@ -48,7 +50,7 @@ function SessionCockpit() {
           </section>
 
           <aside className="space-y-4">
-            <Panel title="Execution identity"><Fact label="Repository" value={session.repo} /><Fact label="Branch" value={session.branch} /><Fact label="Commit" value={session.sha} mono /><Fact label="Worker" value="codeops-agent-7c8d9" mono /><Fact label="Generation" value="3" /><Fact label="Model" value="gpt-5.6-sol" /></Panel>
+            <Panel title="Execution identity"><Fact label="Repository" value={session.repo} /><Fact label="Branch" value={session.branch} /><Fact label="Commit" value={session.sha} mono /><Fact label="Worker" value={session.broker.lease?.status === "active" ? session.broker.lease.holderId : "No active worker"} mono /><Fact label="Generation" value={String(session.broker.generation)} /><Fact label="Lease" value={session.broker.lease?.leaseId.slice(0, 8) ?? "Deleted"} mono /><Fact label="Model" value="gpt-5.6-sol" /></Panel>
             <Panel title="Evidence"><EvidenceRow label="Changed files" value="3" /><EvidenceRow label="Tests" value="61 / 92 passing" tone="live" /><EvidenceRow label="Findings" value={`${session.findings} open`} tone={session.findings > 0 ? "warn" : "quiet"} /><EvidenceRow label="Patch" value="sha256:a4d9…2c10" mono /></Panel>
             <Panel title="Ensemble"><EnsembleRow role="Correctness" state="running" /><EnsembleRow role="Security" state="attention" /><EnsembleRow role="Product" state="completed" /><EnsembleRow role="Synthesis" state="queued" /></Panel>
             <details className="rounded-xl border border-white/8 bg-[#0c0f13] px-4 py-3"><summary className="cursor-pointer list-none text-[11px] font-semibold uppercase tracking-[0.14em] text-white/38">Protocol diagnostics <span className="float-right text-white/22">＋</span></summary><pre className="mt-4 overflow-x-auto border-t border-white/6 pt-4 font-mono text-[10px] leading-5 text-white/32">session/update{`\n`}broker: ses_91a4{`\n`}backend: th_8f20…{`\n`}sequence: 184{`\n`}transport: sse</pre></details>
@@ -59,9 +61,25 @@ function SessionCockpit() {
   );
 }
 
-function ActionButton({ label, active = false, danger = false, disabled = false }: Readonly<{ label: string; active?: boolean; danger?: boolean; disabled?: boolean }>) {
+const actionLabels: Record<SessionActionType, string> = {
+  prompt: "Prompt",
+  respond_permission: "Approve / deny",
+  cancel: "Cancel",
+  checkpoint: "Checkpoint",
+  hibernate: "Hibernate",
+  resume: "Resume",
+  fork: "Fork",
+  archive: "Archive",
+  delete: "Delete",
+};
+
+function ActionButton({ capability }: Readonly<{ capability: SessionCapability }>) {
+  const disabled = capability.availability === "disabled";
+  const danger = capability.action === "cancel" || capability.action === "delete";
+  const active = capability.action === "prompt" && !disabled;
   const style = disabled ? "cursor-not-allowed border-white/6 text-white/18" : active ? "border-[#c8ff5a]/30 bg-[#c8ff5a] text-[#151a0c] hover:bg-[#d5ff80]" : danger ? "border-[#ff9f6e]/20 text-[#ffb18b] hover:bg-[#ff9f6e]/8" : "border-white/10 text-white/55 hover:bg-white/5 hover:text-white/80";
-  return <button type="button" disabled={disabled} className={`rounded-lg border px-3 py-2 text-xs font-semibold transition ${style}`}>{label}</button>;
+  const label = actionLabels[capability.action];
+  return <button type="button" disabled={disabled} title={disabled ? capability.reason : undefined} aria-label={disabled ? `${label} unavailable: ${capability.reason}` : label} className={`min-h-10 rounded-lg border px-3 py-2 text-xs font-semibold transition ${style}`}>{label}</button>;
 }
 
 function Panel({ title, children }: Readonly<{ title: string; children: React.ReactNode }>) { return <section className="rounded-xl border border-white/8 bg-[#0c0f13] p-4"><h2 className="mb-4 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/30">{title}</h2><div className="space-y-3">{children}</div></section>; }

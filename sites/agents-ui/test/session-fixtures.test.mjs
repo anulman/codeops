@@ -11,7 +11,9 @@ test("fleet and cockpit routes retain the v1 operator contract", async () => {
   for (const label of ["Active", "Needs attention", "Archived", "Search sessions"]) {
     assert.match(fleet, new RegExp(label));
   }
-  for (const label of ["Prompt", "Approve / deny", "Cancel", "Resume", "Fork", "Protocol diagnostics"]) {
+  for (const label of ["Prompt", "Approve / deny", "Cancel", "Checkpoint", "Hibernate", "Resume", "Fork", "Archive", "Delete", "Protocol diagnostics"]) {
     assert.match(cockpit, new RegExp(label));
   }
+  assert.match(cockpit, /grid-cols-2/);
+  assert.match(cockpit, /broker\.capabilities\.map/);
 });

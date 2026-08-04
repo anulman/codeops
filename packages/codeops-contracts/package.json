@@ -15,6 +15,10 @@
     "./adversarial-review": {
       "types": "./dist/adversarial-review.d.ts",
       "default": "./dist/adversarial-review.js"
+    },
+    "./session-broker": {
+      "types": "./dist/session-broker.d.ts",
+      "default": "./dist/session-broker.js"
     }
   },
   "scripts": {

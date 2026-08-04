@@ -16,6 +16,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@renoconcierge/codeops-contracts": "file:../../packages/codeops-contracts",
     "@tanstack/react-router": "^1.169.2",
     "@tanstack/react-start": "^1.167.65",
     "@vitejs/plugin-react": "^6.0.1",
