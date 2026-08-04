@@ -1,0 +1,19 @@
+{
+  "name": "@renoconcierge/codeops-session-runtime-worker",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "tsc -p tsconfig.build.json && node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@renoconcierge/codeops-contracts": "file:../../packages/codeops-contracts",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "25.7.0",
+    "typescript": "6.0.3"
+  }
+}

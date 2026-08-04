@@ -11,6 +11,7 @@ on:
       - "services/codeops-plane-controller/**"
       - "services/codeops-control-gateway/**"
       - "services/codeops-model-proxy/**"
+      - "services/codeops-session-runtime-worker/**"
       - "services/codeops-agent/**"
       - "AGENTS.md"
       - "docs/agent-context/**"
@@ -60,6 +61,7 @@ on:
       - "services/codeops-plane-controller/**"
       - "services/codeops-control-gateway/**"
       - "services/codeops-model-proxy/**"
+      - "services/codeops-session-runtime-worker/**"
       - "services/codeops-agent/**"
       - "AGENTS.md"
       - "docs/agent-context/**"
@@ -169,6 +171,12 @@ jobs:
           npm ci --ignore-scripts --prefix services/codeops-model-proxy
           npm audit --omit=dev --audit-level=high --prefix services/codeops-model-proxy
           npm test --prefix services/codeops-model-proxy
+
+      - name: Test and typecheck Agent Sessions runtime transport
+        run: |
+          npm ci --workspaces=false --prefix services/codeops-session-runtime-worker
+          npm test --prefix services/codeops-session-runtime-worker
+          npm run typecheck --prefix services/codeops-session-runtime-worker
 
       - name: Verify pinned ACP agent adapter
         run: |

@@ -1,29 +1,17 @@
 import type { IncomingHttpHeaders } from "node:http";
 import { z } from "zod";
-import type { SessionCommandResult } from "@renoconcierge/codeops-contracts";
+import {
+  sessionRuntimeClaimRequestSchema,
+  sessionRuntimeCompletionRequestSchema,
+  type SessionCommandResult,
+} from "@renoconcierge/codeops-contracts";
 import { authenticateBearer } from "./core.js";
 import type { SessionRuntimeDispatchClaim } from "./session-broker-runtime-outbox.js";
-import { sessionRuntimeCompletionSchema } from "./session-broker-runtime.js";
 
 const dispatchId = z.string().uuid();
 const claimPath = "/v1/session-runtime/claims";
 const completionPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/completions$/i;
-
-const claimRequestSchema = z
-  .object({
-    version: z.literal("codeops.session-runtime-claim-request/v1"),
-    leaseMs: z.number().int().min(1_000).max(15 * 60_000),
-  })
-  .strict();
-
-const completionRequestSchema = z
-  .object({
-    version: z.literal("codeops.session-runtime-completion-request/v1"),
-    claimToken: z.string().uuid(),
-    completion: sessionRuntimeCompletionSchema,
-  })
-  .strict();
 
 function header(
   headers: IncomingHttpHeaders,
@@ -98,7 +86,7 @@ export async function serveSessionRuntime(input: {
   requireJson(input.headers);
 
   if (isClaim) {
-    const request = claimRequestSchema.safeParse(
+    const request = sessionRuntimeClaimRequestSchema.safeParse(
       await readRequestBody(input.readBody),
     );
     if (!request.success) {
@@ -119,7 +107,7 @@ export async function serveSessionRuntime(input: {
     };
   }
 
-  const request = completionRequestSchema.safeParse(
+  const request = sessionRuntimeCompletionRequestSchema.safeParse(
     await readRequestBody(input.readBody),
   );
   if (!request.success) {

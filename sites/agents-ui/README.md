@@ -47,9 +47,14 @@ claim-token-bound completion for an exact dispatch UUID. A dedicated bearer
 capability maps to one server-configured audit worker identity and is distinct
 from broker read, write, Agent Job dispatch, repository-head, and publication
 authority. Bodies are versioned, strict, size-bounded JSON; query parameters,
-identity drift, expired claims, and completion drift fail closed. Production
-dispatch remains fail-closed until the ACP worker transport is packaged and
-the command admission path enqueues runtime actions through this boundary.
+identity drift, expired claims, and completion drift fail closed. The separate
+runtime-worker package now consumes the same shared schemas and provides a
+strict, size-bounded, redirect-rejecting, lease-aware HTTP client. It claims at
+most one dispatch, never invokes an executor for an empty claim, and rejects a
+drifting or expired completion before it crosses the network. Production
+dispatch remains fail-closed until the ACP executor/workspace lifecycle and
+exact Kubernetes caller are packaged and the command admission path enqueues
+runtime actions through this boundary.
 
 Run focused checks from the repository root:
 

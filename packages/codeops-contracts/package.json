@@ -19,6 +19,10 @@
     "./session-broker": {
       "types": "./dist/session-broker.d.ts",
       "default": "./dist/session-broker.js"
+    },
+    "./session-runtime": {
+      "types": "./dist/session-runtime.d.ts",
+      "default": "./dist/session-runtime.js"
     }
   },
   "scripts": {

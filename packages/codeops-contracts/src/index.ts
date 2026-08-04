@@ -39,6 +39,21 @@ export {
   type SessionSnapshot,
   type SessionState,
 } from "./session-broker.js";
+export {
+  sessionRuntimeClaimRequestSchema,
+  sessionRuntimeClaimResponseSchema,
+  sessionRuntimeCommandSchema,
+  sessionRuntimeCommandTypes,
+  sessionRuntimeCompletionRequestSchema,
+  sessionRuntimeCompletionResponseSchema,
+  sessionRuntimeCompletionSchema,
+  sessionRuntimeDispatchClaimSchema,
+  sessionRuntimeDispatchSchema,
+  type SessionRuntimeCommand,
+  type SessionRuntimeCompletion,
+  type SessionRuntimeDispatch,
+  type SessionRuntimeDispatchClaim,
+} from "./session-runtime.js";
 
 const VERSION = {
   workItem: "codeops.work-item/v1",

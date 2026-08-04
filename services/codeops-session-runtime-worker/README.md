@@ -1,0 +1,22 @@
+# CodeOps Session Runtime Worker
+
+This standalone package owns the worker-side HTTP transport for Agent Sessions
+runtime dispatches. It validates the same shared wire schemas as the trusted
+control gateway, claims at most one immutable dispatch, binds a completion to
+the exact dispatch and live claim lease, and submits it through the dedicated
+worker-only bearer boundary.
+
+The package deliberately does not contain an ACP executor or a runnable polling
+entrypoint yet. Runtime command admission remains fail-closed until the ACP
+session/workspace lifecycle and the exact Kubernetes caller are packaged and
+reviewed. This prevents a transport-only image from claiming work it cannot
+safely complete.
+
+Focused checks:
+
+```sh
+npm ci --workspaces=false --prefix services/codeops-session-runtime-worker
+npm run build --prefix packages/codeops-contracts
+npm test --prefix services/codeops-session-runtime-worker
+npm run typecheck --prefix services/codeops-session-runtime-worker
+```
