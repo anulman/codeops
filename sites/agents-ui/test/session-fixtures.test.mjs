@@ -1,0 +1,17 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { readFile } from "node:fs/promises";
+
+test("fleet and cockpit routes retain the v1 operator contract", async () => {
+  const [fleet, cockpit] = await Promise.all([
+    readFile(new URL("../src/routes/index.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/sessions.$sessionId.tsx", import.meta.url), "utf8"),
+  ]);
+
+  for (const label of ["Active", "Needs attention", "Archived", "Search sessions"]) {
+    assert.match(fleet, new RegExp(label));
+  }
+  for (const label of ["Prompt", "Approve / deny", "Cancel", "Resume", "Fork", "Protocol diagnostics"]) {
+    assert.match(cockpit, new RegExp(label));
+  }
+});
