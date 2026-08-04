@@ -76,6 +76,9 @@ export function renderControlGatewayManifest(template, input) {
   const sessionBrokerDatabase = deployment.spec.template.spec.volumes.find(
     (volume) => volume.name === "session-broker-database",
   );
+  const sessionBrokerReadAuth = deployment.spec.template.spec.volumes.find(
+    (volume) => volume.name === "session-broker-read-auth",
+  );
   const image = deployment.spec.template.spec.containers[0].image;
   if (!/@sha256:[0-9a-f]{64}$/.test(image)) {
     throw new Error("control gateway image must be immutable");
@@ -105,6 +108,19 @@ export function renderControlGatewayManifest(template, input) {
   ) {
     throw new Error("control gateway session database binding drifted");
   }
+  if (
+    sessionBrokerReadAuth?.secret?.secretName !==
+      "codeops-session-broker-read-auth" ||
+    sessionBrokerReadAuth.secret.items
+      ?.map((item) => `${item.key}:${item.path}`)
+      .join(",") !== "token:token" ||
+    sessionBrokerReadAuth.secret.secretName ===
+      dispatchAuth.secret.secretName ||
+    sessionBrokerReadAuth.secret.secretName ===
+      repositoryHeadAuth.secret.secretName
+  ) {
+    throw new Error("control gateway session read auth binding drifted");
+  }
   const env = deployment.spec.template.spec.containers[0].env;
   if (
     env.find((item) => item.name === "CODEOPS_MODEL_PROXY_ORIGIN")?.value !==
@@ -133,9 +149,12 @@ export function renderControlGatewayManifest(template, input) {
   }
   if (
     env.find((item) => item.name === "CODEOPS_DATABASE_URL_FILE")?.value !==
-    "/var/run/secrets/codeops-session-broker/database-url"
+      "/var/run/secrets/codeops-session-broker/database-url" ||
+    env.find(
+      (item) => item.name === "CODEOPS_SESSION_BROKER_READ_TOKEN_FILE",
+    )?.value !== "/var/run/secrets/codeops-session-read/token"
   ) {
-    throw new Error("control gateway session database path drifted");
+    throw new Error("control gateway session secret paths drifted");
   }
   const networkPolicy = resources.find(
     (resource) => resource.kind === "NetworkPolicy",

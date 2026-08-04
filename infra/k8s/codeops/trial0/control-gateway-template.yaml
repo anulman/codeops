@@ -116,6 +116,8 @@ spec:
               value: /var/lib/codeops
             - name: CODEOPS_DATABASE_URL_FILE
               value: /var/run/secrets/codeops-session-broker/database-url
+            - name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE
+              value: /var/run/secrets/codeops-session-read/token
             - name: CODEOPS_HTTP_HOST
               value: 0.0.0.0
             - name: CODEOPS_HTTP_PORT
@@ -176,6 +178,9 @@ spec:
             - name: session-broker-database
               mountPath: /var/run/secrets/codeops-session-broker
               readOnly: true
+            - name: session-broker-read-auth
+              mountPath: /var/run/secrets/codeops-session-read
+              readOnly: true
             - name: temp
               mountPath: /tmp
       volumes:
@@ -231,6 +236,13 @@ spec:
             items:
               - key: database-url
                 path: database-url
+        - name: session-broker-read-auth
+          secret:
+            secretName: codeops-session-broker-read-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
         - name: temp
           emptyDir:
             sizeLimit: 64Mi

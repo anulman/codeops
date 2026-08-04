@@ -100,6 +100,28 @@ test("renders one namespace-scoped authenticated gateway", () => {
     ).value,
     "/var/run/secrets/codeops-session-broker/database-url",
   );
+  const readAuthVolume = deployment.spec.template.spec.volumes.find(
+    (volume) => volume.name === "session-broker-read-auth",
+  );
+  assert.equal(
+    readAuthVolume.secret.secretName,
+    "codeops-session-broker-read-auth",
+  );
+  assert.deepEqual(readAuthVolume.secret.items, [
+    { key: "token", path: "token" },
+  ]);
+  assert.equal(
+    deployment.spec.template.spec.containers[0].env.find(
+      (entry) => entry.name === "CODEOPS_SESSION_BROKER_READ_TOKEN_FILE",
+    ).value,
+    "/var/run/secrets/codeops-session-read/token",
+  );
+  assert.notEqual(
+    readAuthVolume.secret.secretName,
+    deployment.spec.template.spec.volumes.find(
+      (volume) => volume.name === "dispatch-auth",
+    ).secret.secretName,
+  );
 });
 
 test("grants only fixed run-resource and log operations", () => {
@@ -171,6 +193,15 @@ test("fails closed on mutable images, broad API CIDRs, or template drift", () =>
       template.replace(
         "secretName: codeops-session-broker-database",
         "secretName: renoconcierge-postgres",
+      ),
+      input,
+    ),
+  );
+  assert.throws(() =>
+    renderControlGatewayManifest(
+      template.replace(
+        "secretName: codeops-session-broker-read-auth",
+        "secretName: codeops-agent-dispatch-auth",
       ),
       input,
     ),

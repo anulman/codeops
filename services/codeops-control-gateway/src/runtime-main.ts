@@ -21,6 +21,10 @@ import { loadInClusterKubernetesClient } from "./kubernetes.js";
 import { publishCandidateRevision } from "./publication.js";
 import { createAgentJobRunner } from "./runtime.js";
 import { migrateSessionBroker } from "./session-broker-migration.js";
+import {
+  InvalidSessionReadRequestError,
+  serveSessionBrokerRead,
+} from "./session-broker-http.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -102,6 +106,12 @@ const publicationToken = await secretFile("CODEOPS_PUBLICATION_TOKEN_FILE");
 if (publicationToken.length < 32 || publicationToken.length > 4_096) {
   throw new Error("publication token length is invalid");
 }
+const sessionBrokerReadToken = await secretFile(
+  "CODEOPS_SESSION_BROKER_READ_TOKEN_FILE",
+);
+if (sessionBrokerReadToken.length < 32 || sessionBrokerReadToken.length > 4_096) {
+  throw new Error("session broker read token length is invalid");
+}
 const repositoryWriteToken = await secretFile(
   "CODEOPS_REPOSITORY_WRITE_TOKEN_FILE",
 );
@@ -133,6 +143,27 @@ const server = createServer((request, response) => {
   void (async () => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    try {
+      const sessionRead = await serveSessionBrokerRead({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        token: sessionBrokerReadToken,
+        database,
+      });
+      if (sessionRead !== null) {
+        json(response, sessionRead.status, sessionRead.body);
+        return;
+      }
+    } catch (error) {
+      json(response, error instanceof InvalidSessionReadRequestError ? 400 : 503, {
+        status:
+          error instanceof InvalidSessionReadRequestError
+            ? "invalid-request"
+            : "unavailable",
+      });
       return;
     }
     if (
