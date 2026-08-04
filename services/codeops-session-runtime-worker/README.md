@@ -6,6 +6,12 @@ control gateway, claims at most one immutable dispatch, binds a completion to
 the exact dispatch and live claim lease, and submits it through the dedicated
 worker-only bearer boundary.
 
+The transport, not the ACP executor, owns the completion envelope. An executor
+may return only the claimed command type and its command-specific checkpoint,
+lease, or fork material. Dispatch, session, generation, lease, idempotency,
+event-cursor, and completion-time identity are copied from the validated live
+claim, so a future ACP adapter cannot substitute broker-owned identity.
+
 The package deliberately does not contain an ACP executor or a runnable polling
 entrypoint yet. Runtime command admission remains fail-closed until the ACP
 session/workspace lifecycle and the exact Kubernetes caller are packaged and

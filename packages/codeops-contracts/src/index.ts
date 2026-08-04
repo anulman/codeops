@@ -42,6 +42,7 @@ export {
 export {
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeClaimResponseSchema,
+  sessionRuntimeCheckpointMaterialSchema,
   sessionRuntimeCommandSchema,
   sessionRuntimeCommandTypes,
   sessionRuntimeCompletionRequestSchema,
@@ -49,6 +50,8 @@ export {
   sessionRuntimeCompletionSchema,
   sessionRuntimeDispatchClaimSchema,
   sessionRuntimeDispatchSchema,
+  sessionRuntimeForkMaterialSchema,
+  sessionRuntimeLeaseMaterialSchema,
   type SessionRuntimeCommand,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,

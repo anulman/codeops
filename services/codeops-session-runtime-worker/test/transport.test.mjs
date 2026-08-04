@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  buildSessionRuntimeCompletion,
   SessionRuntimeTransport,
   SessionRuntimeTransportError,
 } from "../dist/transport.js";
@@ -125,7 +126,7 @@ test("claims and completes one exact dispatch through the worker-only boundary",
   const result = await transport.runOne({
     leaseMs: 300_000,
     now: () => new Date("2026-08-04T20:03:00.000Z"),
-    execute: async () => completion(),
+    execute: async () => ({ type: "prompt" }),
   });
   assert.equal(result.disposition, "committed");
   assert.equal(requests.length, 2);
@@ -163,30 +164,83 @@ test("returns null without invoking the executor when no dispatch is available",
   assert.equal(executed, false);
 });
 
-test("rejects identity drift and expired claims before completion crosses the network", async () => {
-  for (const [value, now] of [
-    [completion({ dispatchId: "77777777-7777-4777-8777-777777777777" }), "2026-08-04T20:03:00.000Z"],
-    [completion(), "2026-08-04T20:05:00.000Z"],
-  ]) {
-    let calls = 0;
-    const transport = new SessionRuntimeTransport({
-      gatewayOrigin: "https://gateway.example.test",
-      token,
-      fetch: async () => {
-        calls += 1;
-        return json({
-          version: "codeops.session-runtime-claim-response/v1",
-          claim: claim(),
-        });
+test("builds the completion envelope from the claim instead of trusting the executor", () => {
+  assert.deepEqual(
+    buildSessionRuntimeCompletion(
+      claim(),
+      { type: "prompt" },
+      new Date("2026-08-04T20:03:00.000Z"),
+    ),
+    completion(),
+  );
+  assert.throws(
+    () => buildSessionRuntimeCompletion(
+      claim(),
+      { type: "prompt", dispatchId: "77777777-7777-4777-8777-777777777777" },
+      new Date("2026-08-04T20:03:00.000Z"),
+    ),
+  );
+  assert.throws(
+    () => buildSessionRuntimeCompletion(
+      claim(),
+      {
+        type: "checkpoint",
+        material: {
+          checkpointId: "77777777-7777-4777-8777-777777777777",
+          patchDigest: `sha256:${"a".repeat(64)}`,
+          acpSessionId: "acp-7",
+          evidenceReferences: [],
+        },
       },
-    });
-    await assert.rejects(transport.runOne({
-      leaseMs: 300_000,
-      now: () => new Date(now),
-      execute: async () => value,
-    }), SessionRuntimeTransportError);
-    assert.equal(calls, 1);
-  }
+      new Date("2026-08-04T20:03:00.000Z"),
+    ),
+    SessionRuntimeTransportError,
+  );
+});
+
+test("rejects identity drift and expired claims before completion crosses the network", async () => {
+  let completeCalls = 0;
+  const direct = new SessionRuntimeTransport({
+    gatewayOrigin: "https://gateway.example.test",
+    token,
+    fetch: async () => {
+      completeCalls += 1;
+      return json({});
+    },
+  });
+  await assert.rejects(
+    direct.complete(
+      claim(),
+      completion({ dispatchId: "77777777-7777-4777-8777-777777777777" }),
+      () => new Date("2026-08-04T20:03:00.000Z"),
+    ),
+    SessionRuntimeTransportError,
+  );
+  assert.equal(completeCalls, 0);
+
+  let claimCalls = 0;
+  let executed = false;
+  const expired = new SessionRuntimeTransport({
+    gatewayOrigin: "https://gateway.example.test",
+    token,
+    fetch: async () => {
+      claimCalls += 1;
+      return json({
+        version: "codeops.session-runtime-claim-response/v1",
+        claim: claim(),
+      });
+    },
+  });
+  await assert.rejects(expired.runOne({
+    leaseMs: 300_000,
+    now: () => new Date("2026-08-04T20:05:00.000Z"),
+    execute: async () => {
+      executed = true;
+      return { type: "prompt" };
+    },
+  }), SessionRuntimeTransportError);
+  assert.equal(claimCalls, 1);
+  assert.equal(executed, false);
 });
 
 test("fails closed on ambiguous origins, credentials, response types, and body bounds", async () => {

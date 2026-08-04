@@ -96,7 +96,7 @@ const completionBase = z.object({
   completedAt: isoDateTime,
 });
 
-const checkpointMaterial = z
+export const sessionRuntimeCheckpointMaterialSchema = z
   .object({
     checkpointId: uuid,
     patchDigest: sha256Digest,
@@ -112,7 +112,7 @@ const leaseFields = {
   expiresAt: isoDateTime,
 } as const;
 
-const leaseMaterial = z
+export const sessionRuntimeLeaseMaterialSchema = z
   .object(leaseFields)
   .strict()
   .refine(
@@ -120,7 +120,7 @@ const leaseMaterial = z
     "runtime lease must expire after it is acquired",
   );
 
-const forkMaterial = z
+export const sessionRuntimeForkMaterialSchema = z
   .object({
     ...leaseFields,
     sessionId: identifier,
@@ -137,16 +137,28 @@ const forkMaterial = z
 export const sessionRuntimeCompletionSchema = z.discriminatedUnion("type", [
   completionBase.extend({ type: z.literal("prompt") }).strict(),
   completionBase
-    .extend({ type: z.literal("checkpoint"), material: checkpointMaterial })
+    .extend({
+      type: z.literal("checkpoint"),
+      material: sessionRuntimeCheckpointMaterialSchema,
+    })
     .strict(),
   completionBase
-    .extend({ type: z.literal("hibernate"), material: checkpointMaterial })
+    .extend({
+      type: z.literal("hibernate"),
+      material: sessionRuntimeCheckpointMaterialSchema,
+    })
     .strict(),
   completionBase
-    .extend({ type: z.literal("resume"), material: leaseMaterial })
+    .extend({
+      type: z.literal("resume"),
+      material: sessionRuntimeLeaseMaterialSchema,
+    })
     .strict(),
   completionBase
-    .extend({ type: z.literal("fork"), material: forkMaterial })
+    .extend({
+      type: z.literal("fork"),
+      material: sessionRuntimeForkMaterialSchema,
+    })
     .strict(),
 ]);
 

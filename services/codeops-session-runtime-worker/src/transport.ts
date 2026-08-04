@@ -1,22 +1,87 @@
 import {
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeClaimResponseSchema,
+  sessionRuntimeCheckpointMaterialSchema,
   sessionRuntimeCompletionRequestSchema,
   sessionRuntimeCompletionResponseSchema,
   sessionRuntimeCompletionSchema,
+  sessionRuntimeForkMaterialSchema,
+  sessionRuntimeLeaseMaterialSchema,
   type SessionCommandResult,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatchClaim,
 } from "@renoconcierge/codeops-contracts";
+import { z } from "zod";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const TOKEN_PATTERN = /^[\x21-\x7e]{32,4096}$/;
 
 export class SessionRuntimeTransportError extends Error {}
 
+const runtimeExecutionResultSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("prompt") }).strict(),
+  z
+    .object({
+      type: z.literal("checkpoint"),
+      material: sessionRuntimeCheckpointMaterialSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("hibernate"),
+      material: sessionRuntimeCheckpointMaterialSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("resume"),
+      material: sessionRuntimeLeaseMaterialSchema,
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("fork"),
+      material: sessionRuntimeForkMaterialSchema,
+    })
+    .strict(),
+]);
+
+export type RuntimeExecutionResult = z.infer<
+  typeof runtimeExecutionResultSchema
+>;
+
 export type RuntimeExecutor = (
   claim: SessionRuntimeDispatchClaim,
-) => Promise<SessionRuntimeCompletion>;
+) => Promise<RuntimeExecutionResult>;
+
+export function buildSessionRuntimeCompletion(
+  claim: SessionRuntimeDispatchClaim,
+  rawExecution: unknown,
+  completedAt: Date,
+): SessionRuntimeCompletion {
+  const execution = runtimeExecutionResultSchema.parse(rawExecution);
+  const { dispatch } = claim;
+  if (execution.type !== dispatch.command.type) {
+    throw new SessionRuntimeTransportError(
+      "session runtime executor result type drifted from the claimed command",
+    );
+  }
+  const envelope = {
+    version: "codeops.session-runtime-completion/v1" as const,
+    dispatchId: dispatch.dispatchId,
+    sessionId: dispatch.command.sessionId,
+    generation: dispatch.command.generation,
+    leaseId: dispatch.command.leaseId,
+    idempotencyKey: dispatch.command.idempotencyKey,
+    observedEventCursor: dispatch.snapshot.eventCursor,
+    completedAt: completedAt.toISOString(),
+  };
+  return sessionRuntimeCompletionSchema.parse(
+    execution.type === "prompt"
+      ? { ...envelope, type: execution.type }
+      : { ...envelope, type: execution.type, material: execution.material },
+  );
+}
 
 function exactGatewayOrigin(raw: string): string {
   const parsed = new URL(raw);
@@ -235,12 +300,18 @@ export class SessionRuntimeTransport {
         "session runtime claim expired before execution began",
       );
     }
-    const completion = await input.execute(claim);
-    if (now().getTime() >= Date.parse(claim.claimExpiresAt)) {
+    const execution = await input.execute(claim);
+    const completedAt = now();
+    if (completedAt.getTime() >= Date.parse(claim.claimExpiresAt)) {
       throw new SessionRuntimeTransportError(
         "session runtime claim expired before completion submission",
       );
     }
+    const completion = buildSessionRuntimeCompletion(
+      claim,
+      execution,
+      completedAt,
+    );
     return this.complete(claim, completion, now);
   }
 }
