@@ -16,6 +16,10 @@ type LocalLifecycleCommand = Extract<
   SessionCommand,
   { readonly type: "cancel" | "archive" | "delete" }
 >;
+type PermissionCommand = Extract<
+  SessionCommand,
+  { readonly type: "respond_permission" }
+>;
 
 export interface LocalSessionTransition {
   readonly snapshot: SessionSnapshot;
@@ -78,6 +82,7 @@ export function applyLocalSessionTransition(
     lease:
       command.type === "delete" ? null : releaseLease(snapshot, occurredAt),
     checkpoint,
+    pendingPermission: null,
     eventCursor: cursor,
     capabilities: capabilitiesFor(transition.state, checkpoint !== null),
     updatedAt: occurredAt,
@@ -95,4 +100,50 @@ export function applyLocalSessionTransition(
     ...eventBody,
   });
   return { snapshot: nextSnapshot, event };
+}
+
+export function applyPermissionSessionTransition(
+  snapshot: SessionSnapshot,
+  command: PermissionCommand,
+  occurredAt: string,
+): LocalSessionTransition {
+  const request = snapshot.pendingPermission;
+  if (snapshot.state !== "waiting_permission" || request === null) {
+    throw new Error("permission response requires one pending request");
+  }
+  if (request.requestId !== command.permissionRequestId) {
+    throw new Error("permission response does not match the pending request");
+  }
+  if (command.decision.outcome === "selected") {
+    const selectedOptionId = command.decision.optionId;
+    if (
+      !request.options.some(({ optionId }) => optionId === selectedOptionId)
+    ) {
+      throw new Error("permission response selected an unknown option");
+    }
+  }
+  const cursor = snapshot.eventCursor + 1;
+  const nextSnapshot = sessionSnapshotSchema.parse({
+    ...snapshot,
+    state: "running",
+    pendingPermission: null,
+    eventCursor: cursor,
+    capabilities: capabilitiesFor("running", snapshot.checkpoint !== null),
+    updatedAt: occurredAt,
+  });
+  const eventBody = {
+    sessionId: snapshot.sessionId,
+    generation: snapshot.generation,
+    cursor,
+    type: "command_committed",
+    occurredAt,
+  } as const;
+  return {
+    snapshot: nextSnapshot,
+    event: sessionEventSchema.parse({
+      version: SESSION_BROKER_VERSION.event,
+      eventId: eventId(eventBody),
+      ...eventBody,
+    }),
+  };
 }

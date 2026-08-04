@@ -58,6 +58,7 @@ function snapshot() {
       evidenceReferences: ["evidence:test-1"],
       createdAt: "2026-08-04T02:58:00.000Z",
     },
+    pendingPermission: null,
     eventCursor: 184,
     capabilities: capabilities(),
     updatedAt: "2026-08-04T03:04:00.000Z",
@@ -80,6 +81,37 @@ test("requires one explicit capability decision for every session action", () =>
     sessionSnapshotSchema.parse({
       ...snapshot(),
       capabilities: [...capabilities().slice(1), capabilities()[1]],
+    }),
+  );
+});
+
+test("binds one durable permission request to waiting state", () => {
+  const pendingPermission = {
+    requestId: "permission-1",
+    title: "Run database migration?",
+    description: "Apply the reviewed migration to the session database.",
+    options: [
+      { optionId: "allow_once", label: "Allow once" },
+      { optionId: "deny", label: "Deny" },
+    ],
+    requestedAt: "2026-08-04T03:04:00.000Z",
+  };
+  assert.doesNotThrow(() =>
+    sessionSnapshotSchema.parse({
+      ...snapshot(),
+      state: "waiting_permission",
+      pendingPermission,
+      capabilities: capabilities("waiting_permission", true),
+    }),
+  );
+  assert.throws(() =>
+    sessionSnapshotSchema.parse({ ...snapshot(), pendingPermission }),
+  );
+  assert.throws(() =>
+    sessionSnapshotSchema.parse({
+      ...snapshot(),
+      state: "waiting_permission",
+      capabilities: capabilities("waiting_permission", true),
     }),
   );
 });

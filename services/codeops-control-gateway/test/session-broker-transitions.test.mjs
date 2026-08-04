@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { applyLocalSessionTransition } from "../dist/session-broker-transitions.js";
+import {
+  applyLocalSessionTransition,
+  applyPermissionSessionTransition,
+} from "../dist/session-broker-transitions.js";
 
 const leaseId = "11111111-1111-4111-8111-111111111111";
 const checkpointId = "22222222-2222-4222-8222-222222222222";
@@ -32,7 +35,7 @@ function snapshot({ state = "running", checkpoint = true, enabled = ["prompt", "
       parentSessionId: null,
       forkedAtCursor: null,
     },
-    lease: state === "running"
+    lease: state === "running" || state === "waiting_permission"
       ? {
           leaseId,
           generation: 3,
@@ -59,6 +62,18 @@ function snapshot({ state = "running", checkpoint = true, enabled = ["prompt", "
           eventCursor: 184,
           evidenceReferences: [],
           createdAt: "2026-08-04T04:40:00.000Z",
+        }
+      : null,
+    pendingPermission: state === "waiting_permission"
+      ? {
+          requestId: "permission-1",
+          title: "Run database migration?",
+          description: "Apply the reviewed migration.",
+          options: [
+            { optionId: "allow_once", label: "Allow once" },
+            { optionId: "deny", label: "Deny" },
+          ],
+          requestedAt: "2026-08-04T04:39:00.000Z",
         }
       : null,
     eventCursor: 184,
@@ -91,6 +106,41 @@ test("cancel releases the lease and retains a resumable checkpoint", () => {
   );
   assert.equal(result.event.type, "state_changed");
   assert.equal(result.event.cursor, 185);
+});
+
+test("permission response resolves only the exact pending request", () => {
+  const current = snapshot({
+    state: "waiting_permission",
+    enabled: ["respond_permission", "cancel", "checkpoint", "hibernate"],
+  });
+  const permission = command("respond_permission", {
+    permissionRequestId: "permission-1",
+    decision: { outcome: "selected", optionId: "allow_once" },
+  });
+  const result = applyPermissionSessionTransition(
+    current,
+    permission,
+    occurredAt,
+  );
+  assert.equal(result.snapshot.state, "running");
+  assert.equal(result.snapshot.pendingPermission, null);
+  assert.equal(result.snapshot.lease.status, "active");
+  assert.equal(result.event.type, "command_committed");
+  assert.equal(result.event.cursor, 185);
+  assert.throws(() =>
+    applyPermissionSessionTransition(
+      current,
+      { ...permission, permissionRequestId: "permission-other" },
+      occurredAt,
+    ),
+  );
+  assert.throws(() =>
+    applyPermissionSessionTransition(
+      current,
+      { ...permission, decision: { outcome: "selected", optionId: "always" } },
+      occurredAt,
+    ),
+  );
 });
 
 test("archive remains resumable only when a checkpoint exists", () => {

@@ -9,7 +9,7 @@ CREATE TABLE codeops.sessions (
   lease_id uuid,
   snapshot_json jsonb NOT NULL,
   updated_at timestamptz NOT NULL,
-  CHECK (snapshot_json ?& ARRAY['version', 'sessionId', 'generation', 'state', 'lease', 'updatedAt']),
+  CHECK (snapshot_json ?& ARRAY['version', 'sessionId', 'generation', 'state', 'lease', 'pendingPermission', 'updatedAt']),
   CHECK (snapshot_json->>'version' = 'codeops.session-snapshot/v1'),
   CHECK (snapshot_json->>'sessionId' = session_id),
   CHECK ((snapshot_json->>'generation')::bigint = generation),
@@ -25,7 +25,15 @@ CREATE TABLE codeops.sessions (
         AND (snapshot_json#>>'{lease,generation}')::bigint = generation
     END
   ),
-  CHECK ((snapshot_json->>'state' = 'deleted') = (lease_id IS NULL))
+  CHECK ((snapshot_json->>'state' = 'deleted') = (lease_id IS NULL)),
+  CHECK (
+    (snapshot_json->>'state' IN ('running', 'waiting_permission', 'checkpointing')) =
+    (snapshot_json#>>'{lease,status}' = 'active')
+  ),
+  CHECK (
+    (snapshot_json->>'state' = 'waiting_permission') =
+    (snapshot_json->'pendingPermission' <> 'null'::jsonb)
+  )
 );
 
 CREATE TABLE codeops.session_commands (

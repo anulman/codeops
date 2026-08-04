@@ -41,6 +41,7 @@ function snapshot(overrides = {}) {
       expiresAt: "2026-08-04T03:05:00.000Z",
     },
     checkpoint: null,
+    pendingPermission: null,
     eventCursor: 184,
     capabilities: capabilities(),
     updatedAt: "2026-08-04T03:04:00.000Z",

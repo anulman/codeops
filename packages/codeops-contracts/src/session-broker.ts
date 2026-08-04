@@ -148,6 +148,32 @@ export const sessionCheckpointSchema = z
   })
   .strict();
 
+export const sessionPermissionRequestSchema = z
+  .object({
+    requestId: identifier,
+    title: safeText(500),
+    description: safeText(5_000),
+    options: z
+      .array(
+        z
+          .object({
+            optionId: identifier,
+            label: safeText(500),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(20),
+    requestedAt: isoDateTime,
+  })
+  .strict()
+  .refine(
+    (request) =>
+      new Set(request.options.map(({ optionId }) => optionId)).size ===
+      request.options.length,
+    "permission request options must be unique",
+  );
+
 const sessionIdentitySchema = z
   .object({
     repository: z
@@ -182,6 +208,7 @@ export const sessionSnapshotSchema = z
     identity: sessionIdentitySchema,
     lease: sessionLeaseSchema.nullable(),
     checkpoint: sessionCheckpointSchema.nullable(),
+    pendingPermission: sessionPermissionRequestSchema.nullable(),
     eventCursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     capabilities: z.array(sessionCapabilitySchema).length(
       sessionActionTypeSchema.options.length,
@@ -207,6 +234,21 @@ export const sessionSnapshotSchema = z
         path: ["lease", "generation"],
       });
     }
+    const requiresActiveLease = [
+      "running",
+      "waiting_permission",
+      "checkpointing",
+    ].includes(snapshot.state);
+    if (
+      snapshot.lease !== null &&
+      (snapshot.lease.status === "active") !== requiresActiveLease
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "session lifecycle and lease status must agree",
+        path: ["lease", "status"],
+      });
+    }
     if (
       snapshot.checkpoint !== null &&
       (snapshot.checkpoint.sessionId !== snapshot.sessionId ||
@@ -217,6 +259,17 @@ export const sessionSnapshotSchema = z
         code: z.ZodIssueCode.custom,
         message: "session checkpoint must belong to this session history",
         path: ["checkpoint"],
+      });
+    }
+    if (
+      (snapshot.state === "waiting_permission") !==
+      (snapshot.pendingPermission !== null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message:
+          "waiting_permission must retain exactly one pending permission request",
+        path: ["pendingPermission"],
       });
     }
     const actions = new Set(snapshot.capabilities.map(({ action }) => action));
@@ -437,6 +490,9 @@ export type SessionCapability = z.infer<typeof sessionCapabilitySchema>;
 export type SessionState = z.infer<typeof sessionStateSchema>;
 export type SessionLease = z.infer<typeof sessionLeaseSchema>;
 export type SessionCheckpoint = z.infer<typeof sessionCheckpointSchema>;
+export type SessionPermissionRequest = z.infer<
+  typeof sessionPermissionRequestSchema
+>;
 export type SessionSnapshot = z.infer<typeof sessionSnapshotSchema>;
 export type SessionCommand = z.infer<typeof sessionCommandSchema>;
 export type SessionCommandResult = z.infer<typeof sessionCommandResultSchema>;

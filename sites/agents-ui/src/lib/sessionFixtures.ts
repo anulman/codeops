@@ -103,6 +103,18 @@ function brokerSnapshot(input: {
           createdAt: "2026-08-04T03:20:11.000Z",
         }
       : null,
+    pendingPermission: input.state === "waiting_permission"
+      ? {
+          requestId: "permission-1",
+          title: "Approve dependency installation?",
+          description: "The agent requested one reviewed dependency change.",
+          options: [
+            { optionId: "allow_once", label: "Allow once" },
+            { optionId: "deny", label: "Deny" },
+          ],
+          requestedAt: "2026-08-04T03:20:00.000Z",
+        }
+      : null,
     eventCursor: input.eventCursor,
     capabilities: [...capabilities(input.enabled)],
     updatedAt: "2026-08-04T03:20:11.000Z",
