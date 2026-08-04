@@ -77,6 +77,21 @@ function committed(current = snapshot()) {
   };
 }
 
+function event(overrides = {}) {
+  return {
+    version: "codeops.session-event/v1",
+    eventId: `sha256:${"c".repeat(64)}`,
+    sessionId: "ses_91a4",
+    generation: 3,
+    cursor: 185,
+    type: "command_committed",
+    occurredAt: "2026-08-04T03:04:01.000Z",
+    ...overrides,
+  };
+}
+
+const mutation = (result = committed(), events = [event()]) => ({ result, events });
+
 class FakeClient {
   constructor({ current = snapshot(), existing = null, updateCount = 1 } = {}) {
     this.current = current;
@@ -104,7 +119,7 @@ const execute = (client, overrides = {}) => executeSessionCommandTransaction(cli
   principalId: "user:aidan",
   now: () => new Date("2026-08-04T03:04:01.000Z"),
   commandId: () => "55555555-5555-4555-8555-555555555555",
-  mutate: () => committed(),
+  mutate: () => mutation(),
   ...overrides,
 });
 
@@ -115,8 +130,9 @@ test("locks, compare-and-swaps, audits, and commits one command transaction", as
   assert.equal(client.calls[0].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
   assert.match(client.calls[1].text, /codeops\.sessions[\s\S]*FOR UPDATE/);
   assert.match(client.calls[2].text, /session_commands[\s\S]*FOR UPDATE/);
-  assert.match(client.calls[3].text, /generation = \$6[\s\S]*lease_id = \$7/);
-  assert.equal(client.calls[4].values[5], "user:aidan");
+  assert.match(client.calls[3].text, /INSERT INTO codeops\.session_events/);
+  assert.match(client.calls[4].text, /generation = \$6[\s\S]*lease_id = \$7/);
+  assert.equal(client.calls[5].values[5], "user:aidan");
   assert.equal(client.calls.at(-1).text, "COMMIT");
 });
 
@@ -124,7 +140,7 @@ test("replays an identical idempotency key without invoking the mutator", async 
   const original = committed();
   const client = new FakeClient({ existing: { command_json: command(), result_json: original } });
   let invoked = false;
-  const result = await execute(client, { mutate: () => { invoked = true; return original; } });
+  const result = await execute(client, { mutate: () => { invoked = true; return mutation(original); } });
   assert.equal(invoked, false);
   assert.equal(result.disposition, "duplicate");
   assert.equal(result.originalCommandId, original.commandId);
@@ -148,7 +164,7 @@ test("durably rejects stale generation and lease commands without mutation", asy
     let invoked = false;
     const result = await execute(client, {
       command: stale,
-      mutate: () => { invoked = true; return committed(); },
+      mutate: () => { invoked = true; return mutation(); },
     });
     assert.equal(invoked, false);
     assert.match(result.rejectionCode, /^(generation|lease)_conflict$/);
@@ -167,7 +183,7 @@ test("rejects a mutator result that crosses command identity", async () => {
   const client = new FakeClient();
   await assert.rejects(
     execute(client, {
-      mutate: () => ({ ...committed(), idempotencyKey: "77777777-7777-4777-8777-777777777777" }),
+      mutate: () => mutation({ ...committed(), idempotencyKey: "77777777-7777-4777-8777-777777777777" }),
     }),
     /does not match the command identity/,
   );
@@ -178,4 +194,17 @@ test("validates the authenticated principal before opening a transaction", async
   const client = new FakeClient();
   await assert.rejects(execute(client, { principalId: "bad principal" }), /audit identity/);
   assert.equal(client.calls.length, 0);
+});
+
+test("rolls back snapshots that advance without a complete ordered event history", async () => {
+  for (const invalid of [
+    mutation(committed(), []),
+    mutation(committed(), [event({ cursor: 186 })]),
+    mutation(committed(), [event({ sessionId: "ses_foreign" })]),
+  ]) {
+    const client = new FakeClient();
+    await assert.rejects(execute(client, { mutate: () => invalid }), /event|cursor/);
+    assert.equal(client.calls.some(({ text }) => text.startsWith("UPDATE codeops.sessions")), false);
+    assert.equal(client.calls.at(-1).text, "ROLLBACK");
+  }
 });

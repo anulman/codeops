@@ -3,9 +3,11 @@ import {
   SESSION_BROKER_VERSION,
   sessionCommandResultSchema,
   sessionCommandSchema,
+  sessionEventSchema,
   sessionSnapshotSchema,
   type SessionCommand,
   type SessionCommandResult,
+  type SessionEvent,
   type SessionSnapshot,
 } from "@renoconcierge/codeops-contracts";
 
@@ -38,7 +40,12 @@ interface ExecuteSessionCommandInput {
   readonly mutate: (
     snapshot: SessionSnapshot,
     command: SessionCommand,
-  ) => Promise<SessionCommandResult> | SessionCommandResult;
+  ) => Promise<SessionMutation> | SessionMutation;
+}
+
+export interface SessionMutation {
+  readonly result: SessionCommandResult;
+  readonly events: readonly SessionEvent[];
 }
 
 interface StoredCommandRow extends Record<string, unknown> {
@@ -124,6 +131,58 @@ async function persistCommand(
       result.committedAt,
     ],
   );
+}
+
+async function persistEvents(
+  client: TransactionClient,
+  commandId: string,
+  events: readonly SessionEvent[],
+): Promise<void> {
+  for (const event of events) {
+    await client.query(
+      `INSERT INTO codeops.session_events
+         (event_id, session_id, generation, cursor, event_type, event_json,
+          command_id, occurred_at)
+       VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, $8::timestamptz)`,
+      [
+        event.eventId,
+        event.sessionId,
+        event.generation,
+        event.cursor,
+        event.type,
+        canonical(event),
+        commandId,
+        event.occurredAt,
+      ],
+    );
+  }
+}
+
+function requireOrderedEvents(
+  snapshot: SessionSnapshot,
+  result: SessionCommandResult,
+  rawEvents: readonly SessionEvent[],
+): readonly SessionEvent[] {
+  if (rawEvents.length === 0) {
+    throw new Error("a committed session mutation must persist at least one event");
+  }
+  const events = rawEvents.map((event) => sessionEventSchema.parse(event));
+  for (const [index, event] of events.entries()) {
+    if (
+      event.sessionId !== result.snapshot.sessionId ||
+      event.generation !== result.snapshot.generation ||
+      event.cursor !== snapshot.eventCursor + index + 1
+    ) {
+      throw new Error("session mutation events must form one ordered snapshot history");
+    }
+  }
+  if (
+    result.eventCursor !== result.snapshot.eventCursor ||
+    result.eventCursor !== events.at(-1)?.cursor
+  ) {
+    throw new Error("session mutation cursor must end at its final persisted event");
+  }
+  return events;
 }
 
 export async function executeSessionCommandTransaction(
@@ -213,13 +272,14 @@ export async function executeSessionCommandTransaction(
           commandId,
         );
       } else {
-        result = sessionCommandResultSchema.parse(
-          await input.mutate(snapshot, command),
-        );
+        const mutation = await input.mutate(snapshot, command);
+        result = sessionCommandResultSchema.parse(mutation.result);
         requireResultIdentity(result, command);
         if (result.disposition !== "committed") {
           throw new Error("session mutator must return a committed result");
         }
+        const events = requireOrderedEvents(snapshot, result, mutation.events);
+        await persistEvents(client, result.commandId, events);
         const updated = await client.query(
           `UPDATE codeops.sessions
               SET snapshot_json = $1::jsonb,
