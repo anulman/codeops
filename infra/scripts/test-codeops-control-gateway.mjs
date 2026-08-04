@@ -84,6 +84,22 @@ test("renders one namespace-scoped authenticated gateway", () => {
     ).valueFrom.secretKeyRef.name,
     "codeops-model-proxy-credentials",
   );
+  const databaseVolume = deployment.spec.template.spec.volumes.find(
+    (volume) => volume.name === "session-broker-database",
+  );
+  assert.equal(
+    databaseVolume.secret.secretName,
+    "codeops-session-broker-database",
+  );
+  assert.deepEqual(databaseVolume.secret.items, [
+    { key: "database-url", path: "database-url" },
+  ]);
+  assert.equal(
+    deployment.spec.template.spec.containers[0].env.find(
+      (entry) => entry.name === "CODEOPS_DATABASE_URL_FILE",
+    ).value,
+    "/var/run/secrets/codeops-session-broker/database-url",
+  );
 });
 
 test("grants only fixed run-resource and log operations", () => {
@@ -125,6 +141,12 @@ test("admits only the orchestrator/controller and exact API /32", () => {
     { protocol: "TCP", port: 443 },
     { protocol: "TCP", port: 6443 },
   ]);
+  const databaseEgress = policy.spec.egress.find(
+    (entry) =>
+      entry.to?.[0]?.podSelector?.matchLabels?.["cnpg.io/poolerName"] ===
+      "renoconcierge-postgres-cnpg-pgbouncer",
+  );
+  assert.deepEqual(databaseEgress.ports, [{ protocol: "TCP", port: 5432 }]);
 });
 
 test("fails closed on mutable images, broad API CIDRs, or template drift", () => {
@@ -141,6 +163,24 @@ test("fails closed on mutable images, broad API CIDRs, or template drift", () =>
   assert.throws(() =>
     renderControlGatewayManifest(
       template.replace("kind: Role", "kind: ClusterRole"),
+      input,
+    ),
+  );
+  assert.throws(() =>
+    renderControlGatewayManifest(
+      template.replace(
+        "secretName: codeops-session-broker-database",
+        "secretName: renoconcierge-postgres",
+      ),
+      input,
+    ),
+  );
+  assert.throws(() =>
+    renderControlGatewayManifest(
+      template.replace(
+        "cnpg.io/poolerName: renoconcierge-postgres-cnpg-pgbouncer",
+        "ipBlock:\n            cidr: 10.0.0.0/8",
+      ),
       input,
     ),
   );

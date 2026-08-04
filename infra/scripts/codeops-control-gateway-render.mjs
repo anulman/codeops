@@ -73,6 +73,9 @@ export function renderControlGatewayManifest(template, input) {
   const repositoryHeadAuth = deployment.spec.template.spec.volumes.find(
     (volume) => volume.name === "repository-head-auth",
   );
+  const sessionBrokerDatabase = deployment.spec.template.spec.volumes.find(
+    (volume) => volume.name === "session-broker-database",
+  );
   const image = deployment.spec.template.spec.containers[0].image;
   if (!/@sha256:[0-9a-f]{64}$/.test(image)) {
     throw new Error("control gateway image must be immutable");
@@ -92,6 +95,15 @@ export function renderControlGatewayManifest(template, input) {
     dispatchAuth.secret.secretName === repositoryHeadAuth.secret.secretName
   ) {
     throw new Error("control gateway endpoint auth bindings drifted");
+  }
+  if (
+    sessionBrokerDatabase?.secret?.secretName !==
+      "codeops-session-broker-database" ||
+    sessionBrokerDatabase.secret.items
+      ?.map((item) => `${item.key}:${item.path}`)
+      .join(",") !== "database-url:database-url"
+  ) {
+    throw new Error("control gateway session database binding drifted");
   }
   const env = deployment.spec.template.spec.containers[0].env;
   if (
@@ -118,6 +130,37 @@ export function renderControlGatewayManifest(template, input) {
     modelProxy.spec.template.spec.automountServiceAccountToken !== false
   ) {
     throw new Error("model proxy credential boundary drifted");
+  }
+  if (
+    env.find((item) => item.name === "CODEOPS_DATABASE_URL_FILE")?.value !==
+    "/var/run/secrets/codeops-session-broker/database-url"
+  ) {
+    throw new Error("control gateway session database path drifted");
+  }
+  const networkPolicy = resources.find(
+    (resource) => resource.kind === "NetworkPolicy",
+  );
+  const databaseEgress = networkPolicy.spec.egress.filter((rule) =>
+    rule.ports?.some((port) => port.protocol === "TCP" && port.port === 5432),
+  );
+  if (
+    databaseEgress.length !== 1 ||
+    JSON.stringify(databaseEgress[0]) !==
+      JSON.stringify({
+        to: [
+          {
+            podSelector: {
+              matchLabels: {
+                "cnpg.io/poolerName":
+                  "renoconcierge-postgres-cnpg-pgbouncer",
+              },
+            },
+          },
+        ],
+        ports: [{ protocol: "TCP", port: 5432 }],
+      })
+  ) {
+    throw new Error("control gateway session database egress drifted");
   }
   const serialized = JSON.stringify(resources);
   if (serialized.includes("ClusterRole") || serialized.includes("hostPath")) {

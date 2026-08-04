@@ -114,6 +114,8 @@ spec:
               value: /var/run/secrets/codeops-model-proxy/signing-key
             - name: CODEOPS_EVIDENCE_ROOT
               value: /var/lib/codeops
+            - name: CODEOPS_DATABASE_URL_FILE
+              value: /var/run/secrets/codeops-session-broker/database-url
             - name: CODEOPS_HTTP_HOST
               value: 0.0.0.0
             - name: CODEOPS_HTTP_PORT
@@ -171,6 +173,9 @@ spec:
             - name: model-proxy-auth
               mountPath: /var/run/secrets/codeops-model-proxy
               readOnly: true
+            - name: session-broker-database
+              mountPath: /var/run/secrets/codeops-session-broker
+              readOnly: true
             - name: temp
               mountPath: /tmp
       volumes:
@@ -219,6 +224,13 @@ spec:
             items:
               - key: signing-key
                 path: signing-key
+        - name: session-broker-database
+          secret:
+            secretName: codeops-session-broker-database
+            defaultMode: 256
+            items:
+              - key: database-url
+                path: database-url
         - name: temp
           emptyDir:
             sizeLimit: 64Mi
@@ -270,6 +282,12 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/poolerName: renoconcierge-postgres-cnpg-pgbouncer
+      ports:
+        - { protocol: TCP, port: 5432 }
     - to:
         - ipBlock:
             cidr: 0.0.0.0/0

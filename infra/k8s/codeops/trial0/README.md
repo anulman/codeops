@@ -37,6 +37,11 @@ Required Secret names and keys:
 - `codeops-plane-app`: `SECRET_KEY`, `LIVE_SERVER_SECRET_KEY`, `REDIS_URL`,
   `DATABASE_URL`, `AMQP_URL`;
 - `codeops-plane-live`: `REDIS_URL`, `LIVE_SERVER_SECRET_KEY`.
+- `codeops-session-broker-database`: `database-url`. This is a dedicated,
+  externally provisioned least-privilege PostgreSQL DSN for the CodeOps
+  session broker. It must target the stable
+  `renoconcierge-postgres-cnpg-pgbouncer` service and must not reuse the
+  shared application owner credential.
 
 The candidate has no Kubernetes credential. Cleanup must remove the Helm
 release, namespace, PVCs, copied TLS material, generated Secrets, node label,
