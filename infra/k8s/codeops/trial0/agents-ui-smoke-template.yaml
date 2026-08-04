@@ -1,0 +1,88 @@
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: codeops-agents-ui-smoke
+spec:
+  backoffLimit: 0
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        codeops.renoconcierge.ca/agents-ui-smoke: "true"
+    spec:
+      serviceAccountName: codeops-agents-ui
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      restartPolicy: Never
+      imagePullSecrets:
+        - name: ghcr-renoconcierge
+      nodeSelector:
+        renoconcierge.ca/codeops: "true"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1001
+        runAsGroup: 1001
+        fsGroup: 1001
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: smoke
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-acceptance-runner@CODEOPS_ACCEPTANCE_RUNNER_DIGEST
+          imagePullPolicy: IfNotPresent
+          command:
+            - node
+            - services/acceptance-runner/src/codeops-agents-ui-smoke.mjs
+          env:
+            - name: CODEOPS_AGENTS_UI_BASE_URL
+              value: http://codeops-agents-ui:3000
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: temp
+              mountPath: /tmp
+            - name: shared-memory
+              mountPath: /dev/shm
+      volumes:
+        - name: temp
+          emptyDir:
+            sizeLimit: 128Mi
+        - name: shared-memory
+          emptyDir:
+            medium: Memory
+            sizeLimit: 256Mi
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codeops-agents-ui-smoke
+spec:
+  podSelector:
+    matchLabels:
+      codeops.renoconcierge.ca/agents-ui-smoke: "true"
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-agents-ui
+      ports:
+        - { protocol: TCP, port: 3000 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }

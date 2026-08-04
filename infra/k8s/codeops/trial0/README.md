@@ -204,6 +204,19 @@ CODEOPS_AGENTS_UI_DIGEST=sha256:<64-lowercase-hex> \
   > "$CODEOPS_AGENTS_UI_MANIFEST"
 ```
 
+After the internal Service and broker are ready, render and apply the bounded
+cluster Playwright smoke Job using the exact acceptance-runner image digest.
+The tokenless Job may reach only the UI Service, sends a synthetic Access
+principal, validates desktop and mobile fleet surfaces, and fails on horizontal
+overflow. It does not test the external Cloudflare Access policy owned by
+`HARDEN-13`.
+
+```bash
+CODEOPS_ACCEPTANCE_RUNNER_DIGEST=sha256:<64-lowercase-hex> \
+  node infra/scripts/render-codeops-agents-ui-smoke.mjs \
+  > "$CODEOPS_AGENTS_UI_SMOKE_MANIFEST"
+```
+
 ## Plane research controller
 
 The privileged Plane controller is packaged separately from Agent Jobs. It

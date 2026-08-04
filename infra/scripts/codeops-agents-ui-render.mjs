@@ -118,6 +118,18 @@ export function renderAgentsUiManifest(template, digest) {
       ],
       ports: [{ protocol: "TCP", port: 3000 }],
     },
+    {
+      from: [
+        {
+          podSelector: {
+            matchLabels: {
+              "codeops.renoconcierge.ca/agents-ui-smoke": "true",
+            },
+          },
+        },
+      ],
+      ports: [{ protocol: "TCP", port: 3000 }],
+    },
   ];
   const expectedEgress = [
     {

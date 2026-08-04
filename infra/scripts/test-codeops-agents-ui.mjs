@@ -65,7 +65,7 @@ test("stays cluster-internal until the Access-owned ingress is added", () => {
   );
 });
 
-test("admits only ingress-nginx and reaches only the gateway and DNS", () => {
+test("admits only ingress-nginx and the bounded smoke job", () => {
   const policy = resources().find((resource) => resource.kind === "NetworkPolicy");
   assert.deepEqual(policy.spec.policyTypes, ["Ingress", "Egress"]);
   assert.deepEqual(policy.spec.podSelector.matchLabels, {
@@ -77,6 +77,12 @@ test("admits only ingress-nginx and reaches only the gateway and DNS", () => {
     ],
     "ingress-nginx",
   );
+  assert.deepEqual(policy.spec.ingress[1].from[0].podSelector.matchLabels, {
+    "codeops.renoconcierge.ca/agents-ui-smoke": "true",
+  });
+  assert.deepEqual(policy.spec.ingress[1].ports, [
+    { protocol: "TCP", port: 3000 },
+  ]);
   assert.deepEqual(
     policy.spec.egress.flatMap((rule) => rule.ports.map((port) => port.port)).sort((a, b) => Number(a) - Number(b)),
     [53, 53, 8080],
