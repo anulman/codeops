@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  applyCheckpointSessionTransition,
+  applyForkSessionTransition,
   applyLocalSessionTransition,
   applyPermissionSessionTransition,
+  applyResumeSessionTransition,
 } from "../dist/session-broker-transitions.js";
 
 const leaseId = "11111111-1111-4111-8111-111111111111";
@@ -182,4 +185,143 @@ test("delete creates a durable tombstone without lease or checkpoint material", 
   );
   assert.equal(result.event.type, "session_deleted");
   assert.match(result.event.eventId, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("commits a checkpoint and hibernates with one released lease", () => {
+  const current = snapshot({ checkpoint: false });
+  const material = {
+    checkpointId,
+    patchDigest: `sha256:${"d".repeat(64)}`,
+    acpSessionId: "acp-ses-91a4",
+    evidenceReferences: ["evidence-1"],
+  };
+  const checkpointed = applyCheckpointSessionTransition(
+    current,
+    material,
+    occurredAt,
+  );
+  assert.equal(checkpointed.snapshot.state, "running");
+  assert.equal(checkpointed.snapshot.checkpoint.eventCursor, 185);
+  assert.equal(checkpointed.snapshot.eventCursor, 185);
+  assert.deepEqual(checkpointed.events.map(({ type }) => type), [
+    "checkpoint_committed",
+  ]);
+
+  const hibernated = applyCheckpointSessionTransition(
+    current,
+    material,
+    occurredAt,
+    true,
+  );
+  assert.equal(hibernated.snapshot.state, "hibernated");
+  assert.equal(hibernated.snapshot.lease.status, "released");
+  assert.equal(hibernated.snapshot.checkpoint.eventCursor, 185);
+  assert.equal(hibernated.snapshot.eventCursor, 186);
+  assert.deepEqual(hibernated.events.map(({ type, cursor }) => [type, cursor]), [
+    ["checkpoint_committed", 185],
+    ["lease_changed", 186],
+  ]);
+});
+
+test("resumes only the exact checkpoint into a new active generation", () => {
+  const current = snapshot({
+    state: "hibernated",
+    enabled: ["resume", "fork", "archive"],
+  });
+  const command = {
+    version: "codeops.session-command/v1",
+    sessionId: current.sessionId,
+    generation: current.generation,
+    leaseId,
+    idempotencyKey: "33333333-3333-4333-8333-333333333333",
+    type: "resume",
+    checkpointId,
+  };
+  const result = applyResumeSessionTransition(
+    current,
+    command,
+    {
+      leaseId: "77777777-7777-4777-8777-777777777777",
+      holderId: "worker-4",
+      acquiredAt: occurredAt,
+      expiresAt: "2026-08-04T05:05:00.000Z",
+    },
+    occurredAt,
+  );
+  assert.equal(result.snapshot.generation, 4);
+  assert.equal(result.snapshot.state, "running");
+  assert.equal(result.snapshot.lease.generation, 4);
+  assert.equal(result.snapshot.lease.status, "active");
+  assert.equal(result.event.generation, 4);
+  assert.equal(result.event.cursor, 185);
+  assert.throws(() =>
+    applyResumeSessionTransition(
+      current,
+      { ...command, checkpointId: "99999999-9999-4999-8999-999999999999" },
+      {
+        leaseId: "77777777-7777-4777-8777-777777777777",
+        holderId: "worker-4",
+        acquiredAt: occurredAt,
+        expiresAt: "2026-08-04T05:05:00.000Z",
+      },
+      occurredAt,
+    ),
+  );
+});
+
+test("forks one generation-one child with independent cursor lineage", () => {
+  const current = snapshot({
+    state: "completed",
+    enabled: ["fork", "archive"],
+  });
+  const command = {
+    version: "codeops.session-command/v1",
+    sessionId: current.sessionId,
+    generation: current.generation,
+    leaseId,
+    idempotencyKey: "33333333-3333-4333-8333-333333333333",
+    type: "fork",
+    checkpointId,
+    parentEventCursor: 184,
+    title: "Alternative implementation",
+  };
+  const result = applyForkSessionTransition(
+    current,
+    command,
+    {
+      sessionId: "ses_child",
+      branch: "feat/agents-ui-child",
+      workflowId: "workflow-child",
+      runId: "run-child",
+      leaseId: "77777777-7777-4777-8777-777777777777",
+      holderId: "worker-child",
+      acquiredAt: occurredAt,
+      expiresAt: "2026-08-04T05:05:00.000Z",
+    },
+    occurredAt,
+  );
+  assert.equal(result.snapshot.sessionId, "ses_child");
+  assert.equal(result.snapshot.generation, 1);
+  assert.equal(result.snapshot.identity.parentSessionId, current.sessionId);
+  assert.equal(result.snapshot.identity.forkedAtCursor, 184);
+  assert.equal(result.snapshot.eventCursor, 1);
+  assert.equal(result.event.cursor, 1);
+  assert.equal(result.event.type, "session_created");
+  assert.throws(() =>
+    applyForkSessionTransition(
+      current,
+      { ...command, parentEventCursor: 183 },
+      {
+        sessionId: "ses_child",
+        branch: "feat/agents-ui-child",
+        workflowId: "workflow-child",
+        runId: "run-child",
+        leaseId: "77777777-7777-4777-8777-777777777777",
+        holderId: "worker-child",
+        acquiredAt: occurredAt,
+        expiresAt: "2026-08-04T05:05:00.000Z",
+      },
+      occurredAt,
+    ),
+  );
 });

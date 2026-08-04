@@ -3,6 +3,7 @@ import {
   SESSION_BROKER_VERSION,
   allowedSessionActionsForState,
   sessionActionTypeSchema,
+  sessionCheckpointSchema,
   sessionEventSchema,
   sessionSnapshotSchema,
   type SessionCapability,
@@ -20,6 +21,37 @@ type PermissionCommand = Extract<
   SessionCommand,
   { readonly type: "respond_permission" }
 >;
+type ResumeCommand = Extract<SessionCommand, { readonly type: "resume" }>;
+type ForkCommand = Extract<SessionCommand, { readonly type: "fork" }>;
+
+export interface RuntimeCheckpointMaterial {
+  readonly checkpointId: string;
+  readonly patchDigest: string;
+  readonly acpSessionId: string;
+  readonly evidenceReferences: readonly string[];
+}
+
+export interface RuntimeLeaseMaterial {
+  readonly leaseId: string;
+  readonly holderId: string;
+  readonly acquiredAt: string;
+  readonly expiresAt: string;
+}
+
+export interface RuntimeForkMaterial extends RuntimeLeaseMaterial {
+  readonly sessionId: string;
+  readonly branch: string;
+  readonly workflowId: string;
+  readonly runId: string;
+}
+
+const forkableStates = new Set<SessionState>([
+  "hibernated",
+  "completed",
+  "failed",
+  "cancelled",
+  "archived",
+]);
 
 export interface LocalSessionTransition {
   readonly snapshot: SessionSnapshot;
@@ -140,6 +172,185 @@ export function applyPermissionSessionTransition(
   } as const;
   return {
     snapshot: nextSnapshot,
+    event: sessionEventSchema.parse({
+      version: SESSION_BROKER_VERSION.event,
+      eventId: eventId(eventBody),
+      ...eventBody,
+    }),
+  };
+}
+
+export function applyCheckpointSessionTransition(
+  snapshot: SessionSnapshot,
+  material: RuntimeCheckpointMaterial,
+  occurredAt: string,
+  hibernate = false,
+): {
+  readonly snapshot: SessionSnapshot;
+  readonly events: readonly SessionEvent[];
+} {
+  if (
+    snapshot.state !== "running" &&
+    snapshot.state !== "waiting_permission"
+  ) {
+    throw new Error("checkpoint completion requires an active session");
+  }
+  const checkpointCursor = snapshot.eventCursor + 1;
+  const checkpoint = sessionCheckpointSchema.parse({
+    version: SESSION_BROKER_VERSION.checkpoint,
+    ...material,
+    sessionId: snapshot.sessionId,
+    generation: snapshot.generation,
+    baseSha: snapshot.identity.baseSha,
+    eventCursor: checkpointCursor,
+    createdAt: occurredAt,
+  });
+  const eventBodies: readonly Omit<SessionEvent, "version" | "eventId">[] =
+    hibernate
+      ? [
+          {
+            sessionId: snapshot.sessionId,
+            generation: snapshot.generation,
+            cursor: checkpointCursor,
+            type: "checkpoint_committed",
+            occurredAt,
+          },
+          {
+            sessionId: snapshot.sessionId,
+            generation: snapshot.generation,
+            cursor: checkpointCursor + 1,
+            type: "lease_changed",
+            occurredAt,
+          },
+        ]
+      : [
+          {
+            sessionId: snapshot.sessionId,
+            generation: snapshot.generation,
+            cursor: checkpointCursor,
+            type: "checkpoint_committed",
+            occurredAt,
+          },
+        ];
+  const state = hibernate ? "hibernated" : snapshot.state;
+  const nextSnapshot = sessionSnapshotSchema.parse({
+    ...snapshot,
+    state,
+    lease: hibernate ? releaseLease(snapshot, occurredAt) : snapshot.lease,
+    checkpoint,
+    pendingPermission: hibernate ? null : snapshot.pendingPermission,
+    eventCursor: eventBodies.at(-1)!.cursor,
+    capabilities: capabilitiesFor(state, true),
+    updatedAt: occurredAt,
+  });
+  return {
+    snapshot: nextSnapshot,
+    events: eventBodies.map((body) =>
+      sessionEventSchema.parse({
+        version: SESSION_BROKER_VERSION.event,
+        eventId: eventId(body),
+        ...body,
+      }),
+    ),
+  };
+}
+
+export function applyResumeSessionTransition(
+  snapshot: SessionSnapshot,
+  command: ResumeCommand,
+  lease: RuntimeLeaseMaterial,
+  occurredAt: string,
+): LocalSessionTransition {
+  if (
+    !(snapshot.state === "hibernated" || snapshot.state === "archived") ||
+    snapshot.checkpoint?.checkpointId !== command.checkpointId
+  ) {
+    throw new Error(
+      "resume requires the exact checkpoint from a hibernated or archived session",
+    );
+  }
+  const generation = snapshot.generation + 1;
+  const cursor = snapshot.eventCursor + 1;
+  const nextSnapshot = sessionSnapshotSchema.parse({
+    ...snapshot,
+    generation,
+    state: "running",
+    lease: {
+      ...lease,
+      generation,
+      status: "active",
+    },
+    pendingPermission: null,
+    eventCursor: cursor,
+    capabilities: capabilitiesFor("running", true),
+    updatedAt: occurredAt,
+  });
+  const eventBody = {
+    sessionId: snapshot.sessionId,
+    generation,
+    cursor,
+    type: "lease_changed",
+    occurredAt,
+  } as const;
+  return {
+    snapshot: nextSnapshot,
+    event: sessionEventSchema.parse({
+      version: SESSION_BROKER_VERSION.event,
+      eventId: eventId(eventBody),
+      ...eventBody,
+    }),
+  };
+}
+
+export function applyForkSessionTransition(
+  snapshot: SessionSnapshot,
+  command: ForkCommand,
+  material: RuntimeForkMaterial,
+  occurredAt: string,
+): LocalSessionTransition {
+  if (
+    snapshot.checkpoint?.checkpointId !== command.checkpointId ||
+    snapshot.eventCursor !== command.parentEventCursor ||
+    !forkableStates.has(snapshot.state)
+  ) {
+    throw new Error("fork requires the exact committed parent checkpoint and cursor");
+  }
+  const child = sessionSnapshotSchema.parse({
+    version: SESSION_BROKER_VERSION.snapshot,
+    sessionId: material.sessionId,
+    generation: 1,
+    state: "running",
+    identity: {
+      ...snapshot.identity,
+      branch: material.branch,
+      workflowId: material.workflowId,
+      runId: material.runId,
+      parentSessionId: snapshot.sessionId,
+      forkedAtCursor: snapshot.eventCursor,
+    },
+    lease: {
+      leaseId: material.leaseId,
+      generation: 1,
+      status: "active",
+      holderId: material.holderId,
+      acquiredAt: material.acquiredAt,
+      expiresAt: material.expiresAt,
+    },
+    checkpoint: null,
+    pendingPermission: null,
+    eventCursor: 1,
+    capabilities: capabilitiesFor("running", false),
+    updatedAt: occurredAt,
+  });
+  const eventBody = {
+    sessionId: child.sessionId,
+    generation: child.generation,
+    cursor: 1,
+    type: "session_created",
+    occurredAt,
+  } as const;
+  return {
+    snapshot: child,
     event: sessionEventSchema.parse({
       version: SESSION_BROKER_VERSION.event,
       eventId: eventId(eventBody),
