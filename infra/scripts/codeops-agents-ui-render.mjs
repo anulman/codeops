@@ -40,13 +40,30 @@ export function renderAgentsUiManifest(template, digest) {
     (resource) => resource.kind === "ServiceAccount",
   );
   const deployment = resources.find((resource) => resource.kind === "Deployment");
+  const service = resources.find((resource) => resource.kind === "Service");
+  const policy = resources.find((resource) => resource.kind === "NetworkPolicy");
   const pod = deployment.spec.template.spec;
+  const workloadSelector = {
+    "app.kubernetes.io/name": "codeops-agents-ui",
+  };
   if (
     serviceAccount.automountServiceAccountToken !== false ||
     pod.automountServiceAccountToken !== false ||
-    pod.serviceAccountName !== "codeops-agents-ui"
+    pod.serviceAccountName !== "codeops-agents-ui" ||
+    JSON.stringify(deployment.spec.selector?.matchLabels) !==
+      JSON.stringify(workloadSelector) ||
+    deployment.spec.template.metadata?.labels?.["app.kubernetes.io/name"] !==
+      "codeops-agents-ui" ||
+    service.spec.type !== "ClusterIP" ||
+    JSON.stringify(service.spec.selector) !== JSON.stringify(workloadSelector) ||
+    JSON.stringify(service.spec.ports) !==
+      JSON.stringify([
+        { name: "http", protocol: "TCP", port: 3000, targetPort: "http" },
+      ]) ||
+    JSON.stringify(policy.spec.podSelector?.matchLabels) !==
+      JSON.stringify(workloadSelector)
   ) {
-    throw new Error("agents UI service account boundary drifted");
+    throw new Error("agents UI workload or service identity drifted");
   }
   const read = pod.volumes.find(
     (volume) => volume.name === "session-broker-read-auth",
@@ -71,6 +88,10 @@ export function renderAgentsUiManifest(template, digest) {
     container.env.map((entry) => [entry.name, entry.value]),
   );
   if (
+    pod.containers.length !== 1 ||
+    container.name !== "agents-ui" ||
+    JSON.stringify(container.ports) !==
+      JSON.stringify([{ name: "http", containerPort: 3000 }]) ||
     env.AGENTS_UI_ACCESS_REQUIRED !== "true" ||
     env.CODEOPS_SESSION_BROKER_URL !== "http://codeops-control-gateway:8080" ||
     env.CODEOPS_SESSION_BROKER_READ_TOKEN_FILE !==
@@ -83,7 +104,6 @@ export function renderAgentsUiManifest(template, digest) {
   ) {
     throw new Error("agents UI runtime boundary drifted");
   }
-  const policy = resources.find((resource) => resource.kind === "NetworkPolicy");
   const serialized = JSON.stringify(resources);
   const expectedIngress = [
     {

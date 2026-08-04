@@ -50,7 +50,13 @@ test("mounts only distinct session read and write capabilities", () => {
 test("stays cluster-internal until the Access-owned ingress is added", () => {
   const values = resources();
   const service = values.find((resource) => resource.kind === "Service");
-  assert.equal(service.spec.type, undefined);
+  assert.equal(service.spec.type, "ClusterIP");
+  assert.deepEqual(service.spec.selector, {
+    "app.kubernetes.io/name": "codeops-agents-ui",
+  });
+  assert.deepEqual(service.spec.ports, [
+    { name: "http", protocol: "TCP", port: 3000, targetPort: "http" },
+  ]);
   assert.equal(values.some((resource) => resource.kind === "Ingress"), false);
   assert.equal(
     values.find((resource) => resource.kind === "ServiceAccount")
@@ -62,6 +68,9 @@ test("stays cluster-internal until the Access-owned ingress is added", () => {
 test("admits only ingress-nginx and reaches only the gateway and DNS", () => {
   const policy = resources().find((resource) => resource.kind === "NetworkPolicy");
   assert.deepEqual(policy.spec.policyTypes, ["Ingress", "Egress"]);
+  assert.deepEqual(policy.spec.podSelector.matchLabels, {
+    "app.kubernetes.io/name": "codeops-agents-ui",
+  });
   assert.equal(
     policy.spec.ingress[0].from[0].namespaceSelector.matchLabels[
       "kubernetes.io/metadata.name"
@@ -82,6 +91,15 @@ test("rejects mutable images and credential or exposure drift", () => {
   for (const drifted of [
     template.replace("kind: NetworkPolicy", "kind: ConfigMap"),
     template.replace("secretName: codeops-session-broker-write-auth", "secretName: codeops-session-broker-read-auth"),
+    template.replace("type: ClusterIP", "type: LoadBalancer"),
+    template.replace(
+      "selector:\n    app.kubernetes.io/name: codeops-agents-ui\n  ports:",
+      "selector:\n    app.kubernetes.io/name: codeops-control-gateway\n  ports:",
+    ),
+    template.replace(
+      "podSelector:\n    matchLabels:\n      app.kubernetes.io/name: codeops-agents-ui\n  policyTypes:",
+      "podSelector:\n    matchLabels:\n      app.kubernetes.io/name: codeops-control-gateway\n  policyTypes:",
+    ),
     `${template}\n---\napiVersion: networking.k8s.io/v1\nkind: Ingress\nmetadata:\n  name: codeops-agents-ui\n`,
   ]) {
     assert.throws(() => renderAgentsUiManifest(drifted, digest));
