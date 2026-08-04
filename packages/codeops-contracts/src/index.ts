@@ -18,6 +18,7 @@ export {
   type CodingOutcome,
 } from "./adversarial-review.js";
 export {
+  allowedSessionActionsForState,
   SESSION_BROKER_VERSION,
   sessionActionTypeSchema,
   sessionCapabilitySchema,

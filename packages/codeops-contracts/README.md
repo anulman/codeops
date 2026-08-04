@@ -100,6 +100,9 @@ workspace/ACP checkpoints, the complete prompt/permission/cancel/checkpoint/
 hibernate/resume/fork/archive/delete command surface, committed or replayed
 command results, and safe ordered events. Archive is reversible; delete is a
 separate command that requires an explicit destructive authorization ID.
+The shared lifecycle policy includes a distinct terminal `cancelled` state and
+fails closed when a snapshot advertises actions that do not belong to its
+current state or require a checkpoint it has not committed.
 
 These schemas define the wire contract, not the storage implementation. The
 broker must still enforce lease compare-and-swap, persist command idempotency

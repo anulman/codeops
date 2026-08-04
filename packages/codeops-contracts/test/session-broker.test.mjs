@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  allowedSessionActionsForState,
   SESSION_BROKER_VERSION,
   sessionActionTypeSchema,
   sessionCommandResultSchema,
@@ -13,11 +14,12 @@ const leaseId = "11111111-1111-4111-8111-111111111111";
 const checkpointId = "22222222-2222-4222-8222-222222222222";
 const idempotencyKey = "33333333-3333-4333-8333-333333333333";
 
-function capabilities() {
+function capabilities(state = "running", hasCheckpoint = true) {
+  const enabled = allowedSessionActionsForState(state, hasCheckpoint);
   return sessionActionTypeSchema.options.map((action) => ({
     action,
-    availability: action === "prompt" ? "enabled" : "disabled",
-    ...(action === "prompt" ? {} : { reason: "Unavailable in this state." }),
+    availability: enabled.includes(action) ? "enabled" : "disabled",
+    ...(enabled.includes(action) ? {} : { reason: "Unavailable in this state." }),
   }));
 }
 
@@ -82,6 +84,40 @@ test("requires one explicit capability decision for every session action", () =>
   );
 });
 
+test("fails closed on state-incompatible broker capabilities", () => {
+  assert.deepEqual(allowedSessionActionsForState("cancelled", true), [
+    "fork",
+    "archive",
+  ]);
+  assert.deepEqual(allowedSessionActionsForState("cancelled", false), [
+    "archive",
+  ]);
+  assert.doesNotThrow(() =>
+    sessionSnapshotSchema.parse({
+      ...snapshot(),
+      capabilities: capabilities().map((capability) =>
+        capability.availability === "enabled" && capability.action !== "prompt"
+          ? {
+              action: capability.action,
+              availability: "disabled",
+              reason: "Temporarily unavailable at the broker.",
+            }
+          : capability,
+      ),
+    }),
+  );
+  assert.throws(() =>
+    sessionSnapshotSchema.parse({
+      ...snapshot(),
+      capabilities: capabilities().map((capability) =>
+        capability.action === "delete"
+          ? { action: "delete", availability: "enabled" }
+          : capability,
+      ),
+    }),
+  );
+});
+
 test("binds snapshots, checkpoints, and leases to one session generation", () => {
   assert.throws(() =>
     sessionSnapshotSchema.parse({
@@ -111,12 +147,15 @@ test("binds snapshots, checkpoints, and leases to one session generation", () =>
   assert.throws(() =>
     sessionSnapshotSchema.parse({
       ...snapshot(),
+      state: "archived",
+      lease: {
+        leaseId,
+        generation: 3,
+        status: "released",
+        releasedAt: "2026-08-04T03:04:00.000Z",
+      },
       checkpoint: null,
-      capabilities: capabilities().map((capability) =>
-        capability.action === "fork"
-          ? { action: "fork", availability: "enabled" }
-          : capability,
-      ),
+      capabilities: capabilities("archived", true),
     }),
   );
 });

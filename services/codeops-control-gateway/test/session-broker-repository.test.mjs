@@ -8,11 +8,11 @@ import {
 const leaseId = "11111111-1111-4111-8111-111111111111";
 const idempotencyKey = "33333333-3333-4333-8333-333333333333";
 
-function capabilities(enabled = "prompt") {
+function capabilities(enabled = ["prompt", "cancel", "checkpoint", "hibernate"]) {
   return [
     "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
     "resume", "fork", "archive", "delete",
-  ].map((action) => action === enabled
+  ].map((action) => enabled.includes(action)
     ? { action, availability: "enabled" }
     : { action, availability: "disabled", reason: "Unavailable." });
 }

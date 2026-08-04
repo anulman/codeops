@@ -44,9 +44,41 @@ export const sessionStateSchema = z.enum([
   "hibernated",
   "completed",
   "failed",
+  "cancelled",
   "archived",
   "deleted",
 ]);
+
+const sessionStateActionPolicy = {
+  queued: ["cancel"],
+  running: ["prompt", "cancel", "checkpoint", "hibernate"],
+  waiting_permission: [
+    "respond_permission",
+    "cancel",
+    "checkpoint",
+    "hibernate",
+  ],
+  checkpointing: ["cancel"],
+  hibernated: ["resume", "fork", "archive"],
+  completed: ["fork", "archive"],
+  failed: ["fork", "archive"],
+  cancelled: ["fork", "archive"],
+  archived: ["resume", "fork", "delete"],
+  deleted: [],
+} as const satisfies Record<
+  z.infer<typeof sessionStateSchema>,
+  readonly z.infer<typeof sessionActionTypeSchema>[]
+>;
+
+export function allowedSessionActionsForState(
+  state: z.infer<typeof sessionStateSchema>,
+  hasCheckpoint: boolean,
+): readonly z.infer<typeof sessionActionTypeSchema>[] {
+  return sessionStateActionPolicy[state].filter(
+    (action) =>
+      hasCheckpoint || (action !== "resume" && action !== "fork"),
+  );
+}
 
 const enabledCapabilitySchema = z
   .object({
@@ -207,6 +239,17 @@ export const sessionSnapshotSchema = z
     const enabled = snapshot.capabilities
       .filter(({ availability }) => availability === "enabled")
       .map(({ action }) => action);
+    const allowedEnabled = allowedSessionActionsForState(
+      snapshot.state,
+      snapshot.checkpoint !== null,
+    );
+    if (enabled.some((action) => !allowedEnabled.includes(action))) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "enabled capabilities must belong to the session lifecycle state",
+        path: ["capabilities"],
+      });
+    }
     if (
       (enabled.includes("resume") || enabled.includes("fork")) &&
       snapshot.checkpoint === null
