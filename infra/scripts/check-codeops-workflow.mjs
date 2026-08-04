@@ -84,7 +84,12 @@ assert.ok(
       step.name === "Test and render the Trial 0 Plane controller" &&
       step.run?.includes("infra/scripts/test-codeops-plane-controller.mjs") &&
       step.run?.includes("infra/scripts/render-codeops-plane-controller.mjs") &&
-      step.env?.CODEOPS_PLANE_CONTROLLER_HOST === "work.renoconcierge.ca",
+      step.env?.CODEOPS_PLANE_CONTROLLER_HOST === "work.renoconcierge.ca" &&
+      step.env?.CODEOPS_ALLOWED_GITHUB_REVIEWER_IDS === "6723643628" &&
+      step.env?.CODEOPS_READY_STATE_ID &&
+      step.env?.CODEOPS_IN_PROGRESS_STATE_ID &&
+      step.env?.CODEOPS_NEEDS_ATTENTION_STATE_ID &&
+      step.env?.CODEOPS_COMPLETE_STATE_ID,
   ),
 );
 assert.ok(

@@ -16,6 +16,7 @@ const actorId = "88fc36c8-73b0-4547-81c7-96b70f61835e";
 const secret = "plane_wh_test-secret";
 const baseSha = "8f3d2c033f70be04b4b2dc8a005683806e84e209";
 const controlPlaneSha = "bd8072b349424e4af7fabfd986dc133b53400603";
+const aiAssigneeId = "98d2dd94-8b56-4d68-bce9-774fc6d4bb2c";
 const projectContextDocuments = [
   {
     path: "AGENTS.md",
@@ -57,7 +58,7 @@ const source = {
     priority: "none",
     state: "067b88e5-304b-4221-ba09-94340dcc36e5",
     labels: [],
-    assignees: [],
+    assignees: [aiAssigneeId],
     module: null,
     parent: null,
     updated_at: "2026-07-26T02:00:00.000Z",
@@ -176,6 +177,7 @@ function readyWebhookInput(ledger, enqueue, body = readyPayload) {
     },
     webhookSecret: secret,
     allowedHumanActorIds: new Set([actorId]),
+    allowedAiAssigneeIds: new Set([aiAssigneeId]),
     readyStateId,
     repository: { owner: "anulman", name: "renoconcierge" },
     controlPlaneSha,
