@@ -8,7 +8,7 @@ import {
   type SessionCommandResult,
   type SessionRuntimePermissionResult,
 } from "@renoconcierge/codeops-contracts";
-import { authenticateBearer } from "./core.js";
+import { authenticateBearer } from "./bearer-auth.js";
 import type { SessionRuntimeDispatchClaim } from "./session-broker-runtime-outbox.js";
 
 const dispatchId = z.string().uuid();

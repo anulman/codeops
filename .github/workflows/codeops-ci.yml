@@ -200,6 +200,10 @@ jobs:
             --tag codeops-session-gateway:ci \
             .
           docker build \
+            --file infra/docker/codeops-session-control-gateway.Dockerfile \
+            --tag codeops-session-control-gateway:ci \
+            .
+          docker build \
             --file infra/docker/codeops-session-runtime-worker.Dockerfile \
             --tag codeops-session-runtime-worker:ci \
             .

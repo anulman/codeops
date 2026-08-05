@@ -9,7 +9,7 @@ import {
   type SessionSnapshot,
   type SessionRuntimeDispatch,
 } from "@renoconcierge/codeops-contracts";
-import { authenticateBearer } from "./core.js";
+import { authenticateBearer } from "./bearer-auth.js";
 import {
   executeSessionCommandTransaction,
   type SessionMutation,

@@ -1,4 +1,5 @@
-import { createHash, timingSafeEqual } from "node:crypto";
+import { createHash } from "node:crypto";
+export { authenticateBearer } from "./bearer-auth.js";
 import {
   mkdir,
   open,
@@ -88,20 +89,6 @@ export interface RetainedCheckpoint {
   readonly checkpoint: z.infer<typeof checkpointSchema>;
   readonly checkpointDigest: string;
   readonly patch: Buffer;
-}
-
-export function authenticateBearer(
-  authorization: string | undefined,
-  expectedToken: string,
-): boolean {
-  if (!authorization?.startsWith("Bearer ")) return false;
-  const received = Buffer.from(authorization.slice("Bearer ".length));
-  const expected = Buffer.from(expectedToken);
-  return (
-    received.length === expected.length &&
-    received.length > 0 &&
-    timingSafeEqual(received, expected)
-  );
 }
 
 export function parseDispatchRequest(value: unknown): AgentJobDispatchRequest {

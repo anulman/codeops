@@ -1,5 +1,5 @@
 import type { IncomingHttpHeaders } from "node:http";
-import { authenticateBearer } from "./core.js";
+import { authenticateBearer } from "./bearer-auth.js";
 import {
   listSessionSnapshots,
   loadSessionEvents,
