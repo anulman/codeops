@@ -18,6 +18,24 @@ const creationReceipt = await readBoundedFile(
   process.env.CODEOPS_SESSION_PROOF_NAMESPACE_RECEIPT,
   "proof Namespace creation receipt",
 );
-const result = await deleteSessionProofNamespace({ planSource, creationReceipt });
+const parsedCreationReceipt = JSON.parse(creationReceipt);
+const revocationReceiptSource = parsedCreationReceipt.result === "created-and-uid-bound"
+  ? await readBoundedFile(
+      process.env.CODEOPS_SESSION_PROOF_REVOCATION_RECEIPT,
+      "proof credential-revocation receipt",
+    )
+  : undefined;
+const revocationEvidenceSource = parsedCreationReceipt.result === "created-and-uid-bound"
+  ? await readBoundedFile(
+      process.env.CODEOPS_SESSION_PROOF_REVOCATION_EVIDENCE,
+      "proof credential-revocation evidence",
+    )
+  : undefined;
+const result = await deleteSessionProofNamespace({
+  planSource,
+  creationReceipt,
+  revocationReceiptSource,
+  revocationEvidenceSource,
+});
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 if (!result.proceed) process.exitCode = 1;

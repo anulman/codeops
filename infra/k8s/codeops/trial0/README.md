@@ -566,9 +566,19 @@ create, apply, patch, issue credentials, or target shared dev/production:
 ```bash
 CODEOPS_SESSION_PROOF_PLAN=/path/to/plan.json \
 CODEOPS_SESSION_PROOF_NAMESPACE_RECEIPT=/path/to/bound-namespace-receipt.json \
+CODEOPS_SESSION_PROOF_REVOCATION_RECEIPT=/path/to/revoke-capabilities-receipt.json \
+CODEOPS_SESSION_PROOF_REVOCATION_EVIDENCE=/path/to/revoke-capabilities-evidence.json \
   node infra/scripts/run-codeops-session-proof-namespace-delete.mjs \
   > /path/to/namespace-delete-receipt.json
 ```
+
+Successful teardown output now contains two separately hash-chained ordered
+steps: `delete-namespace` binds the exact revocation receipt/evidence and
+server-accepted UID-preconditioned DELETE, then `verify-teardown` binds that
+exact deletion receipt/evidence to the final repeated principal/target check
+and Namespace absence. Timeout retains only the deletion receipt for operator
+review; incomplete-create emergency cleanup emits neither lifecycle
+receipt because no intermediate lifecycle was admitted.
 
 Every intermediate action must additionally pass through the non-mutating
 step-receipt contract in

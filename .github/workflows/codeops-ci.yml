@@ -428,6 +428,7 @@ jobs:
           node --test infra/scripts/test-codeops-session-proof-preflight.mjs
           node --test infra/scripts/test-codeops-session-proof-namespace-create.mjs
           node --test infra/scripts/test-codeops-session-proof-namespace-delete.mjs
+          node --test infra/scripts/test-codeops-session-proof-teardown-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-step-receipts.mjs
           node --test infra/scripts/test-codeops-session-proof-apply-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-database-apply.mjs

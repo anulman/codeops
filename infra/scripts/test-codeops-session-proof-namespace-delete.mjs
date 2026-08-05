@@ -182,6 +182,11 @@ test("deletes only the UID-bound Namespace through an API precondition and verif
   assert.equal(request.namespaceUid, admission.namespaceUid);
   assert.deepEqual(Object.keys(request).sort(), ["ca", "cert", "key", "namespace", "namespaceUid", "target"]);
   assert.equal(stub.calls.some((args) => ["delete", "apply", "patch"].includes(args[0])), false);
+  assert.equal(JSON.parse(result.deleteReceiptSource).stepId, "delete-namespace");
+  assert.equal(result.teardownReceipt.stepId, "verify-teardown");
+  assert.equal(result.teardownReceipt.previousReceiptSha256,
+    createHash("sha256").update(result.deleteReceiptSource).digest("hex"));
+  assert.equal(JSON.parse(result.teardownEvidenceSource).namespaceAbsent, true);
 });
 
 test("rejects a replaced Namespace, receipt drift, or plan drift before deletion", async () => {
@@ -256,7 +261,7 @@ test("rejects missing, substituted, oversized, or late revocation evidence befor
       runner: stub.execute,
       deleteRequest: async () => success,
       now: () => new Date("2026-08-05T06:30:00Z"),
-    }), /credential-revocation|bounded/);
+    }), /credential[- ]revocation|bounded|revoke-capabilities/);
     assert.equal(stub.calls.length, 0);
   }
 });
@@ -279,4 +284,6 @@ test("keeps UID-bound emergency cleanup available after incomplete namespace cre
     sleep: async () => {},
   });
   assert.equal(result.result, "deleted-and-absence-verified");
+  assert.equal(result.deleteReceiptSource, null);
+  assert.equal(result.teardownReceipt, null);
 });
