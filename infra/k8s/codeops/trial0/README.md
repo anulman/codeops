@@ -487,9 +487,13 @@ values, mutate Kubernetes, or run in CI.
 gateway artifact and exactly four server-assigned identities: its Deployment,
 Service, ServiceAccount, and NetworkPolicy. Database identities, missing or
 extra objects, renamed or duplicate resources, empty UIDs, wrong artifacts,
-and generic evidence cannot complete the gateway step. This is a non-mutating
-postcondition only; the gateway apply and migration-readiness adapters remain
-closed and are not invoked by CI.
+and generic evidence cannot complete the gateway step. A concrete but uninvoked
+adapter now admits only the exact `start-gateway` authorization and reviewed
+manifest bytes, refuses any pre-existing package object, sends those bytes once
+through `kubectl create`, double-reads all four server UIDs around the final
+live operator/target/Namespace-UID check, and emits no receipt after partial
+creation or identity replacement. Migration readiness remains a separate
+closed postcondition, and the adapter is not invoked by CI.
 
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
