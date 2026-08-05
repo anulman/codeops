@@ -6,6 +6,7 @@ import {
   applyLocalSessionTransition,
   applyPermissionSessionTransition,
   applyResumeSessionTransition,
+  applyRuntimePermissionRequestTransition,
 } from "../dist/session-broker-transitions.js";
 
 const leaseId = "11111111-1111-4111-8111-111111111111";
@@ -141,6 +142,46 @@ test("permission response resolves only the exact pending request", () => {
     applyPermissionSessionTransition(
       current,
       { ...permission, decision: { outcome: "selected", optionId: "always" } },
+      occurredAt,
+    ),
+  );
+});
+
+test("ACP runtime permission request durably pauses one running session", () => {
+  const current = snapshot();
+  const request = {
+    requestId: "prm_91a4",
+    title: "Edit demo file",
+    description: "The ACP agent wants to edit the synthetic demo file.",
+    options: [
+      { optionId: "opt_allow", label: "Allow once" },
+      { optionId: "opt_deny", label: "Deny once" },
+    ],
+    requestedAt: occurredAt,
+  };
+  const result = applyRuntimePermissionRequestTransition(
+    current,
+    request,
+    occurredAt,
+  );
+  assert.equal(result.snapshot.state, "waiting_permission");
+  assert.deepEqual(result.snapshot.pendingPermission, request);
+  assert.equal(result.snapshot.lease.status, "active");
+  assert.deepEqual(
+    result.snapshot.capabilities
+      .filter(({ availability }) => availability === "enabled")
+      .map(({ action }) => action),
+    ["respond_permission", "cancel", "checkpoint", "hibernate"],
+  );
+  assert.equal(result.event.type, "permission_requested");
+  assert.equal(result.event.cursor, 185);
+  assert.throws(() =>
+    applyRuntimePermissionRequestTransition(
+      snapshot({
+        state: "waiting_permission",
+        enabled: ["respond_permission", "cancel", "checkpoint", "hibernate"],
+      }),
+      request,
       occurredAt,
     ),
   );

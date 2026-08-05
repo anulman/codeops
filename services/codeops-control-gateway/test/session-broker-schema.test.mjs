@@ -10,6 +10,8 @@ const receiptsUrl = new URL("../sql/session-runtime-execution-receipts.sql", imp
 const receiptsRevertUrl = new URL("../sql/session-runtime-execution-receipts-revert.sql", import.meta.url);
 const jobInitializationUrl = new URL("../sql/session-job-initialization.sql", import.meta.url);
 const jobInitializationRevertUrl = new URL("../sql/session-job-initialization-revert.sql", import.meta.url);
+const permissionRelayUrl = new URL("../sql/session-runtime-permission-relay.sql", import.meta.url);
+const permissionRelayRevertUrl = new URL("../sql/session-runtime-permission-relay-revert.sql", import.meta.url);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");
@@ -72,6 +74,24 @@ test("admits commandless events only for Job-created session roots", async () =>
     /CHECK \(command_id IS NOT NULL OR event_type = 'session_created'\)/,
   );
   assert.match(revert, /ALTER COLUMN command_id SET NOT NULL/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
+});
+
+test("persists claim-bound runtime permission requests and their option map", async () => {
+  const sql = await readFile(permissionRelayUrl, "utf8");
+  const revert = await readFile(permissionRelayRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.session_runtime_permission_requests/);
+  assert.match(sql, /PRIMARY KEY \(dispatch_id, request_id\)/);
+  assert.match(sql, /UNIQUE \(session_id, request_id\)/);
+  assert.match(sql, /REFERENCES codeops\.session_runtime_outbox\(dispatch_id\)/);
+  assert.match(
+    sql,
+    /event_type IN \('session_created', 'permission_requested'\)/,
+  );
+  assert.match(sql, /codeops\.session-runtime-permission-submission\/v1/);
+  assert.match(revert, /DROP TABLE IF EXISTS codeops\.session_runtime_permission_requests/);
+  assert.match(revert, /event_type = 'session_created'/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });

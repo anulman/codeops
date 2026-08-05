@@ -23,6 +23,10 @@ const migrations = [
     name: "session-job-initialization-v1",
     url: new URL("../sql/session-job-initialization.sql", import.meta.url),
   },
+  {
+    name: "session-runtime-permission-relay-v1",
+    url: new URL("../sql/session-runtime-permission-relay.sql", import.meta.url),
+  },
 ] as const;
 
 function migrationDigest(sql: string): string {

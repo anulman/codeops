@@ -8,6 +8,9 @@ import {
   sessionCommandSchema,
   sessionJobInitializationRequestSchema,
   sessionJobInitializationResponseSchema,
+  sessionRuntimePermissionPollSchema,
+  sessionRuntimePermissionResultSchema,
+  sessionRuntimePermissionSubmissionSchema,
   sessionSnapshotSchema,
 } from "../dist/index.js";
 
@@ -304,6 +307,68 @@ test("returns a committed durable snapshot for success and retry", () => {
       ...common,
       disposition: "committed",
       snapshot: { ...snapshot(), sessionId: "ses_foreign" },
+    }),
+  );
+});
+
+test("binds ACP permission options to one durable broker request and decision", () => {
+  const requestId = "prm_91a4";
+  const claimToken = "55555555-5555-4555-8555-555555555555";
+  const submission = {
+    version: "codeops.session-runtime-permission-submission/v1",
+    claimToken,
+    request: {
+      requestId,
+      title: "Edit demo file",
+      description: "The ACP agent wants to edit the synthetic demo file.",
+      options: [
+        { optionId: "opt_allow", label: "Allow once" },
+        { optionId: "opt_deny", label: "Deny once" },
+      ],
+      requestedAt: "2026-08-05T03:26:00.000Z",
+    },
+    acpSessionId: "acp-session-1",
+    toolCallId: "tool-call-1",
+    options: [
+      { optionId: "opt_allow", acpOptionId: "allow-once/raw" },
+      { optionId: "opt_deny", acpOptionId: "reject-once/raw" },
+    ],
+  };
+  assert.equal(
+    sessionRuntimePermissionSubmissionSchema.parse(submission).request.requestId,
+    requestId,
+  );
+  assert.throws(() =>
+    sessionRuntimePermissionSubmissionSchema.parse({
+      ...submission,
+      options: submission.options.slice(0, 1),
+    }),
+  );
+  assert.equal(
+    sessionRuntimePermissionPollSchema.parse({
+      version: "codeops.session-runtime-permission-poll/v1",
+      claimToken,
+      requestId,
+    }).requestId,
+    requestId,
+  );
+  assert.equal(
+    sessionRuntimePermissionResultSchema.parse({
+      version: "codeops.session-runtime-permission-result/v1",
+      dispatchId: "66666666-6666-4666-8666-666666666666",
+      requestId,
+      disposition: "decided",
+      decision: { outcome: "selected", acpOptionId: "allow-once/raw" },
+    }).disposition,
+    "decided",
+  );
+  assert.throws(() =>
+    sessionRuntimePermissionResultSchema.parse({
+      version: "codeops.session-runtime-permission-result/v1",
+      dispatchId: "66666666-6666-4666-8666-666666666666",
+      requestId,
+      disposition: "pending",
+      decision: { outcome: "denied" },
     }),
   );
 });

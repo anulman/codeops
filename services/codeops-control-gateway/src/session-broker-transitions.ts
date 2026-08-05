@@ -9,6 +9,7 @@ import {
   type SessionCapability,
   type SessionCommand,
   type SessionEvent,
+  type SessionPermissionRequest,
   type SessionSnapshot,
   type SessionState,
 } from "@renoconcierge/codeops-contracts";
@@ -169,6 +170,43 @@ export function applyPermissionSessionTransition(
     generation: snapshot.generation,
     cursor,
     type: "command_committed",
+    occurredAt,
+  } as const;
+  return {
+    snapshot: nextSnapshot,
+    event: sessionEventSchema.parse({
+      version: SESSION_BROKER_VERSION.event,
+      eventId: eventId(eventBody),
+      ...eventBody,
+    }),
+  };
+}
+
+export function applyRuntimePermissionRequestTransition(
+  snapshot: SessionSnapshot,
+  request: SessionPermissionRequest,
+  occurredAt: string,
+): LocalSessionTransition {
+  if (snapshot.state !== "running" || snapshot.pendingPermission !== null) {
+    throw new Error("runtime permission request requires one running session");
+  }
+  const cursor = snapshot.eventCursor + 1;
+  const nextSnapshot = sessionSnapshotSchema.parse({
+    ...snapshot,
+    state: "waiting_permission",
+    pendingPermission: request,
+    eventCursor: cursor,
+    capabilities: sessionCapabilitiesFor(
+      "waiting_permission",
+      snapshot.checkpoint !== null,
+    ),
+    updatedAt: occurredAt,
+  });
+  const eventBody = {
+    sessionId: snapshot.sessionId,
+    generation: snapshot.generation,
+    cursor,
+    type: "permission_requested",
     occurredAt,
   } as const;
   return {

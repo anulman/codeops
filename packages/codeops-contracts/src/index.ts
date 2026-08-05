@@ -45,6 +45,7 @@ export {
   type SessionJobInitializationRequest,
   type SessionJobInitializationResponse,
   type SessionLease,
+  type SessionPermissionRequest,
   type SessionSnapshot,
   type SessionState,
 } from "./session-broker.js";
@@ -61,10 +62,16 @@ export {
   sessionRuntimeDispatchSchema,
   sessionRuntimeForkMaterialSchema,
   sessionRuntimeLeaseMaterialSchema,
+  sessionRuntimePermissionPollSchema,
+  sessionRuntimePermissionResultSchema,
+  sessionRuntimePermissionSubmissionSchema,
   type SessionRuntimeCommand,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
   type SessionRuntimeDispatchClaim,
+  type SessionRuntimePermissionPoll,
+  type SessionRuntimePermissionResult,
+  type SessionRuntimePermissionSubmission,
 } from "./session-runtime.js";
 
 const VERSION = {

@@ -2,6 +2,7 @@ import { z } from "zod";
 import {
   sessionCommandResultSchema,
   sessionCommandSchema,
+  sessionPermissionRequestSchema,
   sessionSnapshotSchema,
   type SessionCommand,
 } from "./session-broker.js";
@@ -24,6 +25,7 @@ const principal = z
   .min(1)
   .max(256)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/);
+const boundedAcpIdentity = z.string().min(1).max(500);
 
 export const sessionRuntimeCommandTypes = [
   "prompt",
@@ -201,6 +203,72 @@ export const sessionRuntimeCompletionRequestSchema = z
 export const sessionRuntimeCompletionResponseSchema =
   sessionCommandResultSchema;
 
+export const sessionRuntimePermissionSubmissionSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-permission-submission/v1"),
+    claimToken: uuid,
+    request: sessionPermissionRequestSchema,
+    acpSessionId: boundedAcpIdentity,
+    toolCallId: boundedAcpIdentity,
+    options: z
+      .array(
+        z
+          .object({
+            optionId: identifier,
+            acpOptionId: boundedAcpIdentity,
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(20),
+  })
+  .strict()
+  .superRefine((submission, context) => {
+    const brokerOptionIds = submission.request.options.map(
+      ({ optionId }) => optionId,
+    );
+    const mappedOptionIds = submission.options.map(({ optionId }) => optionId);
+    if (
+      new Set(mappedOptionIds).size !== mappedOptionIds.length ||
+      brokerOptionIds.length !== mappedOptionIds.length ||
+      brokerOptionIds.some((optionId) => !mappedOptionIds.includes(optionId))
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "runtime permission options must map every broker option exactly once",
+        path: ["options"],
+      });
+    }
+  });
+
+export const sessionRuntimePermissionPollSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-permission-poll/v1"),
+    claimToken: uuid,
+    requestId: identifier,
+  })
+  .strict();
+
+const permissionDecisionSchema = z.discriminatedUnion("outcome", [
+  z.object({ outcome: z.literal("selected"), acpOptionId: boundedAcpIdentity }).strict(),
+  z.object({ outcome: z.literal("denied") }).strict(),
+]);
+
+export const sessionRuntimePermissionResultSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-permission-result/v1"),
+    dispatchId: uuid,
+    requestId: identifier,
+    disposition: z.enum(["pending", "decided"]),
+    decision: permissionDecisionSchema.nullable(),
+  })
+  .strict()
+  .refine(
+    (result) =>
+      (result.disposition === "pending") === (result.decision === null),
+    "a runtime permission result has a decision exactly when decided",
+  );
+
 export type SessionRuntimeDispatch = z.infer<
   typeof sessionRuntimeDispatchSchema
 >;
@@ -209,4 +277,13 @@ export type SessionRuntimeCompletion = z.infer<
 >;
 export type SessionRuntimeDispatchClaim = z.infer<
   typeof sessionRuntimeDispatchClaimSchema
+>;
+export type SessionRuntimePermissionSubmission = z.infer<
+  typeof sessionRuntimePermissionSubmissionSchema
+>;
+export type SessionRuntimePermissionPoll = z.infer<
+  typeof sessionRuntimePermissionPollSchema
+>;
+export type SessionRuntimePermissionResult = z.infer<
+  typeof sessionRuntimePermissionResultSchema
 >;
