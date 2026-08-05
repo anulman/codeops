@@ -426,11 +426,14 @@ exact successful creation receipt, reviewed plan bytes, the complete ordered
 predecessor-receipt byte chain, the live operator/target, and the same labeled
 Namespace UID. Artifact-bearing steps also require the exact reviewed manifest
 bytes. Authorization and completion each repeat the live admission check; the
-completion receipt hashes its exact predecessor so steps cannot be skipped,
-reordered, replayed under a replacement Namespace, or spliced between proof
-runs. This module deliberately has no Kubernetes or credential mutation path;
-concrete action adapters remain closed until each can be constrained and tested
-against this contract.
+completion receipt hashes both its exact predecessor and a verified evidence
+artifact so steps cannot be skipped, reordered, replayed under a replacement
+Namespace, or spliced between proof runs. Credential issuance evidence is
+metadata-only: the exact Secret names, namespaces, object UIDs, types, data-key
+names, and proof-scope labels. Secret values are rejected from the evidence
+artifact. These modules deliberately have no Kubernetes or credential mutation
+path; concrete action adapters remain closed until each can be constrained and
+tested against this contract.
 
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts

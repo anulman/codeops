@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { verifySessionProofOperation } from "./codeops-session-proof-admission.mjs";
+import { verifySessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -61,6 +62,7 @@ function assertPriorReceipt(receipt, expected) {
     receipt.action !== expected.step.action ||
     receipt.artifact !== (expected.step.artifact ?? null) ||
     receipt.previousReceiptSha256 !== expected.previousReceiptSha256 ||
+    !SHA256.test(receipt.evidenceSha256 ?? "") ||
     !RFC3339.test(receipt.checkedAt ?? "") ||
     (expected.artifactSha256 === null
       ? receipt.artifactSha256 !== null
@@ -158,6 +160,8 @@ export function authorizeSessionProofStep(input) {
 
 export function completeSessionProofStep(authorization, input) {
   const expectedStep = sessionProofSequence()[authorization?.stepIndex];
+  const evidenceSource = input.evidenceSource ?? "";
+  const evidence = parseJson(evidenceSource, "proof step evidence");
   if (
     authorization?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-authorization/v1" ||
     !SHA256.test(authorization.planSha256 ?? "") ||
@@ -175,9 +179,25 @@ export function completeSessionProofStep(authorization, input) {
       ? authorization.artifactSha256 !== null
       : !SHA256.test(authorization.artifactSha256 ?? "")) ||
     !RFC3339.test(authorization.authorizedAt ?? "") ||
-    !RFC3339.test(input.completedAt ?? "")
+    !RFC3339.test(input.completedAt ?? "") ||
+    evidence?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
+    evidence.result !== "verified" ||
+    evidence.planSha256 !== authorization.planSha256 ||
+    evidence.stepId !== authorization.stepId ||
+    evidence.namespace?.name !== authorization.namespace.name ||
+    evidence.namespace?.uid !== authorization.namespace.uid ||
+    !RFC3339.test(evidence.observedAt ?? "")
   ) {
     throw new Error("proof step authorization drifted");
+  }
+  if (["issue-broker-capabilities", "issue-runtime-capabilities"].includes(authorization.stepId)) {
+    verifySessionProofCredentialEvidence(authorization, evidence);
+  } else if (
+    JSON.stringify(Object.keys(evidence).sort()) !== JSON.stringify([
+      "apiVersion", "namespace", "observedAt", "planSha256", "result", "stepId",
+    ])
+  ) {
+    throw new Error("proof step evidence gained unreviewed fields");
   }
   verifySessionProofOperation(authorization.admission, {
     stepId: authorization.stepId,
@@ -199,5 +219,6 @@ export function completeSessionProofStep(authorization, input) {
     artifact: authorization.artifact,
     artifactSha256: authorization.artifactSha256,
     previousReceiptSha256: authorization.previousReceiptSha256,
+    evidenceSha256: digest(evidenceSource),
   };
 }

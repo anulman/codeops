@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { createSessionProofAdmission, bindSessionProofNamespace } from "./codeops-session-proof-admission.mjs";
+import { buildSessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -75,6 +76,53 @@ function authorize(overrides = {}) {
   });
 }
 
+function evidenceSource(authorization, observedAt) {
+  const credentialContracts = authorization.stepId === "issue-broker-capabilities"
+    ? {
+        "codeops-session-proof-database-owner": ["database", "password", "username"],
+        "codeops-session-broker-database": ["database-url"],
+        "codeops-session-broker-read-auth": ["token"],
+        "codeops-session-broker-write-auth": ["token"],
+        "codeops-session-runtime-worker-auth": ["token"],
+        "codeops-session-job-initialization-auth": ["token"],
+        "codeops-session-runtime-worker-database": ["database-url", "password"],
+      }
+    : authorization.stepId === "issue-runtime-capabilities"
+      ? {
+          "ghcr-renoconcierge": [".dockerconfigjson"],
+          "codeops-agent-source-credentials": ["repository-read-token"],
+        }
+      : null;
+  if (credentialContracts) {
+    const runtime = authorization.stepId === "issue-runtime-capabilities";
+    return JSON.stringify(buildSessionProofCredentialEvidence({
+      authorization,
+      observedAt,
+      secrets: Object.entries(credentialContracts).map(([name, dataKeys], index) => ({
+        name,
+        namespace: authorization.namespace.name,
+        uid: `secret-uid-${authorization.stepIndex}-${index}`,
+        type: name === "ghcr-renoconcierge" ? "kubernetes.io/dockerconfigjson" : "Opaque",
+        dataKeys,
+        labels: {
+          "app.kubernetes.io/part-of": "codeops-session-proof",
+          "codeops.renoconcierge.ca/credential-scope": runtime
+            ? "session-video-proof-runtime"
+            : "session-video-proof",
+        },
+      })),
+    }));
+  }
+  return JSON.stringify({
+    apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+    result: "verified",
+    observedAt,
+    planSha256: authorization.planSha256,
+    stepId: authorization.stepId,
+    namespace: authorization.namespace,
+  });
+}
+
 test("authorizes only the first post-creation step against the live Namespace UID", () => {
   const value = authorize();
   assert.equal(value.stepIndex, 2);
@@ -89,18 +137,38 @@ test("emits a completed receipt only after a second live identity check", () => 
     operator,
     target,
     completedAt: "2026-08-05T18:03:00Z",
+    evidenceSource: evidenceSource(authorization, "2026-08-05T18:03:00Z"),
   });
   assert.equal(receipt.result, "completed");
   assert.equal(receipt.stepId, "issue-broker-capabilities");
   assert.equal(receipt.namespace.uid, "namespace-uid-1");
+  assert.match(receipt.evidenceSha256, /^[0-9a-f]{64}$/);
+});
+
+test("rejects value-bearing or identity-drifted completion evidence", () => {
+  const authorization = authorize();
+  const evidence = JSON.parse(evidenceSource(authorization, "2026-08-05T18:03:00Z"));
+  evidence.data = { token: "must-not-enter-receipt-evidence" };
+  assert.throws(
+    () => completeSessionProofStep(authorization, {
+      namespaceResource,
+      operator,
+      target,
+      completedAt: "2026-08-05T18:03:00Z",
+      evidenceSource: JSON.stringify(evidence),
+    }),
+    /evidence identity drifted/,
+  );
 });
 
 test("advances only through exact predecessor bytes", () => {
-  const first = completeSessionProofStep(authorize(), {
+  const authorization = authorize();
+  const first = completeSessionProofStep(authorization, {
     namespaceResource,
     operator,
     target,
     completedAt: "2026-08-05T18:03:00Z",
+    evidenceSource: evidenceSource(authorization, "2026-08-05T18:03:00Z"),
   });
   const firstSource = JSON.stringify(first);
   const second = authorize({ priorReceiptSources: [firstSource] });
@@ -122,6 +190,7 @@ test("binds artifact steps to the reviewed manifest bytes", () => {
       operator,
       target,
       completedAt: `2026-08-05T18:0${3 + index}:00Z`,
+      evidenceSource: evidenceSource(authorization, `2026-08-05T18:0${3 + index}:00Z`),
     })));
   }
   assert.throws(
@@ -152,7 +221,13 @@ test("rejects authorization field substitution before writing a receipt", () => 
   assert.throws(
     () => completeSessionProofStep(
       { ...authorization, stepId: "start-runtime", action: "operator-apply" },
-      { namespaceResource, operator, target, completedAt: "2026-08-05T18:03:00Z" },
+      {
+        namespaceResource,
+        operator,
+        target,
+        completedAt: "2026-08-05T18:03:00Z",
+        evidenceSource: evidenceSource(authorization, "2026-08-05T18:03:00Z"),
+      },
     ),
     /authorization drifted/,
   );
@@ -174,6 +249,7 @@ test("chains every intermediate step through revocation and stops before deletio
       operator,
       target,
       completedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+      evidenceSource: evidenceSource(authorization, `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`),
     })));
   }
   assert.equal(JSON.parse(receiptSources.at(-1)).stepId, "revoke-capabilities");
