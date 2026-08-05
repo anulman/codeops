@@ -91,15 +91,16 @@ test("records a caller-supplied immutable migration identity", async () => {
   assert.equal(insert.values[0], "session-broker-runtime-outbox-v1");
 });
 
-test("applies the base and outbox migrations in order", async () => {
+test("applies the base, outbox, and execution-receipt migrations in order", async () => {
   const client = fakeClient();
   const results = await migrateSessionBroker(client);
-  assert.deepEqual(results, ["applied", "applied"]);
+  assert.deepEqual(results, ["applied", "applied", "applied"]);
   const inserts = client.calls
     .filter(({ text }) => text.includes("INSERT INTO codeops.schema_migrations"))
     .map(({ values }) => values[0]);
   assert.deepEqual(inserts, [
     "session-broker-v1",
     "session-broker-runtime-outbox-v1",
+    "session-runtime-execution-receipts-v1",
   ]);
 });

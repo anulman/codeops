@@ -6,6 +6,8 @@ const schemaUrl = new URL("../sql/session-broker.sql", import.meta.url);
 const revertUrl = new URL("../sql/session-broker-revert.sql", import.meta.url);
 const outboxUrl = new URL("../sql/session-broker-runtime-outbox.sql", import.meta.url);
 const outboxRevertUrl = new URL("../sql/session-broker-runtime-outbox-revert.sql", import.meta.url);
+const receiptsUrl = new URL("../sql/session-runtime-execution-receipts.sql", import.meta.url);
+const receiptsRevertUrl = new URL("../sql/session-runtime-execution-receipts-revert.sql", import.meta.url);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");
@@ -40,6 +42,19 @@ test("defines an immutable lease-claimed runtime outbox", async () => {
   assert.match(sql, /CREATE INDEX session_runtime_outbox_claim_idx/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*DROP TABLE codeops\.session_runtime_outbox;[\s\S]*COMMIT;\n$/);
+});
+
+test("defines immutable digest-bound runtime execution receipts", async () => {
+  const sql = await readFile(receiptsUrl, "utf8");
+  const revert = await readFile(receiptsRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.session_runtime_execution_receipts/);
+  assert.match(sql, /dispatch_id uuid PRIMARY KEY/);
+  assert.match(sql, /REFERENCES codeops\.session_runtime_outbox\(dispatch_id\)/);
+  assert.match(sql, /dispatch_digest ~ '\^sha256:\[0-9a-f\]\{64\}\$'/);
+  assert.match(sql, /result_json jsonb NOT NULL/);
+  assert.match(sql, /result_json->>'type' IN/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*DROP TABLE codeops\.session_runtime_execution_receipts;[\s\S]*COMMIT;\n$/);
 });
 
 test("orders migration and reversion around foreign-key dependencies", async () => {

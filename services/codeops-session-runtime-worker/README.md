@@ -15,9 +15,19 @@ claim, so a future ACP adapter cannot substitute broker-owned identity.
 The lifecycle executor receives only the immutable dispatch, never the worker
 bearer token, claim token, claim count, or claim expiry. Its receipt store must
 durably compare-and-create a digest-bound result before completion submission;
-an expired/reclaimed dispatch therefore replays prepared ACP/workspace work
-instead of repeating prompt, checkpoint, hibernate, resume, or fork side
-effects.
+after that receipt exists, an expired/reclaimed dispatch replays the prepared
+result instead of repeating prompt, checkpoint, hibernate, resume, or fork
+side effects. The ACP/workspace adapter must also make each operation
+idempotent by `dispatchId` across the unavoidable crash window between an
+external side effect and receipt creation. Runtime admission remains closed
+until that adapter-level guarantee is implemented and tested.
+
+`PostgresRuntimeExecutionReceiptStore` implements that compare-and-create seam
+against `codeops.session_runtime_execution_receipts`. The versioned broker
+migration creates one immutable row per outbox dispatch and binds it to the
+outbox with a foreign key. The future worker database role needs only bounded
+`SELECT` and `INSERT` on this table; exact grants remain part of the caller
+workload boundary.
 
 The package deliberately does not contain an ACP executor or a runnable polling
 entrypoint yet. Runtime command admission remains fail-closed until the ACP

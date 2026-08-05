@@ -12,6 +12,13 @@ const migrations = [
     name: "session-broker-runtime-outbox-v1",
     url: new URL("../sql/session-broker-runtime-outbox.sql", import.meta.url),
   },
+  {
+    name: "session-runtime-execution-receipts-v1",
+    url: new URL(
+      "../sql/session-runtime-execution-receipts.sql",
+      import.meta.url,
+    ),
+  },
 ] as const;
 
 function migrationDigest(sql: string): string {

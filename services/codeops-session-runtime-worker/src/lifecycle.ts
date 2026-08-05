@@ -95,9 +95,10 @@ async function executeCommand(
 }
 
 /**
- * Wrap ACP/workspace side effects in an immutable dispatch receipt. A retried
- * outbox claim replays the prepared result instead of repeating process,
- * checkpoint, resume, or fork work.
+ * Retain the prepared ACP/workspace result in an immutable dispatch receipt.
+ * Once retained, a retried outbox claim replays that result. The concrete
+ * lifecycle adapter must independently make the external operation idempotent
+ * by dispatch ID across a crash before this receipt is created.
  */
 export function createSessionRuntimeLifecycleExecutor(input: {
   readonly lifecycle: AcpWorkspaceLifecycle;
