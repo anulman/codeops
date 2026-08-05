@@ -365,6 +365,16 @@ jobs:
           node infra/scripts/render-codeops-session-proof-gateway.mjs > /tmp/codeops-session-proof-gateway.yaml
           node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-session-proof-gateway.yaml
 
+      - name: Test and render the isolated Agent Sessions proof UI
+        env:
+          CODEOPS_AGENTS_UI_DIGEST: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+          CODEOPS_SESSION_PROOF_NAMESPACE: codeops-session-proof-video-1
+          CODEOPS_RUN_ID: video-1
+        run: |
+          node --test infra/scripts/test-codeops-session-proof-ui.mjs
+          node infra/scripts/render-codeops-session-proof-ui.mjs > /tmp/codeops-session-proof-ui.yaml
+          node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-session-proof-ui.yaml
+
       - name: Test and render the disposable Agent Sessions proof database
         env:
           CODEOPS_SESSION_PROOF_POSTGRES_DIGEST: sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee

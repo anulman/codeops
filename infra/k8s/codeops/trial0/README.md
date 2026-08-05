@@ -311,6 +311,22 @@ integration. It accepts only the UI and runtime worker, reaches only the proof
 database and DNS, and mounts no repository, GitHub, publication, model, or
 Kubernetes-controller authority.
 
+Render the Agent Sessions UI through its proof wrapper so its four resources
+are bound to the same namespace and run ID. The UI remains tokenless, mounts
+only the distinct broker read/write capabilities, exposes only a ClusterIP,
+and reaches only the same-namespace proof gateway plus DNS. It has no admitted
+cluster ingress or Ingress object; record through a reviewed Kubernetes
+port-forward/Playwright path that injects the synthetic Access principal rather
+than weakening the production Access check:
+
+```bash
+CODEOPS_AGENTS_UI_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_SESSION_PROOF_NAMESPACE=codeops-session-proof-video-1 \
+CODEOPS_RUN_ID=video-1 \
+  node infra/scripts/render-codeops-session-proof-ui.mjs \
+  > "$CODEOPS_SESSION_PROOF_UI_MANIFEST"
+```
+
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
 only the database-owner credential, grants only execution-receipt columns to
