@@ -12,6 +12,10 @@ import {
 } from "./codeops-session-proof-credential-revoker.mjs";
 import { buildSessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
 import { buildSessionProofReadinessEvidence } from "./codeops-session-proof-readiness-evidence.mjs";
+import {
+  buildSessionProofGatewayReadinessEvidence,
+  sessionProofGatewayMigrationRelation,
+} from "./codeops-session-proof-gateway-readiness-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -175,6 +179,36 @@ function buildRevocationInputs() {
             ],
           },
         },
+        observedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+      }));
+    } else if (step.id === "wait-gateway-migration") {
+      evidenceSource = JSON.stringify(buildSessionProofGatewayReadinessEvidence({
+        authorization,
+        gatewayApplyReceiptSource: priorReceiptSources.at(-1),
+        gatewayApplyEvidenceSource: priorEvidenceSources.at(-1),
+        deployment: {
+          apiVersion: "apps/v1",
+          kind: "Deployment",
+          metadata: {
+            name: "codeops-control-gateway",
+            namespace: identity.namespace,
+            uid: "gateway-resource-uid-0",
+            generation: 1,
+          },
+          spec: { replicas: 1 },
+          status: {
+            observedGeneration: 1,
+            replicas: 1,
+            updatedReplicas: 1,
+            readyReplicas: 1,
+            availableReplicas: 1,
+            conditions: [
+              { type: "Available", status: "True" },
+              { type: "Progressing", status: "True" },
+            ],
+          },
+        },
+        migrationRelation: sessionProofGatewayMigrationRelation(),
         observedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
       }));
     } else {

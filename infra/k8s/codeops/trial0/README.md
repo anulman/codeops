@@ -493,7 +493,19 @@ manifest bytes, refuses any pre-existing package object, sends those bytes once
 through `kubectl create`, double-reads all four server UIDs around the final
 live operator/target/Namespace-UID check, and emits no receipt after partial
 creation or identity replacement. Migration readiness remains a separate
-closed postcondition, and the adapter is not invoked by CI.
+closed action adapter, and the apply adapter is not invoked by CI.
+
+`wait-gateway-migration` now has a non-mutating postcondition. Its evidence
+self-contains and hash-verifies the exact gateway apply receipt/evidence,
+reuses the applied Deployment UID at create-only generation 1, proves the
+single gateway replica is current and ready with both ready conditions, and
+attests the migrated `codeops.session_runtime_execution_receipts` relation by
+positive server OID, exact six-column shape/nullability, `dispatch_id` primary
+key, exact foreign key to `codeops.session_runtime_outbox(dispatch_id)`, and the
+four digest/status/state/result-type check-constraint semantics.
+Generic health text, logs, table contents, missing or extra fields, schema
+drift, stale rollout state, and replacement Deployments cannot complete the
+step. No live database query or wait adapter is admitted yet.
 
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
