@@ -361,6 +361,14 @@ jobs:
           node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-session-proof-database.yaml
           node --test infra/scripts/test-codeops-session-proof-secrets.mjs
 
+      - name: Test and render the Agent Sessions receipt grant Job
+        env:
+          CODEOPS_SESSION_PROOF_POSTGRES_DIGEST: sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+        run: |
+          node --test infra/scripts/test-codeops-session-proof-grants.mjs
+          node infra/scripts/render-codeops-session-proof-grants.mjs > /tmp/codeops-session-proof-grants.yaml
+          node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-session-proof-grants.yaml
+
       - name: Test and render the credential-only Codex auth Jobs
         env:
           CODEOPS_AGENT_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

@@ -265,6 +265,17 @@ integration. It accepts only the UI and runtime worker, reaches only the proof
 database and DNS, and mounts no repository, GitHub, publication, model, or
 Kubernetes-controller authority.
 
+After the database and standalone gateway are ready, run the exact-digest,
+non-retrying grant Job. It waits boundedly for the gateway migration, mounts
+only the database-owner credential, grants only execution-receipt columns to
+the pre-created worker role, and can reach only the proof database plus DNS:
+
+```bash
+CODEOPS_SESSION_PROOF_POSTGRES_DIGEST=sha256:<64-lowercase-hex> \
+  node infra/scripts/render-codeops-session-proof-grants.mjs \
+  > "$CODEOPS_SESSION_PROOF_GRANTS_MANIFEST"
+```
+
 The live proof runtime is a bounded, non-retrying Job rather than a shared
 Deployment. Its init container checks out one exact SHA, the runtime worker
 uses separate Job-initialization, claim/completion, and receipt-database
