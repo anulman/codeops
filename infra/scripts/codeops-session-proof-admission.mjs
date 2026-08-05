@@ -50,7 +50,8 @@ function assertPrincipal(actual, expected) {
   if (
     !actual ||
     actual.username !== expected.username ||
-    actual.uid !== expected.uid
+    actual.uid !== expected.uid ||
+    actual.credentialSha256 !== expected.credentialSha256
   ) {
     throw new Error("authenticated operator principal drifted");
   }
@@ -89,7 +90,11 @@ function assertAdmissionShape(admission) {
     !SHA.test(admission.identity?.baseSha ?? "") ||
     !SUFFIX.test(admission.identity?.sessionSuffix ?? "") ||
     !BOUNDED_IDENTITY.test(admission.operator?.username ?? "") ||
-    !BOUNDED_IDENTITY.test(admission.operator?.uid ?? "") ||
+    !(
+      admission.operator?.uid === null ||
+      BOUNDED_IDENTITY.test(admission.operator?.uid ?? "")
+    ) ||
+    !SHA256.test(admission.operator?.credentialSha256 ?? "") ||
     !BOUNDED_IDENTITY.test(admission.target?.context ?? "") ||
     JSON.stringify(admission.authorizedSteps) !== JSON.stringify(expectedSteps) ||
     expires <= approved ||
@@ -176,9 +181,13 @@ export function createSessionProofAdmission(input) {
   }
   if (
     !BOUNDED_IDENTITY.test(input.operator?.username ?? "") ||
-    !BOUNDED_IDENTITY.test(input.operator?.uid ?? "")
+    !(
+      input.operator?.uid === null ||
+      BOUNDED_IDENTITY.test(input.operator?.uid ?? "")
+    ) ||
+    !SHA256.test(input.operator?.credentialSha256 ?? "")
   ) {
-    throw new Error("authenticated operator username and UID are required");
+    throw new Error("authenticated operator and credential fingerprint are required");
   }
   if (
     !BOUNDED_IDENTITY.test(input.target?.context ?? "") ||
@@ -198,7 +207,11 @@ export function createSessionProofAdmission(input) {
     state: "approved-unbound",
     planSha256: digest,
     identity: plan.identity,
-    operator: { username: input.operator.username, uid: input.operator.uid },
+    operator: {
+      username: input.operator.username,
+      uid: input.operator.uid,
+      credentialSha256: input.operator.credentialSha256,
+    },
     target: { context: input.target.context, server: input.target.server },
     approvedAt: input.approvedAt,
     expiresAt: input.expiresAt,

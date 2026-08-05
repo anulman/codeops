@@ -354,9 +354,10 @@ CODEOPS_SESSION_SUFFIX=video-1 \
 ```
 
 Execution admission is a second, operator-owned artifact. It must bind the
-SHA-256 of the reviewed plan bytes to the authenticated Kubernetes username
-and UID, exact context and API server, and a positive window no longer than
-four hours. Namespace creation is the only operation allowed while unbound.
+SHA-256 of the reviewed plan bytes to the authenticated Kubernetes username,
+UID when the authenticator supplies one, SHA-256 of the active client
+certificate, exact context and API server, and a positive window no longer
+than four hours. Namespace creation is the only operation allowed while unbound.
 After creation, every remaining operation—including exact deletion—must first
 re-read the Namespace and match its name, proof labels, and immutable
 `metadata.uid`; a same-name replacement is rejected. Final teardown succeeds
@@ -365,6 +366,19 @@ offline verifier and still has no Kubernetes client or apply/delete path:
 
 ```text
 infra/scripts/codeops-session-proof-admission.mjs
+```
+
+Before creation, the read-only live preflight consumes that admission and uses
+only `kubectl config`, `kubectl auth whoami`, and `kubectl get namespace`. It
+hashes the active client certificate in memory without printing certificate or
+key material, rechecks the reviewed plan bytes and exact target, and succeeds
+only while the exact proof namespace is absent. It cannot apply, create, patch,
+delete, issue credentials, or execute any later lifecycle step:
+
+```bash
+CODEOPS_SESSION_PROOF_PLAN=/path/to/plan.json \
+CODEOPS_SESSION_PROOF_ADMISSION=/path/to/admission.json \
+  node infra/scripts/run-codeops-session-proof-preflight.mjs
 ```
 
 After the database and standalone gateway are ready, run the exact-digest,

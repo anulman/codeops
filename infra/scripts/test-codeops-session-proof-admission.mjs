@@ -14,7 +14,11 @@ const identity = {
   baseSha: "a".repeat(40),
   sessionSuffix: "video-1",
 };
-const operator = { username: "operator@example.com", uid: "operator-uid-1" };
+const operator = {
+  username: "operator@example.com",
+  uid: null,
+  credentialSha256: "9".repeat(64),
+};
 const target = { context: "ovh-prod", server: "https://cluster.example.invalid" };
 const approvedAt = "2026-08-05T05:00:00.000Z";
 const expiresAt = "2026-08-05T08:00:00.000Z";
@@ -109,7 +113,7 @@ test("fails closed on principal, cluster, expiry, namespace labels, UID, or step
   });
   const base = { stepId: "start-runtime", namespaceResource: namespace(), operator, target, observedAt };
   assert.throws(() => verifySessionProofOperation(bound, {
-    ...base, operator: { ...operator, uid: "other" },
+    ...base, operator: { ...operator, credentialSha256: "8".repeat(64) },
   }));
   assert.throws(() => verifySessionProofOperation(bound, {
     ...base, target: { ...target, context: "other" },
