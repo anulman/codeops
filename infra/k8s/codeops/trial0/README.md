@@ -419,6 +419,19 @@ CODEOPS_SESSION_PROOF_NAMESPACE_RECEIPT=/path/to/bound-namespace-receipt.json \
   > /path/to/namespace-delete-receipt.json
 ```
 
+Every intermediate action must additionally pass through the non-mutating
+step-receipt contract in
+`infra/scripts/codeops-session-proof-step-receipts.mjs`. It accepts only an
+exact successful creation receipt, reviewed plan bytes, the complete ordered
+predecessor-receipt byte chain, the live operator/target, and the same labeled
+Namespace UID. Artifact-bearing steps also require the exact reviewed manifest
+bytes. Authorization and completion each repeat the live admission check; the
+completion receipt hashes its exact predecessor so steps cannot be skipped,
+reordered, replayed under a replacement Namespace, or spliced between proof
+runs. This module deliberately has no Kubernetes or credential mutation path;
+concrete action adapters remain closed until each can be constrained and tested
+against this contract.
+
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
 only the database-owner credential, grants only execution-receipt columns to

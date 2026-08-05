@@ -1,0 +1,184 @@
+import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
+import { test } from "node:test";
+import { createSessionProofAdmission, bindSessionProofNamespace } from "./codeops-session-proof-admission.mjs";
+import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
+import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
+
+const identity = {
+  namespace: "codeops-session-proof-video-1",
+  runId: "video-1",
+  baseSha: "1".repeat(40),
+  sessionSuffix: "video-1",
+};
+const operator = { username: "kubernetes-admin", uid: null, credentialSha256: "9".repeat(64) };
+const target = { context: "k3s", server: "https://127.0.0.1:6443" };
+const namespaceResource = {
+  apiVersion: "v1",
+  kind: "Namespace",
+  metadata: {
+    name: identity.namespace,
+    uid: "namespace-uid-1",
+    labels: {
+      "app.kubernetes.io/part-of": "codeops-session-proof",
+      "codeops.renoconcierge.ca/proof-run": identity.runId,
+      "codeops.renoconcierge.ca/base-sha": identity.baseSha,
+    },
+  },
+};
+const artifacts = ["codex-login", "codex-smoke", "database", "gateway", "grants", "namespace", "runtime", "ui"]
+  .map((id) => ({ id, sha256: createHash("sha256").update(`${id}\n`).digest("hex") }));
+const planSource = JSON.stringify({
+  apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+  admission: "closed",
+  execution: "render-and-review-only",
+  identity,
+  artifacts,
+  sequence: sessionProofSequence(),
+});
+const planSha256 = createHash("sha256").update(planSource).digest("hex");
+const unbound = createSessionProofAdmission({
+  planSource,
+  reviewedPlanSha256: planSha256,
+  operator,
+  target,
+  approvedAt: "2026-08-05T18:00:00Z",
+  expiresAt: "2026-08-05T20:00:00Z",
+});
+const admission = bindSessionProofNamespace(unbound, {
+  namespaceResource,
+  operator,
+  target,
+  observedAt: "2026-08-05T18:01:00Z",
+});
+const creationReceiptSource = JSON.stringify({
+  apiVersion: "codeops.renoconcierge.ca/session-proof-namespace-create/v1",
+  result: "created-and-uid-bound",
+  checkedAt: "2026-08-05T18:01:00Z",
+  planSha256,
+  namespaceManifestSha256: artifacts.find((value) => value.id === "namespace").sha256,
+  namespace: { name: identity.namespace, uid: admission.namespaceUid },
+  proceed: true,
+  admission,
+});
+
+function authorize(overrides = {}) {
+  return authorizeSessionProofStep({
+    planSource,
+    creationReceiptSource,
+    priorReceiptSources: [],
+    namespaceResource,
+    operator,
+    target,
+    observedAt: "2026-08-05T18:02:00Z",
+    ...overrides,
+  });
+}
+
+test("authorizes only the first post-creation step against the live Namespace UID", () => {
+  const value = authorize();
+  assert.equal(value.stepIndex, 2);
+  assert.equal(value.stepId, "issue-broker-capabilities");
+  assert.equal(value.previousReceiptSha256, createHash("sha256").update(creationReceiptSource).digest("hex"));
+});
+
+test("emits a completed receipt only after a second live identity check", () => {
+  const authorization = authorize();
+  const receipt = completeSessionProofStep(authorization, {
+    namespaceResource,
+    operator,
+    target,
+    completedAt: "2026-08-05T18:03:00Z",
+  });
+  assert.equal(receipt.result, "completed");
+  assert.equal(receipt.stepId, "issue-broker-capabilities");
+  assert.equal(receipt.namespace.uid, "namespace-uid-1");
+});
+
+test("advances only through exact predecessor bytes", () => {
+  const first = completeSessionProofStep(authorize(), {
+    namespaceResource,
+    operator,
+    target,
+    completedAt: "2026-08-05T18:03:00Z",
+  });
+  const firstSource = JSON.stringify(first);
+  const second = authorize({ priorReceiptSources: [firstSource] });
+  assert.equal(second.stepId, "issue-runtime-capabilities");
+  assert.equal(second.previousReceiptSha256, createHash("sha256").update(firstSource).digest("hex"));
+  const tampered = { ...first, previousReceiptSha256: "0".repeat(64) };
+  assert.throws(
+    () => authorize({ priorReceiptSources: [JSON.stringify(tampered)] }),
+    /receipt chain drifted/,
+  );
+});
+
+test("binds artifact steps to the reviewed manifest bytes", () => {
+  const receipts = [];
+  for (let index = 0; index < 2; index += 1) {
+    const authorization = authorize({ priorReceiptSources: receipts });
+    receipts.push(JSON.stringify(completeSessionProofStep(authorization, {
+      namespaceResource,
+      operator,
+      target,
+      completedAt: `2026-08-05T18:0${3 + index}:00Z`,
+    })));
+  }
+  assert.throws(
+    () => authorize({ priorReceiptSources: receipts, artifactSource: "wrong\n" }),
+    /artifact digest drifted/,
+  );
+  const value = authorize({ priorReceiptSources: receipts, artifactSource: "database\n" });
+  assert.equal(value.stepId, "start-database");
+  assert.equal(value.artifactSha256, artifacts.find((artifact) => artifact.id === "database").sha256);
+});
+
+test("rejects Namespace replacement and incomplete creation", () => {
+  assert.throws(
+    () => authorize({ namespaceResource: { ...namespaceResource, metadata: { ...namespaceResource.metadata, uid: "replacement" } } }),
+    /Namespace UID drifted/,
+  );
+  const incomplete = JSON.parse(creationReceiptSource);
+  incomplete.result = "namespace-uid-bound-create-incomplete";
+  incomplete.proceed = false;
+  assert.throws(
+    () => authorize({ creationReceiptSource: JSON.stringify(incomplete) }),
+    /does not admit execution/,
+  );
+});
+
+test("rejects authorization field substitution before writing a receipt", () => {
+  const authorization = authorize();
+  assert.throws(
+    () => completeSessionProofStep(
+      { ...authorization, stepId: "start-runtime", action: "operator-apply" },
+      { namespaceResource, operator, target, completedAt: "2026-08-05T18:03:00Z" },
+    ),
+    /authorization drifted/,
+  );
+});
+
+test("chains every intermediate step through revocation and stops before deletion", () => {
+  const receiptSources = [];
+  const sequence = sessionProofSequence();
+  for (let stepIndex = 2; stepIndex <= 19; stepIndex += 1) {
+    const step = sequence[stepIndex];
+    const authorization = authorize({
+      priorReceiptSources: receiptSources,
+      artifactSource: step.artifact ? `${step.artifact}\n` : undefined,
+      observedAt: `2026-08-05T18:10:${String(stepIndex).padStart(2, "0")}Z`,
+    });
+    assert.equal(authorization.stepId, step.id);
+    receiptSources.push(JSON.stringify(completeSessionProofStep(authorization, {
+      namespaceResource,
+      operator,
+      target,
+      completedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+    })));
+  }
+  assert.equal(JSON.parse(receiptSources.at(-1)).stepId, "revoke-capabilities");
+  assert.throws(
+    () => authorize({ priorReceiptSources: receiptSources }),
+    /already complete/,
+  );
+});
