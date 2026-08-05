@@ -510,7 +510,12 @@ function buildRevocationInputs() {
     target,
     observedAt: "2026-08-05T19:20:00Z",
   });
-  return { authorization, priorReceiptSources, issuanceEvidenceSources };
+  return {
+    authorization,
+    priorReceiptSources,
+    issuanceEvidenceSources,
+    runtimeStopEvidenceSource: priorEvidenceSources.at(-1),
+  };
 }
 
 function makeRunner(inputs, options = {}) {
@@ -652,6 +657,34 @@ test("rejects issuance evidence or receipt-chain drift before live access", asyn
     completedAt: "2026-08-05T19:22:00Z",
   }, { runner: stub.runner, deleteRequest: stub.deleteRequest }), /evidence digest drifted/);
   assert.equal(stub.calls.length, 0);
+});
+
+test("rejects runtime-stop evidence drift before live access", async () => {
+  const inputs = buildRevocationInputs();
+  const evidence = JSON.parse(inputs.runtimeStopEvidenceSource);
+  evidence.deletedJobUid = "substituted-runtime-job-uid";
+  const stub = makeRunner(inputs);
+  await assert.rejects(revokeSessionProofCredentials({
+    ...inputs,
+    runtimeStopEvidenceSource: JSON.stringify(evidence),
+    startedAt: "2026-08-05T19:21:00Z",
+    completedAt: "2026-08-05T19:22:00Z",
+  }, { runner: stub.runner, deleteRequest: stub.deleteRequest }), /runtime-stop receipt drifted/);
+  assert.equal(stub.calls.length, 0);
+});
+
+test("requires bounded exact runtime-stop evidence before live access", async () => {
+  const inputs = buildRevocationInputs();
+  for (const runtimeStopEvidenceSource of [undefined, "x".repeat(65 * 1024)]) {
+    const stub = makeRunner(inputs);
+    await assert.rejects(revokeSessionProofCredentials({
+      ...inputs,
+      runtimeStopEvidenceSource,
+      startedAt: "2026-08-05T19:21:00Z",
+      completedAt: "2026-08-05T19:22:00Z",
+    }, { runner: stub.runner, deleteRequest: stub.deleteRequest }), /runtime-stop predecessor drifted/);
+    assert.equal(stub.calls.length, 0);
+  }
 });
 
 test("withholds the receipt after delete rejection, replacement, or final absence drift", async () => {

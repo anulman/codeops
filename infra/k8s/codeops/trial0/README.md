@@ -432,6 +432,13 @@ double-reads absence and both retained identities around final live admission
 before emitting evidence and the receipt. It never invokes `kubectl delete`,
 reads logs or credential values, or targets any other workload.
 
+Credential revocation is admitted only after the concrete revoker verifies the
+immediate `stop-runtime` receipt hash, the exact runtime-stop evidence digest,
+and the full nested runtime-stop evidence contract. Revocation must start no
+earlier than that bound stop observation; missing, oversized, substituted, or
+chain-drifted predecessor bytes fail before any live cluster access or Secret
+deletion.
+
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
 

@@ -7,6 +7,7 @@ import {
   buildSessionProofCredentialRevocationEvidence,
 } from "./codeops-session-proof-credential-revocation-evidence.mjs";
 import { verifySessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
+import { verifySessionProofRuntimeStopEvidence } from "./codeops-session-proof-runtime-stop-evidence.mjs";
 import {
   readSessionProofKubeContext,
   readSessionProofNamespace,
@@ -22,6 +23,7 @@ const MAX_OUTPUT_BYTES = 1024 * 1024;
 const DELETE_TIMEOUT_MS = 30_000;
 const VERIFY_TIMEOUT_MS = 60_000;
 const VERIFY_INTERVAL_MS = 500;
+const MAX_SOURCE_BYTES = 64 * 1024;
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 
 function digest(source) {
@@ -74,7 +76,49 @@ function verifyExecutionTimes(authorization, startedAt, completedAt) {
   }
 }
 
-function verifyIssuanceChain(authorization, receiptSources, evidenceSources) {
+function verifyRuntimeStopPredecessor(authorization, receiptSource, evidenceSource) {
+  if (
+    typeof receiptSource !== "string" ||
+    Buffer.byteLength(receiptSource) > MAX_SOURCE_BYTES ||
+    typeof evidenceSource !== "string" ||
+    Buffer.byteLength(evidenceSource) > MAX_SOURCE_BYTES ||
+    digest(receiptSource) !== authorization.previousReceiptSha256
+  ) {
+    throw new Error("proof credential revocation runtime-stop predecessor drifted");
+  }
+  const receipt = parseJson(receiptSource, "proof runtime-stop receipt");
+  if (
+    receipt?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+    receipt.result !== "completed" ||
+    receipt.proceed !== true ||
+    receipt.planSha256 !== authorization.planSha256 ||
+    JSON.stringify(receipt.namespace) !== JSON.stringify(authorization.namespace) ||
+    receipt.stepIndex !== authorization.stepIndex - 1 ||
+    receipt.stepId !== "stop-runtime" ||
+    receipt.action !== "operator-delete-exact-runtime-job" ||
+    receipt.artifact !== null ||
+    receipt.artifactSha256 !== null ||
+    receipt.evidenceSha256 !== digest(evidenceSource)
+  ) {
+    throw new Error("proof credential revocation runtime-stop receipt drifted");
+  }
+  const stopAuthorization = {
+    planSha256: authorization.planSha256,
+    stepIndex: receipt.stepIndex,
+    stepId: receipt.stepId,
+    action: receipt.action,
+    artifact: receipt.artifact,
+    artifactSha256: receipt.artifactSha256,
+    namespace: authorization.namespace,
+    admission: authorization.admission,
+    previousReceiptSha256: receipt.previousReceiptSha256,
+  };
+  const evidence = parseJson(evidenceSource, "proof runtime-stop evidence");
+  verifySessionProofRuntimeStopEvidence(stopAuthorization, evidence);
+  return evidence;
+}
+
+function verifyIssuanceChain(authorization, receiptSources, evidenceSources, runtimeStopEvidenceSource) {
   const expectedPriorCount = authorization.stepIndex - 2;
   if (
     !Array.isArray(receiptSources) ||
@@ -89,6 +133,11 @@ function verifyIssuanceChain(authorization, receiptSources, evidenceSources) {
   if (digest(receiptSources.at(-1)) !== authorization.previousReceiptSha256) {
     throw new Error("proof credential revocation predecessor receipt drifted");
   }
+  const runtimeStopEvidence = verifyRuntimeStopPredecessor(
+    authorization,
+    receiptSources.at(-1),
+    runtimeStopEvidenceSource,
+  );
 
   const sequence = sessionProofSequence();
   for (let index = receiptSources.length - 1; index >= 1; index -= 1) {
@@ -141,7 +190,7 @@ function verifyIssuanceChain(authorization, receiptSources, evidenceSources) {
   ) {
     throw new Error("proof credential issuance UID inventory drifted");
   }
-  return credentials;
+  return { credentials, runtimeStopEvidence };
 }
 
 export function createCredentialDeleteRequest(input) {
@@ -225,11 +274,16 @@ export async function revokeSessionProofCredentials(input, dependencies = {}) {
     throw new Error("proof step is not exact credential revocation");
   }
   verifyExecutionTimes(authorization, input.startedAt, input.completedAt);
-  const issuedUids = verifyIssuanceChain(
+  const predecessor = verifyIssuanceChain(
     authorization,
     input.priorReceiptSources,
     input.issuanceEvidenceSources,
+    input.runtimeStopEvidenceSource,
   );
+  if (Date.parse(input.startedAt) < Date.parse(predecessor.runtimeStopEvidence.observedAt)) {
+    throw new Error("proof credential revocation started before runtime stop completed");
+  }
+  const issuedUids = predecessor.credentials;
 
   const live = readAndVerifyLiveIdentity(authorization, input.startedAt, runner);
   const tls = readSessionProofKubeTlsConfig({ operator: live.operator, target: live.target }, runner);
