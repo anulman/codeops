@@ -429,6 +429,7 @@ jobs:
           node --test infra/scripts/test-codeops-session-proof-namespace-create.mjs
           node --test infra/scripts/test-codeops-session-proof-namespace-delete.mjs
           node --test infra/scripts/test-codeops-session-proof-teardown-evidence.mjs
+          node --test infra/scripts/test-codeops-session-proof-operator-itinerary.mjs
           node --test infra/scripts/test-codeops-session-proof-step-receipts.mjs
           node --test infra/scripts/test-codeops-session-proof-apply-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-database-apply.mjs
@@ -464,6 +465,14 @@ jobs:
           node infra/scripts/render-codeops-session-proof-plan.mjs > /tmp/codeops-session-proof-plan.json
           jq -e '.admission == "closed" and .execution == "render-and-review-only"' \
             /tmp/codeops-session-proof-plan.json
+          CODEOPS_SESSION_PROOF_PLAN=/tmp/codeops-session-proof-plan.json \
+            node infra/scripts/run-codeops-session-proof-closed-rehearsal.mjs \
+              > /tmp/codeops-session-proof-operator-itinerary.json
+          jq -e '.mode == "closed-rehearsal" and .liveAccess == false and
+            .mutation == false and .adapterInvocation == false and
+            (.steps | length) == 23 and
+            .steps[-1].emittedByStepId == "delete-namespace"' \
+            /tmp/codeops-session-proof-operator-itinerary.json
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD

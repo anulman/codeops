@@ -504,6 +504,28 @@ CODEOPS_SESSION_SUFFIX=video-1 \
   > "$CODEOPS_SESSION_PROOF_PLAN"
 ```
 
+Before preparing a live admission, run the closed operator rehearsal over the
+exact reviewed plan and all eight exact manifest byte streams. It emits the
+complete 23-step adapter/input/output itinerary, including every prior receipt
+and evidence handoff through revocation, UID-preconditioned Namespace deletion,
+and final absence emitted by the deletion adapter. The rehearsal imports no
+adapter, invokes no executable step, has no Kubernetes client, and performs no
+mutation:
+
+```bash
+CODEOPS_SESSION_PROOF_PLAN=/path/to/plan.json \
+CODEOPS_SESSION_PROOF_NAMESPACE_MANIFEST=/path/to/namespace.yaml \
+CODEOPS_SESSION_PROOF_DATABASE_MANIFEST=/path/to/database.yaml \
+CODEOPS_SESSION_PROOF_GATEWAY_MANIFEST=/path/to/gateway.yaml \
+CODEOPS_SESSION_PROOF_GRANTS_MANIFEST=/path/to/grants.yaml \
+CODEOPS_SESSION_PROOF_CODEX_LOGIN_MANIFEST=/path/to/codex-login.yaml \
+CODEOPS_SESSION_PROOF_CODEX_SMOKE_MANIFEST=/path/to/codex-smoke.yaml \
+CODEOPS_SESSION_PROOF_UI_MANIFEST=/path/to/ui.yaml \
+CODEOPS_SESSION_PROOF_RUNTIME_MANIFEST=/path/to/runtime.yaml \
+  node infra/scripts/run-codeops-session-proof-closed-rehearsal.mjs \
+  > /path/to/closed-operator-itinerary.json
+```
+
 Execution admission is a second, operator-owned artifact. It must bind the
 SHA-256 of the reviewed plan bytes to the authenticated Kubernetes username,
 UID when the authenticator supplies one, SHA-256 of the active client
