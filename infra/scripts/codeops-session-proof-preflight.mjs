@@ -40,16 +40,7 @@ function certificateFingerprint(certificateData) {
   return createHash("sha256").update(certificate).digest("hex");
 }
 
-export function runSessionProofPreflight(input, runner = execFileSync) {
-  const planSha256 = createHash("sha256").update(input.planSource ?? "").digest("hex");
-  if (planSha256 !== input.admission?.planSha256) {
-    throw new Error("live preflight plan digest drifted");
-  }
-  const plan = parseJson(input.planSource, "proof plan");
-  if (JSON.stringify(plan.identity) !== JSON.stringify(input.admission.identity)) {
-    throw new Error("live preflight plan identity drifted");
-  }
-
+export function readSessionProofKubeContext(runner = execFileSync) {
   const context = runKubectl(["config", "current-context"], runner);
   const config = parseJson(
     runKubectl(["config", "view", "--minify", "-o", "json"], runner),
@@ -76,18 +67,38 @@ export function runSessionProofPreflight(input, runner = execFileSync) {
     uid: whoami.status?.userInfo?.uid ?? null,
     credentialSha256: certificateFingerprint(certificateData),
   };
-  const target = { context, server };
+  return { operator, target: { context, server } };
+}
+
+export function readSessionProofNamespace(namespace, runner = execFileSync) {
   const namespaceSource = runKubectl([
     "get",
     "namespace",
-    input.admission.identity.namespace,
+    namespace,
     "-o",
     "json",
     "--ignore-not-found",
   ], runner);
-  const namespaceResource = namespaceSource
+  return namespaceSource
     ? parseJson(namespaceSource, "kubectl get namespace")
     : null;
+}
+
+export function runSessionProofPreflight(input, runner = execFileSync) {
+  const planSha256 = createHash("sha256").update(input.planSource ?? "").digest("hex");
+  if (planSha256 !== input.admission?.planSha256) {
+    throw new Error("live preflight plan digest drifted");
+  }
+  const plan = parseJson(input.planSource, "proof plan");
+  if (JSON.stringify(plan.identity) !== JSON.stringify(input.admission.identity)) {
+    throw new Error("live preflight plan identity drifted");
+  }
+
+  const { operator, target } = readSessionProofKubeContext(runner);
+  const namespaceResource = readSessionProofNamespace(
+    input.admission.identity.namespace,
+    runner,
+  );
 
   verifySessionProofOperation(input.admission, {
     stepId: "create-namespace",

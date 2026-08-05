@@ -426,6 +426,7 @@ jobs:
           node --test infra/scripts/test-codeops-session-proof-plan.mjs
           node --test infra/scripts/test-codeops-session-proof-admission.mjs
           node --test infra/scripts/test-codeops-session-proof-preflight.mjs
+          node --test infra/scripts/test-codeops-session-proof-namespace-create.mjs
           node infra/scripts/render-codeops-session-proof-plan.mjs > /tmp/codeops-session-proof-plan.json
           jq -e '.admission == "closed" and .execution == "render-and-review-only"' \
             /tmp/codeops-session-proof-plan.json
