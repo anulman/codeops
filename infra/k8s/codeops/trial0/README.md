@@ -236,9 +236,22 @@ CODEOPS_ACCEPTANCE_RUNNER_DIGEST=sha256:<64-lowercase-hex> \
 ## Disposable Agent Sessions runtime Job
 
 The video proof uses a dedicated `codeops-session-proof-*` namespace and an
-ephemeral PostgreSQL workload. Issue its seven distinct Secret objects without
-printing their values, render the exact database image digest, and apply only
-inside that disposable namespace:
+ephemeral PostgreSQL workload. Render the namespace package first. The package
+binds the namespace name to one run ID and exact base SHA, enforces restricted
+Pod Security, applies aggregate object/CPU/memory/storage bounds, and defaults
+all pod ingress and egress to denied. Rendering does not create the namespace:
+
+```bash
+CODEOPS_SESSION_PROOF_NAMESPACE=codeops-session-proof-video-1 \
+CODEOPS_RUN_ID=video-1 \
+CODEOPS_BASE_SHA=<40-lowercase-hex> \
+  node infra/scripts/render-codeops-session-proof-namespace.mjs \
+  > "$CODEOPS_SESSION_PROOF_NAMESPACE_MANIFEST"
+```
+
+After separately reviewing that exact manifest, issue the seven distinct Secret
+objects without printing their values, render the exact database image digest,
+and apply only inside that disposable namespace:
 
 ```bash
 infra/scripts/issue-codeops-session-proof-secrets.sh \
