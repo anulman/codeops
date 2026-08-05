@@ -505,7 +505,17 @@ key, exact foreign key to `codeops.session_runtime_outbox(dispatch_id)`, and the
 four digest/status/state/result-type check-constraint semantics.
 Generic health text, logs, table contents, missing or extra fields, schema
 drift, stale rollout state, and replacement Deployments cannot complete the
-step. No live database query or wait adapter is admitted yet.
+step. A concrete but uninvoked adapter now verifies the exact apply chain
+before live access, repeats operator/target/Namespace-UID admission around the
+bounded poll, reads only the applied gateway Deployment plus PostgreSQL catalog
+metadata through the disposable database Deployment, and compares all four
+parsed check expressions exactly before assigning their semantic labels. It
+caps the configured delay budget at two minutes and repeats both reads before
+emitting evidence and a receipt. Missing relations may be retried within the
+bound; malformed catalog output, changed check expressions, replacement,
+rollout drift, query failure, or final-state loss fails closed. The query reads
+no application rows or Secret values, performs no writes, and is not invoked
+by CI.
 
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts

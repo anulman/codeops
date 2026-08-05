@@ -123,7 +123,7 @@ function verifyMigrationRelation(relation) {
   }
 }
 
-function verifyGatewayApplyChain(authorization, receiptSource, applyEvidenceSource) {
+export function verifySessionProofGatewayApplyChain(authorization, receiptSource, applyEvidenceSource) {
   if (digest(receiptSource) !== authorization.previousReceiptSha256) {
     throw new Error("proof gateway readiness predecessor receipt drifted");
   }
@@ -181,7 +181,7 @@ export function verifySessionProofGatewayReadinessEvidence(authorization, eviden
   ) {
     throw new Error("proof gateway readiness evidence identity drifted");
   }
-  const appliedDeploymentUid = verifyGatewayApplyChain(
+  const appliedDeploymentUid = verifySessionProofGatewayApplyChain(
     authorization,
     evidence.gatewayApplyReceiptSource,
     evidence.gatewayApplyEvidenceSource,
@@ -199,7 +199,7 @@ export function buildSessionProofGatewayReadinessEvidence(input) {
   assertAuthorization(authorization);
   const receiptSource = input.gatewayApplyReceiptSource ?? "";
   const applyEvidenceSource = input.gatewayApplyEvidenceSource ?? "";
-  const appliedDeploymentUid = verifyGatewayApplyChain(authorization, receiptSource, applyEvidenceSource);
+  const appliedDeploymentUid = verifySessionProofGatewayApplyChain(authorization, receiptSource, applyEvidenceSource);
   const deployment = normalizeDeployment(input.deployment);
   if (deployment.uid !== appliedDeploymentUid) {
     throw new Error("proof gateway readiness Deployment UID drifted from apply evidence");
