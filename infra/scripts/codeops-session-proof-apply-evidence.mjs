@@ -21,6 +21,15 @@ const EXPECTED = {
       { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-control-gateway" },
     ],
   },
+  "grant-receipts": {
+    artifact: "grants",
+    resources: [
+      { apiVersion: "batch/v1", kind: "Job", name: "codeops-session-proof-grants" },
+      { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", name: "codeops-session-proof-grants" },
+      { apiVersion: "v1", kind: "ConfigMap", name: "codeops-session-proof-grants" },
+      { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-session-proof-grants" },
+    ],
+  },
 };
 
 function sameKeys(value, keys) {

@@ -57,6 +57,27 @@ test("attests exactly the four applied gateway resource identities", () => {
   );
 });
 
+test("attests exactly the four applied receipt-grant resource identities", () => {
+  const grantAuthorization = {
+    ...authorization,
+    stepId: "grant-receipts",
+    artifact: "grants",
+  };
+  const evidence = buildSessionProofApplyEvidence({
+    authorization: grantAuthorization,
+    observedAt: "2026-08-05T20:42:00Z",
+    resources: sessionProofApplyResourceIdentities("grant-receipts").map((resource, index) => ({
+      ...resource,
+      uid: `grant-resource-uid-${index}`,
+    })),
+  });
+  assert.equal(evidence.resourceInventory.length, 4);
+  assert.deepEqual(
+    evidence.resourceInventory.map((resource) => resource.kind).sort(),
+    ["ConfigMap", "Job", "NetworkPolicy", "ServiceAccount"].sort(),
+  );
+});
+
 test("rejects database, incomplete, duplicate, or wrong-artifact gateway evidence", () => {
   const gatewayAuthorization = {
     ...authorization,
@@ -82,6 +103,38 @@ test("rejects database, incomplete, duplicate, or wrong-artifact gateway evidenc
   assert.throws(() => buildSessionProofApplyEvidence({
     authorization: { ...gatewayAuthorization, artifact: "database" },
     observedAt: "2026-08-05T20:10:00Z",
+    resources: expected,
+  }), /not a qualified apply/);
+});
+
+test("rejects gateway, incomplete, duplicate, or wrong-artifact grant evidence", () => {
+  const grantAuthorization = {
+    ...authorization,
+    stepId: "grant-receipts",
+    artifact: "grants",
+  };
+  const expected = sessionProofApplyResourceIdentities("grant-receipts").map((resource, index) => ({
+    ...resource,
+    uid: `grant-resource-uid-${index}`,
+  }));
+  for (const invalid of [
+    sessionProofApplyResourceIdentities("start-gateway").map((resource, index) => ({
+      ...resource,
+      uid: `gateway-resource-uid-${index}`,
+    })),
+    expected.slice(1),
+    [...expected, expected[0]],
+    expected.map((resource, index) => index === 0 ? { ...resource, name: "renamed" } : resource),
+  ]) {
+    assert.throws(() => buildSessionProofApplyEvidence({
+      authorization: grantAuthorization,
+      observedAt: "2026-08-05T20:42:00Z",
+      resources: invalid,
+    }));
+  }
+  assert.throws(() => buildSessionProofApplyEvidence({
+    authorization: { ...grantAuthorization, artifact: "gateway" },
+    observedAt: "2026-08-05T20:42:00Z",
     resources: expected,
   }), /not a qualified apply/);
 });

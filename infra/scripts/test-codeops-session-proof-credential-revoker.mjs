@@ -152,6 +152,15 @@ function buildRevocationInputs() {
           uid: `gateway-resource-uid-${index}`,
         })),
       }));
+    } else if (step.id === "grant-receipts") {
+      evidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+        authorization,
+        observedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+        resources: sessionProofApplyResourceIdentities("grant-receipts").map((resource, index) => ({
+          ...resource,
+          uid: `grant-resource-uid-${index}`,
+        })),
+      }));
     } else if (step.id === "wait-database") {
       evidenceSource = JSON.stringify(buildSessionProofReadinessEvidence({
         authorization,

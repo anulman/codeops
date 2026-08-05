@@ -522,6 +522,14 @@ non-retrying grant Job. It waits boundedly for the gateway migration, mounts
 only the database-owner credential, grants only execution-receipt columns to
 the pre-created worker role, and can reach only the proof database plus DNS:
 
+`grant-receipts` completion is separately bound to the exact reviewed grants
+artifact and exactly four server-assigned identities: its ConfigMap, Job,
+NetworkPolicy, and ServiceAccount. Gateway/database identities, missing or
+extra objects, renamed or duplicate resources, empty UIDs, wrong artifacts,
+generic evidence, and unreviewed fields cannot complete the apply step. The
+concrete apply adapter and the separate `wait-grants` completion postcondition
+remain closed, so CI cannot create or run this Job.
+
 ```bash
 CODEOPS_SESSION_PROOF_POSTGRES_DIGEST=sha256:<64-lowercase-hex> \
   node infra/scripts/render-codeops-session-proof-grants.mjs \

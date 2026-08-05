@@ -153,6 +153,16 @@ function evidenceSource(authorization, observedAt, context = {}) {
       })),
     }));
   }
+  if (authorization.stepId === "grant-receipts") {
+    return JSON.stringify(buildSessionProofApplyEvidence({
+      authorization,
+      observedAt,
+      resources: sessionProofApplyResourceIdentities("grant-receipts").map((resource, index) => ({
+        ...resource,
+        uid: `grant-resource-uid-${index}`,
+      })),
+    }));
+  }
   if (authorization.stepId === "wait-database") {
     return JSON.stringify(buildSessionProofReadinessEvidence({
       authorization,

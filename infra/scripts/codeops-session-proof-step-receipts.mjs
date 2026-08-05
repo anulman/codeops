@@ -205,7 +205,7 @@ export function completeSessionProofStep(authorization, input) {
   }
   if (["issue-broker-capabilities", "issue-runtime-capabilities"].includes(authorization.stepId)) {
     verifySessionProofCredentialEvidence(authorization, evidence);
-  } else if (["start-database", "start-gateway"].includes(authorization.stepId)) {
+  } else if (["start-database", "start-gateway", "grant-receipts"].includes(authorization.stepId)) {
     verifySessionProofApplyEvidence(authorization, evidence);
   } else if (authorization.stepId === "wait-database") {
     verifySessionProofReadinessEvidence(authorization, evidence);
