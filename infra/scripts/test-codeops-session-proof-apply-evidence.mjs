@@ -36,6 +36,56 @@ test("attests exactly the five applied database resource identities", () => {
   );
 });
 
+test("attests exactly the four applied gateway resource identities", () => {
+  const gatewayAuthorization = {
+    ...authorization,
+    stepId: "start-gateway",
+    artifact: "gateway",
+  };
+  const evidence = buildSessionProofApplyEvidence({
+    authorization: gatewayAuthorization,
+    observedAt: "2026-08-05T20:10:00Z",
+    resources: sessionProofApplyResourceIdentities("start-gateway").map((resource, index) => ({
+      ...resource,
+      uid: `gateway-resource-uid-${index}`,
+    })),
+  });
+  assert.equal(evidence.resourceInventory.length, 4);
+  assert.deepEqual(
+    evidence.resourceInventory.map((resource) => resource.kind).sort(),
+    ["Deployment", "NetworkPolicy", "Service", "ServiceAccount"].sort(),
+  );
+});
+
+test("rejects database, incomplete, duplicate, or wrong-artifact gateway evidence", () => {
+  const gatewayAuthorization = {
+    ...authorization,
+    stepId: "start-gateway",
+    artifact: "gateway",
+  };
+  const expected = sessionProofApplyResourceIdentities("start-gateway").map((resource, index) => ({
+    ...resource,
+    uid: `gateway-resource-uid-${index}`,
+  }));
+  for (const invalid of [
+    resources(),
+    expected.slice(1),
+    [...expected, expected[0]],
+    expected.map((resource, index) => index === 0 ? { ...resource, name: "renamed" } : resource),
+  ]) {
+    assert.throws(() => buildSessionProofApplyEvidence({
+      authorization: gatewayAuthorization,
+      observedAt: "2026-08-05T20:10:00Z",
+      resources: invalid,
+    }));
+  }
+  assert.throws(() => buildSessionProofApplyEvidence({
+    authorization: { ...gatewayAuthorization, artifact: "database" },
+    observedAt: "2026-08-05T20:10:00Z",
+    resources: expected,
+  }), /not a qualified apply/);
+});
+
 test("rejects missing, extra, duplicate, renamed, or UID-less resources", () => {
   const expected = resources();
   for (const invalid of [
@@ -61,7 +111,7 @@ test("rejects wrong step, manifest digest, namespace, time, or extra evidence fi
   });
   assert.throws(() => verifySessionProofApplyEvidence({
     ...authorization,
-    stepId: "start-gateway",
+    stepId: "start-ui",
   }, evidence), /not a qualified apply/);
   for (const drifted of [
     { ...evidence, artifactSha256: "c".repeat(64) },

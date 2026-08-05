@@ -2,13 +2,25 @@ const UID = /^.{1,256}$/u;
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 
 const EXPECTED = {
-  "start-database": [
-    { apiVersion: "v1", kind: "ConfigMap", name: "codeops-session-proof-database-init" },
-    { apiVersion: "apps/v1", kind: "Deployment", name: "codeops-session-proof-database" },
-    { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", name: "codeops-session-proof-database" },
-    { apiVersion: "v1", kind: "Service", name: "codeops-session-proof-database" },
-    { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-session-proof-database" },
-  ],
+  "start-database": {
+    artifact: "database",
+    resources: [
+      { apiVersion: "v1", kind: "ConfigMap", name: "codeops-session-proof-database-init" },
+      { apiVersion: "apps/v1", kind: "Deployment", name: "codeops-session-proof-database" },
+      { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", name: "codeops-session-proof-database" },
+      { apiVersion: "v1", kind: "Service", name: "codeops-session-proof-database" },
+      { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-session-proof-database" },
+    ],
+  },
+  "start-gateway": {
+    artifact: "gateway",
+    resources: [
+      { apiVersion: "apps/v1", kind: "Deployment", name: "codeops-control-gateway" },
+      { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", name: "codeops-control-gateway" },
+      { apiVersion: "v1", kind: "Service", name: "codeops-control-gateway" },
+      { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-control-gateway" },
+    ],
+  },
 };
 
 function sameKeys(value, keys) {
@@ -20,15 +32,15 @@ function identity(resource) {
 }
 
 function expectedResources(authorization) {
-  const expected = EXPECTED[authorization?.stepId];
+  const contract = EXPECTED[authorization?.stepId];
   if (
-    !expected ||
+    !contract ||
     authorization.action !== "operator-apply" ||
-    authorization.artifact !== "database"
+    authorization.artifact !== contract.artifact
   ) {
     throw new Error("proof step is not a qualified apply action");
   }
-  return expected;
+  return contract.resources;
 }
 
 export function verifySessionProofApplyEvidence(authorization, evidence) {
@@ -103,5 +115,5 @@ export function buildSessionProofApplyEvidence(input) {
 }
 
 export function sessionProofApplyResourceIdentities(stepId) {
-  return (EXPECTED[stepId] ?? []).map((resource) => ({ ...resource }));
+  return (EXPECTED[stepId]?.resources ?? []).map((resource) => ({ ...resource }));
 }

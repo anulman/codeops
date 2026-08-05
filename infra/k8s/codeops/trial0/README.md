@@ -483,6 +483,14 @@ reads only the exact Deployment; and emits no receipt on timeout, malformed
 state, or identity replacement. It does not read Pod logs, inspect Secret
 values, mutate Kubernetes, or run in CI.
 
+`start-gateway` completion is now separately bound to the exact reviewed
+gateway artifact and exactly four server-assigned identities: its Deployment,
+Service, ServiceAccount, and NetworkPolicy. Database identities, missing or
+extra objects, renamed or duplicate resources, empty UIDs, wrong artifacts,
+and generic evidence cannot complete the gateway step. This is a non-mutating
+postcondition only; the gateway apply and migration-readiness adapters remain
+closed and are not invoked by CI.
+
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
 only the database-owner credential, grants only execution-receipt columns to
