@@ -467,6 +467,18 @@ fields fail closed. Partial creation or identity replacement emits no receipt
 and must be reconciled through reviewed UID-bound teardown. Database readiness
 remains a separate closed postcondition; neither adapter is invoked by CI.
 
+`wait-database` now has a non-mutating readiness postcondition but no live wait
+adapter. Its self-contained evidence must carry and hash-verify the exact
+predecessor apply receipt and metadata-only apply evidence, reuse the applied
+Deployment UID, observe the current generation, and prove exactly one desired,
+current, updated, ready, and
+available replica with zero unavailable replicas plus both `Available=True`
+and `Progressing=True`. Because the reviewed Deployment readiness probe is
+`pg_isready`, this is the bounded Kubernetes signal for PostgreSQL acceptance;
+generic status text, logs, extra fields, stale generations, and replacement
+Deployments cannot complete the step. The next boundary is the polling adapter
+that derives this evidence without exposing credentials.
+
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
 only the database-owner credential, grants only execution-receipt columns to

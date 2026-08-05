@@ -3,6 +3,7 @@ import { verifySessionProofOperation } from "./codeops-session-proof-admission.m
 import { verifySessionProofApplyEvidence } from "./codeops-session-proof-apply-evidence.mjs";
 import { verifySessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
 import { verifySessionProofCredentialRevocationEvidence } from "./codeops-session-proof-credential-revocation-evidence.mjs";
+import { verifySessionProofReadinessEvidence } from "./codeops-session-proof-readiness-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -205,6 +206,8 @@ export function completeSessionProofStep(authorization, input) {
     verifySessionProofCredentialEvidence(authorization, evidence);
   } else if (authorization.stepId === "start-database") {
     verifySessionProofApplyEvidence(authorization, evidence);
+  } else if (authorization.stepId === "wait-database") {
+    verifySessionProofReadinessEvidence(authorization, evidence);
   } else if (authorization.stepId === "revoke-capabilities") {
     verifySessionProofCredentialRevocationEvidence(authorization, evidence);
   } else if (

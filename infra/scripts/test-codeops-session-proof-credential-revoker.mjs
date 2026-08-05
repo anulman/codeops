@@ -11,6 +11,7 @@ import {
   revokeSessionProofCredentials,
 } from "./codeops-session-proof-credential-revoker.mjs";
 import { buildSessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
+import { buildSessionProofReadinessEvidence } from "./codeops-session-proof-readiness-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -93,6 +94,7 @@ const runtimeContracts = {
 
 function buildRevocationInputs() {
   const priorReceiptSources = [];
+  const priorEvidenceSources = [];
   const issuanceEvidenceSources = [];
   for (let stepIndex = 2; stepIndex <= 18; stepIndex += 1) {
     const step = sessionProofSequence()[stepIndex];
@@ -137,6 +139,35 @@ function buildRevocationInputs() {
           uid: `database-resource-uid-${index}`,
         })),
       }));
+    } else if (step.id === "wait-database") {
+      evidenceSource = JSON.stringify(buildSessionProofReadinessEvidence({
+        authorization,
+        databaseApplyReceiptSource: priorReceiptSources.at(-1),
+        databaseApplyEvidenceSource: priorEvidenceSources.at(-1),
+        deployment: {
+          apiVersion: "apps/v1",
+          kind: "Deployment",
+          metadata: {
+            name: "codeops-session-proof-database",
+            namespace: identity.namespace,
+            uid: "database-resource-uid-1",
+            generation: 1,
+          },
+          spec: { replicas: 1 },
+          status: {
+            observedGeneration: 1,
+            replicas: 1,
+            updatedReplicas: 1,
+            readyReplicas: 1,
+            availableReplicas: 1,
+            conditions: [
+              { type: "Available", status: "True" },
+              { type: "Progressing", status: "True" },
+            ],
+          },
+        },
+        observedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+      }));
     } else {
       evidenceSource = JSON.stringify({
         apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
@@ -147,6 +178,7 @@ function buildRevocationInputs() {
         namespace: { name: identity.namespace, uid: admission.namespaceUid },
       });
     }
+    priorEvidenceSources.push(evidenceSource);
     priorReceiptSources.push(JSON.stringify(completeSessionProofStep(authorization, {
       namespaceResource: namespaceResource(),
       operator,

@@ -11,6 +11,7 @@ import {
   buildSessionProofCredentialRevocationEvidence,
   sessionProofCredentialNames,
 } from "./codeops-session-proof-credential-revocation-evidence.mjs";
+import { buildSessionProofReadinessEvidence } from "./codeops-session-proof-readiness-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -84,7 +85,7 @@ function authorize(overrides = {}) {
   });
 }
 
-function evidenceSource(authorization, observedAt) {
+function evidenceSource(authorization, observedAt, context = {}) {
   const credentialContracts = authorization.stepId === "issue-broker-capabilities"
     ? {
         "codeops-session-proof-database-owner": ["database", "password", "username"],
@@ -136,6 +137,36 @@ function evidenceSource(authorization, observedAt) {
         ...resource,
         uid: `database-resource-uid-${index}`,
       })),
+    }));
+  }
+  if (authorization.stepId === "wait-database") {
+    return JSON.stringify(buildSessionProofReadinessEvidence({
+      authorization,
+      databaseApplyReceiptSource: context.priorReceiptSources?.at(-1),
+      databaseApplyEvidenceSource: context.priorEvidenceSources?.at(-1),
+      deployment: {
+        apiVersion: "apps/v1",
+        kind: "Deployment",
+        metadata: {
+          name: "codeops-session-proof-database",
+          namespace: authorization.namespace.name,
+          uid: "database-resource-uid-1",
+          generation: 1,
+        },
+        spec: { replicas: 1 },
+        status: {
+          observedGeneration: 1,
+          replicas: 1,
+          updatedReplicas: 1,
+          readyReplicas: 1,
+          availableReplicas: 1,
+          conditions: [
+            { type: "Available", status: "True" },
+            { type: "Progressing", status: "True" },
+          ],
+        },
+      },
+      observedAt,
     }));
   }
   return JSON.stringify({
@@ -274,6 +305,7 @@ test("rejects authorization field substitution before writing a receipt", () => 
 
 test("chains every intermediate step through revocation and stops before deletion", () => {
   const receiptSources = [];
+  const evidenceSources = [];
   const sequence = sessionProofSequence();
   for (let stepIndex = 2; stepIndex <= 19; stepIndex += 1) {
     const step = sequence[stepIndex];
@@ -283,12 +315,18 @@ test("chains every intermediate step through revocation and stops before deletio
       observedAt: `2026-08-05T18:10:${String(stepIndex).padStart(2, "0")}Z`,
     });
     assert.equal(authorization.stepId, step.id);
+    const currentEvidenceSource = evidenceSource(
+      authorization,
+      `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+      { priorReceiptSources: receiptSources, priorEvidenceSources: evidenceSources },
+    );
+    evidenceSources.push(currentEvidenceSource);
     receiptSources.push(JSON.stringify(completeSessionProofStep(authorization, {
       namespaceResource,
       operator,
       target,
       completedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
-      evidenceSource: evidenceSource(authorization, `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`),
+      evidenceSource: currentEvidenceSource,
     })));
   }
   assert.equal(JSON.parse(receiptSources.at(-1)).stepId, "revoke-capabilities");
