@@ -89,6 +89,8 @@ test("orders readiness, auth, runtime, evidence, revocation, and namespace delet
   const ids = sequence.map((step) => step.id);
   assert.ok(ids.indexOf("wait-grants") < ids.indexOf("codex-login"));
   assert.ok(ids.indexOf("wait-codex-smoke") < ids.indexOf("start-runtime"));
+  assert.ok(ids.indexOf("start-runtime") < ids.indexOf("wait-runtime"));
+  assert.ok(ids.indexOf("wait-runtime") < ids.indexOf("record-proof"));
   assert.ok(ids.indexOf("record-proof") < ids.indexOf("stop-runtime"));
   assert.deepEqual(ids.slice(-3), ["revoke-capabilities", "delete-namespace", "verify-teardown"]);
 });

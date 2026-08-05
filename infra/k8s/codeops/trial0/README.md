@@ -379,6 +379,20 @@ missing object, Namespace or resource replacement, manifest/action drift, or
 timestamp drift emits no receipt. CI exercises the adapter only through
 injected fakes and never creates a live runtime Job.
 
+The separate `wait-runtime` step completes only after Kubernetes reports the
+same create-only Job UID at generation 1 with one active, ready, non-retried
+execution and exactly one owned, non-terminating Pod. The runtime-worker
+container now exposes readiness only after the pod-local ACP socket accepts a
+connection and the exact root broker session initialization succeeds; both
+runtime containers must then be running and ready with zero restarts, and the
+workspace init container must have exited zero. The concrete but uninvoked
+waiter repeats live operator, target, and Namespace-UID admission around a
+five-minute-bounded poll, fails immediately on terminal Job failure, reads no
+logs or credential values, and double-reads the final Job/Pod identities and
+readiness before emitting evidence and a receipt. Pending, failed, retried,
+replaced, terminating, multiply owned, uninitialized, chain-drifted, or
+timestamp-drifted state fails closed.
+
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
 

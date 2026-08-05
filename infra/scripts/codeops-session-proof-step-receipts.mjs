@@ -10,12 +10,13 @@ import { verifySessionProofGatewayReadinessEvidence } from "./codeops-session-pr
 import { verifySessionProofGrantCompletionEvidence } from "./codeops-session-proof-grant-completion-evidence.mjs";
 import { verifySessionProofReadinessEvidence } from "./codeops-session-proof-readiness-evidence.mjs";
 import { verifySessionProofUiReadinessEvidence } from "./codeops-session-proof-ui-readiness-evidence.mjs";
+import { verifySessionProofRuntimeReadinessEvidence } from "./codeops-session-proof-runtime-readiness-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
 const SHA256 = /^[0-9a-f]{64}$/;
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 const FIRST_EXECUTED_STEP = 2;
-const LAST_EXECUTED_STEP = 19;
+const LAST_EXECUTED_STEP = 20;
 
 function digest(source) {
   return createHash("sha256").update(source).digest("hex");
@@ -226,6 +227,8 @@ export function completeSessionProofStep(authorization, input) {
     verifySessionProofCodexSmokeCompletionEvidence(authorization, evidence);
   } else if (authorization.stepId === "wait-ui") {
     verifySessionProofUiReadinessEvidence(authorization, evidence);
+  } else if (authorization.stepId === "wait-runtime") {
+    verifySessionProofRuntimeReadinessEvidence(authorization, evidence);
   } else if (authorization.stepId === "revoke-capabilities") {
     verifySessionProofCredentialRevocationEvidence(authorization, evidence);
   } else if (

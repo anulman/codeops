@@ -106,6 +106,16 @@ spec:
           resources:
             requests: { cpu: 100m, memory: 256Mi }
             limits: { cpu: "1", memory: 1Gi }
+          readinessProbe:
+            exec:
+              command:
+                - node
+                - -e
+                - "process.exit(require('node:fs').existsSync('/run/codeops/ready') ? 0 : 1)"
+            periodSeconds: 1
+            timeoutSeconds: 1
+            failureThreshold: 1
+            successThreshold: 1
           securityContext:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true

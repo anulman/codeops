@@ -37,11 +37,17 @@ test("packages one immutable non-retrying disposable session Job", () => {
   ]);
   const job = values.find((value) => value.kind === "Job");
   const pod = job.spec.template.spec;
+  const worker = pod.containers.find((container) => container.name === "runtime-worker");
   assert.equal(job.spec.backoffLimit, 0);
   assert.equal(job.spec.activeDeadlineSeconds, 3600);
   assert.equal(pod.restartPolicy, "Never");
   assert.equal(pod.terminationGracePeriodSeconds, 960);
   assert.equal(pod.automountServiceAccountToken, false);
+  assert.deepEqual(worker.readinessProbe.exec.command, [
+    "node",
+    "-e",
+    "process.exit(require('node:fs').existsSync('/run/codeops/ready') ? 0 : 1)",
+  ]);
   assert.deepEqual(
     [...pod.initContainers, ...pod.containers].map((container) => container.image),
     [
@@ -105,6 +111,7 @@ test("rejects mutable images, unsafe identity, broad authority, and resource dri
     template.replace("kind: NetworkPolicy", "kind: ConfigMap"),
     template.replace("secretName: codeops-session-runtime-worker-database", "secretName: codeops-session-broker-database"),
     template.replace("backoffLimit: 0", "backoffLimit: 1"),
+    template.replace("/run/codeops/ready", "/tmp/unbound-ready"),
     template.replace("app.kubernetes.io/name: codeops-control-gateway", "app.kubernetes.io/name: broad-gateway"),
     `${template}\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: forbidden\n`,
   ]) {

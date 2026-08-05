@@ -21,6 +21,7 @@ import { buildSessionProofCodexLoginCompletionEvidence } from "./codeops-session
 import { buildSessionProofCodexSmokeCompletionEvidence } from "./codeops-session-proof-codex-smoke-completion-evidence.mjs";
 import { buildSessionProofCodexSmokeReplacementEvidence } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
 import { buildSessionProofUiReadinessEvidence } from "./codeops-session-proof-ui-readiness-evidence.mjs";
+import { buildSessionProofRuntimeReadinessEvidence } from "./codeops-session-proof-runtime-readiness-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -227,6 +228,35 @@ function evidenceSource(authorization, observedAt, context = {}) {
           ...resource,
           uid: `runtime-resource-uid-${index}`,
         })),
+    }));
+  }
+  if (authorization.stepId === "wait-runtime") {
+    const observedAt = `2026-08-05T18:11:${String(authorization.stepIndex).padStart(2, "0")}Z`;
+    return JSON.stringify(buildSessionProofRuntimeReadinessEvidence({
+      authorization,
+      runtimeApplyReceiptSource: context.priorReceiptSources?.at(-1),
+      runtimeApplyEvidenceSource: context.priorEvidenceSources?.at(-1),
+      job: {
+        apiVersion: "batch/v1", kind: "Job",
+        metadata: { name: "codeops-session-runtime-video-1", uid: "runtime-resource-uid-0", generation: 1 },
+        spec: { completions: 1, parallelism: 1, backoffLimit: 0, activeDeadlineSeconds: 3600 },
+        status: { active: 1, ready: 1, startTime: observedAt },
+      },
+      pod: {
+        apiVersion: "v1", kind: "Pod",
+        metadata: {
+          name: "codeops-session-runtime-video-1-pod", uid: "runtime-pod-uid",
+          labels: { "job-name": "codeops-session-runtime-video-1" },
+          ownerReferences: [{ apiVersion: "batch/v1", kind: "Job", uid: "runtime-resource-uid-0", controller: true }],
+        },
+        status: {
+          phase: "Running", startTime: observedAt,
+          conditions: ["Initialized", "Ready", "ContainersReady", "PodScheduled"].map((type) => ({ type, status: "True" })),
+          initContainerStatuses: [{ name: "workspace-builder", restartCount: 0, state: { terminated: { exitCode: 0 } } }],
+          containerStatuses: ["runtime-worker", "coding-agent"].map((name) => ({ name, ready: true, restartCount: 0, state: { running: { startedAt: observedAt } } })),
+        },
+      },
+      observedAt,
     }));
   }
   if (authorization.stepId === "wait-database") {
@@ -562,7 +592,7 @@ test("chains every intermediate step through revocation and stops before deletio
   const receiptSources = [];
   const evidenceSources = [];
   const sequence = sessionProofSequence();
-  for (let stepIndex = 2; stepIndex <= 19; stepIndex += 1) {
+  for (let stepIndex = 2; stepIndex <= 20; stepIndex += 1) {
     const step = sequence[stepIndex];
     const authorization = authorize({
       priorReceiptSources: receiptSources,

@@ -125,6 +125,23 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
   ) {
     throw new Error("session runtime worker execution identity drifted");
   }
+  if (
+    JSON.stringify(worker.readinessProbe) !== JSON.stringify({
+      exec: {
+        command: [
+          "node",
+          "-e",
+          "process.exit(require('node:fs').existsSync('/run/codeops/ready') ? 0 : 1)",
+        ],
+      },
+      periodSeconds: 1,
+      timeoutSeconds: 1,
+      failureThreshold: 1,
+      successThreshold: 1,
+    })
+  ) {
+    throw new Error("session runtime initialization readiness boundary drifted");
+  }
   const volumes = Object.fromEntries(pod.volumes.map((volume) => [volume.name, volume]));
   const secretBindings = {
     "session-runtime-worker-auth": "codeops-session-runtime-worker-auth",

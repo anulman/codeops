@@ -1,4 +1,4 @@
-import { readFile, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
 import { sessionJobInitializationRequestSchema } from "@renoconcierge/codeops-contracts";
@@ -57,6 +57,7 @@ if (initializationToken === workerToken) {
 }
 const databaseUrl = await secretFile("CODEOPS_DATABASE_URL_FILE", 4_096);
 const socketPath = required("CODEOPS_SESSION_RUNTIME_ACP_SOCKET_PATH");
+const readyPath = path.join(path.dirname(socketPath), "ready");
 const workspace = required("CODEOPS_SESSION_RUNTIME_WORKSPACE");
 const statePath = required("CODEOPS_SESSION_RUNTIME_ACP_STATE_PATH");
 const claimLeaseMs = boundedInteger(
@@ -118,6 +119,7 @@ try {
     leaseId: required("CODEOPS_SESSION_LEASE_ID"),
     holderId: required("CODEOPS_SESSION_HOLDER_ID"),
   }));
+  await writeFile(readyPath, "", { mode: 0o600, flag: "wx" });
   await runSessionRuntimeWorker({
     transport,
     leaseMs: claimLeaseMs,
@@ -147,6 +149,7 @@ try {
     },
   });
 } finally {
+  await rm(readyPath, { force: true }).catch(() => {});
   await writeFile(path.join(path.dirname(socketPath), "done"), "", {
     mode: 0o600,
   }).catch(() => {});

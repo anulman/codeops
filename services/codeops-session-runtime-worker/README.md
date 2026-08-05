@@ -42,8 +42,11 @@ execution receipts, and exits on the first execution error so an ambiguous ACP
 operation is never silently retried. Before polling, it uses the distinct Job
 initialization bearer to compare-and-create the exact root session supplied by
 the disposable Job manifest, but only after the pod-local ACP socket accepts a
-connection. SIGTERM/SIGINT stop only after the active claim
-returns. `reconcileIncompleteRuntimeExecution` is the separate repair
+connection. SIGTERM/SIGINT stop only after the active claim returns. After
+socket and root-session initialization, the entrypoint creates a pod-local
+readiness marker consumed by the proof Job's readiness probe and removes it
+during shutdown; the marker contains no session or credential data.
+`reconcileIncompleteRuntimeExecution` is the separate repair
 seam: it may adopt an out-of-band reconciled result for the exact incomplete
 reservation, but cannot invoke ACP/workspace side effects or repair drift.
 
