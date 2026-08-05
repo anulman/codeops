@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { bindSessionProofNamespace, createSessionProofAdmission } from "./codeops-session-proof-admission.mjs";
 import {
+  buildSessionProofApplyEvidence,
+  sessionProofApplyResourceIdentities,
+} from "./codeops-session-proof-apply-evidence.mjs";
+import {
   createCredentialDeleteRequest,
   revokeSessionProofCredentials,
 } from "./codeops-session-proof-credential-revoker.mjs";
@@ -124,6 +128,15 @@ function buildRevocationInputs() {
         })),
       }));
       issuanceEvidenceSources.push(evidenceSource);
+    } else if (step.id === "start-database") {
+      evidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+        authorization,
+        observedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+        resources: sessionProofApplyResourceIdentities("start-database").map((resource, index) => ({
+          ...resource,
+          uid: `database-resource-uid-${index}`,
+        })),
+      }));
     } else {
       evidenceSource = JSON.stringify({
         apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",

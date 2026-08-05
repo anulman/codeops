@@ -1,0 +1,107 @@
+const UID = /^.{1,256}$/u;
+const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+
+const EXPECTED = {
+  "start-database": [
+    { apiVersion: "v1", kind: "ConfigMap", name: "codeops-session-proof-database-init" },
+    { apiVersion: "apps/v1", kind: "Deployment", name: "codeops-session-proof-database" },
+    { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", name: "codeops-session-proof-database" },
+    { apiVersion: "v1", kind: "Service", name: "codeops-session-proof-database" },
+    { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-session-proof-database" },
+  ],
+};
+
+function sameKeys(value, keys) {
+  return JSON.stringify(Object.keys(value ?? {}).sort()) === JSON.stringify([...keys].sort());
+}
+
+function identity(resource) {
+  return `${resource.apiVersion}/${resource.kind}/${resource.name}`;
+}
+
+function expectedResources(authorization) {
+  const expected = EXPECTED[authorization?.stepId];
+  if (
+    !expected ||
+    authorization.action !== "operator-apply" ||
+    authorization.artifact !== "database"
+  ) {
+    throw new Error("proof step is not a qualified apply action");
+  }
+  return expected;
+}
+
+export function verifySessionProofApplyEvidence(authorization, evidence) {
+  const expected = expectedResources(authorization);
+  if (
+    !sameKeys(evidence, [
+      "apiVersion", "result", "observedAt", "planSha256", "stepId", "namespace",
+      "artifactSha256", "resourceInventory",
+    ]) ||
+    evidence.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
+    evidence.result !== "verified" ||
+    evidence.planSha256 !== authorization.planSha256 ||
+    evidence.stepId !== authorization.stepId ||
+    !RFC3339.test(evidence.observedAt ?? "") ||
+    JSON.stringify(evidence.namespace) !== JSON.stringify(authorization.namespace) ||
+    evidence.artifactSha256 !== authorization.artifactSha256
+  ) {
+    throw new Error("proof apply evidence identity drifted");
+  }
+  const resources = evidence.resourceInventory ?? [];
+  if (
+    !Array.isArray(resources) ||
+    resources.length !== expected.length ||
+    new Set(resources.map(identity)).size !== resources.length ||
+    JSON.stringify(resources.map(identity).sort()) !==
+      JSON.stringify(expected.map(identity).sort())
+  ) {
+    throw new Error("proof apply evidence resource inventory drifted");
+  }
+  for (const resource of resources) {
+    if (
+      !sameKeys(resource, ["apiVersion", "kind", "name", "uid"]) ||
+      !UID.test(resource.uid ?? "")
+    ) {
+      throw new Error("proof apply evidence resource identity drifted");
+    }
+  }
+  return true;
+}
+
+export function buildSessionProofApplyEvidence(input) {
+  const expected = expectedResources(input.authorization);
+  const resources = input.resources ?? [];
+  const normalized = resources.map((resource) => ({
+    apiVersion: resource.apiVersion,
+    kind: resource.kind,
+    name: resource.name,
+    uid: resource.uid,
+  })).sort((left, right) => identity(left).localeCompare(identity(right)));
+  if (
+    resources.some((resource) =>
+      !sameKeys(resource, ["apiVersion", "kind", "name", "uid"])) ||
+    normalized.length !== expected.length ||
+    new Set(normalized.map(identity)).size !== normalized.length ||
+    JSON.stringify(normalized.map(identity)) !==
+      JSON.stringify([...expected].sort((left, right) => identity(left).localeCompare(identity(right))).map(identity))
+  ) {
+    throw new Error("proof apply resource inventory drifted");
+  }
+  const evidence = {
+    apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+    result: "verified",
+    observedAt: input.observedAt,
+    planSha256: input.authorization.planSha256,
+    stepId: input.authorization.stepId,
+    namespace: input.authorization.namespace,
+    artifactSha256: input.authorization.artifactSha256,
+    resourceInventory: normalized,
+  };
+  verifySessionProofApplyEvidence(input.authorization, evidence);
+  return evidence;
+}
+
+export function sessionProofApplyResourceIdentities(stepId) {
+  return (EXPECTED[stepId] ?? []).map((resource) => ({ ...resource }));
+}

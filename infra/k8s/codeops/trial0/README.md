@@ -455,6 +455,15 @@ path. Every apply/wait/record/stop adapter remains closed until it has the same
 bounded postcondition and tests. Neither concrete credential adapter is wired
 to Release or automatically invoked.
 
+`start-database` has the first apply postcondition contract, but still no
+mutating adapter. Its completion evidence must bind the reviewed database
+artifact digest and exactly the five applied resource identities—ServiceAccount,
+ConfigMap, Deployment, Service, and NetworkPolicy—with their server-assigned
+UIDs. Missing, extra, duplicate, renamed, UID-less, wrong-manifest, wrong-step,
+wrong-Namespace, value-bearing, and unreviewed fields fail closed. The next
+boundary is a narrow exact-manifest apply adapter followed by the database
+readiness postcondition; generic evidence cannot complete this step.
+
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
 only the database-owner credential, grants only execution-receipt columns to

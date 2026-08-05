@@ -2,6 +2,10 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { createSessionProofAdmission, bindSessionProofNamespace } from "./codeops-session-proof-admission.mjs";
+import {
+  buildSessionProofApplyEvidence,
+  sessionProofApplyResourceIdentities,
+} from "./codeops-session-proof-apply-evidence.mjs";
 import { buildSessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
 import {
   buildSessionProofCredentialRevocationEvidence,
@@ -124,6 +128,16 @@ function evidenceSource(authorization, observedAt) {
       absentCredentialNames: sessionProofCredentialNames(),
     }));
   }
+  if (authorization.stepId === "start-database") {
+    return JSON.stringify(buildSessionProofApplyEvidence({
+      authorization,
+      observedAt,
+      resources: sessionProofApplyResourceIdentities("start-database").map((resource, index) => ({
+        ...resource,
+        uid: `database-resource-uid-${index}`,
+      })),
+    }));
+  }
   return JSON.stringify({
     apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
     result: "verified",
@@ -211,6 +225,20 @@ test("binds artifact steps to the reviewed manifest bytes", () => {
   const value = authorize({ priorReceiptSources: receipts, artifactSource: "database\n" });
   assert.equal(value.stepId, "start-database");
   assert.equal(value.artifactSha256, artifacts.find((artifact) => artifact.id === "database").sha256);
+  assert.throws(() => completeSessionProofStep(value, {
+    namespaceResource,
+    operator,
+    target,
+    completedAt: "2026-08-05T18:06:00Z",
+    evidenceSource: JSON.stringify({
+      apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+      result: "verified",
+      observedAt: "2026-08-05T18:06:00Z",
+      planSha256,
+      stepId: value.stepId,
+      namespace: value.namespace,
+    }),
+  }), /apply evidence identity drifted/);
 });
 
 test("rejects Namespace replacement and incomplete creation", () => {

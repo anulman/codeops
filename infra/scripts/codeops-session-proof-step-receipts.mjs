@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { verifySessionProofOperation } from "./codeops-session-proof-admission.mjs";
+import { verifySessionProofApplyEvidence } from "./codeops-session-proof-apply-evidence.mjs";
 import { verifySessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
 import { verifySessionProofCredentialRevocationEvidence } from "./codeops-session-proof-credential-revocation-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
@@ -202,6 +203,8 @@ export function completeSessionProofStep(authorization, input) {
   }
   if (["issue-broker-capabilities", "issue-runtime-capabilities"].includes(authorization.stepId)) {
     verifySessionProofCredentialEvidence(authorization, evidence);
+  } else if (authorization.stepId === "start-database") {
+    verifySessionProofApplyEvidence(authorization, evidence);
   } else if (authorization.stepId === "revoke-capabilities") {
     verifySessionProofCredentialRevocationEvidence(authorization, evidence);
   } else if (
