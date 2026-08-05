@@ -84,7 +84,7 @@ export function buildSessionRuntimeCompletion(
   );
 }
 
-function exactGatewayOrigin(raw: string): string {
+export function exactGatewayOrigin(raw: string): string {
   const parsed = new URL(raw);
   if (
     !["http:", "https:"].includes(parsed.protocol) ||
@@ -101,7 +101,7 @@ function exactGatewayOrigin(raw: string): string {
   return parsed.origin;
 }
 
-function exactToken(raw: string): string {
+export function exactToken(raw: string): string {
   const token = raw.trim();
   if (token !== raw || !TOKEN_PATTERN.test(token)) {
     throw new SessionRuntimeTransportError(
@@ -111,7 +111,7 @@ function exactToken(raw: string): string {
   return token;
 }
 
-async function boundedJson(response: Response): Promise<unknown> {
+export async function boundedJson(response: Response): Promise<unknown> {
   const length = response.headers.get("content-length");
   if (length !== null) {
     const bytes = Number(length);
@@ -156,7 +156,7 @@ async function boundedJson(response: Response): Promise<unknown> {
   }
 }
 
-function requireSuccess(response: Response): void {
+export function requireSuccess(response: Response): void {
   if (response.status !== 200) {
     throw new SessionRuntimeTransportError(
       `session runtime gateway returned HTTP ${response.status}`,

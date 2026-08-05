@@ -27,11 +27,21 @@ outbox with a foreign key. The future worker database role needs only bounded
 `SELECT`, `INSERT`, and the exact completion `UPDATE` on this table; exact grants
 and the reconciliation path remain part of the caller workload boundary.
 
-The package deliberately does not contain an ACP executor or a runnable polling
-entrypoint yet. Runtime command admission remains fail-closed until the ACP
-session/workspace lifecycle and the exact Kubernetes caller are packaged and
-reviewed. This prevents a transport-only image from claiming work it cannot
-safely complete.
+`SessionJobInitializer` uses a distinct bearer to compare-and-create only a
+root broker session and validates the returned repository/branch/SHA/workflow/
+run/lease identity. `SocketAcpWorkspaceLifecycle` connects to the pod-local ACP
+Unix socket, maintains an atomic broker-session-to-ACP-session map, relays
+permission requests through a required callback, captures tracked and
+untracked workspace changes, and prepares strict prompt/checkpoint/hibernate/
+resume/fork results. Resume loads the exact checkpoint ACP session; fork uses
+ACP's native session fork and records independent child broker/ACP identity.
+
+The package still deliberately has no runnable polling entrypoint or
+Kubernetes workload. Runtime command admission remains fail-closed until the
+permission callback is bound to durable broker state, incomplete reservations
+have an explicit repair path, and the exact caller image/Job/NetworkPolicy/
+database grants are packaged and reviewed. This prevents a library-only image
+from claiming work it cannot safely complete.
 
 Focused checks:
 
