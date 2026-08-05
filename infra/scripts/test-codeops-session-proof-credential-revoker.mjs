@@ -20,6 +20,7 @@ import { buildSessionProofGrantCompletionEvidence } from "./codeops-session-proo
 import { buildSessionProofCodexLoginCompletionEvidence } from "./codeops-session-proof-codex-login-completion-evidence.mjs";
 import { buildSessionProofCodexSmokeCompletionEvidence } from "./codeops-session-proof-codex-smoke-completion-evidence.mjs";
 import { buildSessionProofCodexSmokeReplacementEvidence } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
+import { buildSessionProofUiReadinessEvidence } from "./codeops-session-proof-ui-readiness-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -182,6 +183,35 @@ function buildRevocationInputs() {
           ...resource,
           uid: `ui-resource-uid-${index}`,
         })),
+      }));
+    } else if (step.id === "wait-ui") {
+      evidenceSource = JSON.stringify(buildSessionProofUiReadinessEvidence({
+        authorization,
+        uiApplyReceiptSource: priorReceiptSources.at(-1),
+        uiApplyEvidenceSource: priorEvidenceSources.at(-1),
+        deployment: {
+          apiVersion: "apps/v1",
+          kind: "Deployment",
+          metadata: {
+            name: "codeops-agents-ui",
+            namespace: identity.namespace,
+            uid: "ui-resource-uid-0",
+            generation: 1,
+          },
+          spec: { replicas: 1 },
+          status: {
+            observedGeneration: 1,
+            replicas: 1,
+            updatedReplicas: 1,
+            readyReplicas: 1,
+            availableReplicas: 1,
+            conditions: [
+              { type: "Available", status: "True" },
+              { type: "Progressing", status: "True" },
+            ],
+          },
+        },
+        observedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
       }));
     } else if (step.id === "wait-database") {
       evidenceSource = JSON.stringify(buildSessionProofReadinessEvidence({

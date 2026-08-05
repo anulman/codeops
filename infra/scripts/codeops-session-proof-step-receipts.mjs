@@ -9,6 +9,7 @@ import { verifySessionProofCredentialRevocationEvidence } from "./codeops-sessio
 import { verifySessionProofGatewayReadinessEvidence } from "./codeops-session-proof-gateway-readiness-evidence.mjs";
 import { verifySessionProofGrantCompletionEvidence } from "./codeops-session-proof-grant-completion-evidence.mjs";
 import { verifySessionProofReadinessEvidence } from "./codeops-session-proof-readiness-evidence.mjs";
+import { verifySessionProofUiReadinessEvidence } from "./codeops-session-proof-ui-readiness-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -223,6 +224,8 @@ export function completeSessionProofStep(authorization, input) {
     verifySessionProofCodexSmokeReplacementEvidence(authorization, evidence);
   } else if (authorization.stepId === "wait-codex-smoke") {
     verifySessionProofCodexSmokeCompletionEvidence(authorization, evidence);
+  } else if (authorization.stepId === "wait-ui") {
+    verifySessionProofUiReadinessEvidence(authorization, evidence);
   } else if (authorization.stepId === "revoke-capabilities") {
     verifySessionProofCredentialRevocationEvidence(authorization, evidence);
   } else if (

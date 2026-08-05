@@ -447,6 +447,8 @@ jobs:
           node --test infra/scripts/test-codeops-session-proof-codex-smoke-completion-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-codex-smoke-wait.mjs
           node --test infra/scripts/test-codeops-session-proof-ui-apply.mjs
+          node --test infra/scripts/test-codeops-session-proof-ui-readiness-evidence.mjs
+          node --test infra/scripts/test-codeops-session-proof-ui-wait.mjs
           node --test infra/scripts/test-codeops-session-proof-credential-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-credential-issuer.mjs
           node --test infra/scripts/test-codeops-session-proof-credential-revocation-evidence.mjs

@@ -358,6 +358,16 @@ Namespace or resource replacement, manifest/action drift, or timestamp drift
 emits no receipt. CI exercises the adapter only through injected fakes and
 never creates a live UI resource.
 
+The separate `wait-ui` completion contract self-contains and hash-verifies the
+exact UI apply receipt/evidence, reuses the create-only Deployment UID at
+generation 1, and requires exactly one desired/current/updated/ready/available
+replica with zero unavailable replicas and both rollout conditions ready. Its
+concrete but uninvoked waiter repeats live operator, target, and Namespace-UID
+admission around a two-minute-bounded poll of only that Deployment, then
+double-reads the final ready identity before emitting evidence and a receipt.
+Pending, stale-generation, incomplete, replaced, malformed, chain-drifted,
+extra-field, or final-state-drifted readiness fails closed.
+
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
 
