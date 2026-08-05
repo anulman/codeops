@@ -327,6 +327,32 @@ CODEOPS_RUN_ID=video-1 \
   > "$CODEOPS_SESSION_PROOF_UI_MANIFEST"
 ```
 
+After every manifest is rendered and separately reviewed, build the immutable
+composition plan. The planner only reads artifacts, validates their exact
+resource sets and namespace mode, hashes them, and emits ordered JSON. It has no
+Kubernetes client and cannot apply or delete anything. The sequence requires
+database/gateway/grant readiness, credential-only login and smoke completion,
+UI readiness, runtime start, off-cluster evidence capture, exact capability
+revocation, namespace deletion, and a final absence check:
+
+```bash
+export CODEOPS_SESSION_PROOF_NAMESPACE_MANIFEST=/path/to/namespace.yaml
+export CODEOPS_SESSION_PROOF_DATABASE_MANIFEST=/path/to/database.yaml
+export CODEOPS_SESSION_PROOF_GATEWAY_MANIFEST=/path/to/gateway.yaml
+export CODEOPS_SESSION_PROOF_GRANTS_MANIFEST=/path/to/grants.yaml
+export CODEOPS_SESSION_PROOF_CODEX_LOGIN_MANIFEST=/path/to/codex-login.yaml
+export CODEOPS_SESSION_PROOF_CODEX_SMOKE_MANIFEST=/path/to/codex-smoke.yaml
+export CODEOPS_SESSION_PROOF_UI_MANIFEST=/path/to/ui.yaml
+export CODEOPS_SESSION_PROOF_RUNTIME_MANIFEST=/path/to/runtime.yaml
+
+CODEOPS_SESSION_PROOF_NAMESPACE=codeops-session-proof-video-1 \
+CODEOPS_RUN_ID=video-1 \
+CODEOPS_BASE_SHA=<40-lowercase-hex> \
+CODEOPS_SESSION_SUFFIX=video-1 \
+  node infra/scripts/render-codeops-session-proof-plan.mjs \
+  > "$CODEOPS_SESSION_PROOF_PLAN"
+```
+
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
 only the database-owner credential, grants only execution-receipt columns to
