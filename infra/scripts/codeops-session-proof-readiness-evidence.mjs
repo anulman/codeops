@@ -72,8 +72,7 @@ function verifyDeployment(deployment) {
     deployment.kind !== "Deployment" ||
     deployment.name !== "codeops-session-proof-database" ||
     !UID.test(deployment.uid ?? "") ||
-    !Number.isInteger(deployment.generation) ||
-    deployment.generation < 1 ||
+    deployment.generation !== 1 ||
     deployment.observedGeneration !== deployment.generation ||
     deployment.desiredReplicas !== 1 ||
     deployment.replicas !== 1 ||
@@ -87,7 +86,11 @@ function verifyDeployment(deployment) {
   }
 }
 
-function verifyApplyChain(authorization, receiptSource, applyEvidenceSource) {
+export function verifySessionProofDatabaseApplyChain(
+  authorization,
+  receiptSource,
+  applyEvidenceSource,
+) {
   if (digest(receiptSource) !== authorization.previousReceiptSha256) {
     throw new Error("proof database readiness predecessor receipt drifted");
   }
@@ -147,7 +150,7 @@ export function verifySessionProofReadinessEvidence(authorization, evidence) {
   ) {
     throw new Error("proof database readiness evidence identity drifted");
   }
-  const appliedDeploymentUid = verifyApplyChain(
+  const appliedDeploymentUid = verifySessionProofDatabaseApplyChain(
     authorization,
     evidence.databaseApplyReceiptSource,
     evidence.databaseApplyEvidenceSource,
@@ -164,7 +167,11 @@ export function buildSessionProofReadinessEvidence(input) {
   assertAuthorization(authorization);
   const receiptSource = input.databaseApplyReceiptSource ?? "";
   const applyEvidenceSource = input.databaseApplyEvidenceSource ?? "";
-  const appliedDeploymentUid = verifyApplyChain(authorization, receiptSource, applyEvidenceSource);
+  const appliedDeploymentUid = verifySessionProofDatabaseApplyChain(
+    authorization,
+    receiptSource,
+    applyEvidenceSource,
+  );
   const deployment = normalizeDeployment(input.deployment);
   if (deployment.uid !== appliedDeploymentUid) {
     throw new Error("proof database readiness Deployment UID drifted from apply evidence");

@@ -120,6 +120,10 @@ test("rejects stale generations, incomplete replicas, failed conditions, and ext
   ]) {
     assert.throws(() => build({ deployment: deployment(status) }), /deployment drifted/);
   }
+  const changedSpec = deployment();
+  changedSpec.metadata.generation = 2;
+  changedSpec.status.observedGeneration = 2;
+  assert.throws(() => build({ deployment: changedSpec }), /deployment drifted/);
   const evidence = build();
   assert.throws(() => verifySessionProofReadinessEvidence(authorization, {
     ...evidence,

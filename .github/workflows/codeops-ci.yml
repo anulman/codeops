@@ -431,6 +431,7 @@ jobs:
           node --test infra/scripts/test-codeops-session-proof-step-receipts.mjs
           node --test infra/scripts/test-codeops-session-proof-apply-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-database-apply.mjs
+          node --test infra/scripts/test-codeops-session-proof-database-wait.mjs
           node --test infra/scripts/test-codeops-session-proof-readiness-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-credential-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-credential-issuer.mjs
