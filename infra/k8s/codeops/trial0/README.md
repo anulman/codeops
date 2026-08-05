@@ -282,8 +282,8 @@ uses separate Job-initialization, claim/completion, and receipt-database
 credentials, and the existing `codeops-agent` image runs Codex ACP beside it.
 The two runtime containers share only the workspace and a memory-backed Unix
 socket. The Job receives no Kubernetes token, denies ingress, and permits
-egress only to the control gateway, the exact CNPG pooler, cluster DNS, and
-public HTTPS needed for repository/model access.
+egress only to the standalone proof gateway, the disposable proof database,
+cluster DNS, and public HTTPS needed for repository/model access.
 
 For an existing externally managed broker database, provision the receipt-only
 role with an admin connection before creating its external Secret. The

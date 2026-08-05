@@ -166,7 +166,7 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
     policy.spec.ingress.length !== 0 ||
     JSON.stringify(actualEgressPorts) !== JSON.stringify(expectedEgressPorts) ||
     policy.spec.egress[0].to[0].podSelector.matchLabels["app.kubernetes.io/name"] !== "codeops-control-gateway" ||
-    policy.spec.egress[1].to[0].podSelector.matchLabels["cnpg.io/poolerName"] !== "renoconcierge-postgres-cnpg-pgbouncer"
+    policy.spec.egress[1].to[0].podSelector.matchLabels["app.kubernetes.io/name"] !== "codeops-session-proof-database"
   ) {
     throw new Error("session runtime network boundary drifted");
   }

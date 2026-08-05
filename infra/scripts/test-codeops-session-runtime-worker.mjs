@@ -75,7 +75,7 @@ test("shares only workspace and the pod-local ACP socket across runtime containe
   assert.ok(agent.volumeMounts.some((mount) => mount.name === "session"));
 });
 
-test("denies ingress and permits only gateway, pooler, DNS, and public HTTPS", () => {
+test("denies ingress and permits only proof gateway, proof database, DNS, and public HTTPS", () => {
   const policy = resources().find((value) => value.kind === "NetworkPolicy");
   assert.deepEqual(policy.spec.ingress, []);
   assert.deepEqual(
@@ -83,7 +83,7 @@ test("denies ingress and permits only gateway, pooler, DNS, and public HTTPS", (
     [53, 53, 443, 5432, 8080],
   );
   assert.equal(policy.spec.egress[0].to[0].podSelector.matchLabels["app.kubernetes.io/name"], "codeops-control-gateway");
-  assert.equal(policy.spec.egress[1].to[0].podSelector.matchLabels["cnpg.io/poolerName"], "renoconcierge-postgres-cnpg-pgbouncer");
+  assert.equal(policy.spec.egress[1].to[0].podSelector.matchLabels["app.kubernetes.io/name"], "codeops-session-proof-database");
 });
 
 test("rejects mutable images, unsafe identity, broad authority, and resource drift", () => {
