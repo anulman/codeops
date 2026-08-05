@@ -8,6 +8,8 @@ const outboxUrl = new URL("../sql/session-broker-runtime-outbox.sql", import.met
 const outboxRevertUrl = new URL("../sql/session-broker-runtime-outbox-revert.sql", import.meta.url);
 const receiptsUrl = new URL("../sql/session-runtime-execution-receipts.sql", import.meta.url);
 const receiptsRevertUrl = new URL("../sql/session-runtime-execution-receipts-revert.sql", import.meta.url);
+const jobInitializationUrl = new URL("../sql/session-job-initialization.sql", import.meta.url);
+const jobInitializationRevertUrl = new URL("../sql/session-job-initialization-revert.sql", import.meta.url);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");
@@ -59,6 +61,19 @@ test("defines immutable digest-bound runtime execution receipts", async () => {
   assert.match(sql, /result_json->>'type' IN/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*DROP TABLE codeops\.session_runtime_execution_receipts;[\s\S]*COMMIT;\n$/);
+});
+
+test("admits commandless events only for Job-created session roots", async () => {
+  const sql = await readFile(jobInitializationUrl, "utf8");
+  const revert = await readFile(jobInitializationRevertUrl, "utf8");
+  assert.match(sql, /ALTER COLUMN command_id DROP NOT NULL/);
+  assert.match(
+    sql,
+    /CHECK \(command_id IS NOT NULL OR event_type = 'session_created'\)/,
+  );
+  assert.match(revert, /ALTER COLUMN command_id SET NOT NULL/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });
 
 test("orders migration and reversion around foreign-key dependencies", async () => {

@@ -35,10 +35,16 @@ import {
   serveSessionRuntime,
 } from "./session-broker-runtime-http.js";
 import {
+  InvalidSessionJobInitializationRequestError,
+  initializeSessionFromJob,
+  serveSessionJobInitialization,
+} from "./session-job-initialization.js";
+import {
   ImmutableSessionRuntimeDispatchConflictError,
   SessionRuntimeDispatchNotFoundError,
   claimSessionRuntimeDispatch,
   completeSessionRuntimeDispatch,
+  enqueueSessionRuntimeDispatch,
 } from "./session-broker-runtime-outbox.js";
 import {
   ImmutableSessionCommandConflictError,
@@ -158,6 +164,25 @@ if (
 ) {
   throw new Error("session runtime worker token must have a distinct authority");
 }
+const sessionJobInitializationToken = await secretFile(
+  "CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE",
+);
+if (
+  sessionJobInitializationToken.length < 32 ||
+  sessionJobInitializationToken.length > 4_096
+) {
+  throw new Error("session Job initialization token length is invalid");
+}
+if (
+  sessionJobInitializationToken === sessionRuntimeWorkerToken ||
+  sessionJobInitializationToken === sessionBrokerReadToken ||
+  sessionJobInitializationToken === sessionBrokerWriteToken ||
+  sessionJobInitializationToken === token ||
+  sessionJobInitializationToken === repositoryHeadToken ||
+  sessionJobInitializationToken === publicationToken
+) {
+  throw new Error("session Job initialization token must have a distinct authority");
+}
 const sessionRuntimeWorkerId = required("CODEOPS_SESSION_RUNTIME_WORKER_ID");
 if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(sessionRuntimeWorkerId)) {
   throw new Error("session runtime worker identity is invalid");
@@ -193,6 +218,41 @@ const server = createServer((request, response) => {
   void (async () => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    try {
+      const sessionInitialization = await serveSessionJobInitialization({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        token: sessionJobInitializationToken,
+        readBody: () => readJson(request),
+        initialize: async (initializationRequest) => {
+          const client = await database.connect();
+          try {
+            return await initializeSessionFromJob(client, {
+              request: initializationRequest,
+            });
+          } finally {
+            client.release();
+          }
+        },
+      });
+      if (sessionInitialization !== null) {
+        json(response, sessionInitialization.status, sessionInitialization.body);
+        return;
+      }
+    } catch (error) {
+      json(
+        response,
+        error instanceof InvalidSessionJobInitializationRequestError ? 400 : 503,
+        {
+          status:
+            error instanceof InvalidSessionJobInitializationRequestError
+              ? "invalid-request"
+              : "unavailable",
+        },
+      );
       return;
     }
     try {
@@ -263,6 +323,14 @@ const server = createServer((request, response) => {
               client,
               commandInput,
             );
+          } finally {
+            client.release();
+          }
+        },
+        enqueueRuntime: async (commandInput) => {
+          const client = await database.connect();
+          try {
+            return await enqueueSessionRuntimeDispatch(client, commandInput);
           } finally {
             client.release();
           }

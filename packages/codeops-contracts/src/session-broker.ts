@@ -174,7 +174,7 @@ export const sessionPermissionRequestSchema = z
     "permission request options must be unique",
   );
 
-const sessionIdentitySchema = z
+export const sessionIdentitySchema = z
   .object({
     repository: z
       .string()
@@ -314,6 +314,28 @@ export const sessionSnapshotSchema = z
       });
     }
   });
+
+export const sessionJobInitializationRequestSchema = z
+  .object({
+    version: z.literal("codeops.session-job-initialization/v1"),
+    sessionId: identifier,
+    identity: sessionIdentitySchema.refine(
+      (identity) =>
+        identity.parentSessionId === null && identity.forkedAtCursor === null,
+      "a Job may initialize only a root session",
+    ),
+    leaseId: uuid,
+    holderId: identifier,
+  })
+  .strict();
+
+export const sessionJobInitializationResponseSchema = z
+  .object({
+    version: z.literal("codeops.session-job-initialization-result/v1"),
+    disposition: z.enum(["created", "duplicate"]),
+    snapshot: sessionSnapshotSchema,
+  })
+  .strict();
 
 const commandBase = z.object({
   version: z.literal(SESSION_BROKER_VERSION.command),
@@ -463,6 +485,24 @@ export const sessionCommandResultSchema = z
     }
   });
 
+export const sessionCommandAcceptedSchema = z
+  .object({
+    version: z.literal("codeops.session-command-accepted/v1"),
+    disposition: z.literal("accepted"),
+    dispatchId: uuid,
+    sessionId: identifier,
+    generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    leaseId: uuid,
+    idempotencyKey: uuid,
+    type: sessionActionTypeSchema,
+  })
+  .strict();
+
+export const sessionCommandSubmissionSchema = z.union([
+  sessionCommandResultSchema,
+  sessionCommandAcceptedSchema,
+]);
+
 export const sessionEventSchema = z
   .object({
     version: z.literal(SESSION_BROKER_VERSION.event),
@@ -494,6 +534,16 @@ export type SessionPermissionRequest = z.infer<
   typeof sessionPermissionRequestSchema
 >;
 export type SessionSnapshot = z.infer<typeof sessionSnapshotSchema>;
+export type SessionJobInitializationRequest = z.infer<
+  typeof sessionJobInitializationRequestSchema
+>;
+export type SessionJobInitializationResponse = z.infer<
+  typeof sessionJobInitializationResponseSchema
+>;
 export type SessionCommand = z.infer<typeof sessionCommandSchema>;
 export type SessionCommandResult = z.infer<typeof sessionCommandResultSchema>;
+export type SessionCommandAccepted = z.infer<typeof sessionCommandAcceptedSchema>;
+export type SessionCommandSubmission = z.infer<
+  typeof sessionCommandSubmissionSchema
+>;
 export type SessionEvent = z.infer<typeof sessionEventSchema>;

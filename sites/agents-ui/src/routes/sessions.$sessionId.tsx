@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { executeSessionCommand, getSessionDetail, getSessionEvents, getSessionFleet } from "@/lib/sessionBroker.data";
@@ -31,6 +31,19 @@ export const Route = createFileRoute("/sessions/$sessionId")({
 
 function SessionCockpit() {
   const { session, events, fleet } = Route.useLoaderData();
+  const router = useRouter();
+  useEffect(() => {
+    if (!session || session.state === "deleted") return;
+    let invalidating = false;
+    const timer = window.setInterval(() => {
+      if (invalidating) return;
+      invalidating = true;
+      void router.invalidate().finally(() => {
+        invalidating = false;
+      });
+    }, 1_000);
+    return () => window.clearInterval(timer);
+  }, [router, session?.sessionId, session?.state]);
   if (!session) {
     return <AppShell><main className="mx-auto max-w-3xl px-4 py-24 text-center text-white/55">Session not found.</main></AppShell>;
   }
@@ -101,13 +114,6 @@ const actionLabels: Record<SessionActionType, string> = {
   delete: "Delete",
 };
 
-const locallyExecutableActions = new Set<SessionActionType>([
-  "respond_permission",
-  "cancel",
-  "archive",
-  "delete",
-]);
-
 function commandForAction(
   session: SessionSnapshot,
   action: SessionActionType,
@@ -120,6 +126,10 @@ function commandForAction(
     leaseId: session.lease.leaseId,
     idempotencyKey: crypto.randomUUID(),
   };
+  if (action === "prompt") {
+    const prompt = window.prompt("Prompt this live session:")?.trim();
+    return prompt ? { ...base, type: action, prompt } : null;
+  }
   if (action === "respond_permission") {
     const request = session.pendingPermission;
     if (!request) throw new Error("There is no pending permission request.");
@@ -142,6 +152,30 @@ function commandForAction(
     }
     return { ...base, type: action, reason };
   }
+  if (action === "checkpoint") return { ...base, type: action };
+  if (action === "hibernate") {
+    const reason = window.prompt("Optional hibernation note:")?.trim();
+    return { ...base, type: action, ...(reason ? { reason } : {}) };
+  }
+  const checkpoint = session.checkpoint;
+  if (!checkpoint) {
+    throw new Error(`${action} requires a committed checkpoint.`);
+  }
+  if (action === "resume") {
+    return { ...base, type: action, checkpointId: checkpoint.checkpointId };
+  }
+  if (action === "fork") {
+    const title = window.prompt("Title for the forked session:")?.trim();
+    return title
+      ? {
+          ...base,
+          type: action,
+          checkpointId: checkpoint.checkpointId,
+          parentEventCursor: session.eventCursor,
+          title,
+        }
+      : null;
+  }
   return null;
 }
 
@@ -149,13 +183,12 @@ function ActionButton({ capability, session }: Readonly<{ capability: SessionCap
   const router = useRouter();
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const runtimePending = !locallyExecutableActions.has(capability.action);
-  const disabled = capability.availability === "disabled" || runtimePending || pending;
+  const disabled = capability.availability === "disabled" || pending;
   const danger = capability.action === "cancel" || capability.action === "delete";
   const active = capability.action === "prompt" && !disabled;
   const style = disabled ? "cursor-not-allowed border-white/6 text-white/18" : active ? "border-[#c8ff5a]/30 bg-[#c8ff5a] text-[#151a0c] hover:bg-[#d5ff80]" : danger ? "border-[#ff9f6e]/20 text-[#ffb18b] hover:bg-[#ff9f6e]/8" : "border-white/10 text-white/55 hover:bg-white/5 hover:text-white/80";
   const label = actionLabels[capability.action];
-  const unavailableReason = runtimePending ? "ACP runtime adapter pending." : capability.availability === "disabled" ? capability.reason : undefined;
+  const unavailableReason = capability.availability === "disabled" ? capability.reason : undefined;
   const run = async () => {
     setError(null);
     try {

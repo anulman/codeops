@@ -19,6 +19,10 @@ const migrations = [
       import.meta.url,
     ),
   },
+  {
+    name: "session-job-initialization-v1",
+    url: new URL("../sql/session-job-initialization.sql", import.meta.url),
+  },
 ] as const;
 
 function migrationDigest(sql: string): string {

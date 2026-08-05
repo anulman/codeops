@@ -59,7 +59,7 @@ export interface LocalSessionTransition {
   readonly event: SessionEvent;
 }
 
-function capabilitiesFor(
+export function sessionCapabilitiesFor(
   state: SessionState,
   hasCheckpoint: boolean,
 ): readonly SessionCapability[] {
@@ -117,7 +117,7 @@ export function applyLocalSessionTransition(
     checkpoint,
     pendingPermission: null,
     eventCursor: cursor,
-    capabilities: capabilitiesFor(transition.state, checkpoint !== null),
+    capabilities: sessionCapabilitiesFor(transition.state, checkpoint !== null),
     updatedAt: occurredAt,
   });
   const eventBody = {
@@ -161,7 +161,7 @@ export function applyPermissionSessionTransition(
     state: "running",
     pendingPermission: null,
     eventCursor: cursor,
-    capabilities: capabilitiesFor("running", snapshot.checkpoint !== null),
+    capabilities: sessionCapabilitiesFor("running", snapshot.checkpoint !== null),
     updatedAt: occurredAt,
   });
   const eventBody = {
@@ -272,7 +272,7 @@ export function applyCheckpointSessionTransition(
     checkpoint,
     pendingPermission: hibernate ? null : snapshot.pendingPermission,
     eventCursor: eventBodies.at(-1)!.cursor,
-    capabilities: capabilitiesFor(state, true),
+    capabilities: sessionCapabilitiesFor(state, true),
     updatedAt: occurredAt,
   });
   return {
@@ -314,7 +314,7 @@ export function applyResumeSessionTransition(
     },
     pendingPermission: null,
     eventCursor: cursor,
-    capabilities: capabilitiesFor("running", true),
+    capabilities: sessionCapabilitiesFor("running", true),
     updatedAt: occurredAt,
   });
   const eventBody = {
@@ -371,7 +371,7 @@ export function applyForkSessionTransition(
     checkpoint: null,
     pendingPermission: null,
     eventCursor: 1,
-    capabilities: capabilitiesFor("running", false),
+    capabilities: sessionCapabilitiesFor("running", false),
     updatedAt: occurredAt,
   });
   const eventBody = {

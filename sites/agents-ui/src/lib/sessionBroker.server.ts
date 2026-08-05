@@ -1,11 +1,11 @@
 import { readFile } from "node:fs/promises";
 import {
-  sessionCommandResultSchema,
   sessionCommandSchema,
+  sessionCommandSubmissionSchema,
   sessionEventSchema,
   sessionSnapshotSchema,
   type SessionCommand,
-  type SessionCommandResult,
+  type SessionCommandSubmission,
   type SessionEvent,
   type SessionSnapshot,
 } from "@renoconcierge/codeops-contracts/session-broker";
@@ -83,7 +83,7 @@ export interface SessionBrokerClient {
   executeCommand(input: {
     readonly command: SessionCommand;
     readonly principalId: string;
-  }): Promise<SessionCommandResult>;
+  }): Promise<SessionCommandSubmission>;
 }
 
 export function parseSessionBrokerBaseUrl(
@@ -215,7 +215,7 @@ export function createSessionBrokerClient(input: {
         .max(256)
         .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/)
         .parse(principalId);
-      const result = sessionCommandResultSchema.parse(
+      const result = sessionCommandSubmissionSchema.parse(
         await request(`/v1/sessions/${parsedCommand.sessionId}/commands`, {
           method: "POST",
           token: input.writeToken,

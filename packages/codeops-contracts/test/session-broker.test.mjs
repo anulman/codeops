@@ -6,6 +6,8 @@ import {
   sessionActionTypeSchema,
   sessionCommandResultSchema,
   sessionCommandSchema,
+  sessionJobInitializationRequestSchema,
+  sessionJobInitializationResponseSchema,
   sessionSnapshotSchema,
 } from "../dist/index.js";
 
@@ -64,6 +66,35 @@ function snapshot() {
     updatedAt: "2026-08-04T03:04:00.000Z",
   };
 }
+
+test("binds a root Job initialization request to one created snapshot", () => {
+  const request = sessionJobInitializationRequestSchema.parse({
+    version: "codeops.session-job-initialization/v1",
+    sessionId,
+    identity: snapshot().identity,
+    leaseId,
+    holderId: "job:agents-video-proof",
+  });
+  assert.equal(request.identity.parentSessionId, null);
+  assert.throws(() =>
+    sessionJobInitializationRequestSchema.parse({
+      ...request,
+      identity: {
+        ...request.identity,
+        parentSessionId: "ses_parent",
+        forkedAtCursor: 9,
+      },
+    }),
+  );
+  assert.equal(
+    sessionJobInitializationResponseSchema.parse({
+      version: "codeops.session-job-initialization-result/v1",
+      disposition: "created",
+      snapshot: { ...snapshot(), generation: 3 },
+    }).snapshot.sessionId,
+    sessionId,
+  );
+});
 
 test("requires one explicit capability decision for every session action", () => {
   const parsed = sessionSnapshotSchema.parse(snapshot());

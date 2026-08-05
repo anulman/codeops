@@ -88,6 +88,9 @@ function request(overrides = {}) {
           committedAt,
         }).result;
       },
+      enqueueRuntime: async () => {
+        throw new Error("unexpected runtime enqueue");
+      },
       ...overrides,
     }),
   };
@@ -129,7 +132,8 @@ test("rejects ambiguous command transport before execution", async () => {
   );
 });
 
-test("keeps ACP-dependent commands outside the local mutation boundary", async () => {
+test("admits ACP-dependent commands only through the durable runtime outbox", async () => {
+  const runtimeCalls = [];
   const submitted = request({
     readBody: async () => ({
       version: "codeops.session-command/v1",
@@ -140,12 +144,33 @@ test("keeps ACP-dependent commands outside the local mutation boundary", async (
       type: "prompt",
       prompt: "Continue with the focused test.",
     }),
+    enqueueRuntime: async (input) => {
+      runtimeCalls.push(input);
+      return {
+        version: "codeops.session-runtime-dispatch/v1",
+        dispatchId: "44444444-4444-4444-8444-444444444444",
+        principalId: input.principalId,
+        command: input.command,
+        snapshot: snapshot(),
+        dispatchedAt: committedAt,
+      };
+    },
   });
   assert.deepEqual(await submitted.promise, {
-    status: 501,
-    body: { status: "acp-runtime-required" },
+    status: 200,
+    body: {
+      version: "codeops.session-command-accepted/v1",
+      disposition: "accepted",
+      dispatchId: "44444444-4444-4444-8444-444444444444",
+      sessionId: "ses_91a4",
+      generation: 3,
+      leaseId,
+      idempotencyKey,
+      type: "prompt",
+    },
   });
   assert.equal(submitted.calls.length, 0);
+  assert.equal(runtimeCalls[0].principalId, "access:aidan@example.com");
 });
 
 test("binds the committed result and ordered event to one mutation context", () => {

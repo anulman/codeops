@@ -1,11 +1,13 @@
 import type { IncomingHttpHeaders } from "node:http";
 import {
   SESSION_BROKER_VERSION,
+  sessionCommandAcceptedSchema,
   sessionCommandResultSchema,
   sessionCommandSchema,
   type SessionCommand,
   type SessionCommandResult,
   type SessionSnapshot,
+  type SessionRuntimeDispatch,
 } from "@renoconcierge/codeops-contracts";
 import { authenticateBearer } from "./core.js";
 import {
@@ -110,6 +112,10 @@ export async function serveSessionBrokerCommand(input: {
     readonly command: unknown;
     readonly principalId: string;
   }) => Promise<SessionCommandResult>;
+  readonly enqueueRuntime: (input: {
+    readonly command: unknown;
+    readonly principalId: string;
+  }) => Promise<SessionRuntimeDispatch>;
 }): Promise<SessionBrokerCommandResult | null> {
   if (input.method !== "POST" || input.url === undefined) return null;
   const url = new URL(input.url, "http://codeops.internal");
@@ -152,7 +158,20 @@ export async function serveSessionBrokerCommand(input: {
     );
   }
   if (!localCommandTypes.has(command.type)) {
-    return { status: 501, body: { status: "acp-runtime-required" } };
+    const dispatch = await input.enqueueRuntime({ command, principalId });
+    return {
+      status: 200,
+      body: sessionCommandAcceptedSchema.parse({
+        version: "codeops.session-command-accepted/v1",
+        disposition: "accepted",
+        dispatchId: dispatch.dispatchId,
+        sessionId: command.sessionId,
+        generation: command.generation,
+        leaseId: command.leaseId,
+        idempotencyKey: command.idempotencyKey,
+        type: command.type,
+      }),
+    };
   }
   return {
     status: 200,

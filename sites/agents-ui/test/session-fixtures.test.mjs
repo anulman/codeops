@@ -19,7 +19,10 @@ test("fleet and cockpit routes use the live broker while retaining the v1 operat
   assert.match(cockpit, /getSessionDetail/);
   assert.match(cockpit, /getSessionEvents/);
   assert.match(cockpit, /executeSessionCommand/);
-  assert.match(cockpit, /locallyExecutableActions/);
+  assert.match(cockpit, /window\.setInterval/);
+  assert.match(cockpit, /type: action, prompt/);
+  assert.match(cockpit, /checkpointId: checkpoint\.checkpointId/);
+  assert.doesNotMatch(cockpit, /ACP runtime adapter pending/);
   assert.match(cockpit, /session\.capabilities\.map/);
   assert.doesNotMatch(fleet, /sessionFixtures/);
   assert.doesNotMatch(cockpit, /sessionFixtures/);

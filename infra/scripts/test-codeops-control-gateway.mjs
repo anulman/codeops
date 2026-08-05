@@ -172,6 +172,27 @@ test("renders one namespace-scoped authenticated gateway", () => {
     workerAuthVolume.secret.secretName,
     writeAuthVolume.secret.secretName,
   );
+  const initializationAuthVolume = deployment.spec.template.spec.volumes.find(
+    (volume) => volume.name === "session-job-initialization-auth",
+  );
+  assert.equal(
+    initializationAuthVolume.secret.secretName,
+    "codeops-session-job-initialization-auth",
+  );
+  assert.deepEqual(initializationAuthVolume.secret.items, [
+    { key: "token", path: "token" },
+  ]);
+  assert.equal(
+    deployment.spec.template.spec.containers[0].env.find(
+      (entry) =>
+        entry.name === "CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE",
+    ).value,
+    "/var/run/secrets/codeops-session-job-initialization/token",
+  );
+  assert.notEqual(
+    initializationAuthVolume.secret.secretName,
+    workerAuthVolume.secret.secretName,
+  );
 });
 
 test("grants only fixed run-resource and log operations", () => {
@@ -190,7 +211,7 @@ test("grants only fixed run-resource and log operations", () => {
   assert.deepEqual(secretRule.verbs, ["create", "delete"]);
 });
 
-test("admits only the orchestrator/controller and exact API /32", () => {
+test("admits only exact control-plane and session-runtime callers", () => {
   const policy = resources().find(
     (resource) =>
       resource.kind === "NetworkPolicy" &&
@@ -214,6 +235,13 @@ test("admits only the orchestrator/controller and exact API /32", () => {
     ],
     "codeops-agents-ui",
   );
+  assert.equal(
+    policy.spec.ingress[0].from[3].podSelector.matchLabels[
+      "app.kubernetes.io/name"
+    ],
+    "codeops-session-runtime-worker",
+  );
+  assert.equal(policy.spec.ingress[0].from.length, 4);
   assert.equal(policy.spec.egress[0].to[0].ipBlock.cidr, "10.3.0.1/32");
   assert.deepEqual(policy.spec.egress[0].ports, [
     { protocol: "TCP", port: 443 },
@@ -276,6 +304,24 @@ test("fails closed on mutable images, broad API CIDRs, or template drift", () =>
       template.replace(
         "secretName: codeops-session-runtime-worker-auth",
         "secretName: codeops-session-broker-write-auth",
+      ),
+      input,
+    ),
+  );
+  assert.throws(() =>
+    renderControlGatewayManifest(
+      template.replace(
+        "secretName: codeops-session-job-initialization-auth",
+        "secretName: codeops-session-runtime-worker-auth",
+      ),
+      input,
+    ),
+  );
+  assert.throws(() =>
+    renderControlGatewayManifest(
+      template.replace(
+        "app.kubernetes.io/name: codeops-session-runtime-worker",
+        "app.kubernetes.io/name: untrusted-runtime",
       ),
       input,
     ),

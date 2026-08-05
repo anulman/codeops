@@ -85,6 +85,10 @@ export function renderControlGatewayManifest(template, input) {
   const sessionRuntimeWorkerAuth = deployment.spec.template.spec.volumes.find(
     (volume) => volume.name === "session-runtime-worker-auth",
   );
+  const sessionJobInitializationAuth =
+    deployment.spec.template.spec.volumes.find(
+      (volume) => volume.name === "session-job-initialization-auth",
+    );
   const image = deployment.spec.template.spec.containers[0].image;
   if (!/@sha256:[0-9a-f]{64}$/.test(image)) {
     throw new Error("control gateway image must be immutable");
@@ -157,6 +161,23 @@ export function renderControlGatewayManifest(template, input) {
   ) {
     throw new Error("control gateway runtime worker auth binding drifted");
   }
+  if (
+    sessionJobInitializationAuth?.secret?.secretName !==
+      "codeops-session-job-initialization-auth" ||
+    sessionJobInitializationAuth.secret.items
+      ?.map((item) => `${item.key}:${item.path}`)
+      .join(",") !== "token:token" ||
+    [
+      sessionRuntimeWorkerAuth.secret.secretName,
+      sessionBrokerReadAuth.secret.secretName,
+      sessionBrokerWriteAuth.secret.secretName,
+      dispatchAuth.secret.secretName,
+      repositoryHeadAuth.secret.secretName,
+      "codeops-publication-auth",
+    ].includes(sessionJobInitializationAuth.secret.secretName)
+  ) {
+    throw new Error("control gateway session Job initialization auth binding drifted");
+  }
   const env = deployment.spec.template.spec.containers[0].env;
   if (
     env.find((item) => item.name === "CODEOPS_MODEL_PROXY_ORIGIN")?.value !==
@@ -196,6 +217,9 @@ export function renderControlGatewayManifest(template, input) {
       (item) => item.name === "CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE",
     )?.value !== "/var/run/secrets/codeops-session-runtime-worker/token" ||
     env.find(
+      (item) => item.name === "CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE",
+    )?.value !== "/var/run/secrets/codeops-session-job-initialization/token" ||
+    env.find(
       (item) => item.name === "CODEOPS_SESSION_RUNTIME_WORKER_ID",
     )?.value !== "acp-worker:primary"
   ) {
@@ -204,6 +228,20 @@ export function renderControlGatewayManifest(template, input) {
   const networkPolicy = resources.find(
     (resource) => resource.kind === "NetworkPolicy",
   );
+  const admittedIngressNames = networkPolicy.spec.ingress[0].from.map(
+    (source) => source.podSelector?.matchLabels?.["app.kubernetes.io/name"],
+  );
+  if (
+    JSON.stringify(admittedIngressNames) !==
+    JSON.stringify([
+      "codeops-orchestrator",
+      "codeops-plane-controller",
+      "codeops-agents-ui",
+      "codeops-session-runtime-worker",
+    ])
+  ) {
+    throw new Error("control gateway caller ingress drifted");
+  }
   const databaseEgress = networkPolicy.spec.egress.filter((rule) =>
     rule.ports?.some((port) => port.protocol === "TCP" && port.port === 5432),
   );

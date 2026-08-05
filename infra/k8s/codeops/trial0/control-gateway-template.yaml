@@ -122,6 +122,8 @@ spec:
               value: /var/run/secrets/codeops-session-write/token
             - name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE
               value: /var/run/secrets/codeops-session-runtime-worker/token
+            - name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE
+              value: /var/run/secrets/codeops-session-job-initialization/token
             - name: CODEOPS_SESSION_RUNTIME_WORKER_ID
               value: acp-worker:primary
             - name: CODEOPS_HTTP_HOST
@@ -192,6 +194,9 @@ spec:
               readOnly: true
             - name: session-runtime-worker-auth
               mountPath: /var/run/secrets/codeops-session-runtime-worker
+              readOnly: true
+            - name: session-job-initialization-auth
+              mountPath: /var/run/secrets/codeops-session-job-initialization
               readOnly: true
             - name: temp
               mountPath: /tmp
@@ -269,6 +274,13 @@ spec:
             items:
               - key: token
                 path: token
+        - name: session-job-initialization-auth
+          secret:
+            secretName: codeops-session-job-initialization-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
         - name: temp
           emptyDir:
             sizeLimit: 64Mi
@@ -305,6 +317,9 @@ spec:
         - podSelector:
             matchLabels:
               app.kubernetes.io/name: codeops-agents-ui
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-session-runtime-worker
       ports:
         - { protocol: TCP, port: 8080 }
   egress:

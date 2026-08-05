@@ -191,6 +191,39 @@ test("uses the separate write credential and binds command responses", async () 
   assert.deepEqual(JSON.parse(calls[0].init.body), command);
 });
 
+test("accepts an identity-bound asynchronous runtime command submission", async () => {
+  const command = {
+    version: "codeops.session-command/v1",
+    sessionId: "ses_91a4",
+    generation: 3,
+    leaseId,
+    idempotencyKey: "22222222-2222-4222-8222-222222222222",
+    type: "prompt",
+    prompt: "Show the live runtime handoff.",
+  };
+  const client = createSessionBrokerClient({
+    baseUrl: new URL("https://broker.example/"),
+    readToken: token,
+    writeToken,
+    fetch: async () => json({
+      version: "codeops.session-command-accepted/v1",
+      disposition: "accepted",
+      dispatchId: "44444444-4444-4444-8444-444444444444",
+      sessionId: command.sessionId,
+      generation: command.generation,
+      leaseId: command.leaseId,
+      idempotencyKey: command.idempotencyKey,
+      type: command.type,
+    }),
+  });
+  const result = await client.executeCommand({
+    command,
+    principalId: "operator@example.com",
+  });
+  assert.equal(result.disposition, "accepted");
+  assert.equal(result.type, "prompt");
+});
+
 test("server functions require Access middleware and never read the token in browser code", async () => {
   const dataSource = await readFile(new URL("../src/lib/sessionBroker.data.ts", import.meta.url), "utf8");
   const authSource = await readFile(new URL("../src/lib/agentsAuth.ts", import.meta.url), "utf8");
