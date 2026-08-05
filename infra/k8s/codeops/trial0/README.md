@@ -407,6 +407,16 @@ drifted evidence cannot emit the ordered receipt. The contract hashes supplied
 bytes only; it does not open a browser, record, upload, contact Kubernetes, or
 read cluster logs or credential values.
 
+The concrete but uninvoked recording completion adapter accepts only an
+absolute, real off-cluster capture directory containing the four canonical
+files and three canonical directories. It rejects symbolic links, special
+files, missing or extra entries, empty or oversized files, root escapes, and
+files whose identity, size, or timestamps change while being read. Only after
+the exact bytes satisfy the evidence contract does it re-read the authenticated
+operator, target, and bound Namespace UID and emit the ordered receipt. It does
+not launch the recorder, upload artifacts, read cluster logs or credentials,
+or perform any Kubernetes mutation.
+
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
 
