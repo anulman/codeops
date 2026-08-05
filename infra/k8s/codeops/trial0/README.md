@@ -417,6 +417,16 @@ operator, target, and bound Namespace UID and emit the ordered receipt. It does
 not launch the recorder, upload artifacts, read cluster logs or credentials,
 or perform any Kubernetes mutation.
 
+Before a runtime deleter is admitted, the non-mutating `stop-runtime`
+postcondition binds the exact recording receipt/evidence chain back through
+runtime readiness to the original create-only Job UID. Completion must prove
+that exact Job is absent while the runtime NetworkPolicy and ServiceAccount
+retain their original server UIDs. A generic absence claim, same-name Job
+replacement, retained-resource deletion/replacement, missing or extra identity,
+nested chain drift, unbounded source, or non-monotonic observation cannot emit
+the ordered receipt. No concrete runtime delete adapter exists or runs at this
+boundary.
+
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
 

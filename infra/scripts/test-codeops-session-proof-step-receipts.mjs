@@ -23,6 +23,7 @@ import { buildSessionProofCodexSmokeReplacementEvidence } from "./codeops-sessio
 import { buildSessionProofUiReadinessEvidence } from "./codeops-session-proof-ui-readiness-evidence.mjs";
 import { buildSessionProofRuntimeReadinessEvidence } from "./codeops-session-proof-runtime-readiness-evidence.mjs";
 import { buildSessionProofRecordEvidence } from "./codeops-session-proof-record-evidence.mjs";
+import { buildSessionProofRuntimeStopEvidence } from "./codeops-session-proof-runtime-stop-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -281,6 +282,20 @@ function evidenceSource(authorization, observedAt, context = {}) {
         "session/export.json": Buffer.from('{"sessions":[]}\n'),
         "assertions.json": Buffer.from('{"result":"passed"}\n'),
       },
+    }));
+  }
+  if (authorization.stepId === "stop-runtime") {
+    const recordEvidenceSource = context.priorEvidenceSources?.at(-1);
+    const recordEvidence = JSON.parse(recordEvidenceSource);
+    const runtimeEvidence = JSON.parse(recordEvidence.runtimeReadinessEvidenceSource);
+    const applyEvidence = JSON.parse(runtimeEvidence.runtimeApplyEvidenceSource);
+    return JSON.stringify(buildSessionProofRuntimeStopEvidence({
+      authorization,
+      recordReceiptSource: context.priorReceiptSources?.at(-1),
+      recordEvidenceSource,
+      runtimeJobAbsent: true,
+      retainedResources: applyEvidence.resourceInventory.filter((resource) => resource.kind !== "Job"),
+      observedAt: "2026-08-05T18:15:19Z",
     }));
   }
   if (authorization.stepId === "wait-database") {
