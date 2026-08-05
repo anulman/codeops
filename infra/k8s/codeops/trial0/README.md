@@ -451,18 +451,21 @@ requests with server-enforced UID preconditions. An interrupted retry may skip
 an originally issued UID that is already absent, but it must verify all nine
 names absent, repeat live admission, and only then emit the evidence and
 completion receipt. The existing name-only shell revokers remain outside this
-path. Every apply/wait/record/stop adapter remains closed until it has the same
-bounded postcondition and tests. Neither concrete credential adapter is wired
-to Release or automatically invoked.
+path. Every remaining apply/wait/record/stop adapter remains closed until it
+has the same bounded postcondition and tests. Neither concrete credential
+adapter is wired to Release or automatically invoked.
 
-`start-database` has the first apply postcondition contract, but still no
-mutating adapter. Its completion evidence must bind the reviewed database
-artifact digest and exactly the five applied resource identities—ServiceAccount,
-ConfigMap, Deployment, Service, and NetworkPolicy—with their server-assigned
-UIDs. Missing, extra, duplicate, renamed, UID-less, wrong-manifest, wrong-step,
-wrong-Namespace, value-bearing, and unreviewed fields fail closed. The next
-boundary is a narrow exact-manifest apply adapter followed by the database
-readiness postcondition; generic evidence cannot complete this step.
+`start-database` has the first concrete apply adapter and postcondition
+contract. The uninvoked adapter accepts only the exact authorization and
+reviewed database manifest digest, refuses any pre-existing package object,
+and sends those bytes once through `kubectl create`. It double-reads exactly
+the five server-assigned resource UIDs—ServiceAccount, ConfigMap, Deployment,
+Service, and NetworkPolicy—around the final live operator, target, and
+Namespace-UID check. Missing, extra, duplicate, renamed, UID-less,
+wrong-manifest, wrong-step, wrong-Namespace, value-bearing, and unreviewed
+fields fail closed. Partial creation or identity replacement emits no receipt
+and must be reconciled through reviewed UID-bound teardown. Database readiness
+remains a separate closed postcondition; neither adapter is invoked by CI.
 
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
