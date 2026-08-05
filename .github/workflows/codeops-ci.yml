@@ -344,6 +344,14 @@ jobs:
           node infra/scripts/render-codeops-session-runtime-worker.mjs > /tmp/codeops-session-runtime-worker.yaml
           node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-session-runtime-worker.yaml
 
+      - name: Test and render the isolated Agent Sessions proof gateway
+        env:
+          CODEOPS_SESSION_CONTROL_GATEWAY_DIGEST: sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+        run: |
+          node --test infra/scripts/test-codeops-session-proof-gateway.mjs
+          node infra/scripts/render-codeops-session-proof-gateway.mjs > /tmp/codeops-session-proof-gateway.yaml
+          node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-session-proof-gateway.yaml
+
       - name: Test and render the credential-only Codex auth Jobs
         env:
           CODEOPS_AGENT_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
