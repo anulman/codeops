@@ -36,12 +36,18 @@ untracked workspace changes, and prepares strict prompt/checkpoint/hibernate/
 resume/fork results. Resume loads the exact checkpoint ACP session; fork uses
 ACP's native session fork and records independent child broker/ACP identity.
 
-The package still deliberately has no runnable polling entrypoint or
-Kubernetes workload. Runtime command admission remains fail-closed until the
-permission callback is bound to durable broker state, incomplete reservations
-have an explicit repair path, and the exact caller image/Job/NetworkPolicy/
-database grants are packaged and reviewed. This prevents a library-only image
-from claiming work it cannot safely complete.
+`runtime-main` is the single-claim polling entrypoint. It binds the durable
+permission callback inside the transport, uses one PostgreSQL connection for
+execution receipts, and exits on the first execution error so an ambiguous ACP
+operation is never silently retried. SIGTERM/SIGINT stop only after the active
+claim returns. `reconcileIncompleteRuntimeExecution` is the separate repair
+seam: it may adopt an out-of-band reconciled result for the exact incomplete
+reservation, but cannot invoke ACP/workspace side effects or repair drift.
+
+The package still deliberately has no Kubernetes workload and runtime command
+admission remains fail-closed. The exact caller image/Job, Unix-socket sidecar,
+NetworkPolicy, database grants, and repair operator boundary must be packaged
+and reviewed before this entrypoint can claim work in a cluster.
 
 Focused checks:
 

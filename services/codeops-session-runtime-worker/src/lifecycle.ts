@@ -63,7 +63,9 @@ export interface AcpWorkspaceLifecycle {
   fork(dispatch: RuntimeDispatchFor<"fork">): Promise<RuntimeExecutionResult>;
 }
 
-function dispatchDigest(dispatch: SessionRuntimeDispatch): string {
+export function sessionRuntimeDispatchDigest(
+  dispatch: SessionRuntimeDispatch,
+): string {
   return `sha256:${createHash("sha256")
     .update(JSON.stringify(dispatch))
     .digest("hex")}`;
@@ -124,7 +126,7 @@ export function createSessionRuntimeLifecycleExecutor(input: {
 }): RuntimeExecutor {
   return async (rawDispatch) => {
     const dispatch = sessionRuntimeDispatchSchema.parse(rawDispatch);
-    const digest = dispatchDigest(dispatch);
+    const digest = sessionRuntimeDispatchDigest(dispatch);
     const existing = await input.receipts.read(dispatch.dispatchId);
     if (existing !== null) return exactReceipt(existing, dispatch, digest);
 

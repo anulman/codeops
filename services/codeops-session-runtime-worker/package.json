@@ -5,6 +5,7 @@
   "type": "module",
   "scripts": {
     "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/runtime-main.js",
     "test": "tsc -p tsconfig.build.json && node --test test/*.test.mjs",
     "typecheck": "tsc -p tsconfig.json"
   },
