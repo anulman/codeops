@@ -235,6 +235,36 @@ CODEOPS_ACCEPTANCE_RUNNER_DIGEST=sha256:<64-lowercase-hex> \
 
 ## Disposable Agent Sessions runtime Job
 
+The video proof uses a dedicated `codeops-session-proof-*` namespace and an
+ephemeral PostgreSQL workload. Issue its seven distinct Secret objects without
+printing their values, render the exact database image digest, and apply only
+inside that disposable namespace:
+
+```bash
+infra/scripts/issue-codeops-session-proof-secrets.sh \
+  --namespace "$CODEOPS_SESSION_PROOF_NAMESPACE"
+
+CODEOPS_SESSION_PROOF_POSTGRES_DIGEST=sha256:<64-lowercase-hex> \
+  node infra/scripts/render-codeops-session-proof-database.mjs \
+  > "$CODEOPS_SESSION_PROOF_DATABASE_MANIFEST"
+```
+
+The database uses `emptyDir`, has no outbound network path, admits only the
+standalone proof gateway and runtime worker, and creates a separate receipt
+worker login during first initialization. The broker owner and receipt worker
+DSNs are projected from different Secrets. Final proof cleanup must delete the
+disposable namespace; if credentials must be revoked independently first, run:
+
+```bash
+infra/scripts/revoke-codeops-session-proof-secrets.sh \
+  --namespace "$CODEOPS_SESSION_PROOF_NAMESPACE"
+```
+
+The standalone proof gateway is likewise render-only and has no release/apply
+integration. It accepts only the UI and runtime worker, reaches only the proof
+database and DNS, and mounts no repository, GitHub, publication, model, or
+Kubernetes-controller authority.
+
 The live proof runtime is a bounded, non-retrying Job rather than a shared
 Deployment. Its init container checks out one exact SHA, the runtime worker
 uses separate Job-initialization, claim/completion, and receipt-database
@@ -244,8 +274,10 @@ socket. The Job receives no Kubernetes token, denies ingress, and permits
 egress only to the control gateway, the exact CNPG pooler, cluster DNS, and
 public HTTPS needed for repository/model access.
 
-Provision the receipt-only database role with an admin connection before
-creating its external Secret:
+For an existing externally managed broker database, provision the receipt-only
+role with an admin connection before creating its external Secret. The
+disposable proof database above creates the login itself, but the same grants
+must still be applied after the gateway migration creates the receipt table:
 
 ```bash
 psql "$CODEOPS_SESSION_BROKER_ADMIN_DSN" \
