@@ -56,7 +56,7 @@ function validateCreationReceipt(receipt) {
   return admission;
 }
 
-function readKubeTlsConfig(expected, runner) {
+export function readSessionProofKubeTlsConfig(expected, runner) {
   const source = runner(
     "kubectl",
     ["config", "view", "--minify", "--raw", "-o", "json"],
@@ -187,7 +187,7 @@ export async function deleteSessionProofNamespace(
     target,
     observedAt,
   });
-  const tls = readKubeTlsConfig({ operator, target }, runner);
+  const tls = readSessionProofKubeTlsConfig({ operator, target }, runner);
   const response = await deleteRequest({
     target,
     namespace: admission.identity.namespace,

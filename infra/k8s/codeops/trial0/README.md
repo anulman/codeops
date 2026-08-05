@@ -431,8 +431,9 @@ artifact so steps cannot be skipped, reordered, replayed under a replacement
 Namespace, or spliced between proof runs. Credential issuance evidence is
 metadata-only: the exact Secret names, namespaces, object UIDs, types, data-key
 names, and proof-scope labels. Secret values are rejected from the evidence
-artifact. These modules deliberately have no Kubernetes or credential mutation
-path. The first concrete—but not automatically invoked—adapter is
+artifact. The receipt and evidence modules deliberately have no Kubernetes or
+credential mutation path. The first concrete—but not automatically
+invoked—adapter is
 `infra/scripts/codeops-session-proof-credential-issuer.mjs`. It accepts only
 the exact next credential-issuance authorization, repeats the live
 operator/target/Namespace-UID check before calling the existing create-only
@@ -440,13 +441,19 @@ issuer, reads only UID/type/label/data-key metadata through a value-free
 `kubectl` template, repeats the live check after issuance, and only then returns
 the evidence bytes and completed receipt. Authorization drift and timestamp
 reordering fail before mutation; post-issuance Namespace replacement withholds
-the receipt. Revocation and every apply/wait/record/stop adapter remain closed
-until each has the same bounded postcondition and tests. The revocation evidence
-contract already requires verified absence of exactly all nine broker/runtime
-Secret names. The existing shell revokers are not yet admitted because
-name-only `kubectl delete --ignore-not-found` cannot prove the issued Secret
-UIDs were the objects removed; the concrete revoker must use UID-preconditioned
-deletes, verify exact absence, and only then build that evidence.
+the receipt. The matching terminal adapter is
+`infra/scripts/codeops-session-proof-credential-revoker.mjs`. It verifies the
+complete predecessor chain and the two evidence artifacts hashed by the
+original issuance receipts, recovers exactly the nine issued Secret UIDs, and
+repeats live identity admission before mutation. It reads only each current
+Secret UID, rejects same-name replacements, and sends direct Kubernetes DELETE
+requests with server-enforced UID preconditions. An interrupted retry may skip
+an originally issued UID that is already absent, but it must verify all nine
+names absent, repeat live admission, and only then emit the evidence and
+completion receipt. The existing name-only shell revokers remain outside this
+path. Every apply/wait/record/stop adapter remains closed until it has the same
+bounded postcondition and tests. Neither concrete credential adapter is wired
+to Release or automatically invoked.
 
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
