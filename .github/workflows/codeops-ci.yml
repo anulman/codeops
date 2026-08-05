@@ -385,12 +385,15 @@ jobs:
       - name: Test and render the credential-only Codex auth Jobs
         env:
           CODEOPS_AGENT_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          CODEOPS_SESSION_PROOF_NAMESPACE: codeops-session-proof-video-1
+          CODEOPS_RUN_ID: video-1
         run: |
           node --test infra/scripts/test-codeops-codex-auth.mjs
+          node --test infra/scripts/test-codeops-session-proof-codex-auth.mjs
           CODEOPS_AUTH_ACTION=login \
-            node infra/scripts/render-codeops-codex-auth.mjs > /tmp/codeops-codex-auth-login.yaml
+            node infra/scripts/render-codeops-session-proof-codex-auth.mjs > /tmp/codeops-codex-auth-login.yaml
           CODEOPS_AUTH_ACTION=smoke \
-            node infra/scripts/render-codeops-codex-auth.mjs > /tmp/codeops-codex-auth-smoke.yaml
+            node infra/scripts/render-codeops-session-proof-codex-auth.mjs > /tmp/codeops-codex-auth-smoke.yaml
           node infra/scripts/check-codeops-manifests.mjs \
             /tmp/codeops-codex-auth-login.yaml \
             /tmp/codeops-codex-auth-smoke.yaml

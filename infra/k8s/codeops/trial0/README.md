@@ -275,9 +275,25 @@ only explicit regular files, validates one `ghcr.io` registry entry, normalizes
 one bounded repository-read token, creates rather than updates exactly two
 Secrets, rolls back partial issuance, and never prints either value. It does not
 copy credentials from shared dev or production. ChatGPT device authentication
-remains separate: render the existing exact-digest Codex login/smoke Jobs into
-the disposable namespace so only their bounded RWO claim reaches the coding
-agent container.
+remains separate: render the existing credential-only login/smoke Jobs through
+the proof wrapper so every object is explicitly bound to the exact namespace
+and run ID. Only their 1 GiB RWO claim reaches the coding-agent container; the
+Jobs receive no Kubernetes token, Secret volume, repository credential, or
+model API key and can reach only DNS plus public HTTPS:
+
+```bash
+export CODEOPS_AGENT_DIGEST=sha256:<64-lowercase-hex>
+export CODEOPS_SESSION_PROOF_NAMESPACE=codeops-session-proof-video-1
+export CODEOPS_RUN_ID=video-1
+
+CODEOPS_AUTH_ACTION=login \
+  node infra/scripts/render-codeops-session-proof-codex-auth.mjs \
+  > "$CODEOPS_SESSION_PROOF_CODEX_LOGIN_MANIFEST"
+
+CODEOPS_AUTH_ACTION=smoke \
+  node infra/scripts/render-codeops-session-proof-codex-auth.mjs \
+  > "$CODEOPS_SESSION_PROOF_CODEX_SMOKE_MANIFEST"
+```
 
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
