@@ -320,6 +320,17 @@ immediately on terminal failure, and double-reads the successful Job and bound
 claim before emitting evidence and a receipt. CI tests both closed adapters but
 cannot create the claim or run the interactive device-auth Job.
 
+`codex-smoke` replacement completion is separately bound to the exact reviewed
+smoke artifact and the exact preceding login-completion receipt/evidence chain.
+Its evidence requires the login Job to be absent, a distinct smoke Job UID, and
+the original PersistentVolumeClaim, ServiceAccount, and NetworkPolicy UIDs to
+remain unchanged. A generic four-object inventory, reused login Job identity,
+replaced retained object, missing or extra object, wrong artifact/action,
+credential contents, logs, chain drift, or extra evidence fields cannot
+complete the replacement step. The concrete replacement adapter and the
+separate `wait-codex-smoke` completion postcondition remain closed; CI tests
+only the non-mutating evidence contract.
+
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
 

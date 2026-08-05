@@ -18,6 +18,7 @@ import {
 } from "./codeops-session-proof-gateway-readiness-evidence.mjs";
 import { buildSessionProofGrantCompletionEvidence } from "./codeops-session-proof-grant-completion-evidence.mjs";
 import { buildSessionProofCodexLoginCompletionEvidence } from "./codeops-session-proof-codex-login-completion-evidence.mjs";
+import { buildSessionProofCodexSmokeReplacementEvidence } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -308,6 +309,21 @@ function evidenceSource(authorization, observedAt, context = {}) {
         },
         status: { phase: "Bound" },
       },
+      observedAt,
+    }));
+  }
+  if (authorization.stepId === "codex-smoke") {
+    return JSON.stringify(buildSessionProofCodexSmokeReplacementEvidence({
+      authorization,
+      loginCompletionReceiptSource: context.priorReceiptSources?.at(-1),
+      loginCompletionEvidenceSource: context.priorEvidenceSources?.at(-1),
+      resources: sessionProofApplyResourceIdentities("codex-smoke").map((resource, index) => ({
+        ...resource,
+        uid: resource.kind === "Job"
+          ? "codex-smoke-job-uid"
+          : `codex-login-resource-uid-${index}`,
+      })),
+      loginJobAbsent: true,
       observedAt,
     }));
   }

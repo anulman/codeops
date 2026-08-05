@@ -18,6 +18,7 @@ import {
 } from "./codeops-session-proof-gateway-readiness-evidence.mjs";
 import { buildSessionProofGrantCompletionEvidence } from "./codeops-session-proof-grant-completion-evidence.mjs";
 import { buildSessionProofCodexLoginCompletionEvidence } from "./codeops-session-proof-codex-login-completion-evidence.mjs";
+import { buildSessionProofCodexSmokeReplacementEvidence } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -304,6 +305,21 @@ function buildRevocationInputs() {
           },
           status: { phase: "Bound" },
         },
+        observedAt,
+      }));
+    } else if (step.id === "codex-smoke") {
+      const observedAt = `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`;
+      evidenceSource = JSON.stringify(buildSessionProofCodexSmokeReplacementEvidence({
+        authorization,
+        loginCompletionReceiptSource: priorReceiptSources.at(-1),
+        loginCompletionEvidenceSource: priorEvidenceSources.at(-1),
+        resources: sessionProofApplyResourceIdentities("codex-smoke").map((resource, index) => ({
+          ...resource,
+          uid: resource.kind === "Job"
+            ? "codex-smoke-job-uid"
+            : `codex-login-resource-uid-${index}`,
+        })),
+        loginJobAbsent: true,
         observedAt,
       }));
     } else {

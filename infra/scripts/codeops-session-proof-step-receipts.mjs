@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { verifySessionProofOperation } from "./codeops-session-proof-admission.mjs";
 import { verifySessionProofApplyEvidence } from "./codeops-session-proof-apply-evidence.mjs";
 import { verifySessionProofCodexLoginCompletionEvidence } from "./codeops-session-proof-codex-login-completion-evidence.mjs";
+import { verifySessionProofCodexSmokeReplacementEvidence } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
 import { verifySessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
 import { verifySessionProofCredentialRevocationEvidence } from "./codeops-session-proof-credential-revocation-evidence.mjs";
 import { verifySessionProofGatewayReadinessEvidence } from "./codeops-session-proof-gateway-readiness-evidence.mjs";
@@ -217,6 +218,8 @@ export function completeSessionProofStep(authorization, input) {
     verifySessionProofGrantCompletionEvidence(authorization, evidence);
   } else if (authorization.stepId === "wait-codex-login") {
     verifySessionProofCodexLoginCompletionEvidence(authorization, evidence);
+  } else if (authorization.stepId === "codex-smoke") {
+    verifySessionProofCodexSmokeReplacementEvidence(authorization, evidence);
   } else if (authorization.stepId === "revoke-capabilities") {
     verifySessionProofCredentialRevocationEvidence(authorization, evidence);
   } else if (

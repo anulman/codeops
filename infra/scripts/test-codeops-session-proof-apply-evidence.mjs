@@ -99,6 +99,25 @@ test("attests exactly the four applied Codex login resource identities", () => {
   );
 });
 
+test("attests exactly the four post-replacement Codex smoke resource identities", () => {
+  const smokeAuthorization = {
+    ...authorization,
+    stepId: "codex-smoke",
+    action: "operator-replace-auth-job",
+    artifact: "codex-smoke",
+  };
+  const evidence = buildSessionProofApplyEvidence({
+    authorization: smokeAuthorization,
+    observedAt: "2026-08-05T21:30:00Z",
+    resources: sessionProofApplyResourceIdentities("codex-smoke").map((resource, index) => ({
+      ...resource,
+      uid: `codex-smoke-resource-uid-${index}`,
+    })),
+  });
+  assert.equal(evidence.resourceInventory.length, 4);
+  assert.equal(evidence.resourceInventory.find((resource) => resource.kind === "Job").name, "codeops-codex-auth-smoke");
+});
+
 test("rejects database, incomplete, duplicate, or wrong-artifact gateway evidence", () => {
   const gatewayAuthorization = {
     ...authorization,
@@ -190,6 +209,37 @@ test("rejects grant, incomplete, duplicate, or wrong-artifact Codex login eviden
     observedAt: "2026-08-05T21:04:00Z",
     resources: expected,
   }), /not a qualified apply/);
+});
+
+test("rejects login identities, wrong action, or wrong artifact for Codex smoke", () => {
+  const smokeAuthorization = {
+    ...authorization,
+    stepId: "codex-smoke",
+    action: "operator-replace-auth-job",
+    artifact: "codex-smoke",
+  };
+  const expected = sessionProofApplyResourceIdentities("codex-smoke").map((resource, index) => ({
+    ...resource,
+    uid: `codex-smoke-resource-uid-${index}`,
+  }));
+  assert.throws(() => buildSessionProofApplyEvidence({
+    authorization: smokeAuthorization,
+    observedAt: "2026-08-05T21:30:00Z",
+    resources: sessionProofApplyResourceIdentities("codex-login").map((resource, index) => ({
+      ...resource,
+      uid: `codex-login-resource-uid-${index}`,
+    })),
+  }));
+  for (const authorizationDrift of [
+    { action: "operator-apply" },
+    { artifact: "codex-login" },
+  ]) {
+    assert.throws(() => buildSessionProofApplyEvidence({
+      authorization: { ...smokeAuthorization, ...authorizationDrift },
+      observedAt: "2026-08-05T21:30:00Z",
+      resources: expected,
+    }), /not a qualified apply/);
+  }
 });
 
 test("rejects missing, extra, duplicate, renamed, or UID-less resources", () => {

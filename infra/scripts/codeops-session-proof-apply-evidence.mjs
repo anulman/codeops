@@ -3,6 +3,7 @@ const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
 
 const EXPECTED = {
   "start-database": {
+    action: "operator-apply",
     artifact: "database",
     resources: [
       { apiVersion: "v1", kind: "ConfigMap", name: "codeops-session-proof-database-init" },
@@ -13,6 +14,7 @@ const EXPECTED = {
     ],
   },
   "start-gateway": {
+    action: "operator-apply",
     artifact: "gateway",
     resources: [
       { apiVersion: "apps/v1", kind: "Deployment", name: "codeops-control-gateway" },
@@ -22,6 +24,7 @@ const EXPECTED = {
     ],
   },
   "grant-receipts": {
+    action: "operator-apply",
     artifact: "grants",
     resources: [
       { apiVersion: "batch/v1", kind: "Job", name: "codeops-session-proof-grants" },
@@ -31,9 +34,20 @@ const EXPECTED = {
     ],
   },
   "codex-login": {
+    action: "operator-apply",
     artifact: "codex-login",
     resources: [
       { apiVersion: "batch/v1", kind: "Job", name: "codeops-codex-auth-login" },
+      { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", name: "codeops-codex-auth" },
+      { apiVersion: "v1", kind: "PersistentVolumeClaim", name: "codeops-codex-auth" },
+      { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-codex-auth" },
+    ],
+  },
+  "codex-smoke": {
+    action: "operator-replace-auth-job",
+    artifact: "codex-smoke",
+    resources: [
+      { apiVersion: "batch/v1", kind: "Job", name: "codeops-codex-auth-smoke" },
       { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", name: "codeops-codex-auth" },
       { apiVersion: "v1", kind: "PersistentVolumeClaim", name: "codeops-codex-auth" },
       { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-codex-auth" },
@@ -53,7 +67,7 @@ function expectedResources(authorization) {
   const contract = EXPECTED[authorization?.stepId];
   if (
     !contract ||
-    authorization.action !== "operator-apply" ||
+    authorization.action !== contract.action ||
     authorization.artifact !== contract.artifact
   ) {
     throw new Error("proof step is not a qualified apply action");
