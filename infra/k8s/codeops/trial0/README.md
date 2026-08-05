@@ -295,6 +295,15 @@ CODEOPS_AUTH_ACTION=smoke \
   > "$CODEOPS_SESSION_PROOF_CODEX_SMOKE_MANIFEST"
 ```
 
+`codex-login` completion is now separately bound to the exact reviewed login
+artifact and exactly four server-assigned identities: its PersistentVolumeClaim,
+ServiceAccount, Job, and NetworkPolicy. Grant-package identities, missing or
+extra objects, renamed or duplicate resources, empty UIDs, wrong artifacts,
+generic evidence, and unreviewed fields cannot complete the apply step. The
+create-only login adapter and the separate `wait-codex-login` completion
+postcondition remain closed; CI cannot create the claim or run the interactive
+device-auth Job.
+
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
 

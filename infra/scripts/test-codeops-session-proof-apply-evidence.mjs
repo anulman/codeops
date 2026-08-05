@@ -78,6 +78,27 @@ test("attests exactly the four applied receipt-grant resource identities", () =>
   );
 });
 
+test("attests exactly the four applied Codex login resource identities", () => {
+  const loginAuthorization = {
+    ...authorization,
+    stepId: "codex-login",
+    artifact: "codex-login",
+  };
+  const evidence = buildSessionProofApplyEvidence({
+    authorization: loginAuthorization,
+    observedAt: "2026-08-05T21:04:00Z",
+    resources: sessionProofApplyResourceIdentities("codex-login").map((resource, index) => ({
+      ...resource,
+      uid: `codex-login-resource-uid-${index}`,
+    })),
+  });
+  assert.equal(evidence.resourceInventory.length, 4);
+  assert.deepEqual(
+    evidence.resourceInventory.map((resource) => resource.kind).sort(),
+    ["Job", "NetworkPolicy", "PersistentVolumeClaim", "ServiceAccount"].sort(),
+  );
+});
+
 test("rejects database, incomplete, duplicate, or wrong-artifact gateway evidence", () => {
   const gatewayAuthorization = {
     ...authorization,
@@ -135,6 +156,38 @@ test("rejects gateway, incomplete, duplicate, or wrong-artifact grant evidence",
   assert.throws(() => buildSessionProofApplyEvidence({
     authorization: { ...grantAuthorization, artifact: "gateway" },
     observedAt: "2026-08-05T20:42:00Z",
+    resources: expected,
+  }), /not a qualified apply/);
+});
+
+test("rejects grant, incomplete, duplicate, or wrong-artifact Codex login evidence", () => {
+  const loginAuthorization = {
+    ...authorization,
+    stepId: "codex-login",
+    artifact: "codex-login",
+  };
+  const expected = sessionProofApplyResourceIdentities("codex-login").map((resource, index) => ({
+    ...resource,
+    uid: `codex-login-resource-uid-${index}`,
+  }));
+  for (const invalid of [
+    sessionProofApplyResourceIdentities("grant-receipts").map((resource, index) => ({
+      ...resource,
+      uid: `grant-resource-uid-${index}`,
+    })),
+    expected.slice(1),
+    [...expected, expected[0]],
+    expected.map((resource, index) => index === 0 ? { ...resource, name: "renamed" } : resource),
+  ]) {
+    assert.throws(() => buildSessionProofApplyEvidence({
+      authorization: loginAuthorization,
+      observedAt: "2026-08-05T21:04:00Z",
+      resources: invalid,
+    }));
+  }
+  assert.throws(() => buildSessionProofApplyEvidence({
+    authorization: { ...loginAuthorization, artifact: "codex-smoke" },
+    observedAt: "2026-08-05T21:04:00Z",
     resources: expected,
   }), /not a qualified apply/);
 });

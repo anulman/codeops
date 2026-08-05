@@ -30,6 +30,15 @@ const EXPECTED = {
       { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-session-proof-grants" },
     ],
   },
+  "codex-login": {
+    artifact: "codex-login",
+    resources: [
+      { apiVersion: "batch/v1", kind: "Job", name: "codeops-codex-auth-login" },
+      { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", name: "codeops-codex-auth" },
+      { apiVersion: "v1", kind: "PersistentVolumeClaim", name: "codeops-codex-auth" },
+      { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-codex-auth" },
+    ],
+  },
 };
 
 function sameKeys(value, keys) {

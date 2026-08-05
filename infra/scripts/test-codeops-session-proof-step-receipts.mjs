@@ -164,6 +164,16 @@ function evidenceSource(authorization, observedAt, context = {}) {
       })),
     }));
   }
+  if (authorization.stepId === "codex-login") {
+    return JSON.stringify(buildSessionProofApplyEvidence({
+      authorization,
+      observedAt,
+      resources: sessionProofApplyResourceIdentities("codex-login").map((resource, index) => ({
+        ...resource,
+        uid: `codex-login-resource-uid-${index}`,
+      })),
+    }));
+  }
   if (authorization.stepId === "wait-database") {
     return JSON.stringify(buildSessionProofReadinessEvidence({
       authorization,
