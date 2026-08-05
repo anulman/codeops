@@ -6,9 +6,14 @@ import {
   readSessionProofNamespace,
 } from "./codeops-session-proof-preflight.mjs";
 import { verifySessionProofOperation } from "./codeops-session-proof-admission.mjs";
+import {
+  verifySessionProofCredentialRevocationEvidence,
+} from "./codeops-session-proof-credential-revocation-evidence.mjs";
+import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const MAX_TLS_MATERIAL_BYTES = 128 * 1024;
+const MAX_SOURCE_BYTES = 64 * 1024;
 const DELETE_TIMEOUT_MS = 30_000;
 const VERIFY_TIMEOUT_MS = 3 * 60 * 1000;
 const VERIFY_INTERVAL_MS = 1_000;
@@ -54,6 +59,52 @@ function validateCreationReceipt(receipt) {
     throw new Error("proof Namespace creation receipt drifted");
   }
   return admission;
+}
+
+function validateRevocationPredecessor(input, admission, planSha256, observedAt) {
+  const receiptSource = input.revocationReceiptSource;
+  const evidenceSource = input.revocationEvidenceSource;
+  if (
+    typeof receiptSource !== "string" ||
+    Buffer.byteLength(receiptSource) > MAX_SOURCE_BYTES ||
+    typeof evidenceSource !== "string" ||
+    Buffer.byteLength(evidenceSource) > MAX_SOURCE_BYTES
+  ) {
+    throw new Error("bounded credential-revocation predecessor bytes are required");
+  }
+  const receipt = parseJson(receiptSource, "proof credential-revocation receipt");
+  const evidence = parseJson(evidenceSource, "proof credential-revocation evidence");
+  const stepIndex = sessionProofSequence().findIndex((step) => step.id === "revoke-capabilities");
+  if (
+    receipt?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+    receipt.result !== "completed" ||
+    receipt.proceed !== true ||
+    receipt.planSha256 !== planSha256 ||
+    JSON.stringify(receipt.namespace) !== JSON.stringify({
+      name: admission.identity.namespace,
+      uid: admission.namespaceUid,
+    }) ||
+    receipt.stepIndex !== stepIndex ||
+    receipt.stepId !== "revoke-capabilities" ||
+    receipt.action !== "operator-revoke-exact-secrets" ||
+    receipt.artifact !== null ||
+    receipt.artifactSha256 !== null ||
+    !/^[0-9a-f]{64}$/.test(receipt.previousReceiptSha256 ?? "") ||
+    receipt.evidenceSha256 !== createHash("sha256").update(evidenceSource).digest("hex") ||
+    !/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/.test(receipt.checkedAt ?? "") ||
+    Date.parse(observedAt) < Date.parse(receipt.checkedAt)
+  ) {
+    throw new Error("proof credential-revocation predecessor drifted");
+  }
+  verifySessionProofCredentialRevocationEvidence({
+    planSha256,
+    stepId: receipt.stepId,
+    action: receipt.action,
+    namespace: receipt.namespace,
+  }, evidence);
+  if (Date.parse(observedAt) < Date.parse(evidence.observedAt)) {
+    throw new Error("proof Namespace deletion preceded credential revocation evidence");
+  }
 }
 
 export function readSessionProofKubeTlsConfig(expected, runner) {
@@ -178,6 +229,9 @@ export async function deleteSessionProofNamespace(
   }
 
   const observedAt = input.observedAt ?? now().toISOString();
+  if (receipt.result === "created-and-uid-bound") {
+    validateRevocationPredecessor(input, admission, planSha256, observedAt);
+  }
   const { operator, target } = readSessionProofKubeContext(runner);
   const namespaceResource = readSessionProofNamespace(admission.identity.namespace, runner);
   verifySessionProofOperation(admission, {

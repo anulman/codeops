@@ -450,6 +450,13 @@ infra/scripts/revoke-codeops-session-proof-runtime-credentials.sh \
   --namespace "$CODEOPS_SESSION_PROOF_NAMESPACE"
 ```
 
+For a successfully created proof namespace, the UID-preconditioned Namespace
+deleter admits teardown only after verifying the exact completed
+`revoke-capabilities` receipt, its bounded evidence bytes and digest, the full
+nine-name absence contract, and monotonic revocation-to-deletion time. The
+only bypass is the existing UID-bound emergency cleanup receipt produced by an
+incomplete namespace creation, before any later lifecycle step is admitted.
+
 The standalone proof gateway is likewise render-only and has no release/apply
 integration. It accepts only the UI and runtime worker, reaches only the proof
 database and DNS, and mounts no repository, GitHub, publication, model, or

@@ -6,6 +6,10 @@ import {
   createNamespaceDeleteRequest,
   deleteSessionProofNamespace,
 } from "./codeops-session-proof-namespace-delete.mjs";
+import {
+  buildSessionProofCredentialRevocationEvidence,
+  sessionProofCredentialNames,
+} from "./codeops-session-proof-credential-revocation-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
 const identity = {
@@ -52,6 +56,43 @@ const creationReceipt = {
   proceed: true,
   admission,
 };
+const revocationAuthorization = {
+  planSha256: admission.planSha256,
+  stepId: "revoke-capabilities",
+  action: "operator-revoke-exact-secrets",
+  namespace: creationReceipt.namespace,
+};
+const revocationEvidenceSource = JSON.stringify(buildSessionProofCredentialRevocationEvidence({
+  authorization: revocationAuthorization,
+  observedAt: "2026-08-05T06:20:00Z",
+  absentCredentialNames: sessionProofCredentialNames(),
+}));
+const revocationReceiptSource = JSON.stringify({
+  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  result: "completed",
+  proceed: true,
+  checkedAt: "2026-08-05T06:21:00Z",
+  planSha256: admission.planSha256,
+  namespace: creationReceipt.namespace,
+  stepIndex: sessionProofSequence().findIndex((step) => step.id === "revoke-capabilities"),
+  stepId: "revoke-capabilities",
+  action: "operator-revoke-exact-secrets",
+  artifact: null,
+  artifactSha256: null,
+  previousReceiptSha256: "b".repeat(64),
+  evidenceSha256: createHash("sha256").update(revocationEvidenceSource).digest("hex"),
+});
+
+function deletionInput(overrides = {}) {
+  return {
+    planSource,
+    creationReceipt,
+    revocationReceiptSource,
+    revocationEvidenceSource,
+    observedAt: "2026-08-05T06:30:00Z",
+    ...overrides,
+  };
+}
 
 function namespace(uid = admission.namespaceUid) {
   return {
@@ -126,7 +167,7 @@ test("constructs one foreground DELETE with an exact Namespace UID precondition"
 test("deletes only the UID-bound Namespace through an API precondition and verifies absence", async () => {
   const stub = runner();
   let request;
-  const result = await deleteSessionProofNamespace({ planSource, creationReceipt }, {
+  const result = await deleteSessionProofNamespace(deletionInput(), {
     runner: stub.execute,
     deleteRequest: async (value) => {
       request = value;
@@ -149,23 +190,21 @@ test("rejects a replaced Namespace, receipt drift, or plan drift before deletion
     deleted = true;
     return success;
   };
-  await assert.rejects(deleteSessionProofNamespace({ planSource, creationReceipt }, {
+  await assert.rejects(deleteSessionProofNamespace(deletionInput(), {
     runner: runner([namespace("replacement-uid")]).execute,
     deleteRequest,
     now: () => new Date("2026-08-05T06:30:00Z"),
   }));
-  await assert.rejects(deleteSessionProofNamespace({
-    planSource,
+  await assert.rejects(deleteSessionProofNamespace(deletionInput({
     creationReceipt: { ...creationReceipt, namespace: { ...creationReceipt.namespace, uid: "other" } },
-  }, {
+  }), {
     runner: runner().execute,
     deleteRequest,
     now: () => new Date("2026-08-05T06:30:00Z"),
   }));
-  await assert.rejects(deleteSessionProofNamespace({
+  await assert.rejects(deleteSessionProofNamespace(deletionInput({
     planSource: `${planSource}\n`,
-    creationReceipt,
-  }, {
+  }), {
     runner: runner().execute,
     deleteRequest,
     now: () => new Date("2026-08-05T06:30:00Z"),
@@ -174,7 +213,7 @@ test("rejects a replaced Namespace, receipt drift, or plan drift before deletion
 });
 
 test("does not report teardown after the API rejects the UID precondition", async () => {
-  await assert.rejects(deleteSessionProofNamespace({ planSource, creationReceipt }, {
+  await assert.rejects(deleteSessionProofNamespace(deletionInput(), {
     runner: runner().execute,
     deleteRequest: async () => ({
       statusCode: 409,
@@ -196,9 +235,48 @@ test("fails closed if the active raw client certificate changes before deletion"
     }
     return base(file, args);
   };
-  await assert.rejects(deleteSessionProofNamespace({ planSource, creationReceipt }, {
+  await assert.rejects(deleteSessionProofNamespace(deletionInput(), {
     runner: stub.execute,
     deleteRequest: async () => success,
     now: () => new Date("2026-08-05T06:30:00Z"),
   }), /certificate drifted/);
+});
+
+test("rejects missing, substituted, oversized, or late revocation evidence before live access", async () => {
+  const substitutions = [
+    { revocationReceiptSource: undefined },
+    { revocationEvidenceSource: undefined },
+    { revocationEvidenceSource: "x".repeat(65 * 1024) },
+    { revocationEvidenceSource: `${revocationEvidenceSource}\n` },
+    { observedAt: "2026-08-05T06:20:30Z" },
+  ];
+  for (const override of substitutions) {
+    const stub = runner();
+    await assert.rejects(deleteSessionProofNamespace(deletionInput(override), {
+      runner: stub.execute,
+      deleteRequest: async () => success,
+      now: () => new Date("2026-08-05T06:30:00Z"),
+    }), /credential-revocation|bounded/);
+    assert.equal(stub.calls.length, 0);
+  }
+});
+
+test("keeps UID-bound emergency cleanup available after incomplete namespace creation", async () => {
+  const incompleteReceipt = {
+    ...creationReceipt,
+    result: "namespace-uid-bound-create-incomplete",
+    proceed: false,
+  };
+  const stub = runner();
+  const result = await deleteSessionProofNamespace({
+    planSource,
+    creationReceipt: incompleteReceipt,
+    observedAt: "2026-08-05T06:30:00Z",
+  }, {
+    runner: stub.execute,
+    deleteRequest: async () => success,
+    now: () => new Date("2026-08-05T06:30:00Z"),
+    sleep: async () => {},
+  });
+  assert.equal(result.result, "deleted-and-absence-verified");
 });
