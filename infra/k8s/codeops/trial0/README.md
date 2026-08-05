@@ -527,8 +527,13 @@ artifact and exactly four server-assigned identities: its ConfigMap, Job,
 NetworkPolicy, and ServiceAccount. Gateway/database identities, missing or
 extra objects, renamed or duplicate resources, empty UIDs, wrong artifacts,
 generic evidence, and unreviewed fields cannot complete the apply step. The
-concrete apply adapter and the separate `wait-grants` completion postcondition
-remain closed, so CI cannot create or run this Job.
+concrete but uninvoked create-only adapter now admits only the exact
+`grant-receipts` authorization and reviewed manifest bytes, refuses any
+pre-existing package object, streams those bytes once through `kubectl create`,
+double-reads all four server UIDs around the final live
+operator/target/Namespace-UID check, and emits no receipt after partial creation
+or identity replacement. The separate `wait-grants` completion postcondition
+remains closed, and CI cannot create or run this Job.
 
 ```bash
 CODEOPS_SESSION_PROOF_POSTGRES_DIGEST=sha256:<64-lowercase-hex> \
