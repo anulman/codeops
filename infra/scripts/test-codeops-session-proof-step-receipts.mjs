@@ -18,6 +18,7 @@ import {
 } from "./codeops-session-proof-gateway-readiness-evidence.mjs";
 import { buildSessionProofGrantCompletionEvidence } from "./codeops-session-proof-grant-completion-evidence.mjs";
 import { buildSessionProofCodexLoginCompletionEvidence } from "./codeops-session-proof-codex-login-completion-evidence.mjs";
+import { buildSessionProofCodexSmokeCompletionEvidence } from "./codeops-session-proof-codex-smoke-completion-evidence.mjs";
 import { buildSessionProofCodexSmokeReplacementEvidence } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
@@ -324,6 +325,50 @@ function evidenceSource(authorization, observedAt, context = {}) {
           : `codex-login-resource-uid-${index}`,
       })),
       loginJobAbsent: true,
+      observedAt,
+    }));
+  }
+  if (authorization.stepId === "wait-codex-smoke") {
+    return JSON.stringify(buildSessionProofCodexSmokeCompletionEvidence({
+      authorization,
+      smokeReplacementReceiptSource: context.priorReceiptSources?.at(-1),
+      smokeReplacementEvidenceSource: context.priorEvidenceSources?.at(-1),
+      loginJobAbsent: true,
+      job: {
+        apiVersion: "batch/v1",
+        kind: "Job",
+        metadata: {
+          name: "codeops-codex-auth-smoke",
+          namespace: authorization.namespace.name,
+          uid: "codex-smoke-job-uid",
+          generation: 1,
+        },
+        spec: {
+          completions: 1,
+          parallelism: 1,
+          backoffLimit: 0,
+          activeDeadlineSeconds: 900,
+          ttlSecondsAfterFinished: 3600,
+        },
+        status: {
+          active: 0,
+          succeeded: 1,
+          failed: 0,
+          startTime: observedAt,
+          completionTime: observedAt,
+          conditions: [{ type: "Complete", status: "True" }],
+        },
+      },
+      persistentVolumeClaim: {
+        apiVersion: "v1",
+        kind: "PersistentVolumeClaim",
+        metadata: {
+          name: "codeops-codex-auth",
+          namespace: authorization.namespace.name,
+          uid: "codex-login-resource-uid-2",
+        },
+        status: { phase: "Bound" },
+      },
       observedAt,
     }));
   }

@@ -334,9 +334,19 @@ preconditioned on its exact UID, verifies its absence, rechecks the retained
 objects, and creates only the smoke Job extracted from the digest-bound reviewed
 manifest. It double-reads the final smoke and retained identities around live
 operator/target/Namespace-UID admission and emits no receipt after deletion or
-creation failure, replacement, or partial state. The separate
-`wait-codex-smoke` completion postcondition remains closed; CI exercises the
-adapter only through injected fakes and never deletes or creates a live Job.
+creation failure, replacement, or partial state. CI exercises the adapter only
+through injected fakes and never deletes or creates a live Job. The separate
+`wait-codex-smoke` completion contract and concrete but uninvoked
+waiter now bind the exact replacement receipt/evidence chain to the same
+create-only smoke Job UID at generation 1, the same bound non-deleting
+credential claim, and continued absence of the login Job. Completion requires
+exactly one successful execution with zero active/failed work or retries, the
+reviewed fifteen-minute deadline, and monotonic authorization/start/completion/
+observation time. The waiter repeats live operator, target, and Namespace-UID
+admission around a sixteen-minute-bounded poll, fails immediately on terminal
+failure, and double-reads the smoke Job, claim, and login absence before
+emitting evidence and a receipt. Pending, failed, retried, replaced, deleting,
+malformed, extra-field, chain-drifted, or timestamp-drifted state fails closed.
 
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
