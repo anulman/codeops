@@ -306,8 +306,19 @@ pre-existing package object, streams those bytes once through `kubectl create`,
 double-reads all four server UIDs around the final live
 operator/target/Namespace-UID check, and emits no receipt after partial creation
 or identity replacement. The separate `wait-codex-login` completion
-postcondition remains closed; CI tests the adapter but cannot create the claim
-or run the interactive device-auth Job.
+postcondition is now bound to the exact login apply receipt/evidence chain, the
+same create-only Job UID at generation 1, and the same bound, non-deleting
+credential-claim UID. It proves the reviewed one-completion, one-parallel,
+non-retrying, fifteen-minute-deadline Job reached exactly one successful
+completion with zero active or failed executions and a valid start/completion
+interval. Generic status text, logs, credential contents, missing or extra
+fields, pending or failed Jobs, retries, timestamp drift, replaced resources,
+and pending/deleting claims cannot complete the step. A concrete but uninvoked
+waiter repeats live operator, target, and Namespace-UID admission around a
+bounded sixteen-minute poll, reads only the exact Job and claim metadata, fails
+immediately on terminal failure, and double-reads the successful Job and bound
+claim before emitting evidence and a receipt. CI tests both closed adapters but
+cannot create the claim or run the interactive device-auth Job.
 
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:

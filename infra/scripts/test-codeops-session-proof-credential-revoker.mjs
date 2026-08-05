@@ -17,6 +17,7 @@ import {
   sessionProofGatewayMigrationRelation,
 } from "./codeops-session-proof-gateway-readiness-evidence.mjs";
 import { buildSessionProofGrantCompletionEvidence } from "./codeops-session-proof-grant-completion-evidence.mjs";
+import { buildSessionProofCodexLoginCompletionEvidence } from "./codeops-session-proof-codex-login-completion-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -259,6 +260,49 @@ function buildRevocationInputs() {
             completionTime: observedAt,
             conditions: [{ type: "Complete", status: "True" }],
           },
+        },
+        observedAt,
+      }));
+    } else if (step.id === "wait-codex-login") {
+      const observedAt = `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`;
+      evidenceSource = JSON.stringify(buildSessionProofCodexLoginCompletionEvidence({
+        authorization,
+        loginApplyReceiptSource: priorReceiptSources.at(-1),
+        loginApplyEvidenceSource: priorEvidenceSources.at(-1),
+        job: {
+          apiVersion: "batch/v1",
+          kind: "Job",
+          metadata: {
+            name: "codeops-codex-auth-login",
+            namespace: identity.namespace,
+            uid: "codex-login-resource-uid-0",
+            generation: 1,
+          },
+          spec: {
+            completions: 1,
+            parallelism: 1,
+            backoffLimit: 0,
+            activeDeadlineSeconds: 900,
+            ttlSecondsAfterFinished: 3600,
+          },
+          status: {
+            active: 0,
+            succeeded: 1,
+            failed: 0,
+            startTime: observedAt,
+            completionTime: observedAt,
+            conditions: [{ type: "Complete", status: "True" }],
+          },
+        },
+        persistentVolumeClaim: {
+          apiVersion: "v1",
+          kind: "PersistentVolumeClaim",
+          metadata: {
+            name: "codeops-codex-auth",
+            namespace: identity.namespace,
+            uid: "codex-login-resource-uid-2",
+          },
+          status: { phase: "Bound" },
         },
         observedAt,
       }));

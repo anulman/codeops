@@ -17,6 +17,7 @@ import {
   sessionProofGatewayMigrationRelation,
 } from "./codeops-session-proof-gateway-readiness-evidence.mjs";
 import { buildSessionProofGrantCompletionEvidence } from "./codeops-session-proof-grant-completion-evidence.mjs";
+import { buildSessionProofCodexLoginCompletionEvidence } from "./codeops-session-proof-codex-login-completion-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -263,6 +264,49 @@ function evidenceSource(authorization, observedAt, context = {}) {
           completionTime: observedAt,
           conditions: [{ type: "Complete", status: "True" }],
         },
+      },
+      observedAt,
+    }));
+  }
+  if (authorization.stepId === "wait-codex-login") {
+    return JSON.stringify(buildSessionProofCodexLoginCompletionEvidence({
+      authorization,
+      loginApplyReceiptSource: context.priorReceiptSources?.at(-1),
+      loginApplyEvidenceSource: context.priorEvidenceSources?.at(-1),
+      job: {
+        apiVersion: "batch/v1",
+        kind: "Job",
+        metadata: {
+          name: "codeops-codex-auth-login",
+          namespace: authorization.namespace.name,
+          uid: "codex-login-resource-uid-0",
+          generation: 1,
+        },
+        spec: {
+          completions: 1,
+          parallelism: 1,
+          backoffLimit: 0,
+          activeDeadlineSeconds: 900,
+          ttlSecondsAfterFinished: 3600,
+        },
+        status: {
+          active: 0,
+          succeeded: 1,
+          failed: 0,
+          startTime: observedAt,
+          completionTime: observedAt,
+          conditions: [{ type: "Complete", status: "True" }],
+        },
+      },
+      persistentVolumeClaim: {
+        apiVersion: "v1",
+        kind: "PersistentVolumeClaim",
+        metadata: {
+          name: "codeops-codex-auth",
+          namespace: authorization.namespace.name,
+          uid: "codex-login-resource-uid-2",
+        },
+        status: { phase: "Bound" },
       },
       observedAt,
     }));
