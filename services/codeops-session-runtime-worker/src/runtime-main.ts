@@ -1,10 +1,14 @@
-import { readFile } from "node:fs/promises";
+import { readFile, writeFile } from "node:fs/promises";
+import path from "node:path";
 import { Pool } from "pg";
+import { sessionJobInitializationRequestSchema } from "@renoconcierge/codeops-contracts";
 import {
   createAcpPermissionRelay,
   SocketAcpWorkspaceLifecycle,
+  waitForAcpSocket,
 } from "./acp-workspace.js";
 import { createSessionRuntimeLifecycleExecutor } from "./lifecycle.js";
+import { SessionJobInitializer } from "./initialization.js";
 import { PostgresRuntimeExecutionReceiptStore } from "./postgres-receipts.js";
 import { runSessionRuntimeWorker } from "./runner.js";
 import { SessionRuntimeTransport } from "./transport.js";
@@ -44,6 +48,13 @@ const workerToken = await secretFile(
   "CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE",
   4_096,
 );
+const initializationToken = await secretFile(
+  "CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE",
+  4_096,
+);
+if (initializationToken === workerToken) {
+  throw new Error("session Job initialization and worker tokens must be distinct");
+}
 const databaseUrl = await secretFile("CODEOPS_DATABASE_URL_FILE", 4_096);
 const socketPath = required("CODEOPS_SESSION_RUNTIME_ACP_SOCKET_PATH");
 const workspace = required("CODEOPS_SESSION_RUNTIME_WORKSPACE");
@@ -80,12 +91,33 @@ const transport = new SessionRuntimeTransport({
   token: workerToken,
   requestTimeoutMs,
 });
+const initializer = new SessionJobInitializer({
+  gatewayOrigin,
+  token: initializationToken,
+  requestTimeoutMs,
+});
 const cancellation = new AbortController();
 const shutdown = () => cancellation.abort();
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);
 
 try {
+  await waitForAcpSocket(socketPath, socketTimeoutMs);
+  await initializer.initialize(sessionJobInitializationRequestSchema.parse({
+    version: "codeops.session-job-initialization/v1",
+    sessionId: required("CODEOPS_SESSION_ID"),
+    identity: {
+      repository: required("CODEOPS_SESSION_REPOSITORY"),
+      branch: required("CODEOPS_SESSION_BRANCH"),
+      baseSha: required("CODEOPS_SESSION_BASE_SHA"),
+      workflowId: required("CODEOPS_SESSION_WORKFLOW_ID"),
+      runId: required("CODEOPS_SESSION_RUN_ID"),
+      parentSessionId: null,
+      forkedAtCursor: null,
+    },
+    leaseId: required("CODEOPS_SESSION_LEASE_ID"),
+    holderId: required("CODEOPS_SESSION_HOLDER_ID"),
+  }));
   await runSessionRuntimeWorker({
     transport,
     leaseMs: claimLeaseMs,
@@ -115,6 +147,9 @@ try {
     },
   });
 } finally {
+  await writeFile(path.join(path.dirname(socketPath), "done"), "", {
+    mode: 0o600,
+  }).catch(() => {});
   process.removeListener("SIGTERM", shutdown);
   process.removeListener("SIGINT", shutdown);
   await database.end();

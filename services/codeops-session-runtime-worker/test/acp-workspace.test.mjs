@@ -10,11 +10,17 @@ import {
   captureWorkspacePatch,
   createAcpPermissionRelay,
   SocketAcpWorkspaceLifecycle,
+  waitForAcpSocket,
 } from "../dist/acp-workspace.js";
 
 const execFileAsync = promisify(execFile);
 const leaseId = "11111111-1111-4111-8111-111111111111";
 const idempotencyKey = "22222222-2222-4222-8222-222222222222";
+
+test("rejects an invalid ACP readiness boundary before opening a socket", async () => {
+  await assert.rejects(waitForAcpSocket("relative.sock", 1_000), /absolute path/);
+  await assert.rejects(waitForAcpSocket("/run/codeops/agent.sock", 999), /between 1 and 60 seconds/);
+});
 
 function capabilities(enabled, hasCheckpoint = false) {
   return [

@@ -1,0 +1,17 @@
+**
+!tsconfig.json
+!packages/
+!packages/codeops-contracts/
+!packages/codeops-contracts/package.json
+!packages/codeops-contracts/tsconfig.json
+!packages/codeops-contracts/tsconfig.build.json
+!packages/codeops-contracts/src/
+!packages/codeops-contracts/src/**
+!services/
+!services/codeops-session-runtime-worker/
+!services/codeops-session-runtime-worker/package.json
+!services/codeops-session-runtime-worker/package-lock.json
+!services/codeops-session-runtime-worker/tsconfig.json
+!services/codeops-session-runtime-worker/tsconfig.build.json
+!services/codeops-session-runtime-worker/src/
+!services/codeops-session-runtime-worker/src/**

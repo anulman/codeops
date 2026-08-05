@@ -43,6 +43,9 @@ on:
       - "infra/scripts/codeops-agent-job-render.mjs"
       - "infra/scripts/render-codeops-agent-job.mjs"
       - "infra/scripts/test-codeops-agent-job.mjs"
+      - "infra/scripts/codeops-session-runtime-worker-render.mjs"
+      - "infra/scripts/render-codeops-session-runtime-worker.mjs"
+      - "infra/scripts/test-codeops-session-runtime-worker.mjs"
       - "infra/scripts/codeops-codex-auth-render.mjs"
       - "infra/scripts/render-codeops-codex-auth.mjs"
       - "infra/scripts/test-codeops-codex-auth.mjs"
@@ -93,6 +96,9 @@ on:
       - "infra/scripts/codeops-agent-job-render.mjs"
       - "infra/scripts/render-codeops-agent-job.mjs"
       - "infra/scripts/test-codeops-agent-job.mjs"
+      - "infra/scripts/codeops-session-runtime-worker-render.mjs"
+      - "infra/scripts/render-codeops-session-runtime-worker.mjs"
+      - "infra/scripts/test-codeops-session-runtime-worker.mjs"
       - "infra/scripts/codeops-codex-auth-render.mjs"
       - "infra/scripts/render-codeops-codex-auth.mjs"
       - "infra/scripts/test-codeops-codex-auth.mjs"
@@ -192,6 +198,10 @@ jobs:
           docker build \
             --file infra/docker/codeops-session-gateway.Dockerfile \
             --tag codeops-session-gateway:ci \
+            .
+          docker build \
+            --file infra/docker/codeops-session-runtime-worker.Dockerfile \
+            --tag codeops-session-runtime-worker:ci \
             .
 
       - name: Build privileged Plane controller image
@@ -312,6 +322,23 @@ jobs:
           node --test infra/scripts/test-codeops-agent-job.mjs
           node infra/scripts/render-codeops-agent-job.mjs > /tmp/codeops-agent-job.yaml
           node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-agent-job.yaml
+
+      - name: Test and render the disposable Agent Sessions runtime Job
+        env:
+          CODEOPS_AGENT_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          CODEOPS_SESSION_RUNTIME_WORKER_DIGEST: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+          CODEOPS_BASE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          CODEOPS_BRANCH: feat/agents-ui
+          CODEOPS_LEASE_ID: 11111111-1111-4111-8111-111111111111
+          CODEOPS_REPOSITORY: https://github.com/anulman/renoconcierge
+          CODEOPS_RUN_ID: video-proof-1
+          CODEOPS_SESSION_ID: ses_video_1
+          CODEOPS_SESSION_SUFFIX: video-1
+          CODEOPS_WORKFLOW_ID: video-proof-1
+        run: |
+          node --test infra/scripts/test-codeops-session-runtime-worker.mjs
+          node infra/scripts/render-codeops-session-runtime-worker.mjs > /tmp/codeops-session-runtime-worker.yaml
+          node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-session-runtime-worker.yaml
 
       - name: Test and render the credential-only Codex auth Jobs
         env:

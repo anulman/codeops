@@ -144,6 +144,22 @@ async function connectSocket(
   );
 }
 
+export async function waitForAcpSocket(
+  socketPath: string,
+  timeoutMs: number,
+): Promise<void> {
+  const exactPath = boundedAbsolutePath("ACP socket path", socketPath);
+  if (
+    !Number.isSafeInteger(timeoutMs) ||
+    timeoutMs < 1_000 ||
+    timeoutMs > 60_000
+  ) {
+    throw new Error("ACP socket timeout must be between 1 and 60 seconds");
+  }
+  const socket = await connectSocket(exactPath, timeoutMs);
+  socket.destroy();
+}
+
 function emptyState(): StoredAcpState {
   return { version: "codeops.acp-session-state/v1", sessions: {} };
 }

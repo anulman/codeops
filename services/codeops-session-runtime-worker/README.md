@@ -39,15 +39,23 @@ ACP's native session fork and records independent child broker/ACP identity.
 `runtime-main` is the single-claim polling entrypoint. It binds the durable
 permission callback inside the transport, uses one PostgreSQL connection for
 execution receipts, and exits on the first execution error so an ambiguous ACP
-operation is never silently retried. SIGTERM/SIGINT stop only after the active
-claim returns. `reconcileIncompleteRuntimeExecution` is the separate repair
+operation is never silently retried. Before polling, it uses the distinct Job
+initialization bearer to compare-and-create the exact root session supplied by
+the disposable Job manifest, but only after the pod-local ACP socket accepts a
+connection. SIGTERM/SIGINT stop only after the active claim
+returns. `reconcileIncompleteRuntimeExecution` is the separate repair
 seam: it may adopt an out-of-band reconciled result for the exact incomplete
 reservation, but cannot invoke ACP/workspace side effects or repair drift.
 
-The package still deliberately has no Kubernetes workload and runtime command
-admission remains fail-closed. The exact caller image/Job, Unix-socket sidecar,
-NetworkPolicy, database grants, and repair operator boundary must be packaged
-and reviewed before this entrypoint can claim work in a cluster.
+The checked-in `session-runtime-worker-template.yaml` packages this entrypoint
+only as an explicitly rendered disposable Job beside the existing Codex ACP
+agent image. Its receipt DSN is a separate Secret whose role is reduced by
+`session-runtime-worker-grants.sql` to column-level receipt read/reserve/
+completion access. The template is not part of any release deploy path, so
+runtime command admission remains fail-closed until the exact-SHA proof is
+explicitly rendered, reviewed, and applied. The repair seam is likewise absent
+from the polling entrypoint and requires a separate reviewed one-shot operator
+action.
 
 Focused checks:
 

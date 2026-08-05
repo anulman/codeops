@@ -46,6 +46,13 @@ Required Secret names and keys:
   capability is mounted by the control gateway and Agent Sessions UI only.
 - `codeops-session-broker-write-auth`: `token`. This distinct write bearer
   capability is mounted by the control gateway and Agent Sessions UI only.
+- `codeops-session-runtime-worker-auth`: `token`. This worker-only bearer is
+  mounted by the control gateway and disposable session runtime Job only.
+- `codeops-session-job-initialization-auth`: `token`. This distinct Job-only
+  bearer can compare-and-create one root session and cannot claim work.
+- `codeops-session-runtime-worker-database`: `database-url`. This DSN must use
+  the dedicated receipt-only role provisioned by
+  `session-runtime-worker-grants.sql`; it must not reuse the broker owner DSN.
 
 The candidate has no Kubernetes credential. Cleanup must remove the Helm
 release, namespace, PVCs, copied TLS material, generated Secrets, node label,
@@ -225,6 +232,50 @@ CODEOPS_ACCEPTANCE_RUNNER_DIGEST=sha256:<64-lowercase-hex> \
   node infra/scripts/render-codeops-agents-ui-smoke.mjs \
   > "$CODEOPS_AGENTS_UI_SMOKE_MANIFEST"
 ```
+
+## Disposable Agent Sessions runtime Job
+
+The live proof runtime is a bounded, non-retrying Job rather than a shared
+Deployment. Its init container checks out one exact SHA, the runtime worker
+uses separate Job-initialization, claim/completion, and receipt-database
+credentials, and the existing `codeops-agent` image runs Codex ACP beside it.
+The two runtime containers share only the workspace and a memory-backed Unix
+socket. The Job receives no Kubernetes token, denies ingress, and permits
+egress only to the control gateway, the exact CNPG pooler, cluster DNS, and
+public HTTPS needed for repository/model access.
+
+Provision the receipt-only database role with an admin connection before
+creating its external Secret:
+
+```bash
+psql "$CODEOPS_SESSION_BROKER_ADMIN_DSN" \
+  --set=worker_role=codeops_session_runtime_worker \
+  --file=infra/k8s/codeops/trial0/session-runtime-worker-grants.sql
+```
+
+Render only for an exact disposable proof identity. Rendering does not apply
+or admit the Job:
+
+```bash
+CODEOPS_AGENT_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_SESSION_RUNTIME_WORKER_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_BASE_SHA=<40-lowercase-hex> \
+CODEOPS_BRANCH=feat/agents-ui \
+CODEOPS_LEASE_ID=<lowercase-uuid> \
+CODEOPS_REPOSITORY=https://github.com/anulman/renoconcierge \
+CODEOPS_RUN_ID=video-proof-1 \
+CODEOPS_SESSION_ID=ses_video_1 \
+CODEOPS_SESSION_SUFFIX=video-1 \
+CODEOPS_WORKFLOW_ID=video-proof-1 \
+  node infra/scripts/render-codeops-session-runtime-worker.mjs \
+  > "$CODEOPS_SESSION_RUNTIME_WORKER_MANIFEST"
+```
+
+The repair function is intentionally absent from the polling entrypoint and
+manifest. A repair operator must first reconcile the external ACP/workspace
+outcome, then invoke the exact-result repair seam in a separate reviewed
+one-shot process; the live worker never guesses or automatically retries an
+incomplete receipt.
 
 ## Plane research controller
 

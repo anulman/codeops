@@ -1,0 +1,208 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codeops-session-runtime-__CODEOPS_SESSION_SUFFIX__
+  labels:
+    app.kubernetes.io/name: codeops-session-runtime-worker
+    codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: codeops-session-runtime-__CODEOPS_SESSION_SUFFIX__
+  labels:
+    app.kubernetes.io/name: codeops-session-runtime-worker
+    app.kubernetes.io/part-of: codeops-trial0
+    codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: codeops-session-runtime-worker
+        app.kubernetes.io/part-of: codeops-trial0
+        codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+    spec:
+      restartPolicy: Never
+      terminationGracePeriodSeconds: 960
+      serviceAccountName: codeops-session-runtime-__CODEOPS_SESSION_SUFFIX__
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        - name: ghcr-renoconcierge
+      nodeSelector:
+        renoconcierge.ca/codeops: "true"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: workspace-builder
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+            - |
+              auth="$(printf 'x-access-token:%s' "$CODEOPS_REPOSITORY_READ_TOKEN" | base64 | tr -d '\n')"
+              git init /workspace
+              git -c safe.directory=/workspace -C /workspace remote add origin "$CODEOPS_SESSION_REPOSITORY"
+              git -c safe.directory=/workspace -C /workspace \
+                -c "http.extraHeader=Authorization: Basic $auth" \
+                fetch --depth=1 origin "$CODEOPS_SESSION_BASE_SHA"
+              unset auth CODEOPS_REPOSITORY_READ_TOKEN
+              git -c safe.directory=/workspace -C /workspace checkout --detach FETCH_HEAD
+              git -c safe.directory=/workspace -C /workspace remote remove origin
+              test "$(git -c safe.directory=/workspace -C /workspace rev-parse HEAD)" = "$CODEOPS_SESSION_BASE_SHA"
+          env:
+            - name: CODEOPS_SESSION_REPOSITORY
+              value: __CODEOPS_REPOSITORY_URL__
+            - name: CODEOPS_SESSION_BASE_SHA
+              value: __CODEOPS_BASE_SHA__
+            - name: CODEOPS_REPOSITORY_READ_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: codeops-agent-source-credentials
+                  key: repository-read-token
+          resources:
+            requests: { cpu: 100m, memory: 128Mi }
+            limits: { cpu: 500m, memory: 512Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: workspace, mountPath: /workspace }
+            - { name: temp, mountPath: /tmp }
+      containers:
+        - name: runtime-worker
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-runtime-worker@__CODEOPS_SESSION_RUNTIME_WORKER_DIGEST__
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN, value: "http://codeops-control-gateway:8080" }
+            - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: "/var/run/secrets/codeops-session-runtime-worker/token" }
+            - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: "/var/run/secrets/codeops-session-job-initialization/token" }
+            - { name: CODEOPS_DATABASE_URL_FILE, value: "/var/run/secrets/codeops-session-runtime-database/database-url" }
+            - { name: CODEOPS_SESSION_RUNTIME_ACP_SOCKET_PATH, value: "/run/codeops/agent.sock" }
+            - { name: CODEOPS_SESSION_RUNTIME_WORKSPACE, value: "/workspace" }
+            - { name: CODEOPS_SESSION_RUNTIME_ACP_STATE_PATH, value: "/var/lib/codeops-session/state.json" }
+            - { name: CODEOPS_SESSION_ID, value: "__CODEOPS_SESSION_ID__" }
+            - { name: CODEOPS_SESSION_REPOSITORY, value: "anulman/renoconcierge" }
+            - { name: CODEOPS_SESSION_BRANCH, value: "__CODEOPS_BRANCH__" }
+            - { name: CODEOPS_SESSION_BASE_SHA, value: "__CODEOPS_BASE_SHA__" }
+            - { name: CODEOPS_SESSION_WORKFLOW_ID, value: "__CODEOPS_WORKFLOW_ID__" }
+            - { name: CODEOPS_SESSION_RUN_ID, value: "__CODEOPS_RUN_ID__" }
+            - { name: CODEOPS_SESSION_LEASE_ID, value: "__CODEOPS_LEASE_ID__" }
+            - { name: CODEOPS_SESSION_HOLDER_ID, value: "session-job:__CODEOPS_SESSION_ID__" }
+            - { name: CODEOPS_SESSION_RUNTIME_CLAIM_LEASE_MS, value: "900000" }
+            - { name: CODEOPS_SESSION_RUNTIME_IDLE_POLL_MS, value: "1000" }
+          resources:
+            requests: { cpu: 100m, memory: 256Mi }
+            limits: { cpu: "1", memory: 1Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: workspace, mountPath: /workspace }
+            - { name: session, mountPath: /run/codeops }
+            - { name: session-state, mountPath: /var/lib/codeops-session }
+            - { name: temp, mountPath: /tmp }
+            - { name: session-runtime-worker-auth, mountPath: /var/run/secrets/codeops-session-runtime-worker, readOnly: true }
+            - { name: session-job-initialization-auth, mountPath: /var/run/secrets/codeops-session-job-initialization, readOnly: true }
+            - { name: session-runtime-database, mountPath: /var/run/secrets/codeops-session-runtime-database, readOnly: true }
+        - name: coding-agent
+          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: CODEX_HOME, value: "/var/lib/codeops-codex" }
+            - { name: DEFAULT_AUTH_REQUEST, value: '{"methodId":"chat-gpt"}' }
+            - { name: CODEX_CONFIG, value: '{"model":"gpt-5.6-sol","model_reasoning_effort":"high"}' }
+            - { name: CODEOPS_ACP_SOCKET, value: "/run/codeops/agent.sock" }
+          resources:
+            requests: { cpu: 500m, memory: 1Gi }
+            limits: { cpu: "2", memory: 6Gi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: workspace, mountPath: /workspace }
+            - { name: session, mountPath: /run/codeops }
+            - { name: temp, mountPath: /tmp }
+            - { name: codex-auth, mountPath: /var/lib/codeops-codex }
+      volumes:
+        - { name: workspace, emptyDir: {} }
+        - { name: session, emptyDir: { medium: Memory, sizeLimit: 16Mi } }
+        - { name: session-state, emptyDir: { sizeLimit: 16Mi } }
+        - { name: temp, emptyDir: { sizeLimit: 256Mi } }
+        - name: codex-auth
+          persistentVolumeClaim: { claimName: codeops-codex-auth }
+        - name: session-runtime-worker-auth
+          secret:
+            secretName: codeops-session-runtime-worker-auth
+            defaultMode: 256
+            items: [{ key: token, path: token }]
+        - name: session-job-initialization-auth
+          secret:
+            secretName: codeops-session-job-initialization-auth
+            defaultMode: 256
+            items: [{ key: token, path: token }]
+        - name: session-runtime-database
+          secret:
+            secretName: codeops-session-runtime-worker-database
+            defaultMode: 256
+            items: [{ key: database-url, path: database-url }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codeops-session-runtime-__CODEOPS_SESSION_SUFFIX__
+  labels:
+    app.kubernetes.io/name: codeops-session-runtime-worker
+    codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: codeops-session-runtime-worker
+      codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: codeops-control-gateway }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
+        - podSelector:
+            matchLabels: { cnpg.io/poolerName: renoconcierge-postgres-cnpg-pgbouncer }
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+      ports: [{ protocol: TCP, port: 443 }]
