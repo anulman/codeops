@@ -441,7 +441,12 @@ issuer, reads only UID/type/label/data-key metadata through a value-free
 the evidence bytes and completed receipt. Authorization drift and timestamp
 reordering fail before mutation; post-issuance Namespace replacement withholds
 the receipt. Revocation and every apply/wait/record/stop adapter remain closed
-until each has the same bounded postcondition and tests.
+until each has the same bounded postcondition and tests. The revocation evidence
+contract already requires verified absence of exactly all nine broker/runtime
+Secret names. The existing shell revokers are not yet admitted because
+name-only `kubectl delete --ignore-not-found` cannot prove the issued Secret
+UIDs were the objects removed; the concrete revoker must use UID-preconditioned
+deletes, verify exact absence, and only then build that evidence.
 
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts

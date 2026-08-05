@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { verifySessionProofOperation } from "./codeops-session-proof-admission.mjs";
 import { verifySessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
+import { verifySessionProofCredentialRevocationEvidence } from "./codeops-session-proof-credential-revocation-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -201,6 +202,8 @@ export function completeSessionProofStep(authorization, input) {
   }
   if (["issue-broker-capabilities", "issue-runtime-capabilities"].includes(authorization.stepId)) {
     verifySessionProofCredentialEvidence(authorization, evidence);
+  } else if (authorization.stepId === "revoke-capabilities") {
+    verifySessionProofCredentialRevocationEvidence(authorization, evidence);
   } else if (
     JSON.stringify(Object.keys(evidence).sort()) !== JSON.stringify([
       "apiVersion", "namespace", "observedAt", "planSha256", "result", "stepId",

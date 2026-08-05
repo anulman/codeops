@@ -431,6 +431,7 @@ jobs:
           node --test infra/scripts/test-codeops-session-proof-step-receipts.mjs
           node --test infra/scripts/test-codeops-session-proof-credential-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-credential-issuer.mjs
+          node --test infra/scripts/test-codeops-session-proof-credential-revocation-evidence.mjs
           node infra/scripts/render-codeops-session-proof-plan.mjs > /tmp/codeops-session-proof-plan.json
           jq -e '.admission == "closed" and .execution == "render-and-review-only"' \
             /tmp/codeops-session-proof-plan.json

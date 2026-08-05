@@ -3,6 +3,10 @@ import { createHash } from "node:crypto";
 import { test } from "node:test";
 import { createSessionProofAdmission, bindSessionProofNamespace } from "./codeops-session-proof-admission.mjs";
 import { buildSessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
+import {
+  buildSessionProofCredentialRevocationEvidence,
+  sessionProofCredentialNames,
+} from "./codeops-session-proof-credential-revocation-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -111,6 +115,13 @@ function evidenceSource(authorization, observedAt) {
             : "session-video-proof",
         },
       })),
+    }));
+  }
+  if (authorization.stepId === "revoke-capabilities") {
+    return JSON.stringify(buildSessionProofCredentialRevocationEvidence({
+      authorization,
+      observedAt,
+      absentCredentialNames: sessionProofCredentialNames(),
     }));
   }
   return JSON.stringify({
