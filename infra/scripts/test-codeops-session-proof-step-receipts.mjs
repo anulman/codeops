@@ -16,6 +16,7 @@ import {
   buildSessionProofGatewayReadinessEvidence,
   sessionProofGatewayMigrationRelation,
 } from "./codeops-session-proof-gateway-readiness-evidence.mjs";
+import { buildSessionProofGrantCompletionEvidence } from "./codeops-session-proof-grant-completion-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -221,6 +222,38 @@ function evidenceSource(authorization, observedAt, context = {}) {
         },
       },
       migrationRelation: sessionProofGatewayMigrationRelation(),
+      observedAt,
+    }));
+  }
+  if (authorization.stepId === "wait-grants") {
+    return JSON.stringify(buildSessionProofGrantCompletionEvidence({
+      authorization,
+      grantApplyReceiptSource: context.priorReceiptSources?.at(-1),
+      grantApplyEvidenceSource: context.priorEvidenceSources?.at(-1),
+      job: {
+        apiVersion: "batch/v1",
+        kind: "Job",
+        metadata: {
+          name: "codeops-session-proof-grants",
+          namespace: authorization.namespace.name,
+          uid: "grant-resource-uid-0",
+          generation: 1,
+        },
+        spec: {
+          completions: 1,
+          parallelism: 1,
+          backoffLimit: 0,
+          activeDeadlineSeconds: 300,
+        },
+        status: {
+          active: 0,
+          succeeded: 1,
+          failed: 0,
+          startTime: observedAt,
+          completionTime: observedAt,
+          conditions: [{ type: "Complete", status: "True" }],
+        },
+      },
       observedAt,
     }));
   }

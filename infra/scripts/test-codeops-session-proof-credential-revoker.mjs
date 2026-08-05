@@ -16,6 +16,7 @@ import {
   buildSessionProofGatewayReadinessEvidence,
   sessionProofGatewayMigrationRelation,
 } from "./codeops-session-proof-gateway-readiness-evidence.mjs";
+import { buildSessionProofGrantCompletionEvidence } from "./codeops-session-proof-grant-completion-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -219,6 +220,38 @@ function buildRevocationInputs() {
         },
         migrationRelation: sessionProofGatewayMigrationRelation(),
         observedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+      }));
+    } else if (step.id === "wait-grants") {
+      const observedAt = `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`;
+      evidenceSource = JSON.stringify(buildSessionProofGrantCompletionEvidence({
+        authorization,
+        grantApplyReceiptSource: priorReceiptSources.at(-1),
+        grantApplyEvidenceSource: priorEvidenceSources.at(-1),
+        job: {
+          apiVersion: "batch/v1",
+          kind: "Job",
+          metadata: {
+            name: "codeops-session-proof-grants",
+            namespace: identity.namespace,
+            uid: "grant-resource-uid-0",
+            generation: 1,
+          },
+          spec: {
+            completions: 1,
+            parallelism: 1,
+            backoffLimit: 0,
+            activeDeadlineSeconds: 300,
+          },
+          status: {
+            active: 0,
+            succeeded: 1,
+            failed: 0,
+            startTime: observedAt,
+            completionTime: observedAt,
+            conditions: [{ type: "Complete", status: "True" }],
+          },
+        },
+        observedAt,
       }));
     } else {
       evidenceSource = JSON.stringify({

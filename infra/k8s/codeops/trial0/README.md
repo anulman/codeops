@@ -532,8 +532,18 @@ concrete but uninvoked create-only adapter now admits only the exact
 pre-existing package object, streams those bytes once through `kubectl create`,
 double-reads all four server UIDs around the final live
 operator/target/Namespace-UID check, and emits no receipt after partial creation
-or identity replacement. The separate `wait-grants` completion postcondition
-remains closed, and CI cannot create or run this Job.
+or identity replacement. `wait-grants` completion is now separately bound to
+the exact grant apply receipt/evidence chain and the applied Job UID at
+create-only generation 1. It proves the reviewed one-completion, one-parallel,
+non-retrying, five-minute-deadline Job reached exactly one successful
+completion with zero active or failed executions and a valid start/completion
+interval. Generic status text, logs, missing or extra fields, pending or failed
+Jobs, retries, timestamp drift, and replacement Jobs cannot complete the step.
+The concrete but uninvoked waiter repeats live operator, target, and
+Namespace-UID admission around a bounded six-minute poll, reads only the exact
+Job, fails immediately on terminal failure, and double-reads the successful
+state before emitting evidence and a receipt. CI tests the closed adapter but
+cannot create or run this Job.
 
 ```bash
 CODEOPS_SESSION_PROOF_POSTGRES_DIGEST=sha256:<64-lowercase-hex> \

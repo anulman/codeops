@@ -4,6 +4,7 @@ import { verifySessionProofApplyEvidence } from "./codeops-session-proof-apply-e
 import { verifySessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
 import { verifySessionProofCredentialRevocationEvidence } from "./codeops-session-proof-credential-revocation-evidence.mjs";
 import { verifySessionProofGatewayReadinessEvidence } from "./codeops-session-proof-gateway-readiness-evidence.mjs";
+import { verifySessionProofGrantCompletionEvidence } from "./codeops-session-proof-grant-completion-evidence.mjs";
 import { verifySessionProofReadinessEvidence } from "./codeops-session-proof-readiness-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -211,6 +212,8 @@ export function completeSessionProofStep(authorization, input) {
     verifySessionProofReadinessEvidence(authorization, evidence);
   } else if (authorization.stepId === "wait-gateway-migration") {
     verifySessionProofGatewayReadinessEvidence(authorization, evidence);
+  } else if (authorization.stepId === "wait-grants") {
+    verifySessionProofGrantCompletionEvidence(authorization, evidence);
   } else if (authorization.stepId === "revoke-capabilities") {
     verifySessionProofCredentialRevocationEvidence(authorization, evidence);
   } else if (
