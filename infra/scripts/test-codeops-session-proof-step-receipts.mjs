@@ -22,6 +22,7 @@ import { buildSessionProofCodexSmokeCompletionEvidence } from "./codeops-session
 import { buildSessionProofCodexSmokeReplacementEvidence } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
 import { buildSessionProofUiReadinessEvidence } from "./codeops-session-proof-ui-readiness-evidence.mjs";
 import { buildSessionProofRuntimeReadinessEvidence } from "./codeops-session-proof-runtime-readiness-evidence.mjs";
+import { buildSessionProofRecordEvidence } from "./codeops-session-proof-record-evidence.mjs";
 import { authorizeSessionProofStep, completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -257,6 +258,29 @@ function evidenceSource(authorization, observedAt, context = {}) {
         },
       },
       observedAt,
+    }));
+  }
+  if (authorization.stepId === "record-proof") {
+    return JSON.stringify(buildSessionProofRecordEvidence({
+      authorization,
+      runtimeReadinessReceiptSource: context.priorReceiptSources?.at(-1),
+      runtimeReadinessEvidenceSource: context.priorEvidenceSources?.at(-1),
+      startedAt: "2026-08-05T18:12:18Z",
+      finishedAt: "2026-08-05T18:13:18Z",
+      observedAt: "2026-08-05T18:14:18Z",
+      inspection: {
+        legible: true,
+        completeOperationCoverage: true,
+        correctFinalLifecycleState: true,
+        syntheticOwnedContentOnly: true,
+        sensitiveMaterialAbsent: true,
+      },
+      artifacts: {
+        "browser/video/raw.webm": Buffer.from("canonical raw video"),
+        "browser/trace.zip": Buffer.from("playwright trace"),
+        "session/export.json": Buffer.from('{"sessions":[]}\n'),
+        "assertions.json": Buffer.from('{"result":"passed"}\n'),
+      },
     }));
   }
   if (authorization.stepId === "wait-database") {

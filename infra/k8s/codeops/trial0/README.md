@@ -393,6 +393,20 @@ readiness before emitting evidence and a receipt. Pending, failed, retried,
 replaced, terminating, multiply owned, uninitialized, chain-drifted, or
 timestamp-drifted state fails closed.
 
+The non-mutating `record-proof` completion boundary then binds the exact
+runtime-readiness receipt/evidence chain to an off-cluster evidence inventory.
+The inventory is computed from exact bytes for the canonical raw WebM,
+Playwright trace, sanitized session export, and deterministic assertions. It
+also binds the reviewed source SHA, monotonic capture interval, the complete
+job-initialization/live-observation and command sequence, reconnect and
+duplicate-command durability checks, and explicit post-recording inspection
+for legibility, lifecycle correctness, synthetic-only content, and absence of
+sensitive material. Missing, extra, empty, oversized, renamed, wrong-content-
+type, chain-drifted, incomplete-coverage, unsafe-inspection, or timestamp-
+drifted evidence cannot emit the ordered receipt. The contract hashes supplied
+bytes only; it does not open a browser, record, upload, contact Kubernetes, or
+read cluster logs or credential values.
+
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
 

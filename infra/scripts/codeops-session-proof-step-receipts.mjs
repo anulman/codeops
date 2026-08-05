@@ -11,6 +11,7 @@ import { verifySessionProofGrantCompletionEvidence } from "./codeops-session-pro
 import { verifySessionProofReadinessEvidence } from "./codeops-session-proof-readiness-evidence.mjs";
 import { verifySessionProofUiReadinessEvidence } from "./codeops-session-proof-ui-readiness-evidence.mjs";
 import { verifySessionProofRuntimeReadinessEvidence } from "./codeops-session-proof-runtime-readiness-evidence.mjs";
+import { verifySessionProofRecordEvidence } from "./codeops-session-proof-record-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
 const SHA256 = /^[0-9a-f]{64}$/;
@@ -229,6 +230,8 @@ export function completeSessionProofStep(authorization, input) {
     verifySessionProofUiReadinessEvidence(authorization, evidence);
   } else if (authorization.stepId === "wait-runtime") {
     verifySessionProofRuntimeReadinessEvidence(authorization, evidence);
+  } else if (authorization.stepId === "record-proof") {
+    verifySessionProofRecordEvidence(authorization, evidence);
   } else if (authorization.stepId === "revoke-capabilities") {
     verifySessionProofCredentialRevocationEvidence(authorization, evidence);
   } else if (
