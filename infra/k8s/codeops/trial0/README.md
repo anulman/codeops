@@ -432,8 +432,16 @@ Namespace, or spliced between proof runs. Credential issuance evidence is
 metadata-only: the exact Secret names, namespaces, object UIDs, types, data-key
 names, and proof-scope labels. Secret values are rejected from the evidence
 artifact. These modules deliberately have no Kubernetes or credential mutation
-path; concrete action adapters remain closed until each can be constrained and
-tested against this contract.
+path. The first concrete—but not automatically invoked—adapter is
+`infra/scripts/codeops-session-proof-credential-issuer.mjs`. It accepts only
+the exact next credential-issuance authorization, repeats the live
+operator/target/Namespace-UID check before calling the existing create-only
+issuer, reads only UID/type/label/data-key metadata through a value-free
+`kubectl` template, repeats the live check after issuance, and only then returns
+the evidence bytes and completed receipt. Authorization drift and timestamp
+reordering fail before mutation; post-issuance Namespace replacement withholds
+the receipt. Revocation and every apply/wait/record/stop adapter remain closed
+until each has the same bounded postcondition and tests.
 
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts

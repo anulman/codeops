@@ -158,10 +158,8 @@ export function authorizeSessionProofStep(input) {
   };
 }
 
-export function completeSessionProofStep(authorization, input) {
+export function verifySessionProofStepAuthorization(authorization) {
   const expectedStep = sessionProofSequence()[authorization?.stepIndex];
-  const evidenceSource = input.evidenceSource ?? "";
-  const evidence = parseJson(evidenceSource, "proof step evidence");
   if (
     authorization?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-authorization/v1" ||
     !SHA256.test(authorization.planSha256 ?? "") ||
@@ -178,7 +176,18 @@ export function completeSessionProofStep(authorization, input) {
     (authorization.artifact === null
       ? authorization.artifactSha256 !== null
       : !SHA256.test(authorization.artifactSha256 ?? "")) ||
-    !RFC3339.test(authorization.authorizedAt ?? "") ||
+    !RFC3339.test(authorization.authorizedAt ?? "")
+  ) {
+    throw new Error("proof step authorization drifted");
+  }
+  return true;
+}
+
+export function completeSessionProofStep(authorization, input) {
+  verifySessionProofStepAuthorization(authorization);
+  const evidenceSource = input.evidenceSource ?? "";
+  const evidence = parseJson(evidenceSource, "proof step evidence");
+  if (
     !RFC3339.test(input.completedAt ?? "") ||
     evidence?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
     evidence.result !== "verified" ||
