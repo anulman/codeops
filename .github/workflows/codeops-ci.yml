@@ -430,6 +430,7 @@ jobs:
           node --test infra/scripts/test-codeops-session-proof-namespace-delete.mjs
           node --test infra/scripts/test-codeops-session-proof-teardown-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-operator-itinerary.mjs
+          node --test infra/scripts/test-codeops-session-proof-operator-packet.mjs
           node --test infra/scripts/test-codeops-session-proof-step-receipts.mjs
           node --test infra/scripts/test-codeops-session-proof-apply-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-database-apply.mjs
@@ -473,6 +474,14 @@ jobs:
             (.steps | length) == 23 and
             .steps[-1].emittedByStepId == "delete-namespace"' \
             /tmp/codeops-session-proof-operator-itinerary.json
+          CODEOPS_SESSION_PROOF_PLAN=/tmp/codeops-session-proof-plan.json \
+          CODEOPS_SESSION_PROOF_PACKET=/tmp/codeops-session-proof-video-1.packet \
+            node infra/scripts/run-codeops-session-proof-operator-packet.mjs \
+              > /tmp/codeops-session-proof-operator-packet-result.json
+          jq -e '.state == "reviewed-inputs-only" and .liveAccess == false and
+            .clusterMutation == false and .adapterInvocation == false and
+            (.files | length) == 10' \
+            /tmp/codeops-session-proof-video-1.packet/packet-manifest.json
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD

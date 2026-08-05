@@ -526,6 +526,19 @@ CODEOPS_SESSION_PROOF_RUNTIME_MANIFEST=/path/to/runtime.yaml \
   > /path/to/closed-operator-itinerary.json
 ```
 
+Persist the exact reviewed inputs only after the closed rehearsal passes. The
+packet writer requires an absolute normalized path named exactly from the proof
+Namespace, refuses an existing target or symbolic-link parent, creates every
+file exclusively with mode `0600` inside a mode-`0700` directory, fsyncs the
+contents, and atomically publishes the directory with a SHA-256 inventory. The
+packet contains no admission, credential, receipt, live evidence, or recording
+bytes and still imports or invokes no lifecycle adapter:
+
+```bash
+CODEOPS_SESSION_PROOF_PACKET=/absolute/path/codeops-session-proof-video-1.packet \
+  node infra/scripts/run-codeops-session-proof-operator-packet.mjs
+```
+
 Execution admission is a second, operator-owned artifact. It must bind the
 SHA-256 of the reviewed plan bytes to the authenticated Kubernetes username,
 UID when the authenticator supplies one, SHA-256 of the active client
