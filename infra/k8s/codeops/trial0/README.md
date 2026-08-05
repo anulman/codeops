@@ -300,9 +300,14 @@ artifact and exactly four server-assigned identities: its PersistentVolumeClaim,
 ServiceAccount, Job, and NetworkPolicy. Grant-package identities, missing or
 extra objects, renamed or duplicate resources, empty UIDs, wrong artifacts,
 generic evidence, and unreviewed fields cannot complete the apply step. The
-create-only login adapter and the separate `wait-codex-login` completion
-postcondition remain closed; CI cannot create the claim or run the interactive
-device-auth Job.
+A concrete but uninvoked create-only adapter now admits only the exact
+`codex-login` authorization and reviewed manifest bytes, refuses any
+pre-existing package object, streams those bytes once through `kubectl create`,
+double-reads all four server UIDs around the final live
+operator/target/Namespace-UID check, and emits no receipt after partial creation
+or identity replacement. The separate `wait-codex-login` completion
+postcondition remains closed; CI tests the adapter but cannot create the claim
+or run the interactive device-auth Job.
 
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
