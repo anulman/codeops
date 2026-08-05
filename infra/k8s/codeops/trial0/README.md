@@ -257,6 +257,11 @@ and apply only inside that disposable namespace:
 infra/scripts/issue-codeops-session-proof-secrets.sh \
   --namespace "$CODEOPS_SESSION_PROOF_NAMESPACE"
 
+infra/scripts/issue-codeops-session-proof-runtime-credentials.sh \
+  --namespace "$CODEOPS_SESSION_PROOF_NAMESPACE" \
+  --registry-config-file "$CODEOPS_SESSION_PROOF_REGISTRY_CONFIG_FILE" \
+  --repository-token-file "$CODEOPS_SESSION_PROOF_REPOSITORY_TOKEN_FILE"
+
 CODEOPS_SESSION_PROOF_POSTGRES_DIGEST=sha256:<64-lowercase-hex> \
   node infra/scripts/render-codeops-session-proof-database.mjs \
   > "$CODEOPS_SESSION_PROOF_DATABASE_MANIFEST"
@@ -265,11 +270,23 @@ CODEOPS_SESSION_PROOF_POSTGRES_DIGEST=sha256:<64-lowercase-hex> \
 The database uses `emptyDir`, has no outbound network path, admits only the
 standalone proof gateway and runtime worker, and creates a separate receipt
 worker login during first initialization. The broker owner and receipt worker
-DSNs are projected from different Secrets. Final proof cleanup must delete the
-disposable namespace; if credentials must be revoked independently first, run:
+DSNs are projected from different Secrets. The runtime credential issuer accepts
+only explicit regular files, validates one `ghcr.io` registry entry, normalizes
+one bounded repository-read token, creates rather than updates exactly two
+Secrets, rolls back partial issuance, and never prints either value. It does not
+copy credentials from shared dev or production. ChatGPT device authentication
+remains separate: render the existing exact-digest Codex login/smoke Jobs into
+the disposable namespace so only their bounded RWO claim reaches the coding
+agent container.
+
+Final proof cleanup must delete the disposable namespace; if credentials must
+be revoked independently first, run:
 
 ```bash
 infra/scripts/revoke-codeops-session-proof-secrets.sh \
+  --namespace "$CODEOPS_SESSION_PROOF_NAMESPACE"
+
+infra/scripts/revoke-codeops-session-proof-runtime-credentials.sh \
   --namespace "$CODEOPS_SESSION_PROOF_NAMESPACE"
 ```
 
