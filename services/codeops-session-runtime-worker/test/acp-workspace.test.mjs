@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import {
   AcpSessionStateStore,
   captureWorkspacePatch,
+  createAcpPermissionRelay,
   SocketAcpWorkspaceLifecycle,
 } from "../dist/acp-workspace.js";
 
@@ -101,6 +102,48 @@ test("persists bounded broker-to-ACP session identity atomically", async () => {
     version: "codeops.acp-session-state/v1",
     sessions: { ses_video_1: "acp-session-1" },
   });
+});
+
+test("maps ACP options through opaque broker identities without exposing claim authority", async () => {
+  const submitted = [];
+  const relay = createAcpPermissionRelay({
+    context: {
+      requestPermission: async (input) => {
+        submitted.push(input);
+        return { outcome: "selected", acpOptionId: "opaque-allow-once" };
+      },
+    },
+    now: () => new Date("2026-08-05T03:20:00.000Z"),
+  });
+  const response = await relay.request(
+    dispatch("prompt", { prompt: "Make one safe edit." }),
+    {
+      sessionId: "acp-session-1",
+      toolCall: {
+        toolCallId: "tool-call-1",
+        title: "Write README.md",
+        kind: "edit",
+      },
+      options: [
+        { optionId: "opaque-allow-once", name: "Allow once", kind: "allow_once" },
+        { optionId: "opaque-reject", name: "Reject", kind: "reject_once" },
+      ],
+    },
+  );
+  assert.deepEqual(response, {
+    outcome: { outcome: "selected", optionId: "opaque-allow-once" },
+  });
+  assert.equal(submitted.length, 1);
+  assert.equal("claimToken" in submitted[0], false);
+  assert.match(submitted[0].request.requestId, /^permission-[0-9a-f]{64}$/);
+  assert.deepEqual(submitted[0].request.options, [
+    { optionId: "option-1", label: "Allow once" },
+    { optionId: "option-2", label: "Reject" },
+  ]);
+  assert.deepEqual(submitted[0].options, [
+    { optionId: "option-1", acpOptionId: "opaque-allow-once" },
+    { optionId: "option-2", acpOptionId: "opaque-reject" },
+  ]);
 });
 
 test("captures tracked and untracked workspace changes in one bounded patch", async () => {

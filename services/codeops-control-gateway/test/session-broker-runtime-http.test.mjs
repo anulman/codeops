@@ -8,6 +8,7 @@ import {
 const token = "r".repeat(32);
 const dispatchId = "44444444-4444-4444-8444-444444444444";
 const claimToken = "55555555-5555-4555-8555-555555555555";
+const requestId = "permission-1";
 
 function completion(overrides = {}) {
   return {
@@ -27,9 +28,13 @@ function completion(overrides = {}) {
 function request(overrides = {}) {
   const claims = [];
   const completions = [];
+  const permissionSubmissions = [];
+  const permissionPolls = [];
   return {
     claims,
     completions,
+    permissionSubmissions,
+    permissionPolls,
     promise: serveSessionRuntime({
       method: "POST",
       url: "/v1/session-runtime/claims",
@@ -50,6 +55,26 @@ function request(overrides = {}) {
       complete: async (input) => {
         completions.push(input);
         return { disposition: "committed" };
+      },
+      submitPermission: async (input) => {
+        permissionSubmissions.push(input);
+        return {
+          version: "codeops.session-runtime-permission-result/v1",
+          dispatchId,
+          requestId,
+          disposition: "pending",
+          decision: null,
+        };
+      },
+      pollPermission: async (input) => {
+        permissionPolls.push(input);
+        return {
+          version: "codeops.session-runtime-permission-result/v1",
+          dispatchId,
+          requestId,
+          disposition: "decided",
+          decision: { outcome: "denied" },
+        };
       },
       ...overrides,
     }),
@@ -100,6 +125,49 @@ test("binds a completion to the path, claim, and authenticated worker", async ()
   ]);
 });
 
+test("binds permission submission and polling to the claimed dispatch", async () => {
+  const submission = {
+    version: "codeops.session-runtime-permission-submission/v1",
+    claimToken,
+    request: {
+      requestId,
+      title: "Allow write?",
+      description: "The agent wants to update one file.",
+      options: [{ optionId: "allow-once", label: "Allow once" }],
+      requestedAt: "2026-08-04T19:04:00.000Z",
+    },
+    acpSessionId: "acp-session-1",
+    toolCallId: "tool-call-1",
+    options: [{ optionId: "allow-once", acpOptionId: "opaque-allow-once" }],
+  };
+  const submitted = request({
+    url: `/v1/session-runtime/dispatches/${dispatchId}/permissions`,
+    readBody: async () => submission,
+  });
+  assert.equal((await submitted.promise).body.disposition, "pending");
+  assert.deepEqual(submitted.permissionSubmissions, [{
+    dispatchId,
+    workerId: "acp-worker:primary",
+    submission,
+  }]);
+
+  const poll = {
+    version: "codeops.session-runtime-permission-poll/v1",
+    claimToken,
+    requestId,
+  };
+  const polled = request({
+    url: `/v1/session-runtime/dispatches/${dispatchId}/permissions/${requestId}/poll`,
+    readBody: async () => poll,
+  });
+  assert.equal((await polled.promise).body.disposition, "decided");
+  assert.deepEqual(polled.permissionPolls, [{
+    dispatchId,
+    workerId: "acp-worker:primary",
+    poll,
+  }]);
+});
+
 test("rejects ambiguous or drifting runtime requests before persistence", async () => {
   for (const submitted of [
     request({ url: "/v1/session-runtime/claims?limit=1" }),
@@ -108,6 +176,14 @@ test("rejects ambiguous or drifting runtime requests before persistence", async 
         authorization: `Bearer ${token}`,
         "content-type": "text/plain",
       },
+    }),
+    request({
+      url: `/v1/session-runtime/dispatches/${dispatchId}/permissions/${requestId}/poll`,
+      readBody: async () => ({
+        version: "codeops.session-runtime-permission-poll/v1",
+        claimToken,
+        requestId: "different-request",
+      }),
     }),
     request({
       readBody: async () => ({

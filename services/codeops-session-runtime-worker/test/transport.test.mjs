@@ -168,6 +168,85 @@ test("returns null without invoking the executor when no dispatch is available",
   assert.equal(executed, false);
 });
 
+test("relays permission through a claim-hidden executor callback", async () => {
+  const requests = [];
+  const transport = new SessionRuntimeTransport({
+    gatewayOrigin: "http://codeops-control-gateway:8080",
+    token,
+    fetch: async (url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push({ url, body });
+      if (url.endsWith("/claims")) {
+        return json({
+          version: "codeops.session-runtime-claim-response/v1",
+          claim: claim(),
+        });
+      }
+      if (url.endsWith("/permissions")) {
+        return json({
+          version: "codeops.session-runtime-permission-result/v1",
+          dispatchId,
+          requestId: "permission-1",
+          disposition: "pending",
+          decision: null,
+        });
+      }
+      if (url.endsWith("/permissions/permission-1/poll")) {
+        return json({
+          version: "codeops.session-runtime-permission-result/v1",
+          dispatchId,
+          requestId: "permission-1",
+          disposition: "decided",
+          decision: {
+            outcome: "selected",
+            acpOptionId: "opaque-allow-once",
+          },
+        });
+      }
+      return json({
+        version: "codeops.session-command-result/v1",
+        commandId: "66666666-6666-4666-8666-666666666666",
+        sessionId: "ses_91a4",
+        generation: 3,
+        leaseId,
+        idempotencyKey,
+        type: "prompt",
+        eventCursor: 185,
+        snapshot: { ...claim().dispatch.snapshot, eventCursor: 185 },
+        committedAt: "2026-08-04T20:03:01.000Z",
+        disposition: "committed",
+      });
+    },
+  });
+  const result = await transport.runOne({
+    leaseMs: 300_000,
+    now: () => new Date("2026-08-04T20:03:00.000Z"),
+    execute: async (_dispatch, context) => {
+      assert.equal("claimToken" in context, false);
+      assert.deepEqual(await context.requestPermission({
+        request: {
+          requestId: "permission-1",
+          title: "Allow write?",
+          description: "The agent wants to update one file.",
+          options: [{ optionId: "allow-once", label: "Allow once" }],
+          requestedAt: "2026-08-04T20:01:00.000Z",
+        },
+        acpSessionId: "acp-session-1",
+        toolCallId: "tool-call-1",
+        options: [{ optionId: "allow-once", acpOptionId: "opaque-allow-once" }],
+      }), {
+        outcome: "selected",
+        acpOptionId: "opaque-allow-once",
+      });
+      return { type: "prompt" };
+    },
+  });
+  assert.equal(result.disposition, "committed");
+  assert.equal(requests[1].body.claimToken, claimToken);
+  assert.equal(requests[2].body.claimToken, claimToken);
+  assert.equal(requests[3].body.claimToken, claimToken);
+});
+
 test("builds the completion envelope from the claim instead of trusting the executor", () => {
   assert.deepEqual(
     buildSessionRuntimeCompletion(

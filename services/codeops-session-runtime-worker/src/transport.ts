@@ -7,12 +7,18 @@ import {
   sessionRuntimeCompletionSchema,
   sessionRuntimeForkMaterialSchema,
   sessionRuntimeLeaseMaterialSchema,
+  sessionRuntimePermissionPollSchema,
+  sessionRuntimePermissionResultSchema,
+  sessionRuntimePermissionSubmissionSchema,
   type SessionCommandResult,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
   type SessionRuntimeDispatchClaim,
+  type SessionRuntimePermissionResult,
+  type SessionRuntimePermissionSubmission,
 } from "@renoconcierge/codeops-contracts";
 import { z } from "zod";
+import { setTimeout as delay } from "node:timers/promises";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const TOKEN_PATTERN = /^[\x21-\x7e]{32,4096}$/;
@@ -51,8 +57,20 @@ export type RuntimeExecutionResult = z.infer<
   typeof runtimeExecutionResultSchema
 >;
 
+export type RuntimePermissionSubmission = Omit<
+  SessionRuntimePermissionSubmission,
+  "version" | "claimToken"
+>;
+
+export interface RuntimeExecutionContext {
+  requestPermission(
+    submission: RuntimePermissionSubmission,
+  ): Promise<NonNullable<SessionRuntimePermissionResult["decision"]>>;
+}
+
 export type RuntimeExecutor = (
   dispatch: SessionRuntimeDispatch,
+  context: RuntimeExecutionContext,
 ) => Promise<RuntimeExecutionResult>;
 
 export function buildSessionRuntimeCompletion(
@@ -288,6 +306,68 @@ export class SessionRuntimeTransport {
     );
   }
 
+  async #requestPermission(
+    claim: SessionRuntimeDispatchClaim,
+    input: RuntimePermissionSubmission,
+    now: () => Date,
+  ): Promise<NonNullable<SessionRuntimePermissionResult["decision"]>> {
+    if (claim.dispatch.command.type !== "prompt") {
+      throw new SessionRuntimeTransportError(
+        "only a claimed prompt may request ACP permission",
+      );
+    }
+    const submission = sessionRuntimePermissionSubmissionSchema.parse({
+      version: "codeops.session-runtime-permission-submission/v1",
+      claimToken: claim.claimToken,
+      ...input,
+    });
+    const path = `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/permissions`;
+    let result = sessionRuntimePermissionResultSchema.parse(
+      await this.#post(path, submission),
+    );
+    if (
+      result.dispatchId !== claim.dispatch.dispatchId ||
+      result.requestId !== submission.request.requestId
+    ) {
+      throw new SessionRuntimeTransportError(
+        "session runtime permission response drifted from the exact claim",
+      );
+    }
+    while (result.disposition === "pending") {
+      if (now().getTime() >= Date.parse(claim.claimExpiresAt)) {
+        throw new SessionRuntimeTransportError(
+          "session runtime claim expired while waiting for permission",
+        );
+      }
+      await delay(250);
+      const poll = sessionRuntimePermissionPollSchema.parse({
+        version: "codeops.session-runtime-permission-poll/v1",
+        claimToken: claim.claimToken,
+        requestId: submission.request.requestId,
+      });
+      result = sessionRuntimePermissionResultSchema.parse(
+        await this.#post(
+          `${path}/${submission.request.requestId}/poll`,
+          poll,
+        ),
+      );
+      if (
+        result.dispatchId !== claim.dispatch.dispatchId ||
+        result.requestId !== submission.request.requestId
+      ) {
+        throw new SessionRuntimeTransportError(
+          "session runtime permission poll drifted from the exact claim",
+        );
+      }
+    }
+    if (result.decision === null) {
+      throw new SessionRuntimeTransportError(
+        "decided session runtime permission omitted its decision",
+      );
+    }
+    return result.decision;
+  }
+
   async runOne(input: {
     readonly leaseMs: number;
     readonly execute: RuntimeExecutor;
@@ -303,7 +383,12 @@ export class SessionRuntimeTransport {
     }
     // The executor owns ACP/workspace side effects, not broker claim authority.
     // Never expose the claim token or its completion lease to that boundary.
-    const execution = await input.execute(claim.dispatch);
+    const execution = await input.execute(claim.dispatch, {
+      // Claim authority remains captured inside the transport callback. The
+      // ACP/workspace executor receives neither bearer nor claim token.
+      requestPermission: (submission) =>
+        this.#requestPermission(claim, submission, now),
+    });
     const completedAt = now();
     if (completedAt.getTime() >= Date.parse(claim.claimExpiresAt)) {
       throw new SessionRuntimeTransportError(

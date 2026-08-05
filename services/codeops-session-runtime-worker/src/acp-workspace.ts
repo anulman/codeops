@@ -11,7 +11,10 @@ import type { SessionRuntimeDispatch } from "@renoconcierge/codeops-contracts";
 import type {
   AcpWorkspaceLifecycle,
 } from "./lifecycle.js";
-import type { RuntimeExecutionResult } from "./transport.js";
+import type {
+  RuntimeExecutionContext,
+  RuntimeExecutionResult,
+} from "./transport.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_PATCH_BYTES = 2_000_000;
@@ -28,6 +31,64 @@ export interface AcpPermissionRelay {
     dispatch: PromptDispatch,
     request: acp.RequestPermissionRequest,
   ): Promise<acp.RequestPermissionResponse>;
+}
+
+export function createAcpPermissionRelay(input: {
+  readonly context: RuntimeExecutionContext;
+  readonly now?: () => Date;
+}): AcpPermissionRelay {
+  const now = input.now ?? (() => new Date());
+  return {
+    request: async (dispatch, request) => {
+      if (request.sessionId.length < 1 || request.sessionId.length > 500) {
+        throw new Error("ACP permission session identity is invalid");
+      }
+      if (
+        request.toolCall.toolCallId.length < 1 ||
+        request.toolCall.toolCallId.length > 500
+      ) {
+        throw new Error("ACP permission tool-call identity is invalid");
+      }
+      const requestId = `permission-${createHash("sha256")
+        .update(dispatch.dispatchId)
+        .update("\0")
+        .update(request.toolCall.toolCallId)
+        .digest("hex")}`;
+      const title =
+        request.toolCall.title?.trim() ||
+        request.toolCall.name?.trim() ||
+        request.toolCall.kind?.trim() ||
+        "Agent tool permission";
+      const description = `ACP tool call ${request.toolCall.toolCallId} requests operator permission.`;
+      const options = request.options.map((option, index) => ({
+        optionId: `option-${index + 1}`,
+        label: option.name,
+      }));
+      const decision = await input.context.requestPermission({
+        request: {
+          requestId,
+          title,
+          description,
+          options,
+          requestedAt: now().toISOString(),
+        },
+        acpSessionId: request.sessionId,
+        toolCallId: request.toolCall.toolCallId,
+        options: request.options.map((option, index) => ({
+          optionId: `option-${index + 1}`,
+          acpOptionId: option.optionId,
+        })),
+      });
+      return decision.outcome === "denied"
+        ? { outcome: { outcome: "cancelled" } }
+        : {
+            outcome: {
+              outcome: "selected",
+              optionId: decision.acpOptionId,
+            },
+          };
+    },
+  };
 }
 
 interface StoredAcpState {

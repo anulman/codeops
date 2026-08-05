@@ -47,6 +47,12 @@ import {
   enqueueSessionRuntimeDispatch,
 } from "./session-broker-runtime-outbox.js";
 import {
+  pollSessionRuntimePermission,
+  SessionRuntimePermissionConflictError,
+  SessionRuntimePermissionNotFoundError,
+  submitSessionRuntimePermission,
+} from "./session-runtime-permissions.js";
+import {
   ImmutableSessionCommandConflictError,
   SessionCompareAndSwapError,
   SessionForkConflictError,
@@ -282,6 +288,22 @@ const server = createServer((request, response) => {
             client.release();
           }
         },
+        submitPermission: async (permissionInput) => {
+          const client = await database.connect();
+          try {
+            return await submitSessionRuntimePermission(client, permissionInput);
+          } finally {
+            client.release();
+          }
+        },
+        pollPermission: async (permissionInput) => {
+          const client = await database.connect();
+          try {
+            return await pollSessionRuntimePermission(client, permissionInput);
+          } finally {
+            client.release();
+          }
+        },
       });
       if (sessionRuntime !== null) {
         json(response, sessionRuntime.status, sessionRuntime.body);
@@ -291,10 +313,12 @@ const server = createServer((request, response) => {
       const status =
         error instanceof InvalidSessionRuntimeRequestError
           ? 400
-          : error instanceof SessionRuntimeDispatchNotFoundError
+          : error instanceof SessionRuntimeDispatchNotFoundError ||
+              error instanceof SessionRuntimePermissionNotFoundError
             ? 404
             : error instanceof ImmutableSessionRuntimeDispatchConflictError ||
-                error instanceof SessionRuntimeClaimConflictError
+                error instanceof SessionRuntimeClaimConflictError ||
+                error instanceof SessionRuntimePermissionConflictError
               ? 409
               : 503;
       json(response, status, {
