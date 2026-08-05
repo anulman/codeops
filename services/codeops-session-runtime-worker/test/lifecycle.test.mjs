@@ -69,8 +69,17 @@ function memoryReceipts() {
   return {
     records,
     async read(id) { return records.get(id) ?? null; },
-    async create(receipt) {
-      if (!records.has(receipt.dispatchId)) records.set(receipt.dispatchId, receipt);
+    async reserve(input) {
+      if (!records.has(input.dispatchId)) {
+        const reservation = { ...input, result: null };
+        records.set(input.dispatchId, reservation);
+        return { acquired: true, reservation };
+      }
+      return { acquired: false, reservation: records.get(input.dispatchId) };
+    },
+    async complete(receipt) {
+      const current = records.get(receipt.dispatchId);
+      if (current?.result === null) records.set(receipt.dispatchId, receipt);
       return records.get(receipt.dispatchId);
     },
   };
@@ -123,9 +132,28 @@ test("rejects a receipt rebound to changed dispatch identity", async () => {
   );
 });
 
-test("rejects conflicting compare-and-create results after side effects", async () => {
+test("fails closed on an incomplete reservation without repeating side effects", async () => {
   const receipts = memoryReceipts();
-  receipts.create = async (receipt) => ({
+  receipts.records.set(dispatchId, {
+    dispatchId,
+    dispatchDigest: `sha256:${"a".repeat(64)}`,
+    result: null,
+  });
+  let calls = 0;
+  const execute = createSessionRuntimeLifecycleExecutor({
+    receipts,
+    lifecycle: lifecycle({ async prompt() { calls += 1; return { type: "prompt" }; } }),
+  });
+  await assert.rejects(
+    execute(dispatch()),
+    /incomplete and requires repair/,
+  );
+  assert.equal(calls, 0);
+});
+
+test("rejects conflicting completion results after side effects", async () => {
+  const receipts = memoryReceipts();
+  receipts.complete = async (receipt) => ({
     ...receipt,
     result: { type: "checkpoint", material: {} },
   });

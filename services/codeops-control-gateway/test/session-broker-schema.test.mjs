@@ -51,7 +51,11 @@ test("defines immutable digest-bound runtime execution receipts", async () => {
   assert.match(sql, /dispatch_id uuid PRIMARY KEY/);
   assert.match(sql, /REFERENCES codeops\.session_runtime_outbox\(dispatch_id\)/);
   assert.match(sql, /dispatch_digest ~ '\^sha256:\[0-9a-f\]\{64\}\$'/);
-  assert.match(sql, /result_json jsonb NOT NULL/);
+  assert.match(sql, /status IN \('started', 'completed'\)/);
+  assert.match(sql, /status = 'started' AND result_json IS NULL/);
+  assert.match(sql, /status = 'completed' AND result_json IS NOT NULL/);
+  assert.match(sql, /completed_at >= created_at/);
+  assert.match(sql, /result_json jsonb/);
   assert.match(sql, /result_json->>'type' IN/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*DROP TABLE codeops\.session_runtime_execution_receipts;[\s\S]*COMMIT;\n$/);

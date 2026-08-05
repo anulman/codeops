@@ -16,14 +16,27 @@ export interface RuntimeExecutionReceipt {
   readonly result: RuntimeExecutionResult;
 }
 
+export interface RuntimeExecutionReservation {
+  readonly dispatchId: string;
+  readonly dispatchDigest: string;
+  readonly result: RuntimeExecutionResult | null;
+}
+
 /**
  * The production implementation must durably compare-and-create receipts.
  * Returning a pre-existing receipt is permitted only when it is byte-for-byte
  * the same immutable dispatch/result pair.
  */
 export interface RuntimeExecutionReceiptStore {
-  read(dispatchId: string): Promise<RuntimeExecutionReceipt | null>;
-  create(receipt: RuntimeExecutionReceipt): Promise<RuntimeExecutionReceipt>;
+  read(dispatchId: string): Promise<RuntimeExecutionReservation | null>;
+  reserve(input: {
+    readonly dispatchId: string;
+    readonly dispatchDigest: string;
+  }): Promise<{
+    readonly acquired: boolean;
+    readonly reservation: RuntimeExecutionReservation;
+  }>;
+  complete(receipt: RuntimeExecutionReceipt): Promise<RuntimeExecutionReceipt>;
 }
 
 type RuntimeDispatchFor<Type extends RuntimeExecutionResult["type"]> =
@@ -57,10 +70,15 @@ function dispatchDigest(dispatch: SessionRuntimeDispatch): string {
 }
 
 function exactReceipt(
-  raw: RuntimeExecutionReceipt,
+  raw: RuntimeExecutionReservation,
   dispatch: SessionRuntimeDispatch,
   digest: string,
 ): RuntimeExecutionResult {
+  if (raw.result === null) {
+    throw new SessionRuntimeTransportError(
+      "session runtime lifecycle operation is incomplete and requires repair",
+    );
+  }
   const result = runtimeExecutionResultSchema.parse(raw.result);
   if (
     raw.dispatchId !== dispatch.dispatchId ||
@@ -95,10 +113,10 @@ async function executeCommand(
 }
 
 /**
- * Retain the prepared ACP/workspace result in an immutable dispatch receipt.
- * Once retained, a retried outbox claim replays that result. The concrete
- * lifecycle adapter must independently make the external operation idempotent
- * by dispatch ID across a crash before this receipt is created.
+ * Reserve one dispatch durably before invoking ACP/workspace side effects, then
+ * retain the prepared result. Reclaims replay completed work; an incomplete
+ * reservation fails closed for operator reconciliation rather than risking a
+ * repeated prompt, checkpoint, resume, or fork.
  */
 export function createSessionRuntimeLifecycleExecutor(input: {
   readonly lifecycle: AcpWorkspaceLifecycle;
@@ -110,6 +128,14 @@ export function createSessionRuntimeLifecycleExecutor(input: {
     const existing = await input.receipts.read(dispatch.dispatchId);
     if (existing !== null) return exactReceipt(existing, dispatch, digest);
 
+    const reserved = await input.receipts.reserve({
+      dispatchId: dispatch.dispatchId,
+      dispatchDigest: digest,
+    });
+    if (!reserved.acquired) {
+      return exactReceipt(reserved.reservation, dispatch, digest);
+    }
+
     const result = runtimeExecutionResultSchema.parse(
       await executeCommand(input.lifecycle, dispatch),
     );
@@ -119,7 +145,7 @@ export function createSessionRuntimeLifecycleExecutor(input: {
       );
     }
     const proposed = { dispatchId: dispatch.dispatchId, dispatchDigest: digest, result };
-    const stored = await input.receipts.create(proposed);
+    const stored = await input.receipts.complete(proposed);
     const replay = exactReceipt(stored, dispatch, digest);
     if (JSON.stringify(replay) !== JSON.stringify(result)) {
       throw new SessionRuntimeTransportError(
