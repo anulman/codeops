@@ -7,6 +7,8 @@ import {
   sessionRuntimePermissionSubmissionSchema,
   sessionSnapshotSchema,
   type SessionRuntimePermissionResult,
+  type SessionRuntimeDispatch,
+  type SessionSnapshot,
 } from "@renoconcierge/codeops-contracts";
 import type { TransactionClient } from "./session-broker-repository.js";
 import { applyRuntimePermissionRequestTransition } from "./session-broker-transitions.js";
@@ -29,10 +31,18 @@ interface StoredSessionRow extends Record<string, unknown> {
 }
 
 interface StoredPermissionRow extends Record<string, unknown> {
+  readonly request_id: unknown;
   readonly request_json: unknown;
 }
 
 interface PolledPermissionRow extends StoredDispatchRow, StoredSessionRow {
+  readonly request_json: unknown;
+  readonly command_json: unknown;
+  readonly result_json: unknown;
+}
+
+interface CompletionSnapshotRow extends StoredSessionRow {
+  readonly request_id: unknown;
   readonly request_json: unknown;
   readonly command_json: unknown;
   readonly result_json: unknown;
@@ -179,17 +189,20 @@ export async function submitSessionRuntimePermission(
     }
 
     const existing = await client.query<StoredPermissionRow>(
-      `SELECT request_json
+      `SELECT request_id, request_json
          FROM codeops.session_runtime_permission_requests
-        WHERE dispatch_id = $1 AND request_id = $2
+        WHERE dispatch_id = $1
         FOR UPDATE`,
-      [input.dispatchId, submission.request.requestId],
+      [input.dispatchId],
     );
     if (existing.rows[0]) {
       const stored = sessionRuntimePermissionSubmissionSchema.parse(
         existing.rows[0].request_json,
       );
-      if (canonical(stored) !== canonical(submission)) {
+      if (
+        existing.rows[0].request_id !== submission.request.requestId ||
+        canonical(stored) !== canonical(submission)
+      ) {
         throw new SessionRuntimePermissionConflictError(
           "runtime permission request conflicts with its immutable stored identity",
         );
@@ -269,6 +282,93 @@ export async function submitSessionRuntimePermission(
     await client.query("ROLLBACK");
     throw error;
   }
+}
+
+export async function resolveSessionRuntimeCompletionSnapshot(
+  client: TransactionClient,
+  input: {
+    readonly dispatch: SessionRuntimeDispatch;
+    readonly claimToken: string;
+  },
+): Promise<SessionSnapshot> {
+  const result = await client.query<CompletionSnapshotRow>(
+    `SELECT session.snapshot_json,
+            request.request_id, request.request_json,
+            decision.command_json, decision.result_json
+       FROM codeops.sessions AS session
+       LEFT JOIN codeops.session_runtime_permission_requests AS request
+         ON request.dispatch_id = $1
+       LEFT JOIN LATERAL (
+         SELECT command_json, result_json
+           FROM codeops.session_commands
+          WHERE session_id = request.session_id
+            AND command_json->>'type' = 'respond_permission'
+            AND command_json->>'permissionRequestId' = request.request_id
+          ORDER BY committed_at ASC, command_id ASC
+          LIMIT 1
+       ) AS decision ON TRUE
+      WHERE session.session_id = $2`,
+    [input.dispatch.dispatchId, input.dispatch.command.sessionId],
+  );
+  if (!result.rows[0]) {
+    throw new SessionRuntimePermissionNotFoundError(
+      `session ${input.dispatch.command.sessionId} was not found`,
+    );
+  }
+  if (result.rows.length !== 1) {
+    throw new SessionRuntimePermissionConflictError(
+      "runtime dispatch has more than one permission request",
+    );
+  }
+  const row = result.rows[0];
+  const current = sessionSnapshotSchema.parse(row.snapshot_json);
+  if (row.request_id === null) {
+    if (canonical(current) !== canonical(input.dispatch.snapshot)) {
+      throw new SessionRuntimePermissionConflictError(
+        "runtime completion snapshot drifted without a permission transition",
+      );
+    }
+    return current;
+  }
+  if (
+    input.dispatch.command.type !== "prompt" ||
+    row.request_json === null ||
+    row.command_json === null ||
+    row.result_json === null
+  ) {
+    throw new SessionRuntimePermissionConflictError(
+      "runtime completion requires one decided prompt permission",
+    );
+  }
+  const submission = sessionRuntimePermissionSubmissionSchema.parse(
+    row.request_json,
+  );
+  const command = sessionCommandSchema.parse(row.command_json);
+  const commandResult = sessionCommandResultSchema.parse(row.result_json);
+  if (
+    row.request_id !== submission.request.requestId ||
+    submission.claimToken !== input.claimToken ||
+    command.type !== "respond_permission" ||
+    command.sessionId !== input.dispatch.command.sessionId ||
+    command.generation !== input.dispatch.command.generation ||
+    command.leaseId !== input.dispatch.command.leaseId ||
+    command.permissionRequestId !== submission.request.requestId ||
+    commandResult.sessionId !== command.sessionId ||
+    commandResult.generation !== command.generation ||
+    commandResult.leaseId !== command.leaseId ||
+    commandResult.idempotencyKey !== command.idempotencyKey ||
+    commandResult.type !== command.type ||
+    commandResult.disposition !== "committed" ||
+    commandResult.eventCursor !== input.dispatch.snapshot.eventCursor + 2 ||
+    commandResult.snapshot.state !== "running" ||
+    commandResult.snapshot.pendingPermission !== null ||
+    canonical(commandResult.snapshot) !== canonical(current)
+  ) {
+    throw new SessionRuntimePermissionConflictError(
+      "runtime completion does not follow the exact permission decision lineage",
+    );
+  }
+  return current;
 }
 
 export async function pollSessionRuntimePermission(

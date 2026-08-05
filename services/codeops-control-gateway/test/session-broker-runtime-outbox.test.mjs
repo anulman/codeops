@@ -241,7 +241,7 @@ function reverseObjectKeys(value) {
 }
 
 class CompletionClient {
-  constructor({ dispatch, reservedDispatch = dispatch, status = "claimed", token = claimToken, workerId = "acp-worker:7", expiresAt = "2026-08-04T19:20:00.000Z", current = snapshot(), completed = null, completionValue = null, completeCount = 1 } = {}) {
+  constructor({ dispatch, reservedDispatch = dispatch, status = "claimed", token = claimToken, workerId = "acp-worker:7", expiresAt = "2026-08-04T19:20:00.000Z", current = snapshot(), completed = null, completionValue = null, completeCount = 1, permission = null } = {}) {
     this.dispatch = dispatch;
     this.reservedDispatch = reservedDispatch;
     this.status = status;
@@ -252,10 +252,23 @@ class CompletionClient {
     this.completed = completed;
     this.completionValue = completionValue;
     this.completeCount = completeCount;
+    this.permission = permission;
     this.calls = [];
   }
   async query(text, values = []) {
     this.calls.push({ text, values });
+    if (text.includes("FROM codeops.sessions AS session")) {
+      return {
+        rowCount: 1,
+        rows: [{
+          snapshot_json: this.current,
+          request_id: this.permission?.requestId ?? null,
+          request_json: this.permission?.submission ?? null,
+          command_json: this.permission?.command ?? null,
+          result_json: this.permission?.result ?? null,
+        }],
+      };
+    }
     if (text.includes("WHERE dispatch_id = $1") && text.startsWith("SELECT")) {
       return {
         rowCount: this.dispatch ? 1 : 0,
@@ -317,9 +330,9 @@ test("atomically commits only an exact unexpired claim completion", async () => 
   });
   assert.equal(result.disposition, "committed");
   assert.equal(result.eventCursor, 185);
-  assert.equal(client.calls[1].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
-  assert.match(client.calls[2].text, /codeops\.sessions[\s\S]*FOR UPDATE/);
-  assert.match(client.calls[3].text, /session_runtime_outbox[\s\S]*FOR UPDATE/);
+  assert.equal(client.calls[2].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
+  assert.match(client.calls[3].text, /codeops\.sessions[\s\S]*FOR UPDATE/);
+  assert.match(client.calls[4].text, /session_runtime_outbox[\s\S]*FOR UPDATE/);
   const completed = client.calls.find(({ text }) =>
     text.startsWith("UPDATE codeops.session_runtime_outbox"));
   assert.match(completed.text, /status = 'completed'/);
@@ -330,6 +343,71 @@ test("atomically commits only an exact unexpired claim completion", async () => 
   assert.equal(completed.values[4], dispatchId);
   assert.equal(completed.values[5], claimToken);
   assert.equal(client.calls.at(-1).text, "COMMIT");
+});
+
+test("commits a prompt against the exact permission-mediated snapshot", async () => {
+  const dispatch = await runtimeDispatch();
+  const current = snapshot({
+    eventCursor: 186,
+    updatedAt: "2026-08-04T19:09:00.000Z",
+  });
+  const requestId = "permission-1";
+  const permissionCommand = {
+    version: "codeops.session-command/v1",
+    sessionId: "ses_91a4",
+    generation: 3,
+    leaseId,
+    idempotencyKey: "77777777-7777-4777-8777-777777777777",
+    type: "respond_permission",
+    permissionRequestId: requestId,
+    decision: { outcome: "selected", optionId: "allow-once" },
+  };
+  const permissionResult = {
+    version: "codeops.session-command-result/v1",
+    commandId: "88888888-8888-4888-8888-888888888888",
+    sessionId: "ses_91a4",
+    generation: 3,
+    leaseId,
+    idempotencyKey: permissionCommand.idempotencyKey,
+    type: "respond_permission",
+    eventCursor: 186,
+    snapshot: current,
+    committedAt: "2026-08-04T19:09:00.000Z",
+    disposition: "committed",
+  };
+  const client = new CompletionClient({
+    dispatch,
+    current,
+    permission: {
+      requestId,
+      submission: {
+        version: "codeops.session-runtime-permission-submission/v1",
+        claimToken,
+        request: {
+          requestId,
+          title: "Allow write?",
+          description: "The agent wants to update one file.",
+          options: [{ optionId: "allow-once", label: "Allow once" }],
+          requestedAt: "2026-08-04T19:05:00.000Z",
+        },
+        acpSessionId: "acp-session-1",
+        toolCallId: "tool-call-1",
+        options: [{ optionId: "allow-once", acpOptionId: "opaque-allow-once" }],
+      },
+      command: permissionCommand,
+      result: permissionResult,
+    },
+  });
+  const result = await completeSessionRuntimeDispatch(client, {
+    dispatchId,
+    claimToken,
+    workerId: "acp-worker:7",
+    completion: completion({ completedAt: "2026-08-04T19:10:00.000Z" }),
+    now: () => new Date("2026-08-04T19:10:00.000Z"),
+    commandId: () => "99999999-9999-4999-8999-999999999999",
+  });
+  assert.equal(result.eventCursor, 187);
+  assert.equal(result.snapshot.eventCursor, 187);
 });
 
 test("rolls back stale tokens, expired claims, and changed snapshots", async () => {
@@ -351,7 +429,9 @@ test("rolls back stale tokens, expired claims, and changed snapshots", async () 
       client.calls.some(({ text }) => text.includes("INSERT INTO codeops.session_events")),
       false,
     );
-    assert.equal(client.calls.at(-1).text, "ROLLBACK");
+    if (client.calls.some(({ text }) => text === "BEGIN ISOLATION LEVEL SERIALIZABLE")) {
+      assert.equal(client.calls.at(-1).text, "ROLLBACK");
+    }
   }
 });
 

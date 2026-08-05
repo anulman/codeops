@@ -15,6 +15,7 @@ import {
   sessionRuntimeDispatchSchema,
   type SessionRuntimeDispatch,
 } from "./session-broker-runtime.js";
+import { resolveSessionRuntimeCompletionSnapshot } from "./session-runtime-permissions.js";
 
 const workerPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 
@@ -287,18 +288,28 @@ export async function completeSessionRuntimeDispatch(
     );
   }
 
+  const completionSnapshot = await resolveSessionRuntimeCompletionSnapshot(
+    client,
+    { dispatch, claimToken: input.claimToken },
+  );
+
   return executeSessionCommandTransaction(client, {
     command: dispatch.command,
     principalId: dispatch.principalId,
     now: input.now,
     commandId: input.commandId,
     mutate: (_snapshot, _command, context) =>
-      applySessionRuntimeCompletion(dispatch, completion, context),
+      applySessionRuntimeCompletion(
+        dispatch,
+        completion,
+        context,
+        completionSnapshot,
+      ),
     runtimeReservation: {
       dispatchId: dispatch.dispatchId,
       claimToken: input.claimToken,
       workerId: input.workerId,
-      expectedSnapshot: dispatch.snapshot,
+      expectedSnapshot: completionSnapshot,
       dispatchJson: dispatch,
       completionJson: completion,
     },

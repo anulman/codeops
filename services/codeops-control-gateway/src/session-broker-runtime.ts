@@ -3,6 +3,7 @@ import {
   sessionCommandResultSchema,
   sessionRuntimeCompletionSchema,
   sessionRuntimeDispatchSchema,
+  sessionSnapshotSchema,
   type SessionCommandResult,
   type SessionRuntimeCommand,
   type SessionRuntimeCompletion,
@@ -88,11 +89,29 @@ export function applySessionRuntimeCompletion(
   rawDispatch: unknown,
   rawCompletion: unknown,
   context: SessionMutationContext,
+  rawCurrentSnapshot?: unknown,
 ): SessionMutation {
   const dispatch = sessionRuntimeDispatchSchema.parse(rawDispatch);
   const completion = sessionRuntimeCompletionSchema.parse(rawCompletion);
   requireCompletionIdentity(dispatch, completion);
-  const { command, snapshot } = dispatch;
+  const { command } = dispatch;
+  const snapshot = sessionSnapshotSchema.parse(
+    rawCurrentSnapshot ?? dispatch.snapshot,
+  );
+  if (
+    snapshot.sessionId !== dispatch.snapshot.sessionId ||
+    snapshot.generation !== dispatch.snapshot.generation ||
+    snapshot.lease?.leaseId !== dispatch.snapshot.lease?.leaseId ||
+    JSON.stringify(snapshot.identity) !== JSON.stringify(dispatch.snapshot.identity) ||
+    snapshot.eventCursor < dispatch.snapshot.eventCursor ||
+    (command.type !== "prompt" &&
+      snapshot.eventCursor !== dispatch.snapshot.eventCursor) ||
+    Date.parse(completion.completedAt) < Date.parse(snapshot.updatedAt)
+  ) {
+    throw new Error(
+      "runtime completion current snapshot does not follow the exact dispatch lineage",
+    );
+  }
   const transition = (() => {
     switch (command.type) {
       case "prompt": {

@@ -132,7 +132,7 @@ class SubmitClient {
     if (text.includes("FROM codeops.session_runtime_permission_requests")) {
       return {
         rowCount: this.stored ? 1 : 0,
-        rows: this.stored ? [{ request_json: this.stored }] : [],
+        rows: this.stored ? [{ request_id: requestId, request_json: this.stored }] : [],
       };
     }
     if (text.startsWith("UPDATE codeops.sessions")) {

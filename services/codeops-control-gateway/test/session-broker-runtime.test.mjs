@@ -126,6 +126,33 @@ test("commits an acknowledged prompt as one ordered ACP update", () => {
   ]);
 });
 
+test("commits a prompt after one exact permission request and decision", () => {
+  const permissionResolved = snapshot({
+    eventCursor: 186,
+    updatedAt: "2026-08-04T16:54:00.000Z",
+  });
+  const mutation = applySessionRuntimeCompletion(
+    dispatch("prompt"),
+    completion("prompt"),
+    context,
+    permissionResolved,
+  );
+  assert.equal(mutation.result.eventCursor, 187);
+  assert.deepEqual(mutation.events.map(({ type, cursor }) => [type, cursor]), [
+    ["acp_update", 187],
+  ]);
+  assert.throws(() => applySessionRuntimeCompletion(
+    dispatch("prompt"),
+    completion("prompt"),
+    context,
+    snapshot({
+      eventCursor: 186,
+      generation: 4,
+      lease: { ...snapshot().lease, generation: 4 },
+    }),
+  ), /exact dispatch lineage/);
+});
+
 test("rejects a completion that drifts from its exact dispatch snapshot", () => {
   const current = dispatch("prompt");
   for (const drift of [
