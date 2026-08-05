@@ -348,6 +348,16 @@ failure, and double-reads the smoke Job, claim, and login absence before
 emitting evidence and a receipt. Pending, failed, retried, replaced, deleting,
 malformed, extra-field, chain-drifted, or timestamp-drifted state fails closed.
 
+The `start-ui` apply boundary is separately bound to the exact reviewed UI
+artifact and exactly the Deployment, Service, ServiceAccount, and NetworkPolicy
+server UIDs. Its concrete but uninvoked adapter repeats live operator, target,
+and Namespace-UID admission, refuses any pre-existing package object, streams
+the reviewed bytes once through `kubectl create`, and double-reads all four
+identities around the final admission check. Partial creation, a missing object,
+Namespace or resource replacement, manifest/action drift, or timestamp drift
+emits no receipt. CI exercises the adapter only through injected fakes and
+never creates a live UI resource.
+
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
 

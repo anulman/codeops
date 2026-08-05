@@ -177,6 +177,16 @@ function evidenceSource(authorization, observedAt, context = {}) {
       })),
     }));
   }
+  if (authorization.stepId === "start-ui") {
+    return JSON.stringify(buildSessionProofApplyEvidence({
+      authorization,
+      observedAt,
+      resources: sessionProofApplyResourceIdentities("start-ui").map((resource, index) => ({
+        ...resource,
+        uid: `ui-resource-uid-${index}`,
+      })),
+    }));
+  }
   if (authorization.stepId === "wait-database") {
     return JSON.stringify(buildSessionProofReadinessEvidence({
       authorization,

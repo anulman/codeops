@@ -174,6 +174,15 @@ function buildRevocationInputs() {
           uid: `codex-login-resource-uid-${index}`,
         })),
       }));
+    } else if (step.id === "start-ui") {
+      evidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+        authorization,
+        observedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+        resources: sessionProofApplyResourceIdentities("start-ui").map((resource, index) => ({
+          ...resource,
+          uid: `ui-resource-uid-${index}`,
+        })),
+      }));
     } else if (step.id === "wait-database") {
       evidenceSource = JSON.stringify(buildSessionProofReadinessEvidence({
         authorization,

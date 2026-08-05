@@ -118,6 +118,27 @@ test("attests exactly the four post-replacement Codex smoke resource identities"
   assert.equal(evidence.resourceInventory.find((resource) => resource.kind === "Job").name, "codeops-codex-auth-smoke");
 });
 
+test("attests exactly the four applied proof UI resource identities", () => {
+  const uiAuthorization = {
+    ...authorization,
+    stepId: "start-ui",
+    artifact: "ui",
+  };
+  const evidence = buildSessionProofApplyEvidence({
+    authorization: uiAuthorization,
+    observedAt: "2026-08-05T22:05:00Z",
+    resources: sessionProofApplyResourceIdentities("start-ui").map((resource, index) => ({
+      ...resource,
+      uid: `ui-resource-uid-${index}`,
+    })),
+  });
+  assert.equal(evidence.resourceInventory.length, 4);
+  assert.deepEqual(
+    evidence.resourceInventory.map((resource) => resource.kind).sort(),
+    ["Deployment", "NetworkPolicy", "Service", "ServiceAccount"].sort(),
+  );
+});
+
 test("rejects database, incomplete, duplicate, or wrong-artifact gateway evidence", () => {
   const gatewayAuthorization = {
     ...authorization,
@@ -242,6 +263,36 @@ test("rejects login identities, wrong action, or wrong artifact for Codex smoke"
   }
 });
 
+test("rejects gateway identities, wrong action, or wrong artifact for the proof UI", () => {
+  const uiAuthorization = {
+    ...authorization,
+    stepId: "start-ui",
+    artifact: "ui",
+  };
+  const expected = sessionProofApplyResourceIdentities("start-ui").map((resource, index) => ({
+    ...resource,
+    uid: `ui-resource-uid-${index}`,
+  }));
+  assert.throws(() => buildSessionProofApplyEvidence({
+    authorization: uiAuthorization,
+    observedAt: "2026-08-05T22:05:00Z",
+    resources: sessionProofApplyResourceIdentities("start-gateway").map((resource, index) => ({
+      ...resource,
+      uid: `gateway-resource-uid-${index}`,
+    })),
+  }));
+  for (const authorizationDrift of [
+    { action: "operator-replace-auth-job" },
+    { artifact: "gateway" },
+  ]) {
+    assert.throws(() => buildSessionProofApplyEvidence({
+      authorization: { ...uiAuthorization, ...authorizationDrift },
+      observedAt: "2026-08-05T22:05:00Z",
+      resources: expected,
+    }), /not a qualified apply/);
+  }
+});
+
 test("rejects missing, extra, duplicate, renamed, or UID-less resources", () => {
   const expected = resources();
   for (const invalid of [
@@ -267,7 +318,7 @@ test("rejects wrong step, manifest digest, namespace, time, or extra evidence fi
   });
   assert.throws(() => verifySessionProofApplyEvidence({
     ...authorization,
-    stepId: "start-ui",
+    stepId: "start-runtime",
   }, evidence), /not a qualified apply/);
   for (const drifted of [
     { ...evidence, artifactSha256: "c".repeat(64) },

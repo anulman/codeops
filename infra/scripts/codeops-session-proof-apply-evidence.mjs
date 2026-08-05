@@ -53,6 +53,16 @@ const EXPECTED = {
       { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-codex-auth" },
     ],
   },
+  "start-ui": {
+    action: "operator-apply",
+    artifact: "ui",
+    resources: [
+      { apiVersion: "apps/v1", kind: "Deployment", name: "codeops-agents-ui" },
+      { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", name: "codeops-agents-ui" },
+      { apiVersion: "v1", kind: "Service", name: "codeops-agents-ui" },
+      { apiVersion: "v1", kind: "ServiceAccount", name: "codeops-agents-ui" },
+    ],
+  },
 };
 
 function sameKeys(value, keys) {
