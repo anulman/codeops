@@ -110,6 +110,20 @@ function runtimeIdentities(authorization, recordEvidence) {
   return { job, retained: retained.sort((left, right) => identity(left).localeCompare(identity(right))) };
 }
 
+export function verifySessionProofRuntimeStopPredecessor(
+  authorization,
+  recordReceiptSource,
+  recordEvidenceSource,
+) {
+  assertAuthorization(authorization);
+  const recordEvidence = verifyRecordPredecessor(
+    authorization,
+    recordReceiptSource,
+    recordEvidenceSource,
+  );
+  return { recordEvidence, ...runtimeIdentities(authorization, recordEvidence) };
+}
+
 function verifyRetainedResources(expected, resources) {
   if (
     !Array.isArray(resources) ||
@@ -147,17 +161,16 @@ export function verifySessionProofRuntimeStopEvidence(authorization, evidence) {
   ) {
     throw new Error("proof runtime stop evidence identity drifted");
   }
-  const recordEvidence = verifyRecordPredecessor(
+  const predecessor = verifySessionProofRuntimeStopPredecessor(
     authorization,
     evidence.recordReceiptSource,
     evidence.recordEvidenceSource,
   );
-  const expected = runtimeIdentities(authorization, recordEvidence);
-  if (evidence.deletedJobUid !== expected.job.uid) {
+  if (evidence.deletedJobUid !== predecessor.job.uid) {
     throw new Error("proof runtime stop Job UID drifted");
   }
-  verifyRetainedResources(expected.retained, evidence.retainedResourceInventory);
-  if (Date.parse(evidence.observedAt) < Date.parse(recordEvidence.observedAt)) {
+  verifyRetainedResources(predecessor.retained, evidence.retainedResourceInventory);
+  if (Date.parse(evidence.observedAt) < Date.parse(predecessor.recordEvidence.observedAt)) {
     throw new Error("proof runtime stop observation time drifted");
   }
   return true;
@@ -168,12 +181,11 @@ export function buildSessionProofRuntimeStopEvidence(input) {
   assertAuthorization(authorization);
   const recordReceiptSource = input.recordReceiptSource ?? "";
   const recordEvidenceSource = input.recordEvidenceSource ?? "";
-  const recordEvidence = verifyRecordPredecessor(
+  const predecessor = verifySessionProofRuntimeStopPredecessor(
     authorization,
     recordReceiptSource,
     recordEvidenceSource,
   );
-  const expected = runtimeIdentities(authorization, recordEvidence);
   const retainedResourceInventory = (input.retainedResources ?? [])
     .map((resource) => ({
       apiVersion: resource.apiVersion,
@@ -182,7 +194,7 @@ export function buildSessionProofRuntimeStopEvidence(input) {
       uid: resource.uid,
     }))
     .sort((left, right) => identity(left).localeCompare(identity(right)));
-  verifyRetainedResources(expected.retained, retainedResourceInventory);
+  verifyRetainedResources(predecessor.retained, retainedResourceInventory);
   const evidence = {
     apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
     result: "verified",
@@ -192,7 +204,7 @@ export function buildSessionProofRuntimeStopEvidence(input) {
     namespace: authorization.namespace,
     recordReceiptSource,
     recordEvidenceSource,
-    deletedJobUid: expected.job.uid,
+    deletedJobUid: predecessor.job.uid,
     runtimeJobAbsent: input.runtimeJobAbsent,
     retainedResourceInventory,
   };

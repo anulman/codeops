@@ -424,8 +424,13 @@ that exact Job is absent while the runtime NetworkPolicy and ServiceAccount
 retain their original server UIDs. A generic absence claim, same-name Job
 replacement, retained-resource deletion/replacement, missing or extra identity,
 nested chain drift, unbounded source, or non-monotonic observation cannot emit
-the ordered receipt. No concrete runtime delete adapter exists or runs at this
-boundary.
+the ordered receipt. The concrete but uninvoked deleter repeats live
+operator/target/Namespace-UID admission, verifies the exact Job and retained
+identities, sends one direct Kubernetes DELETE with a foreground
+`DeleteOptions.preconditions.uid`, and boundedly verifies Job absence. It then
+double-reads absence and both retained identities around final live admission
+before emitting evidence and the receipt. It never invokes `kubectl delete`,
+reads logs or credential values, or targets any other workload.
 
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
