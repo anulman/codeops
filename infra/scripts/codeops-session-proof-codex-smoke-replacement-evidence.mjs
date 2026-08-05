@@ -45,7 +45,7 @@ function assertAuthorization(authorization) {
   }
 }
 
-function verifyLoginCompletionChain(authorization, receiptSource, evidenceSource) {
+export function verifySessionProofCodexSmokePredecessor(authorization, receiptSource, evidenceSource) {
   if (digest(receiptSource) !== authorization.previousReceiptSha256) {
     throw new Error("proof Codex smoke predecessor receipt drifted");
   }
@@ -128,7 +128,7 @@ export function verifySessionProofCodexSmokeReplacementEvidence(authorization, e
   ) {
     throw new Error("proof Codex smoke replacement evidence identity drifted");
   }
-  const loginCompletionEvidence = verifyLoginCompletionChain(
+  const loginCompletionEvidence = verifySessionProofCodexSmokePredecessor(
     authorization,
     evidence.loginCompletionReceiptSource,
     evidence.loginCompletionEvidenceSource,
@@ -150,7 +150,7 @@ export function buildSessionProofCodexSmokeReplacementEvidence(input) {
   assertAuthorization(authorization);
   const loginCompletionReceiptSource = input.loginCompletionReceiptSource ?? "";
   const loginCompletionEvidenceSource = input.loginCompletionEvidenceSource ?? "";
-  const loginCompletionEvidence = verifyLoginCompletionChain(
+  const loginCompletionEvidence = verifySessionProofCodexSmokePredecessor(
     authorization,
     loginCompletionReceiptSource,
     loginCompletionEvidenceSource,

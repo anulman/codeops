@@ -327,9 +327,16 @@ the original PersistentVolumeClaim, ServiceAccount, and NetworkPolicy UIDs to
 remain unchanged. A generic four-object inventory, reused login Job identity,
 replaced retained object, missing or extra object, wrong artifact/action,
 credential contents, logs, chain drift, or extra evidence fields cannot
-complete the replacement step. The concrete replacement adapter and the
-separate `wait-codex-smoke` completion postcondition remain closed; CI tests
-only the non-mutating evidence contract.
+complete the replacement step. A concrete but uninvoked replacement adapter
+now verifies that chain and the four live server identities before mutation,
+deletes only the completed login Job through a foreground Kubernetes DELETE
+preconditioned on its exact UID, verifies its absence, rechecks the retained
+objects, and creates only the smoke Job extracted from the digest-bound reviewed
+manifest. It double-reads the final smoke and retained identities around live
+operator/target/Namespace-UID admission and emits no receipt after deletion or
+creation failure, replacement, or partial state. The separate
+`wait-codex-smoke` completion postcondition remains closed; CI exercises the
+adapter only through injected fakes and never deletes or creates a live Job.
 
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
