@@ -400,6 +400,25 @@ CODEOPS_SESSION_PROOF_NAMESPACE_MANIFEST=/path/to/namespace.yaml \
   > /path/to/bound-namespace-receipt.json
 ```
 
+Before that create-only path may run, the matching cleanup boundary must be
+reviewed and qualified. Cleanup accepts only the exact creation receipt and
+reviewed plan bytes. It repeats the live principal, credential, target, labels,
+and Namespace UID checks, then sends one direct Kubernetes DELETE with a
+server-enforced `DeleteOptions.preconditions.uid`. It does not rely on
+`kubectl delete`, which has no UID/resource-version check. The client accepts
+only the active inline CA, certificate, and key from the same kubeconfig,
+rechecks the certificate fingerprint without printing TLS material, rejects a
+same-name replacement, and reports success only after a second principal/
+target check and exact Namespace absence. It cannot delete any other resource,
+create, apply, patch, issue credentials, or target shared dev/production:
+
+```bash
+CODEOPS_SESSION_PROOF_PLAN=/path/to/plan.json \
+CODEOPS_SESSION_PROOF_NAMESPACE_RECEIPT=/path/to/bound-namespace-receipt.json \
+  node infra/scripts/run-codeops-session-proof-namespace-delete.mjs \
+  > /path/to/namespace-delete-receipt.json
+```
+
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
 only the database-owner credential, grants only execution-receipt columns to
