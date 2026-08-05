@@ -213,6 +213,16 @@ function buildRevocationInputs() {
         },
         observedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
       }));
+    } else if (step.id === "start-runtime") {
+      evidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+        authorization,
+        observedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+        resources: sessionProofApplyResourceIdentities("start-runtime", authorization)
+          .map((resource, index) => ({
+            ...resource,
+            uid: `runtime-resource-uid-${index}`,
+          })),
+      }));
     } else if (step.id === "wait-database") {
       evidenceSource = JSON.stringify(buildSessionProofReadinessEvidence({
         authorization,

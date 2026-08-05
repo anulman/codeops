@@ -368,6 +368,17 @@ double-reads the final ready identity before emitting evidence and a receipt.
 Pending, stale-generation, incomplete, replaced, malformed, chain-drifted,
 extra-field, or final-state-drifted readiness fails closed.
 
+The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
+NetworkPolicy names from the reviewed proof session suffix and binds their
+server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked
+adapter repeats live operator, target, and Namespace-UID admission, refuses any
+pre-existing package object, streams the reviewed bytes once through
+`kubectl create`, and double-reads all three identities around the final
+admission check. A malformed or overlong session identity, partial creation,
+missing object, Namespace or resource replacement, manifest/action drift, or
+timestamp drift emits no receipt. CI exercises the adapter only through
+injected fakes and never creates a live runtime Job.
+
 Final proof cleanup must delete the disposable namespace; if credentials must
 be revoked independently first, run:
 

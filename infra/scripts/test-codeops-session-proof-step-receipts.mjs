@@ -218,6 +218,17 @@ function evidenceSource(authorization, observedAt, context = {}) {
       observedAt,
     }));
   }
+  if (authorization.stepId === "start-runtime") {
+    return JSON.stringify(buildSessionProofApplyEvidence({
+      authorization,
+      observedAt,
+      resources: sessionProofApplyResourceIdentities("start-runtime", authorization)
+        .map((resource, index) => ({
+          ...resource,
+          uid: `runtime-resource-uid-${index}`,
+        })),
+    }));
+  }
   if (authorization.stepId === "wait-database") {
     return JSON.stringify(buildSessionProofReadinessEvidence({
       authorization,

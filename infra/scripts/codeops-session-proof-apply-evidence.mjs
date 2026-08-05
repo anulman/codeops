@@ -1,5 +1,6 @@
 const UID = /^.{1,256}$/u;
 const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+const DNS = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 
 const EXPECTED = {
   "start-database": {
@@ -74,6 +75,23 @@ function identity(resource) {
 }
 
 function expectedResources(authorization) {
+  if (authorization?.stepId === "start-runtime") {
+    const sessionSuffix = authorization.admission?.identity?.sessionSuffix;
+    const name = `codeops-session-runtime-${sessionSuffix ?? ""}`;
+    if (
+      authorization.action !== "operator-apply" ||
+      authorization.artifact !== "runtime" ||
+      !DNS.test(sessionSuffix ?? "") ||
+      name.length > 63
+    ) {
+      throw new Error("proof step is not a qualified apply action");
+    }
+    return [
+      { apiVersion: "batch/v1", kind: "Job", name },
+      { apiVersion: "networking.k8s.io/v1", kind: "NetworkPolicy", name },
+      { apiVersion: "v1", kind: "ServiceAccount", name },
+    ];
+  }
   const contract = EXPECTED[authorization?.stepId];
   if (
     !contract ||
@@ -156,6 +174,9 @@ export function buildSessionProofApplyEvidence(input) {
   return evidence;
 }
 
-export function sessionProofApplyResourceIdentities(stepId) {
+export function sessionProofApplyResourceIdentities(stepId, authorization = null) {
+  if (stepId === "start-runtime") {
+    return expectedResources({ ...authorization, stepId }).map((resource) => ({ ...resource }));
+  }
   return (EXPECTED[stepId]?.resources ?? []).map((resource) => ({ ...resource }));
 }

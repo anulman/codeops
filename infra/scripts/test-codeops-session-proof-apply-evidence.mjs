@@ -139,6 +139,27 @@ test("attests exactly the four applied proof UI resource identities", () => {
   );
 });
 
+test("attests exactly the three session-bound runtime resource identities", () => {
+  const runtimeAuthorization = {
+    ...authorization,
+    stepId: "start-runtime",
+    artifact: "runtime",
+    admission: { identity: { sessionSuffix: "video-1" } },
+  };
+  const evidence = buildSessionProofApplyEvidence({
+    authorization: runtimeAuthorization,
+    observedAt: "2026-08-05T22:20:00Z",
+    resources: sessionProofApplyResourceIdentities("start-runtime", runtimeAuthorization)
+      .map((resource, index) => ({ ...resource, uid: `runtime-resource-uid-${index}` })),
+  });
+  assert.equal(evidence.resourceInventory.length, 3);
+  assert.deepEqual(
+    evidence.resourceInventory.map((resource) => `${resource.kind}/${resource.name}`).sort(),
+    ["Job", "NetworkPolicy", "ServiceAccount"]
+      .map((kind) => `${kind}/codeops-session-runtime-video-1`).sort(),
+  );
+});
+
 test("rejects database, incomplete, duplicate, or wrong-artifact gateway evidence", () => {
   const gatewayAuthorization = {
     ...authorization,
@@ -288,6 +309,36 @@ test("rejects gateway identities, wrong action, or wrong artifact for the proof 
     assert.throws(() => buildSessionProofApplyEvidence({
       authorization: { ...uiAuthorization, ...authorizationDrift },
       observedAt: "2026-08-05T22:05:00Z",
+      resources: expected,
+    }), /not a qualified apply/);
+  }
+});
+
+test("rejects static identities or drifted session identity for the proof runtime", () => {
+  const runtimeAuthorization = {
+    ...authorization,
+    stepId: "start-runtime",
+    artifact: "runtime",
+    admission: { identity: { sessionSuffix: "video-1" } },
+  };
+  const expected = sessionProofApplyResourceIdentities("start-runtime", runtimeAuthorization)
+    .map((resource, index) => ({ ...resource, uid: `runtime-resource-uid-${index}` }));
+  assert.throws(() => buildSessionProofApplyEvidence({
+    authorization: runtimeAuthorization,
+    observedAt: "2026-08-05T22:20:00Z",
+    resources: sessionProofApplyResourceIdentities("start-ui").map((resource, index) => ({
+      ...resource,
+      uid: `ui-resource-uid-${index}`,
+    })),
+  }));
+  for (const authorizationDrift of [
+    { action: "operator-replace-auth-job" },
+    { artifact: "ui" },
+    { admission: { identity: { sessionSuffix: "Video_1" } } },
+  ]) {
+    assert.throws(() => buildSessionProofApplyEvidence({
+      authorization: { ...runtimeAuthorization, ...authorizationDrift },
+      observedAt: "2026-08-05T22:20:00Z",
       resources: expected,
     }), /not a qualified apply/);
   }
