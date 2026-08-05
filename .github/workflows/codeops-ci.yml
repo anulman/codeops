@@ -359,7 +359,7 @@ jobs:
           node --test infra/scripts/test-codeops-session-proof-database.mjs
           node infra/scripts/render-codeops-session-proof-database.mjs > /tmp/codeops-session-proof-database.yaml
           node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-session-proof-database.yaml
-          node --test infra/scripts/test-codeops-session-proof-secrets.mjs
+          node --test infra/scripts/test-codeops-session-proof-credentials.mjs
 
       - name: Test and render the Agent Sessions receipt grant Job
         env:
