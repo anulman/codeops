@@ -353,6 +353,20 @@ CODEOPS_SESSION_SUFFIX=video-1 \
   > "$CODEOPS_SESSION_PROOF_PLAN"
 ```
 
+Execution admission is a second, operator-owned artifact. It must bind the
+SHA-256 of the reviewed plan bytes to the authenticated Kubernetes username
+and UID, exact context and API server, and a positive window no longer than
+four hours. Namespace creation is the only operation allowed while unbound.
+After creation, every remaining operation—including exact deletion—must first
+re-read the Namespace and match its name, proof labels, and immutable
+`metadata.uid`; a same-name replacement is rejected. Final teardown succeeds
+only when that UID-bound Namespace is absent. The admission module is an
+offline verifier and still has no Kubernetes client or apply/delete path:
+
+```text
+infra/scripts/codeops-session-proof-admission.mjs
+```
+
 After the database and standalone gateway are ready, run the exact-digest,
 non-retrying grant Job. It waits boundedly for the gateway migration, mounts
 only the database-owner credential, grants only execution-receipt columns to

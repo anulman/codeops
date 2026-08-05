@@ -162,6 +162,33 @@ function inspectArtifact(expected, source, input) {
   };
 }
 
+export function sessionProofSequence() {
+  return [
+    { id: "review-namespace", action: "review", artifact: "namespace" },
+    { id: "create-namespace", action: "operator-apply", artifact: "namespace" },
+    { id: "issue-broker-capabilities", action: "operator-issue-exact-secrets" },
+    { id: "issue-runtime-capabilities", action: "operator-issue-exact-runtime-credentials" },
+    { id: "start-database", action: "operator-apply", artifact: "database" },
+    { id: "wait-database", action: "operator-wait-ready", requires: ["start-database"] },
+    { id: "start-gateway", action: "operator-apply", artifact: "gateway", requires: ["wait-database"] },
+    { id: "wait-gateway-migration", action: "operator-wait-ready", requires: ["start-gateway"] },
+    { id: "grant-receipts", action: "operator-apply", artifact: "grants", requires: ["wait-gateway-migration"] },
+    { id: "wait-grants", action: "operator-wait-complete", requires: ["grant-receipts"] },
+    { id: "codex-login", action: "operator-apply", artifact: "codex-login", requires: ["wait-grants"] },
+    { id: "wait-codex-login", action: "operator-wait-complete", requires: ["codex-login"] },
+    { id: "codex-smoke", action: "operator-replace-auth-job", artifact: "codex-smoke", requires: ["wait-codex-login"] },
+    { id: "wait-codex-smoke", action: "operator-wait-complete", requires: ["codex-smoke"] },
+    { id: "start-ui", action: "operator-apply", artifact: "ui", requires: ["wait-grants"] },
+    { id: "wait-ui", action: "operator-wait-ready", requires: ["start-ui"] },
+    { id: "start-runtime", action: "operator-apply", artifact: "runtime", requires: ["wait-codex-smoke", "wait-ui"] },
+    { id: "record-proof", action: "operator-record-and-export-evidence", requires: ["start-runtime"] },
+    { id: "stop-runtime", action: "operator-delete-exact-runtime-job", requires: ["record-proof"] },
+    { id: "revoke-capabilities", action: "operator-revoke-exact-secrets", requires: ["stop-runtime"] },
+    { id: "delete-namespace", action: "operator-delete-exact-namespace", requires: ["revoke-capabilities"] },
+    { id: "verify-teardown", action: "operator-verify-namespace-absent", requires: ["delete-namespace"] },
+  ];
+}
+
 export function buildSessionProofPlan(input) {
   if (!RUN_ID.test(input.runId ?? "")) {
     throw new Error("proof run ID must be one DNS-safe label");
@@ -204,29 +231,6 @@ export function buildSessionProofPlan(input) {
       sessionSuffix: input.sessionSuffix,
     },
     artifacts,
-    sequence: [
-      { id: "review-namespace", action: "review", artifact: "namespace" },
-      { id: "create-namespace", action: "operator-apply", artifact: "namespace" },
-      { id: "issue-broker-capabilities", action: "operator-issue-exact-secrets" },
-      { id: "issue-runtime-capabilities", action: "operator-issue-exact-runtime-credentials" },
-      { id: "start-database", action: "operator-apply", artifact: "database" },
-      { id: "wait-database", action: "operator-wait-ready", requires: ["start-database"] },
-      { id: "start-gateway", action: "operator-apply", artifact: "gateway", requires: ["wait-database"] },
-      { id: "wait-gateway-migration", action: "operator-wait-ready", requires: ["start-gateway"] },
-      { id: "grant-receipts", action: "operator-apply", artifact: "grants", requires: ["wait-gateway-migration"] },
-      { id: "wait-grants", action: "operator-wait-complete", requires: ["grant-receipts"] },
-      { id: "codex-login", action: "operator-apply", artifact: "codex-login", requires: ["wait-grants"] },
-      { id: "wait-codex-login", action: "operator-wait-complete", requires: ["codex-login"] },
-      { id: "codex-smoke", action: "operator-replace-auth-job", artifact: "codex-smoke", requires: ["wait-codex-login"] },
-      { id: "wait-codex-smoke", action: "operator-wait-complete", requires: ["codex-smoke"] },
-      { id: "start-ui", action: "operator-apply", artifact: "ui", requires: ["wait-grants"] },
-      { id: "wait-ui", action: "operator-wait-ready", requires: ["start-ui"] },
-      { id: "start-runtime", action: "operator-apply", artifact: "runtime", requires: ["wait-codex-smoke", "wait-ui"] },
-      { id: "record-proof", action: "operator-record-and-export-evidence", requires: ["start-runtime"] },
-      { id: "stop-runtime", action: "operator-delete-exact-runtime-job", requires: ["record-proof"] },
-      { id: "revoke-capabilities", action: "operator-revoke-exact-secrets", requires: ["stop-runtime"] },
-      { id: "delete-namespace", action: "operator-delete-exact-namespace", requires: ["revoke-capabilities"] },
-      { id: "verify-teardown", action: "operator-verify-namespace-absent", requires: ["delete-namespace"] },
-    ],
+    sequence: sessionProofSequence(),
   };
 }
