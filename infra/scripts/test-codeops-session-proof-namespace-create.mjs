@@ -8,7 +8,10 @@ import { createSessionProofAdmission } from "./codeops-session-proof-admission.m
 import { createSessionProofNamespace } from "./codeops-session-proof-namespace-create.mjs";
 import { attachSessionProofOperatorAdmission } from "./codeops-session-proof-operator-admission.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
-import { authorizeFirstSessionProofStepFromOperatorPacket } from "./codeops-session-proof-operator-step-authorization.mjs";
+import {
+  authorizeFirstSessionProofStepFromOperatorPacket,
+  persistFirstSessionProofStepAuthorizationFromOperatorPacket,
+} from "./codeops-session-proof-operator-step-authorization.mjs";
 import { persistSessionProofOperatorPacket } from "./codeops-session-proof-operator-packet.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -72,6 +75,10 @@ function persistOperatorInputs(root) {
   const packetPath = join(root, `${identity.namespace}.packet`);
   const admissionPath = join(root, `${identity.namespace}.admission.json`);
   const receiptPath = join(root, `${identity.namespace}.namespace-create-receipt.json`);
+  const authorizationPath = join(
+    root,
+    `${identity.namespace}.step-02-issue-broker-capabilities.authorization.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -81,7 +88,7 @@ function persistOperatorInputs(root) {
     approvedAt: "2026-08-05T05:00:00Z",
     expiresAt: "2026-08-05T08:00:00Z",
   });
-  return { packetPath, admissionPath, receiptPath };
+  return { packetPath, admissionPath, receiptPath, authorizationPath };
 }
 
 function namespace() {
@@ -255,17 +262,49 @@ test("authorizes only the first intermediate step from the exact persisted opera
       observedAt: "2026-08-05T06:00:00Z",
     }, stub.execute);
     const mutationCount = stub.calls.filter(({ args }) => args[0] === "create").length;
-    const authorization = authorizeFirstSessionProofStepFromOperatorPacket({
+    const authorization = persistFirstSessionProofStepAuthorizationFromOperatorPacket({
       ...inputs,
       observedAt: "2026-08-05T06:01:00Z",
     }, stub.execute);
     assert.equal(authorization.stepIndex, 2);
     assert.equal(authorization.stepId, "issue-broker-capabilities");
     assert.equal(authorization.artifact, null);
+    assert.equal(statSync(inputs.authorizationPath).mode & 0o777, 0o600);
+    assert.deepEqual(
+      JSON.parse(readFileSync(inputs.authorizationPath, "utf8")),
+      authorization,
+    );
     assert.equal(
       stub.calls.filter(({ args }) => args[0] === "create").length,
       mutationCount,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a substituted or existing first-step authorization before live reads", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, runner().execute);
+    const stub = runner(true);
+    assert.throws(() => persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      authorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute), /derive exactly/);
+    assert.equal(stub.calls.length, 0);
+
+    writeFileSync(inputs.authorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute), /already exists/);
+    assert.equal(stub.calls.length, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

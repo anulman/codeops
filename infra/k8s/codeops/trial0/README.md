@@ -632,8 +632,14 @@ mutation:
 CODEOPS_SESSION_PROOF_PACKET=/absolute/path/codeops-session-proof-video-1.packet \
 CODEOPS_SESSION_PROOF_ADMISSION=/absolute/path/codeops-session-proof-video-1.admission.json \
 CODEOPS_SESSION_PROOF_NAMESPACE_RECEIPT=/absolute/path/codeops-session-proof-video-1.namespace-create-receipt.json \
+CODEOPS_SESSION_PROOF_STEP_AUTHORIZATION=/absolute/path/codeops-session-proof-video-1.step-02-issue-broker-capabilities.authorization.json \
   node infra/scripts/run-codeops-session-proof-first-step-authorization.mjs
 ```
+
+The exact authorization is exclusively written beside the other operator
+artifacts as a mode-`0600` file, fsynced with its parent, and refused if its
+Namespace-derived path already exists or is substituted. No credential issuer
+is imported or invoked by this persistence boundary.
 
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
