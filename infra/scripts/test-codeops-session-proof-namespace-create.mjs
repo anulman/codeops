@@ -3805,10 +3805,24 @@ test("authorizes only Codex smoke completion from exact persisted replacement ou
     const stub = runner();
     const { receipt } = await persistThroughCodexSmokeReplacementOutputs(inputs, stub);
     const callCount = stub.calls.length;
-    const authorization = authorizeTwelfthSessionProofStepFromOperatorPacket({
+    const closedStub = runner(true);
+    assert.throws(() => persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      twelfthAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T06:34:00Z",
+    }, closedStub.execute), /derive exactly/);
+    assert.equal(closedStub.calls.length, 0);
+    assert.throws(() => readTwelfthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      twelfthAuthorizationPath: join(root, "substituted.authorization.json"),
+    }, closedStub.execute), /derive exactly/);
+    assert.equal(closedStub.calls.length, 0);
+
+    const persisted = persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
       ...inputs,
       observedAt: "2026-08-05T06:34:00Z",
     }, stub.execute);
+    const authorization = persisted;
     assert.equal(authorization.stepIndex, 13);
     assert.equal(authorization.stepId, "wait-codex-smoke");
     assert.equal(authorization.action, "operator-wait-complete");
@@ -3822,20 +3836,6 @@ test("authorizes only Codex smoke completion from exact persisted replacement ou
       stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")),
       false,
     );
-
-    const closedStub = runner(true);
-    assert.throws(() => persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
-      ...inputs,
-      twelfthAuthorizationPath: join(root, "substituted.authorization.json"),
-      observedAt: "2026-08-05T06:34:00Z",
-    }, closedStub.execute), /derive exactly/);
-    assert.equal(closedStub.calls.length, 0);
-
-    const persisted = persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
-      ...inputs,
-      observedAt: "2026-08-05T06:34:00Z",
-    }, stub.execute);
-    assert.deepEqual(persisted, authorization);
     assert.equal(statSync(inputs.twelfthAuthorizationPath).mode & 0o777, 0o600);
     assert.deepEqual(
       JSON.parse(readFileSync(inputs.twelfthAuthorizationPath, "utf8")),

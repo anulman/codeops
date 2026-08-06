@@ -178,14 +178,14 @@ export function readTwelfthSessionProofStepAuthorizationFromOperatorPacket(
   input,
   runner = execFileSync,
 ) {
-  const outputs = readSessionProofCodexSmokeReplacementOutputsFromOperatorPacket(
-    input,
-    runner,
-  );
+  const packetName = basename(input.packetPath ?? "");
+  const namespace = packetName.endsWith(".packet")
+    ? packetName.slice(0, -".packet".length)
+    : "";
   assertAuthorizationPath(
     input.twelfthAuthorizationPath,
     input.packetPath,
-    outputs.creationReceipt.namespace.name,
+    namespace,
     false,
   );
   const authorizationBytes = readPrivateAuthorization(input.twelfthAuthorizationPath);
@@ -199,6 +199,9 @@ export function readTwelfthSessionProofStepAuthorizationFromOperatorPacket(
     ...input,
     observedAt: authorization.authorizedAt,
   }, runner);
+  if (expected.namespace.name !== namespace) {
+    throw new Error("proof twelfth-step authorization Namespace drifted from the operator packet path");
+  }
   const expectedSource = `${JSON.stringify(expected, null, 2)}\n`;
   if (!authorizationBytes.equals(Buffer.from(expectedSource))) {
     throw new Error("proof twelfth-step authorization is not the exact persisted artifact");
