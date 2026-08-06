@@ -30,7 +30,10 @@ const adapters = {
     "./codeops-session-proof-operator-gateway-wait.mjs",
     "persistSessionProofGatewayMigrationWaitFromOperatorPacket",
   ],
-  "grant-receipts": ["./codeops-session-proof-grant-apply.mjs", "applySessionProofGrants"],
+  "grant-receipts": [
+    "./codeops-session-proof-operator-grant-apply.mjs",
+    "applySessionProofGrantsFromOperatorPacket",
+  ],
   "wait-grants": ["./codeops-session-proof-grant-wait.mjs", "waitForSessionProofGrants"],
   "codex-login": ["./codeops-session-proof-codex-login-apply.mjs", "applySessionProofCodexLogin"],
   "wait-codex-login": ["./codeops-session-proof-codex-login-wait.mjs", "waitForSessionProofCodexLogin"],

@@ -69,6 +69,9 @@ import {
   persistSeventhSessionProofStepAuthorizationFromOperatorPacket,
   readSeventhSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-grant-step-authorization.mjs";
+import {
+  applySessionProofGrantsFromOperatorPacket,
+} from "./codeops-session-proof-operator-grant-apply.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
   authorizeFirstSessionProofStepFromOperatorPacket,
@@ -2238,6 +2241,71 @@ test("rejects a substituted or existing receipt-grant authorization before live 
       observedAt: "2026-08-05T06:19:00Z",
     }, stub.execute), /already exists/);
     assert.equal(stub.calls.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hands only the exact persisted receipt-grant authorization and reviewed manifest to the adapter", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGatewayWaitOutputs(inputs, stub);
+    const authorization = persistSeventhSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:19:00Z",
+    }, stub.execute);
+    const createCalls = stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length;
+    let received;
+    const result = applySessionProofGrantsFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:20:00Z",
+      completedAt: "2026-08-05T06:21:00Z",
+    }, stub.execute, (input, runnerArgument) => {
+      received = input;
+      assert.equal(runnerArgument, stub.execute);
+      return { accepted: true };
+    });
+    assert.deepEqual(result, { accepted: true });
+    assert.deepEqual(received, {
+      authorization,
+      manifestSource: "synthetic-grants-artifact\n",
+      startedAt: "2026-08-05T06:20:00Z",
+      completedAt: "2026-08-05T06:21:00Z",
+    });
+    assert.equal(stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length, createCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persisted receipt-grant authorization drift fails before the adapter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGatewayWaitOutputs(inputs, stub);
+    persistSeventhSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:19:00Z",
+    }, stub.execute);
+    const authorization = JSON.parse(readFileSync(inputs.seventhAuthorizationPath, "utf8"));
+    writeFileSync(inputs.seventhAuthorizationPath, `${JSON.stringify({
+      ...authorization,
+      action: "operator-wait-complete",
+    }, null, 2)}\n`, { mode: 0o600 });
+    let adapterCalls = 0;
+    assert.throws(() => applySessionProofGrantsFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:20:00Z",
+      completedAt: "2026-08-05T06:21:00Z",
+    }, stub.execute, () => {
+      adapterCalls += 1;
+    }), /exact persisted artifact/);
+    assert.equal(adapterCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

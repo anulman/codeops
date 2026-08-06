@@ -90,6 +90,13 @@ test("wires every closed proof step and exact byte source without invoking an ad
       export: "persistSessionProofGatewayMigrationWaitFromOperatorPacket",
     },
   );
+  assert.deepEqual(
+    result.steps.find((step) => step.stepId === "grant-receipts").adapter,
+    {
+      module: "./codeops-session-proof-operator-grant-apply.mjs",
+      export: "applySessionProofGrantsFromOperatorPacket",
+    },
+  );
   assert.deepEqual(result.finalOutputs, ["receipt:verify-teardown", "evidence:verify-teardown"]);
 });
 

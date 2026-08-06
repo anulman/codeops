@@ -853,6 +853,14 @@ the private gateway-readiness chain on readback. A substituted or existing
 target fails before live access. It imports and invokes no grant adapter and
 remains unreferenced by runners and workflows.
 
+The create-only grant handoff then reconstructs that exact private
+authorization, re-verifies its gateway-readiness predecessor chain, and reads
+the reviewed grants manifest bytes from the immutable operator packet before
+passing only those values plus bounded execution timestamps to the existing
+grant adapter. Authorization or artifact drift fails before the adapter can be
+reached. The itinerary names this operator boundary, but no runner or workflow
+invokes it.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
