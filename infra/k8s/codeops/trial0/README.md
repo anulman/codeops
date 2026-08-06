@@ -973,6 +973,13 @@ authorizes only the reviewed `codex-smoke` replacement artifact. It persists no
 authorization, imports or invokes no replacement adapter, and remains unwired
 to every runner and workflow.
 
+Its durable boundary requires the exact absent Namespace-derived adjacent
+step-12 authorization path before any live read, exclusively creates the
+artifact as mode `0600`, fsyncs and identity-checks its bytes and parent, and
+reconstructs its exact canonical meaning from the private login-completion
+chain on readback. It imports and invokes no replacement adapter and remains
+unwired to every runner and workflow.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
