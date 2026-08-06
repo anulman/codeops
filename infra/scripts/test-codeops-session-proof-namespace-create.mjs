@@ -36,6 +36,8 @@ import {
 } from "./codeops-session-proof-operator-database-apply.mjs";
 import {
   authorizeFourthSessionProofStepFromOperatorPacket,
+  persistFourthSessionProofStepAuthorizationFromOperatorPacket,
+  readFourthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-database-wait-authorization.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
@@ -161,6 +163,10 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-04-start-database.receipt.json`,
   );
+  const fourthAuthorizationPath = join(
+    root,
+    `${identity.namespace}.step-05-wait-database.authorization.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -183,6 +189,7 @@ function persistOperatorInputs(root) {
     thirdAuthorizationPath,
     thirdEvidencePath,
     thirdStepReceiptPath,
+    fourthAuthorizationPath,
   };
 }
 
@@ -1180,6 +1187,59 @@ test("database apply evidence drift fails before database readiness authorizatio
       ...inputs,
       observedAt: "2026-08-05T06:10:00Z",
     }, stub.execute), /evidence|receipt/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persists the exact private database-readiness authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughDatabaseOutputs(inputs, stub);
+    const createCalls = stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length;
+    const authorization = persistFourthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:10:00Z",
+    }, stub.execute);
+    assert.equal(statSync(inputs.fourthAuthorizationPath).mode & 0o777, 0o600);
+    assert.deepEqual(
+      JSON.parse(readFileSync(inputs.fourthAuthorizationPath, "utf8")),
+      authorization,
+    );
+    assert.deepEqual(
+      readFourthSessionProofStepAuthorizationFromOperatorPacket(inputs, stub.execute)
+        .authorization,
+      authorization,
+    );
+    assert.equal(stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length, createCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a substituted or existing database-readiness authorization before live reads", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const setup = runner();
+    persistThroughDatabaseOutputs(inputs, setup);
+    const stub = runner(true);
+    assert.throws(() => persistFourthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      fourthAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T06:10:00Z",
+    }, stub.execute), /derive exactly/);
+    assert.equal(stub.calls.length, 0);
+    writeFileSync(inputs.fourthAuthorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistFourthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:10:00Z",
+    }, stub.execute), /already exists/);
+    assert.equal(stub.calls.length, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

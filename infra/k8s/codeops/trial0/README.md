@@ -745,6 +745,14 @@ Only `wait-database` can then be authorized, with no manifest input. This
 handoff neither persists the readiness authorization nor invokes the bounded
 waiter, and it remains unreferenced by runners and workflows.
 
+The matching persistence boundary exclusively creates the exact
+Namespace-derived adjacent mode-`0600`
+`step-05-wait-database.authorization.json`, fsyncs and identity-checks its
+bytes and parent, and reconstructs the exact authorization from the private
+database apply chain on readback. A substituted or existing target fails before
+live reads. It imports and invokes no readiness waiter and remains unreferenced
+by runners and workflows.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
