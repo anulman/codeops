@@ -51,6 +51,8 @@ import {
 } from "./codeops-session-proof-operator-gateway-step-authorization.mjs";
 import {
   applySessionProofGatewayFromOperatorPacket,
+  persistSessionProofGatewayApplyFromOperatorPacket,
+  readSessionProofGatewayApplyOutputsFromOperatorPacket,
 } from "./codeops-session-proof-operator-gateway-apply.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
@@ -193,6 +195,14 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-06-start-gateway.authorization.json`,
   );
+  const fifthEvidencePath = join(
+    root,
+    `${identity.namespace}.step-06-start-gateway.evidence.json`,
+  );
+  const fifthStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-06-start-gateway.receipt.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -219,6 +229,8 @@ function persistOperatorInputs(root) {
     fourthEvidencePath,
     fourthStepReceiptPath,
     fifthAuthorizationPath,
+    fifthEvidencePath,
+    fifthStepReceiptPath,
   };
 }
 
@@ -1659,6 +1671,86 @@ test("gateway authorization drift fails before the apply adapter is reached", ()
     }, stub.execute, () => {
       applyCalls += 1;
     }), /exact persisted artifact/);
+    assert.equal(applyCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durably persists the exact gateway apply evidence and completion receipt", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const authorization = persistThroughGatewayAuthorization(inputs, stub);
+    const completedAt = "2026-08-05T06:15:00Z";
+    const evidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+      authorization,
+      observedAt: completedAt,
+      resources: sessionProofApplyResourceIdentities("start-gateway").map((resource, index) => ({
+        ...resource,
+        uid: `gateway-resource-uid-${index}`,
+      })),
+    }));
+    const receipt = completeSessionProofStep(authorization, {
+      namespaceResource: namespace(),
+      operator,
+      target,
+      completedAt,
+      evidenceSource,
+    });
+    let applyCalls = 0;
+    const result = persistSessionProofGatewayApplyFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:14:00Z",
+      completedAt,
+    }, stub.execute, (received, runnerArgument) => {
+      applyCalls += 1;
+      assert.deepEqual(received.authorization, authorization);
+      assert.equal(runnerArgument, stub.execute);
+      assert.equal(statSync(inputs.fifthEvidencePath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.fifthStepReceiptPath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.fifthEvidencePath).size, 0);
+      assert.equal(statSync(inputs.fifthStepReceiptPath).size, 0);
+      return { evidenceSource, receipt };
+    });
+    assert.equal(applyCalls, 1);
+    assert.equal(readFileSync(inputs.fifthEvidencePath, "utf8"), evidenceSource);
+    assert.equal(readFileSync(inputs.fifthStepReceiptPath, "utf8"), result.receiptSource);
+    assert.equal(result.receipt.evidenceSha256,
+      createHash("sha256").update(readFileSync(inputs.fifthEvidencePath)).digest("hex"));
+    const reopened = readSessionProofGatewayApplyOutputsFromOperatorPacket(inputs, stub.execute);
+    assert.equal(reopened.fifthEvidenceSource, evidenceSource);
+    assert.equal(reopened.fifthStepReceiptSource, result.receiptSource);
+    assert.deepEqual(reopened.fifthAuthorization, authorization);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reserves exact gateway output paths before the apply adapter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGatewayAuthorization(inputs, stub);
+    let applyCalls = 0;
+    const apply = () => {
+      applyCalls += 1;
+      return { evidenceSource: "{}", receipt: {} };
+    };
+    assert.throws(() => persistSessionProofGatewayApplyFromOperatorPacket({
+      ...inputs,
+      fifthEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:14:00Z",
+      completedAt: "2026-08-05T06:15:00Z",
+    }, stub.execute, apply), /derive exactly/);
+    writeFileSync(inputs.fifthStepReceiptPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSessionProofGatewayApplyFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:14:00Z",
+      completedAt: "2026-08-05T06:15:00Z",
+    }, stub.execute, apply), /already exists/);
     assert.equal(applyCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });

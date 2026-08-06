@@ -798,6 +798,15 @@ predecessor, permission, identity, or manifest drift fails before the apply
 adapter can be reached. The closed itinerary names this exact operator adapter,
 but no runner or workflow invokes it.
 
+The matching persistence boundary exclusively reserves the exact adjacent
+mode-`0600` gateway evidence and completion-receipt outputs and fsyncs their
+parent before the apply adapter can be reached. After success it fsyncs and
+identity-checks the specialized four-resource evidence and its hash-bound
+canonical receipt. Readback reconstructs the exact receipt from the private
+authorization, live identity, and persisted evidence. Existing or substituted
+outputs and interrupted writes fail closed. The itinerary names this boundary,
+but no runner or workflow invokes it.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
