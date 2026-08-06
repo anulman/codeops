@@ -693,6 +693,15 @@ runtime issuer. Authorization, predecessor, permission, identity, or input-path
 drift fails before the credential script can be reached. This adapter remains
 unreferenced by runners and workflows.
 
+Its durable output boundary exclusively reserves the exact Namespace-derived
+adjacent mode-`0600` step-3 evidence and completion-receipt files and fsyncs
+their parent before issuance. After success it fsyncs the metadata-only evidence
+bytes, then the canonical receipt whose `evidenceSha256` binds those bytes,
+identity-checks both open files, and fsyncs the parent again. Existing or
+substituted outputs fail before credential issuance. Interruption leaves the
+private reserved outputs for explicit operator reconciliation, and the boundary
+remains unreferenced by runners and workflows.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
