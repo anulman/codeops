@@ -113,7 +113,7 @@ function writePrivateAuthorization(path, source) {
   }
 }
 
-export function authorizeTwelfthSessionProofStepFromOperatorPacket(
+function buildTwelfthSessionProofStepAuthorizationFromOperatorPacket(
   input,
   runner = execFileSync,
 ) {
@@ -126,7 +126,7 @@ export function authorizeTwelfthSessionProofStepFromOperatorPacket(
     outputs.creationReceipt.namespace.name,
     runner,
   );
-  return authorizeSessionProofStep({
+  const authorization = authorizeSessionProofStep({
     planSource: outputs.planSource,
     creationReceiptSource: outputs.creationReceiptSource,
     priorReceiptSources: [
@@ -147,6 +147,15 @@ export function authorizeTwelfthSessionProofStepFromOperatorPacket(
     target,
     observedAt: input.observedAt,
   });
+  return { authorization, replacementOutputs: outputs };
+}
+
+export function authorizeTwelfthSessionProofStepFromOperatorPacket(
+  input,
+  runner = execFileSync,
+) {
+  return buildTwelfthSessionProofStepAuthorizationFromOperatorPacket(input, runner)
+    .authorization;
 }
 
 export function persistTwelfthSessionProofStepAuthorizationFromOperatorPacket(
@@ -163,7 +172,10 @@ export function persistTwelfthSessionProofStepAuthorizationFromOperatorPacket(
     namespace,
     true,
   );
-  const authorization = authorizeTwelfthSessionProofStepFromOperatorPacket(input, runner);
+  const { authorization } = buildTwelfthSessionProofStepAuthorizationFromOperatorPacket(
+    input,
+    runner,
+  );
   if (authorization.namespace.name !== namespace) {
     throw new Error("proof twelfth-step authorization Namespace drifted from the operator packet path");
   }
@@ -195,10 +207,11 @@ export function readTwelfthSessionProofStepAuthorizationFromOperatorPacket(
   } catch {
     throw new Error("proof twelfth-step authorization must be valid JSON");
   }
-  const expected = authorizeTwelfthSessionProofStepFromOperatorPacket({
-    ...input,
-    observedAt: authorization.authorizedAt,
-  }, runner);
+  const { authorization: expected, replacementOutputs } =
+    buildTwelfthSessionProofStepAuthorizationFromOperatorPacket({
+      ...input,
+      observedAt: authorization.authorizedAt,
+    }, runner);
   if (expected.namespace.name !== namespace) {
     throw new Error("proof twelfth-step authorization Namespace drifted from the operator packet path");
   }
@@ -206,5 +219,9 @@ export function readTwelfthSessionProofStepAuthorizationFromOperatorPacket(
   if (!authorizationBytes.equals(Buffer.from(expectedSource))) {
     throw new Error("proof twelfth-step authorization is not the exact persisted artifact");
   }
-  return { authorization: expected, authorizationSource: expectedSource };
+  return {
+    authorization: expected,
+    authorizationSource: expectedSource,
+    replacementOutputs,
+  };
 }

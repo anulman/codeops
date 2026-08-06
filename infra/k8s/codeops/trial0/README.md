@@ -358,6 +358,13 @@ checks its bytes and parent, and reconstructs its exact meaning from the private
 replacement chain on readback. Substituted or occupied targets fail before live
 access. It imports and invokes no waiter and remains unwired to every runner and
 workflow. The separate
+bounded-waiter handoff reopens and reconstructs that exact private
+authorization together with the already-verified replacement outputs, then
+passes only those exact predecessor bytes plus reviewed polling bounds and
+bounded execution timestamps to the existing smoke waiter. Authorization or
+replacement drift fails before the waiter can be reached. The handoff remains
+unwired to every runner and workflow, and tests exercise it only through an
+injected waiter, so it performs no live Job reads. The separate
 `wait-codex-smoke` completion contract and concrete but uninvoked
 waiter now bind the exact replacement receipt/evidence chain to the same
 create-only smoke Job UID at generation 1, the same bound non-deleting
