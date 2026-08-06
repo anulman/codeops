@@ -641,6 +641,17 @@ artifacts as a mode-`0600` file, fsynced with its parent, and refused if its
 Namespace-derived path already exists or is substituted. No credential issuer
 is imported or invoked by this persistence boundary.
 
+The broker-credential adapter consumes that handoff only through
+`issueFirstSessionProofCredentialsFromOperatorPacket`. Before reaching the
+issuer, it re-verifies the immutable packet, admission, and exact private
+creation receipt; requires the adjacent Namespace-derived authorization path;
+reopens the mode-`0600` authorization through a no-follow descriptor with
+stable file identity; and reconstructs the exact canonical authorization from
+the live principal, target, Namespace UID, and authorization time. Substituted,
+permission-weakened, non-canonical, or semantically drifted authorization bytes
+fail before the credential script. The closed itinerary names this exact
+operator-packet adapter, but no workflow or runner invokes it.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
@@ -686,13 +697,15 @@ artifact. The receipt and evidence modules deliberately have no Kubernetes or
 credential mutation path. The first concrete—but not automatically
 invoked—adapter is
 `infra/scripts/codeops-session-proof-credential-issuer.mjs`. It accepts only
-the exact next credential-issuance authorization, repeats the live
-operator/target/Namespace-UID check before calling the existing create-only
-issuer, reads only UID/type/label/data-key metadata through a value-free
-`kubectl` template, repeats the live check after issuance, and only then returns
-the evidence bytes and completed receipt. Authorization drift and timestamp
-reordering fail before mutation; post-issuance Namespace replacement withholds
-the receipt. The matching terminal adapter is
+the exact persisted first-step authorization through the operator-packet
+handoff above (or, for the later runtime-credential step, the exact next
+receipt-chain authorization), repeats the live operator/target/Namespace-UID
+check before calling the existing create-only issuer, reads only
+UID/type/label/data-key metadata through a value-free `kubectl` template,
+repeats the live check after issuance, and only then returns the evidence bytes
+and completed receipt. Authorization drift and timestamp reordering fail before
+mutation; post-issuance Namespace replacement withholds the receipt. The
+matching terminal adapter is
 `infra/scripts/codeops-session-proof-credential-revoker.mjs`. It verifies the
 complete predecessor chain and the two evidence artifacts hashed by the
 original issuance receipts, recovers exactly the nine issued Secret UIDs, and

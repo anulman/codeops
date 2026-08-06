@@ -5,6 +5,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { createSessionProofAdmission } from "./codeops-session-proof-admission.mjs";
+import {
+  issueFirstSessionProofCredentialsFromOperatorPacket,
+} from "./codeops-session-proof-credential-issuer.mjs";
 import { createSessionProofNamespace } from "./codeops-session-proof-namespace-create.mjs";
 import { attachSessionProofOperatorAdmission } from "./codeops-session-proof-operator-admission.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
@@ -55,6 +58,15 @@ const admission = createSessionProofAdmission({
   approvedAt: "2026-08-05T05:00:00Z",
   expiresAt: "2026-08-05T08:00:00Z",
 });
+const brokerContracts = {
+  "codeops-session-proof-database-owner": ["database", "password", "username"],
+  "codeops-session-broker-database": ["database-url"],
+  "codeops-session-broker-read-auth": ["token"],
+  "codeops-session-broker-write-auth": ["token"],
+  "codeops-session-runtime-worker-auth": ["token"],
+  "codeops-session-job-initialization-auth": ["token"],
+  "codeops-session-runtime-worker-database": ["database-url", "password"],
+};
 
 function persistOperatorInputs(root) {
   const artifactSources = Object.fromEntries(artifactIds.map((id) => [
@@ -109,10 +121,32 @@ function namespace() {
 
 function runner(initiallyPresent = false, failCreateAfterNamespace = false) {
   let created = initiallyPresent;
+  let issued = false;
   const calls = [];
-  const execute = (_file, args, options = {}) => {
-    calls.push({ args, options });
+  const execute = (file, args, options = {}) => {
+    calls.push({ file, args, options });
     const key = args.join(" ");
+    if (file.endsWith("issue-codeops-session-proof-secrets.sh")) {
+      issued = true;
+      return "issued\n";
+    }
+    if (
+      file === "kubectl" &&
+      args[0] === "-n" &&
+      args[2] === "get" &&
+      args[3] === "secret"
+    ) {
+      assert.equal(issued, true);
+      const name = args[4];
+      return [
+        `secret-uid-${name}`,
+        "Opaque",
+        "codeops-session-proof",
+        "session-video-proof",
+        ...brokerContracts[name],
+        "",
+      ].join("\n");
+    }
     if (key === "config current-context") return `${target.context}\n`;
     if (key === "config view --minify -o json") {
       return JSON.stringify({ clusters: [{ cluster: { server: target.server } }] });
@@ -277,6 +311,68 @@ test("authorizes only the first intermediate step from the exact persisted opera
     assert.equal(
       stub.calls.filter(({ args }) => args[0] === "create").length,
       mutationCount,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the broker issuer consumes only the exact persisted first-step authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute);
+    const result = issueFirstSessionProofCredentialsFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, stub.execute);
+    assert.equal(result.receipt.stepId, "issue-broker-capabilities");
+    assert.equal(result.receipt.previousReceiptSha256,
+      createHash("sha256").update(readFileSync(inputs.receiptPath)).digest("hex"));
+    assert.equal(
+      stub.calls.filter(({ file }) => file.endsWith("issue-codeops-session-proof-secrets.sh")).length,
+      1,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("authorization drift fails before the broker issuer is invoked", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute);
+    const authorization = JSON.parse(readFileSync(inputs.authorizationPath, "utf8"));
+    writeFileSync(inputs.authorizationPath, `${JSON.stringify({
+      ...authorization,
+      action: "operator-apply",
+    }, null, 2)}\n`);
+    assert.throws(() => issueFirstSessionProofCredentialsFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, stub.execute), /exact persisted artifact/);
+    assert.equal(
+      stub.calls.some(({ file }) => file.endsWith("issue-codeops-session-proof-secrets.sh")),
+      false,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

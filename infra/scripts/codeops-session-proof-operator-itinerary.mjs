@@ -6,7 +6,10 @@ const PLAN_VERSION = "codeops.renoconcierge.ca/session-proof-plan/v1";
 
 const adapters = {
   "create-namespace": ["./codeops-session-proof-namespace-create.mjs", "createSessionProofNamespace"],
-  "issue-broker-capabilities": ["./codeops-session-proof-credential-issuer.mjs", "issueSessionProofCredentials"],
+  "issue-broker-capabilities": [
+    "./codeops-session-proof-credential-issuer.mjs",
+    "issueFirstSessionProofCredentialsFromOperatorPacket",
+  ],
   "issue-runtime-capabilities": ["./codeops-session-proof-credential-issuer.mjs", "issueSessionProofCredentials"],
   "start-database": ["./codeops-session-proof-database-apply.mjs", "applySessionProofDatabase"],
   "wait-database": ["./codeops-session-proof-database-wait.mjs", "waitForSessionProofDatabase"],

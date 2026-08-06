@@ -11,6 +11,9 @@ import {
   readSessionProofKubeContext,
   readSessionProofNamespace,
 } from "./codeops-session-proof-preflight.mjs";
+import {
+  readFirstSessionProofStepAuthorizationFromOperatorPacket,
+} from "./codeops-session-proof-operator-step-authorization.mjs";
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const COMMAND_TIMEOUT_MS = 2 * 60 * 1000;
@@ -149,4 +152,19 @@ export function issueSessionProofCredentials(input, runner = execFileSync) {
     evidenceSource,
   });
   return { evidenceSource, receipt };
+}
+
+export function issueFirstSessionProofCredentialsFromOperatorPacket(
+  input,
+  runner = execFileSync,
+) {
+  const { authorization } = readFirstSessionProofStepAuthorizationFromOperatorPacket(
+    input,
+    runner,
+  );
+  return issueSessionProofCredentials({
+    authorization,
+    startedAt: input.startedAt,
+    completedAt: input.completedAt,
+  }, runner);
 }
