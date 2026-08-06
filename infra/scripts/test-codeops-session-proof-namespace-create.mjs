@@ -76,6 +76,8 @@ import {
 } from "./codeops-session-proof-operator-grant-apply.mjs";
 import {
   authorizeEighthSessionProofStepFromOperatorPacket,
+  persistEighthSessionProofStepAuthorizationFromOperatorPacket,
+  readEighthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-grant-wait-authorization.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
@@ -254,6 +256,10 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-08-grant-receipts.receipt.json`,
   );
+  const eighthAuthorizationPath = join(
+    root,
+    `${identity.namespace}.step-09-wait-grants.authorization.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -288,6 +294,7 @@ function persistOperatorInputs(root) {
     seventhAuthorizationPath,
     seventhEvidencePath,
     seventhStepReceiptPath,
+    eighthAuthorizationPath,
   };
 }
 
@@ -2482,6 +2489,54 @@ test("grant apply evidence drift fails before grant completion authorization", (
       observedAt: "2026-08-05T06:22:00Z",
     }, stub.execute), /evidence|receipt/);
     assert.equal(stub.calls.slice(callCount).some(({ args }) => args.includes("job")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persists the exact private grant-completion authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGrantOutputs(inputs, stub);
+    const authorization = persistEighthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:22:00Z",
+    }, stub.execute);
+    assert.equal(statSync(inputs.eighthAuthorizationPath).mode & 0o777, 0o600);
+    assert.deepEqual(
+      JSON.parse(readFileSync(inputs.eighthAuthorizationPath, "utf8")),
+      authorization,
+    );
+    assert.deepEqual(
+      readEighthSessionProofStepAuthorizationFromOperatorPacket(inputs, stub.execute).authorization,
+      authorization,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a substituted or existing grant-completion authorization before live reads", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    persistThroughGrantOutputs(inputs, runner());
+    const stub = runner(true);
+    assert.throws(() => persistEighthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      eighthAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T06:22:00Z",
+    }, stub.execute), /derive exactly/);
+    assert.equal(stub.calls.length, 0);
+
+    writeFileSync(inputs.eighthAuthorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistEighthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:22:00Z",
+    }, stub.execute), /already exists/);
+    assert.equal(stub.calls.length, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -877,6 +877,14 @@ hash chain against the live principal, target, and Namespace UID, and
 authorizes only the no-artifact `wait-grants` completion step. It persists no
 authorization, invokes no waiter, and remains referenced only by focused tests.
 
+Its persistence boundary requires the exact adjacent absent Namespace-derived
+`step-09-wait-grants.authorization.json` path before live reads, then
+exclusively creates the canonical authorization as mode `0600`, fsyncs and
+identity-checks its bytes and parent, and reconstructs the exact artifact from
+the private grant apply chain on readback. A substituted or existing target
+fails before live access. It imports and invokes no waiter and remains
+unreferenced by runners and workflows.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
