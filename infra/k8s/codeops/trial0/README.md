@@ -790,6 +790,14 @@ database-readiness chain on readback. A substituted or existing target fails
 before live reads. It imports and invokes no gateway apply adapter and remains
 unreferenced by runners and workflows.
 
+The gateway-apply handoff then reopens and reconstructs that exact private
+authorization, reads the reviewed gateway manifest bytes only from the
+immutable operator packet, and passes only those values plus bounded execution
+timestamps to the existing create-only apply adapter. Authorization,
+predecessor, permission, identity, or manifest drift fails before the apply
+adapter can be reached. The closed itinerary names this exact operator adapter,
+but no runner or workflow invokes it.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
