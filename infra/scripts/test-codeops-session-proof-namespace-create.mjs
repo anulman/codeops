@@ -3843,6 +3843,19 @@ test("authorizes only Codex smoke completion from exact persisted replacement ou
       twelfthAuthorizationPath: join(root, "substituted.authorization.json"),
     }, closedStub.execute), /derive exactly/);
     assert.equal(closedStub.calls.length, 0);
+    let substitutedWaiterCalls = 0;
+    assert.throws(() => waitForSessionProofCodexSmokeFromOperatorPacket({
+      ...inputs,
+      twelfthAuthorizationPath: join(root, "substituted.authorization.json"),
+      startedAt: "2026-08-05T06:35:00Z",
+      completedAt: "2026-08-05T06:36:00Z",
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, closedStub.execute, () => {
+      substitutedWaiterCalls += 1;
+    }), /derive exactly/);
+    assert.equal(substitutedWaiterCalls, 0);
+    assert.equal(closedStub.calls.length, 0);
 
     const persisted = persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
       ...inputs,
@@ -3867,11 +3880,48 @@ test("authorizes only Codex smoke completion from exact persisted replacement ou
       JSON.parse(readFileSync(inputs.twelfthAuthorizationPath, "utf8")),
       authorization,
     );
-    assert.deepEqual(
-      readTwelfthSessionProofStepAuthorizationFromOperatorPacket(inputs, stub.execute)
-        .authorization,
+    let received;
+    const waitResult = waitForSessionProofCodexSmokeFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:35:00Z",
+      completedAt: "2026-08-05T06:36:00Z",
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, stub.execute, (input, runnerArgument) => {
+      received = input;
+      assert.equal(runnerArgument, stub.execute);
+      return { accepted: true };
+    });
+    assert.deepEqual(waitResult, { accepted: true });
+    assert.deepEqual(received, {
       authorization,
-    );
+      smokeReplacementReceiptSource: readFileSync(inputs.eleventhStepReceiptPath, "utf8"),
+      smokeReplacementEvidenceSource: readFileSync(inputs.eleventhEvidencePath, "utf8"),
+      startedAt: "2026-08-05T06:35:00Z",
+      completedAt: "2026-08-05T06:36:00Z",
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    });
+    const authorizationSource = readFileSync(inputs.twelfthAuthorizationPath, "utf8");
+    writeFileSync(inputs.twelfthAuthorizationPath, `${JSON.stringify({
+      ...authorization,
+      action: "operator-apply",
+    }, null, 2)}\n`, { mode: 0o600 });
+    let driftedWaiterCalls = 0;
+    const beforeAuthorizationDrift = stub.calls.length;
+    assert.throws(() => waitForSessionProofCodexSmokeFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:35:00Z",
+      completedAt: "2026-08-05T06:36:00Z",
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, stub.execute, () => {
+      driftedWaiterCalls += 1;
+    }), /authorization drifted/);
+    assert.equal(driftedWaiterCalls, 0);
+    assert.equal(stub.calls.length, beforeAuthorizationDrift);
+    writeFileSync(inputs.twelfthAuthorizationPath, authorizationSource, { mode: 0o600 });
+
     const beforeOccupied = stub.calls.length;
     assert.throws(() => persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
       ...inputs,
@@ -3890,64 +3940,6 @@ test("authorizes only Codex smoke completion from exact persisted replacement ou
       stub.calls.slice(driftCallCount).some(({ args }) => args.includes("job.batch")),
       false,
     );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("hands only the exact persisted Codex-smoke authorization and replacement outputs to the waiter", async () => {
-  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
-  try {
-    const inputs = persistOperatorInputs(root);
-    const stub = runner();
-    await persistThroughCodexSmokeReplacementOutputs(inputs, stub);
-    const authorization = persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
-      ...inputs,
-      observedAt: "2026-08-05T06:34:00Z",
-    }, stub.execute);
-    const callCount = stub.calls.length;
-    let received;
-    const result = waitForSessionProofCodexSmokeFromOperatorPacket({
-      ...inputs,
-      startedAt: "2026-08-05T06:35:00Z",
-      completedAt: "2026-08-05T06:36:00Z",
-      maxAttempts: 96,
-      pollIntervalMs: 10_000,
-    }, stub.execute, (input, runnerArgument) => {
-      received = input;
-      assert.equal(runnerArgument, stub.execute);
-      return { accepted: true };
-    });
-    assert.deepEqual(result, { accepted: true });
-    assert.deepEqual(received, {
-      authorization,
-      smokeReplacementReceiptSource: readFileSync(inputs.eleventhStepReceiptPath, "utf8"),
-      smokeReplacementEvidenceSource: readFileSync(inputs.eleventhEvidencePath, "utf8"),
-      startedAt: "2026-08-05T06:35:00Z",
-      completedAt: "2026-08-05T06:36:00Z",
-      maxAttempts: 96,
-      pollIntervalMs: 10_000,
-    });
-    assert.equal(
-      stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")),
-      false,
-    );
-
-    writeFileSync(inputs.twelfthAuthorizationPath, `${JSON.stringify({
-      ...authorization,
-      action: "operator-apply",
-    }, null, 2)}\n`, { mode: 0o600 });
-    let waiterCalls = 0;
-    assert.throws(() => waitForSessionProofCodexSmokeFromOperatorPacket({
-      ...inputs,
-      startedAt: "2026-08-05T06:35:00Z",
-      completedAt: "2026-08-05T06:36:00Z",
-      maxAttempts: 96,
-      pollIntervalMs: 10_000,
-    }, stub.execute, () => {
-      waiterCalls += 1;
-    }), /exact persisted artifact/);
-    assert.equal(waiterCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

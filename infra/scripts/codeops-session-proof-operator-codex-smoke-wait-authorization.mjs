@@ -18,7 +18,10 @@ import {
   readSessionProofKubeContext,
   readSessionProofNamespace,
 } from "./codeops-session-proof-preflight.mjs";
-import { authorizeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
+import {
+  authorizeSessionProofStep,
+  verifySessionProofStepAuthorization,
+} from "./codeops-session-proof-step-receipts.mjs";
 
 function assertAuthorizationPath(path, packetPath, namespace, mustBeAbsent) {
   if (!isAbsolute(path ?? "") || resolve(path) !== path) {
@@ -207,6 +210,7 @@ export function readTwelfthSessionProofStepAuthorizationFromOperatorPacket(
   } catch {
     throw new Error("proof twelfth-step authorization must be valid JSON");
   }
+  verifySessionProofStepAuthorization(authorization);
   const { authorization: expected, replacementOutputs } =
     buildTwelfthSessionProofStepAuthorizationFromOperatorPacket({
       ...input,
