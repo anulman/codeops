@@ -6,6 +6,10 @@ import { join } from "node:path";
 import test from "node:test";
 import { createSessionProofAdmission } from "./codeops-session-proof-admission.mjs";
 import {
+  buildSessionProofApplyEvidence,
+  sessionProofApplyResourceIdentities,
+} from "./codeops-session-proof-apply-evidence.mjs";
+import {
   issueFirstSessionProofCredentialsFromOperatorPacket,
 } from "./codeops-session-proof-credential-issuer.mjs";
 import { createSessionProofNamespace } from "./codeops-session-proof-namespace-create.mjs";
@@ -30,6 +34,9 @@ import {
   applySessionProofDatabaseFromOperatorPacket,
   persistSessionProofDatabaseApplyFromOperatorPacket,
 } from "./codeops-session-proof-operator-database-apply.mjs";
+import {
+  authorizeFourthSessionProofStepFromOperatorPacket,
+} from "./codeops-session-proof-operator-database-wait-authorization.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
   authorizeFirstSessionProofStepFromOperatorPacket,
@@ -37,6 +44,7 @@ import {
 } from "./codeops-session-proof-operator-step-authorization.mjs";
 import { persistSessionProofOperatorPacket } from "./codeops-session-proof-operator-packet.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
+import { completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 
 const identity = {
   namespace: "codeops-session-proof-video-1",
@@ -284,6 +292,32 @@ function persistThroughDatabaseAuthorization(inputs, stub) {
     ...inputs,
     observedAt: "2026-08-05T06:07:00Z",
   }, stub.execute);
+}
+
+function persistThroughDatabaseOutputs(inputs, stub) {
+  const authorization = persistThroughDatabaseAuthorization(inputs, stub);
+  const completedAt = "2026-08-05T06:09:00Z";
+  const evidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+    authorization,
+    observedAt: completedAt,
+    resources: sessionProofApplyResourceIdentities("start-database").map((resource, index) => ({
+      ...resource,
+      uid: `database-resource-uid-${index + 1}`,
+    })),
+  }));
+  const receipt = completeSessionProofStep(authorization, {
+    namespaceResource: namespace(),
+    operator,
+    target,
+    completedAt,
+    evidenceSource,
+  });
+  persistSessionProofDatabaseApplyFromOperatorPacket({
+    ...inputs,
+    startedAt: "2026-08-05T06:08:00Z",
+    completedAt,
+  }, stub.execute, () => ({ evidenceSource, receipt }));
+  return { authorization, evidenceSource, receipt };
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -1103,6 +1137,49 @@ test("reserves exact database output paths before the apply adapter is reached",
       completedAt: "2026-08-05T06:09:00Z",
     }, stub.execute, apply), /already exists/);
     assert.equal(applyCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("authorizes only database readiness from the exact persisted database outputs", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const { receipt } = persistThroughDatabaseOutputs(inputs, stub);
+    const createCalls = stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length;
+    const authorization = authorizeFourthSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:10:00Z",
+    }, stub.execute);
+    assert.equal(authorization.stepIndex, 5);
+    assert.equal(authorization.stepId, "wait-database");
+    assert.equal(authorization.action, "operator-wait-ready");
+    assert.equal(authorization.artifact, null);
+    assert.equal(authorization.artifactSha256, null);
+    assert.equal(authorization.previousReceiptSha256,
+      createHash("sha256").update(`${JSON.stringify(receipt, null, 2)}\n`).digest("hex"));
+    assert.equal(stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length, createCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("database apply evidence drift fails before database readiness authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughDatabaseOutputs(inputs, stub);
+    const evidence = JSON.parse(readFileSync(inputs.thirdEvidencePath, "utf8"));
+    writeFileSync(inputs.thirdEvidencePath, JSON.stringify({ ...evidence, extra: true }));
+    assert.throws(() => authorizeFourthSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:10:00Z",
+    }, stub.execute), /evidence|receipt/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

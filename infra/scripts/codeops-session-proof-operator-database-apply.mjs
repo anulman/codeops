@@ -6,6 +6,7 @@ import {
   fsyncSync,
   lstatSync,
   openSync,
+  readFileSync,
   realpathSync,
   writeFileSync,
 } from "node:fs";
@@ -18,6 +19,22 @@ import {
 import {
   readSessionProofOperatorCreationReceipt,
 } from "./codeops-session-proof-operator-namespace-create.mjs";
+import {
+  readSecondSessionProofCredentialOutputsFromOperatorPacket,
+} from "./codeops-session-proof-operator-runtime-credential-issuance.mjs";
+import {
+  readSessionProofKubeContext,
+  readSessionProofNamespace,
+} from "./codeops-session-proof-preflight.mjs";
+import { completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
+
+function parseJson(source, label) {
+  try {
+    return JSON.parse(source);
+  } catch {
+    throw new Error(`${label} must be valid JSON`);
+  }
+}
 
 function assertOutputPath(path, packetPath, namespace, suffix, mustBeAbsent) {
   if (!isAbsolute(path ?? "") || resolve(path) !== path) {
@@ -50,6 +67,41 @@ function reservePrivateOutput(path) {
     constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW,
     0o600,
   );
+}
+
+function readPrivateOutput(path) {
+  const before = lstatSync(path);
+  if (
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    (before.mode & 0o777) !== 0o600 ||
+    before.size < 2 ||
+    before.size > 1024 * 1024
+  ) {
+    throw new Error("proof database output must be one bounded private regular file");
+  }
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    const source = readFileSync(descriptor);
+    const opened = fstatSync(descriptor);
+    const after = lstatSync(path);
+    if (
+      source.length !== before.size ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.ctimeMs !== before.ctimeMs ||
+      after.mtimeMs !== before.mtimeMs ||
+      (after.mode & 0o777) !== 0o600
+    ) {
+      throw new Error("proof database output changed while it was read");
+    }
+    return source;
+  } finally {
+    closeSync(descriptor);
+  }
 }
 
 function syncParent(path) {
@@ -139,4 +191,59 @@ export function persistSessionProofDatabaseApplyFromOperatorPacket(
     closeSync(evidenceDescriptor);
     if (receiptDescriptor !== undefined) closeSync(receiptDescriptor);
   }
+}
+
+export function readSessionProofDatabaseApplyOutputsFromOperatorPacket(
+  input,
+  runner = execFileSync,
+) {
+  const priorOutputs = readSecondSessionProofCredentialOutputsFromOperatorPacket(input, runner);
+  const { authorization } = readThirdSessionProofStepAuthorizationFromOperatorPacket(
+    input,
+    runner,
+  );
+  const namespace = authorization.namespace.name;
+  assertOutputPath(
+    input.thirdEvidencePath,
+    input.packetPath,
+    namespace,
+    "step-04-start-database.evidence.json",
+    false,
+  );
+  assertOutputPath(
+    input.thirdStepReceiptPath,
+    input.packetPath,
+    namespace,
+    "step-04-start-database.receipt.json",
+    false,
+  );
+  const thirdEvidenceSource = readPrivateOutput(input.thirdEvidencePath).toString("utf8");
+  const thirdStepReceiptSource = readPrivateOutput(input.thirdStepReceiptPath).toString("utf8");
+  const evidence = parseJson(thirdEvidenceSource, "proof database apply evidence");
+  const receipt = parseJson(thirdStepReceiptSource, "proof database apply receipt");
+  if (
+    receipt.checkedAt !== evidence.observedAt ||
+    Date.parse(receipt.checkedAt ?? "") < Date.parse(authorization.authorizedAt)
+  ) {
+    throw new Error("proof database apply output timestamps drifted");
+  }
+  const { operator, target } = readSessionProofKubeContext(runner);
+  const namespaceResource = readSessionProofNamespace(namespace, runner);
+  const expected = completeSessionProofStep(authorization, {
+    namespaceResource,
+    operator,
+    target,
+    completedAt: receipt.checkedAt,
+    evidenceSource: thirdEvidenceSource,
+  });
+  const expectedSource = `${JSON.stringify(expected, null, 2)}\n`;
+  if (thirdStepReceiptSource !== expectedSource) {
+    throw new Error("proof database apply receipt is not the exact persisted artifact");
+  }
+  return {
+    ...priorOutputs,
+    thirdAuthorization: authorization,
+    thirdEvidenceSource,
+    thirdStepReceiptSource,
+  };
 }
