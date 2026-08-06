@@ -56,8 +56,13 @@ import {
   readTwelfthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-codex-smoke-wait-authorization.mjs";
 import {
+  persistSessionProofCodexSmokeWaitFromOperatorPacket,
+  readSessionProofCodexSmokeWaitOutputsFromOperatorPacket,
   waitForSessionProofCodexSmokeFromOperatorPacket,
 } from "./codeops-session-proof-operator-codex-smoke-wait.mjs";
+import {
+  buildSessionProofCodexSmokeCompletionEvidence,
+} from "./codeops-session-proof-codex-smoke-completion-evidence.mjs";
 import {
   buildSessionProofCodexSmokeReplacementEvidence,
 } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
@@ -383,6 +388,14 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-13-wait-codex-smoke.authorization.json`,
   );
+  const twelfthEvidencePath = join(
+    root,
+    `${identity.namespace}.step-13-wait-codex-smoke.evidence.json`,
+  );
+  const twelfthStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-13-wait-codex-smoke.receipt.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -430,6 +443,8 @@ function persistOperatorInputs(root) {
     eleventhEvidencePath,
     eleventhStepReceiptPath,
     twelfthAuthorizationPath,
+    twelfthEvidencePath,
+    twelfthStepReceiptPath,
   };
 }
 
@@ -3921,6 +3936,127 @@ test("authorizes only Codex smoke completion from exact persisted replacement ou
     assert.equal(driftedWaiterCalls, 0);
     assert.equal(stub.calls.length, beforeAuthorizationDrift);
     writeFileSync(inputs.twelfthAuthorizationPath, authorizationSource, { mode: 0o600 });
+
+    const smokeReplacementReceiptSource = readFileSync(
+      inputs.eleventhStepReceiptPath,
+      "utf8",
+    );
+    const smokeReplacementEvidenceSource = readFileSync(inputs.eleventhEvidencePath, "utf8");
+    const smokeApplyEvidence = JSON.parse(
+      JSON.parse(smokeReplacementEvidenceSource).smokeApplyEvidenceSource,
+    );
+    const smokeJob = smokeApplyEvidence.resourceInventory.find((resource) =>
+      resource.kind === "Job" && resource.name === "codeops-codex-auth-smoke");
+    const smokeClaim = smokeApplyEvidence.resourceInventory.find((resource) =>
+      resource.kind === "PersistentVolumeClaim" && resource.name === "codeops-codex-auth");
+    const completedAt = "2026-08-05T06:36:00Z";
+    const completionEvidenceSource = JSON.stringify(
+      buildSessionProofCodexSmokeCompletionEvidence({
+        authorization,
+        smokeReplacementReceiptSource,
+        smokeReplacementEvidenceSource,
+        loginJobAbsent: true,
+        job: {
+          apiVersion: "batch/v1",
+          kind: "Job",
+          metadata: {
+            name: "codeops-codex-auth-smoke",
+            namespace: identity.namespace,
+            uid: smokeJob.uid,
+            generation: 1,
+          },
+          spec: {
+            completions: 1,
+            parallelism: 1,
+            backoffLimit: 0,
+            activeDeadlineSeconds: 900,
+            ttlSecondsAfterFinished: 3600,
+          },
+          status: {
+            active: 0,
+            succeeded: 1,
+            failed: 0,
+            startTime: "2026-08-05T06:35:00Z",
+            completionTime: "2026-08-05T06:35:30Z",
+            conditions: [{ type: "Complete", status: "True" }],
+          },
+        },
+        persistentVolumeClaim: {
+          apiVersion: "v1",
+          kind: "PersistentVolumeClaim",
+          metadata: {
+            name: "codeops-codex-auth",
+            namespace: identity.namespace,
+            uid: smokeClaim.uid,
+          },
+          status: { phase: "Bound" },
+        },
+        observedAt: completedAt,
+      }),
+    );
+    const completionReceipt = completeSessionProofStep(authorization, {
+      namespaceResource: namespace(),
+      operator,
+      target,
+      completedAt,
+      evidenceSource: completionEvidenceSource,
+    });
+    let persistenceWaiterCalls = 0;
+    const persistenceWaiter = () => {
+      persistenceWaiterCalls += 1;
+      assert.equal(statSync(inputs.twelfthEvidencePath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.twelfthStepReceiptPath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.twelfthEvidencePath).size, 0);
+      assert.equal(statSync(inputs.twelfthStepReceiptPath).size, 0);
+      return { evidenceSource: completionEvidenceSource, receipt: completionReceipt };
+    };
+    assert.throws(() => persistSessionProofCodexSmokeWaitFromOperatorPacket({
+      ...inputs,
+      twelfthEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:35:00Z",
+      completedAt,
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, stub.execute, persistenceWaiter), /derive exactly/);
+    writeFileSync(inputs.twelfthStepReceiptPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSessionProofCodexSmokeWaitFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:35:00Z",
+      completedAt,
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, stub.execute, persistenceWaiter), /already exists/);
+    assert.equal(persistenceWaiterCalls, 0);
+    rmSync(inputs.twelfthEvidencePath, { force: true });
+    rmSync(inputs.twelfthStepReceiptPath);
+
+    const persistedCompletion = persistSessionProofCodexSmokeWaitFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:35:00Z",
+      completedAt,
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, stub.execute, persistenceWaiter);
+    assert.equal(persistenceWaiterCalls, 1);
+    assert.equal(readFileSync(inputs.twelfthEvidencePath, "utf8"), completionEvidenceSource);
+    assert.equal(
+      readFileSync(inputs.twelfthStepReceiptPath, "utf8"),
+      persistedCompletion.receiptSource,
+    );
+    assert.equal(
+      persistedCompletion.receipt.evidenceSha256,
+      createHash("sha256").update(readFileSync(inputs.twelfthEvidencePath)).digest("hex"),
+    );
+    const reopenedCompletion = readSessionProofCodexSmokeWaitOutputsFromOperatorPacket(
+      inputs,
+      stub.execute,
+    );
+    assert.equal(reopenedCompletion.twelfthEvidenceSource, completionEvidenceSource);
+    assert.equal(
+      reopenedCompletion.twelfthStepReceiptSource,
+      persistedCompletion.receiptSource,
+    );
+    assert.deepEqual(reopenedCompletion.twelfthAuthorization, authorization);
 
     const beforeOccupied = stub.calls.length;
     assert.throws(() => persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({

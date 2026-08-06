@@ -364,7 +364,15 @@ passes only those exact predecessor bytes plus reviewed polling bounds and
 bounded execution timestamps to the existing smoke waiter. Authorization or
 replacement drift fails before the waiter can be reached. The handoff remains
 unwired to every runner and workflow, and tests exercise it only through an
-injected waiter, so it performs no live Job reads. The separate
+injected waiter, so it performs no live Job reads. Its adjacent persistence
+boundary exclusively reserves the exact Namespace-derived private
+`step-13-wait-codex-smoke` evidence and receipt paths and fsyncs their parent
+before the waiter can be reached. After success it fsyncs and identity-checks
+the specialized completion evidence and its hash-bound canonical receipt;
+readback reconstructs that exact result from the private authorization and
+replacement chain. Existing or substituted outputs, interruption, evidence
+drift, receipt drift, and weakened file identity fail closed. No runner or
+workflow invokes this persistence boundary. The separate
 `wait-codex-smoke` completion contract and concrete but uninvoked
 waiter now bind the exact replacement receipt/evidence chain to the same
 create-only smoke Job UID at generation 1, the same bound non-deleting
