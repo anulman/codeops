@@ -340,6 +340,12 @@ handoff reopens the exact private step-12 authorization, reconstructs the
 persisted login-completion evidence/receipt chain, and passes only those bytes,
 the reviewed smoke manifest, bounded timestamps, and the already-verified
 runner into that adapter. It is not invoked by any proof runner or workflow.
+The adjacent operator persistence boundary exclusively reserves the exact
+Namespace-derived private evidence/receipt paths and fsyncs their parent before
+replacement can be reached. After success it fsyncs and identity-checks the
+specialized replacement evidence and hash-bound canonical receipt; readback
+reconstructs that exact result from the private authorization and login-
+completion chain. Existing or substituted outputs and interruption fail closed.
 The separate
 `wait-codex-smoke` completion contract and concrete but uninvoked
 waiter now bind the exact replacement receipt/evidence chain to the same
