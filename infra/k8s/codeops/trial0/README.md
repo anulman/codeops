@@ -384,6 +384,13 @@ admission around a sixteen-minute-bounded poll, fails immediately on terminal
 failure, and double-reads the smoke Job, claim, and login absence before
 emitting evidence and a receipt. Pending, failed, retried, replaced, deleting,
 malformed, extra-field, chain-drifted, or timestamp-drifted state fails closed.
+The next read-only operator handoff reopens the exact private smoke-completion
+evidence and receipt, reconstructs their canonical meaning from the complete
+predecessor chain, repeats live operator/target/Namespace-UID admission, and
+authorizes only `start-ui` against the exact reviewed UI manifest retained in
+the immutable packet. It persists no authorization, imports or invokes no UI
+adapter, performs no Job read, and remains referenced only by the focused
+closed-proof test.
 
 The `start-ui` apply boundary is separately bound to the exact reviewed UI
 artifact and exactly the Deployment, Service, ServiceAccount, and NetworkPolicy

@@ -64,6 +64,9 @@ import {
   buildSessionProofCodexSmokeCompletionEvidence,
 } from "./codeops-session-proof-codex-smoke-completion-evidence.mjs";
 import {
+  authorizeThirteenthSessionProofStepFromOperatorPacket,
+} from "./codeops-session-proof-operator-ui-step-authorization.mjs";
+import {
   buildSessionProofCodexSmokeReplacementEvidence,
 } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
 import {
@@ -4057,6 +4060,27 @@ test("authorizes only Codex smoke completion from exact persisted replacement ou
       persistedCompletion.receiptSource,
     );
     assert.deepEqual(reopenedCompletion.twelfthAuthorization, authorization);
+    const beforeUiAuthorization = stub.calls.length;
+    const uiAuthorization = authorizeThirteenthSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:37:00Z",
+    }, stub.execute);
+    assert.equal(uiAuthorization.stepIndex, 14);
+    assert.equal(uiAuthorization.stepId, "start-ui");
+    assert.equal(uiAuthorization.action, "operator-apply");
+    assert.equal(uiAuthorization.artifact, "ui");
+    assert.equal(
+      uiAuthorization.artifactSha256,
+      createHash("sha256").update("synthetic-ui-artifact\n").digest("hex"),
+    );
+    assert.equal(
+      uiAuthorization.previousReceiptSha256,
+      createHash("sha256").update(persistedCompletion.receiptSource).digest("hex"),
+    );
+    assert.equal(
+      stub.calls.slice(beforeUiAuthorization).some(({ args }) => args.includes("job.batch")),
+      false,
+    );
 
     const beforeOccupied = stub.calls.length;
     assert.throws(() => persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
