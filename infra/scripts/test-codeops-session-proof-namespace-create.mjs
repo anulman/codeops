@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -70,6 +70,7 @@ function persistOperatorInputs(root) {
   });
   const packetPath = join(root, `${identity.namespace}.packet`);
   const admissionPath = join(root, `${identity.namespace}.admission.json`);
+  const receiptPath = join(root, `${identity.namespace}.namespace-create-receipt.json`);
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -79,7 +80,7 @@ function persistOperatorInputs(root) {
     approvedAt: "2026-08-05T05:00:00Z",
     expiresAt: "2026-08-05T08:00:00Z",
   });
-  return { packetPath, admissionPath };
+  return { packetPath, admissionPath, receiptPath };
 }
 
 function namespace() {
@@ -195,6 +196,49 @@ test("creates from only the exact operator packet and attached admission", () =>
       "result",
     ]);
     assert.equal(stub.calls.filter(({ args }) => args[0] === "create").length, 1);
+    assert.equal(statSync(inputs.receiptPath).mode & 0o777, 0o600);
+    assert.deepEqual(JSON.parse(readFileSync(inputs.receiptPath, "utf8")), result);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("refuses a substituted or existing creation receipt before Kubernetes access", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    assert.throws(() => createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      receiptPath: join(root, "substituted-receipt.json"),
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute), /derive exactly/i);
+    assert.equal(stub.calls.length, 0);
+
+    writeFileSync(inputs.receiptPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute), /already exists/);
+    assert.equal(stub.calls.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persists the UID-bound non-proceed receipt after partial package creation", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner(false, true);
+    const result = createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    assert.equal(result.result, "namespace-uid-bound-create-incomplete");
+    assert.equal(result.proceed, false);
+    assert.equal(result.namespace.uid, "namespace-uid-1");
+    assert.deepEqual(JSON.parse(readFileSync(inputs.receiptPath, "utf8")), result);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

@@ -607,9 +607,17 @@ created. Do not run it until the exact source head has passed review:
 ```bash
 CODEOPS_SESSION_PROOF_PACKET=/absolute/path/codeops-session-proof-video-1.packet \
 CODEOPS_SESSION_PROOF_ADMISSION=/absolute/path/codeops-session-proof-video-1.admission.json \
-  node infra/scripts/run-codeops-session-proof-namespace-create.mjs \
-  > /path/to/bound-namespace-receipt.json
+CODEOPS_SESSION_PROOF_NAMESPACE_RECEIPT=/absolute/path/codeops-session-proof-video-1.namespace-create-receipt.json \
+  node infra/scripts/run-codeops-session-proof-namespace-create.mjs
 ```
+
+The runner reserves that exact receipt beside the immutable packet and
+admission as an exclusively created mode-`0600` file and fsyncs its parent
+before live access, then writes and fsyncs the exact receipt before returning.
+It refuses an existing target, a symbolic-link parent, or any path not derived
+from the packet Namespace. This preserves the exact successful or
+UID-bound-incomplete creation result for the next receipt-chain or emergency
+teardown boundary without changing the immutable reviewed packet.
 
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
