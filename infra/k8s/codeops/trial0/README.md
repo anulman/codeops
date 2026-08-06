@@ -782,6 +782,14 @@ reviewed gateway manifest retained in the immutable packet. This handoff
 persists no authorization, invokes no gateway apply adapter, and remains
 unreferenced by runners and workflows.
 
+The matching persistence boundary exclusively creates the exact
+Namespace-derived adjacent mode-`0600`
+`step-06-start-gateway.authorization.json`, fsyncs and identity-checks its
+bytes and parent, and reconstructs the exact authorization from the private
+database-readiness chain on readback. A substituted or existing target fails
+before live reads. It imports and invokes no gateway apply adapter and remains
+unreferenced by runners and workflows.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
