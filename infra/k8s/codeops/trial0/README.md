@@ -392,6 +392,16 @@ the immutable packet. It persists no authorization, imports or invokes no UI
 adapter, performs no Job read, and remains referenced only by the focused
 closed-proof test.
 
+The exact `start-ui` authorization is separately persisted at the adjacent
+Namespace-derived `step-14-start-ui.authorization.json` path. The operator
+boundary requires that exact absent target before live reads, exclusively
+creates it as mode `0600`, fsyncs and identity-checks the canonical bytes and
+their parent, and reconstructs the exact artifact from the private smoke-
+completion chain on readback. Existing or substituted targets, weakened file
+identity, malformed or structurally drifted authorization, predecessor drift,
+and byte drift fail closed. No runner or workflow invokes this persistence
+boundary, and it imports or invokes no UI adapter.
+
 The `start-ui` apply boundary is separately bound to the exact reviewed UI
 artifact and exactly the Deployment, Service, ServiceAccount, and NetworkPolicy
 server UIDs. Its concrete but uninvoked adapter repeats live operator, target,
