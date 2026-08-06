@@ -40,6 +40,8 @@ import {
   readFourthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-database-wait-authorization.mjs";
 import {
+  persistSessionProofDatabaseWaitFromOperatorPacket,
+  readSessionProofDatabaseWaitOutputsFromOperatorPacket,
   waitForSessionProofDatabaseFromOperatorPacket,
 } from "./codeops-session-proof-operator-database-wait.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
@@ -49,6 +51,7 @@ import {
 } from "./codeops-session-proof-operator-step-authorization.mjs";
 import { persistSessionProofOperatorPacket } from "./codeops-session-proof-operator-packet.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
+import { buildSessionProofReadinessEvidence } from "./codeops-session-proof-readiness-evidence.mjs";
 import { completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 
 const identity = {
@@ -170,6 +173,14 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-05-wait-database.authorization.json`,
   );
+  const fourthEvidencePath = join(
+    root,
+    `${identity.namespace}.step-05-wait-database.evidence.json`,
+  );
+  const fourthStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-05-wait-database.receipt.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -193,6 +204,8 @@ function persistOperatorInputs(root) {
     thirdEvidencePath,
     thirdStepReceiptPath,
     fourthAuthorizationPath,
+    fourthEvidencePath,
+    fourthStepReceiptPath,
   };
 }
 
@@ -337,6 +350,32 @@ function persistThroughDatabaseWaitAuthorization(inputs, stub) {
     observedAt: "2026-08-05T06:10:00Z",
   }, stub.execute);
   return { ...outputs, waitAuthorization: authorization };
+}
+
+function readyDatabaseDeployment() {
+  return {
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    metadata: {
+      name: "codeops-session-proof-database",
+      namespace: identity.namespace,
+      uid: "database-resource-uid-2",
+      generation: 1,
+    },
+    spec: { replicas: 1 },
+    status: {
+      observedGeneration: 1,
+      replicas: 1,
+      updatedReplicas: 1,
+      readyReplicas: 1,
+      availableReplicas: 1,
+      unavailableReplicas: 0,
+      conditions: [
+        { type: "Available", status: "True" },
+        { type: "Progressing", status: "True" },
+      ],
+    },
+  };
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -1326,6 +1365,92 @@ test("database-readiness authorization drift fails before the waiter is reached"
     }, stub.execute, () => {
       waiterCalls += 1;
     }), /exact persisted artifact/);
+    assert.equal(waiterCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durably persists the exact database-readiness evidence and completion receipt", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const { evidenceSource: applyEvidenceSource, receipt: applyReceipt, waitAuthorization } =
+      persistThroughDatabaseWaitAuthorization(inputs, stub);
+    const completedAt = "2026-08-05T06:12:00Z";
+    const evidenceSource = JSON.stringify(buildSessionProofReadinessEvidence({
+      authorization: waitAuthorization,
+      databaseApplyReceiptSource: `${JSON.stringify(applyReceipt, null, 2)}\n`,
+      databaseApplyEvidenceSource: applyEvidenceSource,
+      deployment: readyDatabaseDeployment(),
+      observedAt: completedAt,
+    }));
+    const receipt = completeSessionProofStep(waitAuthorization, {
+      namespaceResource: namespace(),
+      operator,
+      target,
+      completedAt,
+      evidenceSource,
+    });
+    let waiterCalls = 0;
+    const result = persistSessionProofDatabaseWaitFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:11:00Z",
+      completedAt,
+      maxAttempts: 12,
+      pollIntervalMs: 1000,
+    }, stub.execute, (received, runnerArgument) => {
+      waiterCalls += 1;
+      assert.deepEqual(received.authorization, waitAuthorization);
+      assert.equal(runnerArgument, stub.execute);
+      assert.equal(statSync(inputs.fourthEvidencePath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.fourthStepReceiptPath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.fourthEvidencePath).size, 0);
+      assert.equal(statSync(inputs.fourthStepReceiptPath).size, 0);
+      return { evidenceSource, receipt };
+    });
+    assert.equal(waiterCalls, 1);
+    assert.equal(readFileSync(inputs.fourthEvidencePath, "utf8"), evidenceSource);
+    assert.equal(readFileSync(inputs.fourthStepReceiptPath, "utf8"), result.receiptSource);
+    assert.equal(result.receipt.evidenceSha256,
+      createHash("sha256").update(readFileSync(inputs.fourthEvidencePath)).digest("hex"));
+    const reopened = readSessionProofDatabaseWaitOutputsFromOperatorPacket(inputs, stub.execute);
+    assert.equal(reopened.fourthEvidenceSource, evidenceSource);
+    assert.equal(reopened.fourthStepReceiptSource, result.receiptSource);
+    assert.deepEqual(reopened.fourthAuthorization, waitAuthorization);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reserves exact database-readiness output paths before the waiter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughDatabaseWaitAuthorization(inputs, stub);
+    let waiterCalls = 0;
+    const waiter = () => {
+      waiterCalls += 1;
+      return { evidenceSource: "{}", receipt: {} };
+    };
+    assert.throws(() => persistSessionProofDatabaseWaitFromOperatorPacket({
+      ...inputs,
+      fourthEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:11:00Z",
+      completedAt: "2026-08-05T06:12:00Z",
+      maxAttempts: 12,
+      pollIntervalMs: 1000,
+    }, stub.execute, waiter), /derive exactly/);
+    writeFileSync(inputs.fourthStepReceiptPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSessionProofDatabaseWaitFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:11:00Z",
+      completedAt: "2026-08-05T06:12:00Z",
+      maxAttempts: 12,
+      pollIntervalMs: 1000,
+    }, stub.execute, waiter), /already exists/);
     assert.equal(waiterCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });

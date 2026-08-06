@@ -20,7 +20,7 @@ const adapters = {
   ],
   "wait-database": [
     "./codeops-session-proof-operator-database-wait.mjs",
-    "waitForSessionProofDatabaseFromOperatorPacket",
+    "persistSessionProofDatabaseWaitFromOperatorPacket",
   ],
   "start-gateway": ["./codeops-session-proof-gateway-apply.mjs", "applySessionProofGateway"],
   "wait-gateway-migration": ["./codeops-session-proof-gateway-wait.mjs", "waitForSessionProofGatewayMigration"],

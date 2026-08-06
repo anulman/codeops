@@ -761,6 +761,17 @@ database readiness waiter. Authorization, predecessor, permission, identity,
 or output drift fails before the waiter can be reached. The closed itinerary
 names this exact operator adapter, but no runner or workflow invokes it.
 
+Its durable output boundary exclusively reserves the exact Namespace-derived
+adjacent mode-`0600` step-5 evidence and completion-receipt files and fsyncs
+their parent before the waiter can be reached. After successful bounded
+readiness, it fsyncs the exact evidence bytes, then the canonical receipt whose
+`evidenceSha256` binds those bytes, identity-checks both open files, and fsyncs
+the parent again. Readback reconstructs the specialized readiness evidence and
+receipt from the private authorization and database apply chain. Existing or
+substituted outputs fail before the waiter. Interruption leaves private reserved
+outputs for explicit operator reconciliation. The closed itinerary names this
+persistence boundary, but no runner or workflow invokes it.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
