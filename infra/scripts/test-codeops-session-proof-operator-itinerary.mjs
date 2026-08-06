@@ -87,7 +87,7 @@ test("wires every closed proof step and exact byte source without invoking an ad
     result.steps.find((step) => step.stepId === "wait-gateway-migration").adapter,
     {
       module: "./codeops-session-proof-operator-gateway-wait.mjs",
-      export: "waitForSessionProofGatewayMigrationFromOperatorPacket",
+      export: "persistSessionProofGatewayMigrationWaitFromOperatorPacket",
     },
   );
   assert.deepEqual(result.finalOutputs, ["receipt:verify-teardown", "evidence:verify-teardown"]);

@@ -60,6 +60,8 @@ import {
   readSixthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-gateway-wait-authorization.mjs";
 import {
+  persistSessionProofGatewayMigrationWaitFromOperatorPacket,
+  readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket,
   waitForSessionProofGatewayMigrationFromOperatorPacket,
 } from "./codeops-session-proof-operator-gateway-wait.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
@@ -70,6 +72,10 @@ import {
 import { persistSessionProofOperatorPacket } from "./codeops-session-proof-operator-packet.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 import { buildSessionProofReadinessEvidence } from "./codeops-session-proof-readiness-evidence.mjs";
+import {
+  buildSessionProofGatewayReadinessEvidence,
+  sessionProofGatewayMigrationRelation,
+} from "./codeops-session-proof-gateway-readiness-evidence.mjs";
 import { completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 
 const identity = {
@@ -215,6 +221,14 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-07-wait-gateway-migration.authorization.json`,
   );
+  const sixthEvidencePath = join(
+    root,
+    `${identity.namespace}.step-07-wait-gateway-migration.evidence.json`,
+  );
+  const sixthStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-07-wait-gateway-migration.receipt.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -244,6 +258,8 @@ function persistOperatorInputs(root) {
     fifthEvidencePath,
     fifthStepReceiptPath,
     sixthAuthorizationPath,
+    sixthEvidencePath,
+    sixthStepReceiptPath,
   };
 }
 
@@ -484,6 +500,32 @@ function persistThroughGatewayWaitAuthorization(inputs, stub) {
     ...inputs,
     observedAt: "2026-08-05T06:16:00Z",
   }, stub.execute);
+}
+
+function readyGatewayDeployment() {
+  return {
+    apiVersion: "apps/v1",
+    kind: "Deployment",
+    metadata: {
+      name: "codeops-control-gateway",
+      namespace: identity.namespace,
+      uid: "gateway-resource-uid-0",
+      generation: 1,
+    },
+    spec: { replicas: 1 },
+    status: {
+      observedGeneration: 1,
+      replicas: 1,
+      updatedReplicas: 1,
+      readyReplicas: 1,
+      availableReplicas: 1,
+      unavailableReplicas: 0,
+      conditions: [
+        { type: "Available", status: "True" },
+        { type: "Progressing", status: "True" },
+      ],
+    },
+  };
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -1967,6 +2009,95 @@ test("persisted gateway readiness authorization drift fails before the waiter is
     }, stub.execute, () => {
       waiterCalls += 1;
     }), /exact persisted artifact/);
+    assert.equal(waiterCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durably persists the exact gateway readiness evidence and completion receipt", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const authorization = persistThroughGatewayWaitAuthorization(inputs, stub);
+    const completedAt = "2026-08-05T06:18:00Z";
+    const evidenceSource = JSON.stringify(buildSessionProofGatewayReadinessEvidence({
+      authorization,
+      gatewayApplyReceiptSource: readFileSync(inputs.fifthStepReceiptPath, "utf8"),
+      gatewayApplyEvidenceSource: readFileSync(inputs.fifthEvidencePath, "utf8"),
+      deployment: readyGatewayDeployment(),
+      migrationRelation: sessionProofGatewayMigrationRelation(),
+      observedAt: completedAt,
+    }));
+    const receipt = completeSessionProofStep(authorization, {
+      namespaceResource: namespace(),
+      operator,
+      target,
+      completedAt,
+      evidenceSource,
+    });
+    let waiterCalls = 0;
+    const result = persistSessionProofGatewayMigrationWaitFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:17:00Z",
+      completedAt,
+      maxAttempts: 12,
+      pollIntervalMs: 1000,
+    }, stub.execute, (received, runnerArgument) => {
+      waiterCalls += 1;
+      assert.deepEqual(received.authorization, authorization);
+      assert.equal(runnerArgument, stub.execute);
+      assert.equal(statSync(inputs.sixthEvidencePath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.sixthStepReceiptPath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.sixthEvidencePath).size, 0);
+      assert.equal(statSync(inputs.sixthStepReceiptPath).size, 0);
+      return { evidenceSource, receipt };
+    });
+    assert.equal(waiterCalls, 1);
+    assert.equal(readFileSync(inputs.sixthEvidencePath, "utf8"), evidenceSource);
+    assert.equal(readFileSync(inputs.sixthStepReceiptPath, "utf8"), result.receiptSource);
+    assert.equal(result.receipt.evidenceSha256,
+      createHash("sha256").update(readFileSync(inputs.sixthEvidencePath)).digest("hex"));
+    const reopened = readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket(
+      inputs,
+      stub.execute,
+    );
+    assert.equal(reopened.sixthEvidenceSource, evidenceSource);
+    assert.equal(reopened.sixthStepReceiptSource, result.receiptSource);
+    assert.deepEqual(reopened.sixthAuthorization, authorization);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reserves exact gateway-readiness output paths before the waiter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGatewayWaitAuthorization(inputs, stub);
+    let waiterCalls = 0;
+    const waiter = () => {
+      waiterCalls += 1;
+      return { evidenceSource: "{}", receipt: {} };
+    };
+    assert.throws(() => persistSessionProofGatewayMigrationWaitFromOperatorPacket({
+      ...inputs,
+      sixthEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:17:00Z",
+      completedAt: "2026-08-05T06:18:00Z",
+      maxAttempts: 12,
+      pollIntervalMs: 1000,
+    }, stub.execute, waiter), /derive exactly/);
+    writeFileSync(inputs.sixthStepReceiptPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSessionProofGatewayMigrationWaitFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:17:00Z",
+      completedAt: "2026-08-05T06:18:00Z",
+      maxAttempts: 12,
+      pollIntervalMs: 1000,
+    }, stub.execute, waiter), /already exists/);
     assert.equal(waiterCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });

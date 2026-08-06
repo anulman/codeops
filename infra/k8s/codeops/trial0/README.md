@@ -828,6 +828,16 @@ migration waiter. Authorization, predecessor, permission, identity, or output
 drift fails before the waiter can be reached. The closed itinerary names this
 operator adapter, but no runner or workflow invokes it.
 
+Its durable output boundary exclusively reserves the exact Namespace-derived
+adjacent mode-`0600` step-7 evidence and completion-receipt files and fsyncs
+their parent before the waiter can be reached. After successful bounded
+readiness it fsyncs and identity-checks the specialized gateway/migration
+evidence and its hash-bound canonical receipt, then fsyncs the parent again.
+Readback reconstructs the exact result from the private authorization and
+gateway apply chain. Existing or substituted outputs and interrupted writes
+fail closed. The itinerary names this persistence boundary, but no runner or
+workflow invokes it.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
