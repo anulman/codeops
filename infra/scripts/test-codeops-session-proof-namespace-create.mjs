@@ -44,6 +44,9 @@ import {
   readSessionProofDatabaseWaitOutputsFromOperatorPacket,
   waitForSessionProofDatabaseFromOperatorPacket,
 } from "./codeops-session-proof-operator-database-wait.mjs";
+import {
+  authorizeFifthSessionProofStepFromOperatorPacket,
+} from "./codeops-session-proof-operator-gateway-step-authorization.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
   authorizeFirstSessionProofStepFromOperatorPacket,
@@ -376,6 +379,34 @@ function readyDatabaseDeployment() {
       ],
     },
   };
+}
+
+function persistThroughDatabaseWaitOutputs(inputs, stub) {
+  const { receipt: applyReceipt, waitAuthorization } =
+    persistThroughDatabaseWaitAuthorization(inputs, stub);
+  const completedAt = "2026-08-05T06:12:00Z";
+  const evidenceSource = JSON.stringify(buildSessionProofReadinessEvidence({
+    authorization: waitAuthorization,
+    databaseApplyReceiptSource: `${JSON.stringify(applyReceipt, null, 2)}\n`,
+    databaseApplyEvidenceSource: readFileSync(inputs.thirdEvidencePath, "utf8"),
+    deployment: readyDatabaseDeployment(),
+    observedAt: completedAt,
+  }));
+  const receipt = completeSessionProofStep(waitAuthorization, {
+    namespaceResource: namespace(),
+    operator,
+    target,
+    completedAt,
+    evidenceSource,
+  });
+  persistSessionProofDatabaseWaitFromOperatorPacket({
+    ...inputs,
+    startedAt: "2026-08-05T06:11:00Z",
+    completedAt,
+    maxAttempts: 12,
+    pollIntervalMs: 1000,
+  }, stub.execute, () => ({ evidenceSource, receipt }));
+  return { evidenceSource, receipt };
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -1452,6 +1483,54 @@ test("reserves exact database-readiness output paths before the waiter is reache
       pollIntervalMs: 1000,
     }, stub.execute, waiter), /already exists/);
     assert.equal(waiterCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("authorizes only gateway creation from the exact persisted database readiness outputs", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const { receipt } = persistThroughDatabaseWaitOutputs(inputs, stub);
+    const createCalls = stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length;
+    const authorization = authorizeFifthSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:13:00Z",
+    }, stub.execute);
+    assert.equal(authorization.stepIndex, 6);
+    assert.equal(authorization.stepId, "start-gateway");
+    assert.equal(authorization.action, "operator-apply");
+    assert.equal(authorization.artifact, "gateway");
+    assert.equal(
+      authorization.artifactSha256,
+      createHash("sha256").update("synthetic-gateway-artifact\n").digest("hex"),
+    );
+    assert.equal(
+      authorization.previousReceiptSha256,
+      createHash("sha256").update(`${JSON.stringify(receipt, null, 2)}\n`).digest("hex"),
+    );
+    assert.equal(stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length, createCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("database readiness evidence drift fails before gateway authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughDatabaseWaitOutputs(inputs, stub);
+    const evidence = JSON.parse(readFileSync(inputs.fourthEvidencePath, "utf8"));
+    writeFileSync(inputs.fourthEvidencePath, JSON.stringify({ ...evidence, extra: true }));
+    assert.throws(() => authorizeFifthSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:13:00Z",
+    }, stub.execute), /evidence|receipt/);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

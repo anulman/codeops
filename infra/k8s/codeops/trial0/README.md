@@ -772,6 +772,16 @@ substituted outputs fail before the waiter. Interruption leaves private reserved
 outputs for explicit operator reconciliation. The closed itinerary names this
 persistence boundary, but no runner or workflow invokes it.
 
+The following read-only handoff reopens those exact private database-readiness
+outputs through stable no-follow descriptors, re-verifies the persisted
+readiness authorization and current principal, target, and Namespace UID,
+validates the specialized readiness evidence, reconstructs the canonical
+completion receipt from the exact evidence bytes, and verifies its predecessor
+and hash chain. Only `start-gateway` can then be authorized, bound to the exact
+reviewed gateway manifest retained in the immutable packet. This handoff
+persists no authorization, invokes no gateway apply adapter, and remains
+unreferenced by runners and workflows.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
