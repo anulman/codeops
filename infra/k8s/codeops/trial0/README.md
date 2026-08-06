@@ -925,6 +925,15 @@ execution timestamps to the existing adapter. Authorization, predecessor,
 artifact, principal, target, or Namespace drift fails before login apply can be
 reached. No runner or workflow invokes this operator boundary.
 
+Its durable output boundary exclusively reserves the exact Namespace-derived
+adjacent mode-`0600` step-10 evidence and completion-receipt files and fsyncs
+their parent before the create-only adapter can be reached. After successful
+login creation it fsyncs and identity-checks the specialized four-resource
+evidence and its hash-bound canonical receipt, then fsyncs the parent again.
+Readback reconstructs the exact result from the private authorization and
+grant-completion chain. Existing or substituted outputs and interrupted writes
+fail closed. No runner or workflow invokes this persistence boundary.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
