@@ -949,6 +949,14 @@ the private login-apply chain on readback. A substituted or existing target
 fails before live access. It imports and invokes no waiter and remains
 unreferenced by runners and workflows.
 
+The bounded-waiter handoff then reopens and reconstructs that exact private
+authorization, re-verifies the specialized four-resource login apply evidence
+and its canonical completion receipt, and passes only those exact predecessor
+bytes plus reviewed polling bounds and bounded execution timestamps to the
+existing login waiter. Authorization, predecessor, permission, identity, or
+output drift fails before the waiter can be reached. No runner or workflow
+invokes this operator boundary.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,

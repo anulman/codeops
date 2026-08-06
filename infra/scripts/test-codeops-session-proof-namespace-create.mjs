@@ -33,6 +33,9 @@ import {
   readTenthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-codex-login-wait-authorization.mjs";
 import {
+  waitForSessionProofCodexLoginFromOperatorPacket,
+} from "./codeops-session-proof-operator-codex-login-wait.mjs";
+import {
   persistFirstSessionProofCredentialIssuanceFromOperatorPacket,
 } from "./codeops-session-proof-operator-credential-issuance.mjs";
 import {
@@ -760,6 +763,14 @@ function persistThroughCodexLoginOutputs(inputs, stub) {
     completedAt,
   }, stub.execute, () => ({ evidenceSource, receipt }));
   return { authorization, evidenceSource, receipt };
+}
+
+function persistThroughCodexLoginWaitAuthorization(inputs, stub) {
+  persistThroughCodexLoginOutputs(inputs, stub);
+  return persistTenthSessionProofStepAuthorizationFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:28:00Z",
+  }, stub.execute);
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -3189,6 +3200,68 @@ test("rejects a substituted or existing Codex-login completion authorization bef
       observedAt: "2026-08-05T06:28:00Z",
     }, stub.execute), /already exists/);
     assert.equal(stub.calls.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hands only the exact persisted Codex-login completion authorization and apply outputs to the waiter", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const authorization = persistThroughCodexLoginWaitAuthorization(inputs, stub);
+    const callCount = stub.calls.length;
+    let received;
+    const result = waitForSessionProofCodexLoginFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:29:00Z",
+      completedAt: "2026-08-05T06:30:00Z",
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, stub.execute, (input, runnerArgument) => {
+      received = input;
+      assert.equal(runnerArgument, stub.execute);
+      return { accepted: true };
+    });
+    assert.deepEqual(result, { accepted: true });
+    assert.deepEqual(received, {
+      authorization,
+      loginApplyReceiptSource: readFileSync(inputs.ninthStepReceiptPath, "utf8"),
+      loginApplyEvidenceSource: readFileSync(inputs.ninthEvidencePath, "utf8"),
+      startedAt: "2026-08-05T06:29:00Z",
+      completedAt: "2026-08-05T06:30:00Z",
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    });
+    assert.equal(stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persisted Codex-login completion authorization drift fails before the waiter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughCodexLoginWaitAuthorization(inputs, stub);
+    const authorization = JSON.parse(readFileSync(inputs.tenthAuthorizationPath, "utf8"));
+    writeFileSync(inputs.tenthAuthorizationPath, `${JSON.stringify({
+      ...authorization,
+      action: "operator-apply",
+    }, null, 2)}\n`, { mode: 0o600 });
+    let waiterCalls = 0;
+    assert.throws(() => waitForSessionProofCodexLoginFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:29:00Z",
+      completedAt: "2026-08-05T06:30:00Z",
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, stub.execute, () => {
+      waiterCalls += 1;
+    }), /exact persisted artifact/);
+    assert.equal(waiterCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
