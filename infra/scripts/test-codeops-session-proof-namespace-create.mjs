@@ -56,6 +56,8 @@ import {
 } from "./codeops-session-proof-operator-gateway-apply.mjs";
 import {
   authorizeSixthSessionProofStepFromOperatorPacket,
+  persistSixthSessionProofStepAuthorizationFromOperatorPacket,
+  readSixthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-gateway-wait-authorization.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
@@ -1831,6 +1833,59 @@ test("gateway apply evidence drift fails before gateway migration authorization"
       ...inputs,
       observedAt: "2026-08-05T06:16:00Z",
     }, stub.execute), /evidence|receipt/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persists the exact private gateway-migration readiness authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGatewayApplyOutputs(inputs, stub);
+    const createCalls = stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length;
+    const authorization = persistSixthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:16:00Z",
+    }, stub.execute);
+    assert.equal(statSync(inputs.sixthAuthorizationPath).mode & 0o777, 0o600);
+    assert.deepEqual(
+      JSON.parse(readFileSync(inputs.sixthAuthorizationPath, "utf8")),
+      authorization,
+    );
+    assert.deepEqual(
+      readSixthSessionProofStepAuthorizationFromOperatorPacket(inputs, stub.execute)
+        .authorization,
+      authorization,
+    );
+    assert.equal(stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length, createCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a substituted or existing gateway-migration authorization before live reads", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const setup = runner();
+    persistThroughGatewayApplyOutputs(inputs, setup);
+    const stub = runner(true);
+    assert.throws(() => persistSixthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      sixthAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T06:16:00Z",
+    }, stub.execute), /derive exactly/);
+    assert.equal(stub.calls.length, 0);
+    writeFileSync(inputs.sixthAuthorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSixthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:16:00Z",
+    }, stub.execute), /already exists/);
+    assert.equal(stub.calls.length, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
