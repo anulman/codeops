@@ -3747,18 +3747,33 @@ test("durably persists the exact Codex smoke replacement evidence and receipt", 
       evidenceSource,
     });
     let replacementCalls = 0;
-    const result = await persistSessionProofCodexSmokeReplacementFromOperatorPacket({
-      ...inputs,
-      startedAt: "2026-08-05T06:32:00Z",
-      completedAt,
-    }, stub.execute, () => {
+    const replacement = () => {
       replacementCalls += 1;
       assert.equal(statSync(inputs.eleventhEvidencePath).mode & 0o777, 0o600);
       assert.equal(statSync(inputs.eleventhStepReceiptPath).mode & 0o777, 0o600);
       assert.equal(statSync(inputs.eleventhEvidencePath).size, 0);
       assert.equal(statSync(inputs.eleventhStepReceiptPath).size, 0);
       return { evidenceSource, receipt };
-    });
+    };
+    await assert.rejects(() => persistSessionProofCodexSmokeReplacementFromOperatorPacket({
+      ...inputs,
+      eleventhEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:32:00Z",
+      completedAt,
+    }, stub.execute, replacement), /derive exactly/);
+    writeFileSync(inputs.eleventhStepReceiptPath, "occupied\n", { mode: 0o600 });
+    await assert.rejects(() => persistSessionProofCodexSmokeReplacementFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:32:00Z",
+      completedAt,
+    }, stub.execute, replacement), /already exists/);
+    rmSync(inputs.eleventhStepReceiptPath);
+    assert.equal(replacementCalls, 0);
+    const result = await persistSessionProofCodexSmokeReplacementFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:32:00Z",
+      completedAt,
+    }, stub.execute, replacement);
     assert.equal(replacementCalls, 1);
     assert.equal(readFileSync(inputs.eleventhEvidencePath, "utf8"), evidenceSource);
     assert.equal(readFileSync(inputs.eleventhStepReceiptPath, "utf8"), result.receiptSource);
@@ -3771,39 +3786,6 @@ test("durably persists the exact Codex smoke replacement evidence and receipt", 
     assert.equal(reopened.eleventhEvidenceSource, evidenceSource);
     assert.equal(reopened.eleventhStepReceiptSource, result.receiptSource);
     assert.deepEqual(reopened.eleventhAuthorization, authorization);
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("reserves exact Codex smoke replacement output paths before replacement is reached", async () => {
-  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
-  try {
-    const inputs = persistOperatorInputs(root);
-    const stub = runner();
-    persistThroughCodexLoginWaitOutputs(inputs, stub);
-    persistEleventhSessionProofStepAuthorizationFromOperatorPacket({
-      ...inputs,
-      observedAt: "2026-08-05T06:31:00Z",
-    }, stub.execute);
-    let replacementCalls = 0;
-    const replacement = () => {
-      replacementCalls += 1;
-      return { evidenceSource: "{}", receipt: {} };
-    };
-    await assert.rejects(() => persistSessionProofCodexSmokeReplacementFromOperatorPacket({
-      ...inputs,
-      eleventhEvidencePath: join(root, "substituted.evidence.json"),
-      startedAt: "2026-08-05T06:32:00Z",
-      completedAt: "2026-08-05T06:33:00Z",
-    }, stub.execute, replacement), /derive exactly/);
-    writeFileSync(inputs.eleventhStepReceiptPath, "occupied\n", { mode: 0o600 });
-    await assert.rejects(() => persistSessionProofCodexSmokeReplacementFromOperatorPacket({
-      ...inputs,
-      startedAt: "2026-08-05T06:32:00Z",
-      completedAt: "2026-08-05T06:33:00Z",
-    }, stub.execute, replacement), /already exists/);
-    assert.equal(replacementCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -3833,26 +3815,15 @@ test("authorizes only Codex smoke completion from exact persisted replacement ou
       stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")),
       false,
     );
-  } finally {
-    rmSync(root, { recursive: true, force: true });
-  }
-});
-
-test("Codex smoke replacement evidence drift fails before completion authorization", async () => {
-  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
-  try {
-    const inputs = persistOperatorInputs(root);
-    const stub = runner();
-    await persistThroughCodexSmokeReplacementOutputs(inputs, stub);
     const evidence = JSON.parse(readFileSync(inputs.eleventhEvidencePath, "utf8"));
     writeFileSync(inputs.eleventhEvidencePath, JSON.stringify({ ...evidence, extra: true }));
-    const callCount = stub.calls.length;
+    const driftCallCount = stub.calls.length;
     assert.throws(() => authorizeTwelfthSessionProofStepFromOperatorPacket({
       ...inputs,
       observedAt: "2026-08-05T06:34:00Z",
     }, stub.execute), /evidence|receipt/);
     assert.equal(
-      stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")),
+      stub.calls.slice(driftCallCount).some(({ args }) => args.includes("job.batch")),
       false,
     );
   } finally {
