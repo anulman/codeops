@@ -6,6 +6,7 @@ import {
   fsyncSync,
   lstatSync,
   openSync,
+  readFileSync,
   realpathSync,
   writeFileSync,
 } from "node:fs";
@@ -33,7 +34,7 @@ function parseJson(source, label) {
   }
 }
 
-function assertAuthorizationPath(path, packetPath, namespace) {
+function assertAuthorizationPath(path, packetPath, namespace, mustBeAbsent) {
   if (!isAbsolute(path ?? "") || resolve(path) !== path) {
     throw new Error("proof second-step authorization path must be absolute and normalized");
   }
@@ -48,11 +49,48 @@ function assertAuthorizationPath(path, packetPath, namespace) {
   ) {
     throw new Error("proof second-step authorization path must derive exactly from the packet Namespace");
   }
+  if (mustBeAbsent) {
+    try {
+      lstatSync(path);
+      throw new Error("proof second-step authorization already exists");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+}
+
+function readPrivateAuthorization(path) {
+  const before = lstatSync(path);
+  if (
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    (before.mode & 0o777) !== 0o600 ||
+    before.size < 2 ||
+    before.size > 1024 * 1024
+  ) {
+    throw new Error("proof second-step authorization must be one bounded private regular file");
+  }
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    lstatSync(path);
-    throw new Error("proof second-step authorization already exists");
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
+    const source = readFileSync(descriptor);
+    const opened = fstatSync(descriptor);
+    const after = lstatSync(path);
+    if (
+      source.length !== before.size ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.ctimeMs !== before.ctimeMs ||
+      after.mtimeMs !== before.mtimeMs ||
+      (after.mode & 0o777) !== 0o600
+    ) {
+      throw new Error("proof second-step authorization changed while it was read");
+    }
+    return source;
+  } finally {
+    closeSync(descriptor);
   }
 }
 
@@ -152,6 +190,7 @@ export function persistSecondSessionProofStepAuthorizationFromOperatorPacket(
     input.secondAuthorizationPath,
     input.packetPath,
     outputs.creationReceipt.namespace.name,
+    true,
   );
   const authorization = authorizeSecondSessionProofStepFromOperatorPacket(input, runner);
   writePrivateAuthorization(
@@ -159,4 +198,33 @@ export function persistSecondSessionProofStepAuthorizationFromOperatorPacket(
     `${JSON.stringify(authorization, null, 2)}\n`,
   );
   return authorization;
+}
+
+export function readSecondSessionProofStepAuthorizationFromOperatorPacket(
+  input,
+  runner = execFileSync,
+) {
+  const outputs = readFirstSessionProofCredentialOutputsFromOperatorPacket(input);
+  assertAuthorizationPath(
+    input.secondAuthorizationPath,
+    input.packetPath,
+    outputs.creationReceipt.namespace.name,
+    false,
+  );
+  const authorizationBytes = readPrivateAuthorization(input.secondAuthorizationPath);
+  let authorization;
+  try {
+    authorization = JSON.parse(authorizationBytes);
+  } catch {
+    throw new Error("proof second-step authorization must be valid JSON");
+  }
+  const expected = authorizeSecondSessionProofStepFromOperatorPacket({
+    ...input,
+    observedAt: authorization.authorizedAt,
+  }, runner);
+  const expectedSource = `${JSON.stringify(expected, null, 2)}\n`;
+  if (!authorizationBytes.equals(Buffer.from(expectedSource))) {
+    throw new Error("proof second-step authorization is not the exact persisted artifact");
+  }
+  return { authorization: expected, authorizationSource: expectedSource };
 }

@@ -684,6 +684,15 @@ and refused before live reads if the path is substituted or already exists.
 Persistence remains unwired to every runner and workflow and issues no
 credential.
 
+The runtime-credential issuer handoff accepts only that exact private persisted
+step-3 authorization. It reopens the authorization through a stable no-follow
+descriptor, reconstructs its canonical meaning from the exact predecessor
+chain and current principal, target, and Namespace UID, and passes only the
+reviewed absolute registry-config and repository-token paths to the existing
+runtime issuer. Authorization, predecessor, permission, identity, or input-path
+drift fails before the credential script can be reached. This adapter remains
+unreferenced by runners and workflows.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,

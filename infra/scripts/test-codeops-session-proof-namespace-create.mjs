@@ -17,6 +17,9 @@ import {
   authorizeSecondSessionProofStepFromOperatorPacket,
   persistSecondSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-next-step-authorization.mjs";
+import {
+  issueSecondSessionProofCredentialsFromOperatorPacket,
+} from "./codeops-session-proof-operator-runtime-credential-issuance.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
   authorizeFirstSessionProofStepFromOperatorPacket,
@@ -73,6 +76,16 @@ const brokerContracts = {
   "codeops-session-runtime-worker-auth": ["token"],
   "codeops-session-job-initialization-auth": ["token"],
   "codeops-session-runtime-worker-database": ["database-url", "password"],
+};
+const runtimeContracts = {
+  "ghcr-renoconcierge": {
+    type: "kubernetes.io/dockerconfigjson",
+    keys: [".dockerconfigjson"],
+  },
+  "codeops-agent-source-credentials": {
+    type: "Opaque",
+    keys: ["repository-read-token"],
+  },
 };
 
 function persistOperatorInputs(root) {
@@ -148,13 +161,23 @@ function namespace() {
 
 function runner(initiallyPresent = false, failCreateAfterNamespace = false) {
   let created = initiallyPresent;
-  let issued = false;
+  let brokerIssued = false;
+  let runtimeIssued = false;
   const calls = [];
   const execute = (file, args, options = {}) => {
     calls.push({ file, args, options });
     const key = args.join(" ");
     if (file.endsWith("issue-codeops-session-proof-secrets.sh")) {
-      issued = true;
+      brokerIssued = true;
+      return "issued\n";
+    }
+    if (file.endsWith("issue-codeops-session-proof-runtime-credentials.sh")) {
+      assert.deepEqual(args, [
+        "--namespace", identity.namespace,
+        "--registry-config-file", "/private/registry-config.json",
+        "--repository-token-file", "/private/repository-token",
+      ]);
+      runtimeIssued = true;
       return "issued\n";
     }
     if (
@@ -163,14 +186,17 @@ function runner(initiallyPresent = false, failCreateAfterNamespace = false) {
       args[2] === "get" &&
       args[3] === "secret"
     ) {
-      assert.equal(issued, true);
       const name = args[4];
+      const brokerContract = brokerContracts[name];
+      const runtimeContract = runtimeContracts[name];
+      assert.ok(brokerContract ?? runtimeContract);
+      assert.equal(brokerContract ? brokerIssued : runtimeIssued, true);
       return [
         `secret-uid-${name}`,
-        "Opaque",
+        brokerContract ? "Opaque" : runtimeContract.type,
         "codeops-session-proof",
-        "session-video-proof",
-        ...brokerContracts[name],
+        brokerContract ? "session-video-proof" : "session-video-proof-runtime",
+        ...(brokerContract ?? runtimeContract.keys),
         "",
       ].join("\n");
     }
@@ -524,6 +550,86 @@ test("rejects a substituted or existing step-3 authorization before live reads",
       observedAt: "2026-08-05T06:04:00Z",
     }, stub.execute), /already exists/);
     assert.equal(stub.calls.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("the runtime issuer consumes only the exact persisted step-3 authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute);
+    persistFirstSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, stub.execute);
+    persistSecondSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:04:00Z",
+    }, stub.execute);
+    const result = issueSecondSessionProofCredentialsFromOperatorPacket({
+      ...inputs,
+      registryConfigFile: "/private/registry-config.json",
+      repositoryTokenFile: "/private/repository-token",
+      startedAt: "2026-08-05T06:05:00Z",
+      completedAt: "2026-08-05T06:06:00Z",
+    }, stub.execute);
+    assert.equal(result.receipt.stepId, "issue-runtime-capabilities");
+    assert.equal(result.receipt.previousReceiptSha256,
+      createHash("sha256").update(readFileSync(inputs.stepReceiptPath)).digest("hex"));
+    assert.equal(stub.calls.filter(({ file }) =>
+      file.endsWith("issue-codeops-session-proof-runtime-credentials.sh")).length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("step-3 authorization drift fails before the runtime issuer is invoked", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute);
+    persistFirstSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, stub.execute);
+    persistSecondSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:04:00Z",
+    }, stub.execute);
+    const authorization = JSON.parse(readFileSync(inputs.secondAuthorizationPath, "utf8"));
+    writeFileSync(inputs.secondAuthorizationPath, `${JSON.stringify({
+      ...authorization,
+      action: "operator-apply",
+    }, null, 2)}\n`);
+    assert.throws(() => issueSecondSessionProofCredentialsFromOperatorPacket({
+      ...inputs,
+      registryConfigFile: "/private/registry-config.json",
+      repositoryTokenFile: "/private/repository-token",
+      startedAt: "2026-08-05T06:05:00Z",
+      completedAt: "2026-08-05T06:06:00Z",
+    }, stub.execute), /exact persisted artifact/);
+    assert.equal(stub.calls.some(({ file }) =>
+      file.endsWith("issue-codeops-session-proof-runtime-credentials.sh")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
