@@ -167,12 +167,35 @@ const proofTestShardIndex = readShardInteger("CODEOPS_PROOF_TEST_SHARD_INDEX", 0
 if (proofTestShardCount < 1 || proofTestShardIndex >= proofTestShardCount) {
   throw new Error("proof test shard index must identify one configured shard");
 }
+// Keep the deep predecessor-chain cases balanced; all tests remain registered in every shard.
+const proofThreeShardOverrides = new Map([
+  [
+    "hands only the exact persisted Codex smoke authorization and login-completion outputs to replacement",
+    1,
+  ],
+  ["login-completion evidence drift fails before Codex smoke authorization", 1],
+  ["durably persists the exact Codex-login completion evidence and receipt", 2],
+  [
+    "authorizes only Codex-login completion from the exact persisted login apply outputs",
+    2,
+  ],
+  [
+    "rejects a substituted or existing Codex-login completion authorization before live reads",
+    2,
+  ],
+  ["persisted Codex-login authorization drift fails before the create-only adapter", 2],
+]);
+const proofSeenTestNames = new Set();
 let proofTestOrdinal = 0;
 function test(name, implementation) {
   const ordinal = proofTestOrdinal;
   proofTestOrdinal += 1;
+  proofSeenTestNames.add(name);
+  const selectedShard = proofTestShardCount === 3
+    ? (proofThreeShardOverrides.get(name) ?? ordinal % proofTestShardCount)
+    : ordinal % proofTestShardCount;
   return nodeTest(name, {
-    skip: ordinal % proofTestShardCount !== proofTestShardIndex,
+    skip: selectedShard !== proofTestShardIndex,
   }, implementation);
 }
 
@@ -4343,3 +4366,13 @@ test("rejects packet attachment drift before any create preflight read", () => {
     rmSync(root, { recursive: true, force: true });
   }
 });
+
+if (proofTestShardCount === 3) {
+  const missingOverrides = [...proofThreeShardOverrides.keys()]
+    .filter((name) => !proofSeenTestNames.has(name));
+  if (missingOverrides.length > 0) {
+    throw new Error(
+      `proof test shard overrides do not name registered tests: ${missingOverrides.join(", ")}`,
+    );
+  }
+}
