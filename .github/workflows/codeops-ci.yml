@@ -426,7 +426,20 @@ jobs:
           node --test infra/scripts/test-codeops-session-proof-plan.mjs
           node --test infra/scripts/test-codeops-session-proof-admission.mjs
           node --test infra/scripts/test-codeops-session-proof-preflight.mjs
-          node --test infra/scripts/test-codeops-session-proof-namespace-create.mjs
+          proof_status=0
+          CODEOPS_PROOF_TEST_SHARD_COUNT=2 CODEOPS_PROOF_TEST_SHARD_INDEX=0 \
+            node --test infra/scripts/test-codeops-session-proof-namespace-create.mjs \
+              > /tmp/codeops-session-proof-namespace-create-0.log 2>&1 &
+          proof_shard_0=$!
+          CODEOPS_PROOF_TEST_SHARD_COUNT=2 CODEOPS_PROOF_TEST_SHARD_INDEX=1 \
+            node --test infra/scripts/test-codeops-session-proof-namespace-create.mjs \
+              > /tmp/codeops-session-proof-namespace-create-1.log 2>&1 &
+          proof_shard_1=$!
+          if ! wait "$proof_shard_0"; then proof_status=1; fi
+          if ! wait "$proof_shard_1"; then proof_status=1; fi
+          cat /tmp/codeops-session-proof-namespace-create-0.log
+          cat /tmp/codeops-session-proof-namespace-create-1.log
+          test "$proof_status" -eq 0
           node --test infra/scripts/test-codeops-session-proof-namespace-delete.mjs
           node --test infra/scripts/test-codeops-session-proof-teardown-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-operator-itinerary.mjs

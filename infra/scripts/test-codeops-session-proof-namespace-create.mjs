@@ -3,7 +3,7 @@ import { createHash } from "node:crypto";
 import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import test from "node:test";
+import nodeTest from "node:test";
 import { createSessionProofAdmission } from "./codeops-session-proof-admission.mjs";
 import {
   buildSessionProofApplyEvidence,
@@ -141,6 +141,29 @@ import {
   sessionProofGatewayMigrationRelation,
 } from "./codeops-session-proof-gateway-readiness-evidence.mjs";
 import { completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
+
+function readShardInteger(name, fallback) {
+  const source = process.env[name];
+  if (source === undefined) return fallback;
+  if (!/^(0|[1-9][0-9]*)$/.test(source)) {
+    throw new Error(`${name} must be a non-negative integer`);
+  }
+  return Number(source);
+}
+
+const proofTestShardCount = readShardInteger("CODEOPS_PROOF_TEST_SHARD_COUNT", 1);
+const proofTestShardIndex = readShardInteger("CODEOPS_PROOF_TEST_SHARD_INDEX", 0);
+if (proofTestShardCount < 1 || proofTestShardIndex >= proofTestShardCount) {
+  throw new Error("proof test shard index must identify one configured shard");
+}
+let proofTestOrdinal = 0;
+function test(name, implementation) {
+  const ordinal = proofTestOrdinal;
+  proofTestOrdinal += 1;
+  return nodeTest(name, {
+    skip: ordinal % proofTestShardCount !== proofTestShardIndex,
+  }, implementation);
+}
 
 const identity = {
   namespace: "codeops-session-proof-video-1",
