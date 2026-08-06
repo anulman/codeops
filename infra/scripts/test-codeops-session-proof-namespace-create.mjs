@@ -26,6 +26,9 @@ import {
   persistThirdSessionProofStepAuthorizationFromOperatorPacket,
   readThirdSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-database-step-authorization.mjs";
+import {
+  applySessionProofDatabaseFromOperatorPacket,
+} from "./codeops-session-proof-operator-database-apply.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
   authorizeFirstSessionProofStepFromOperatorPacket,
@@ -239,6 +242,37 @@ function runner(initiallyPresent = false, failCreateAfterNamespace = false) {
     throw new Error(`unexpected kubectl call: ${key}`);
   };
   return { calls, execute };
+}
+
+function persistThroughDatabaseAuthorization(inputs, stub) {
+  createSessionProofNamespaceFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:00:00Z",
+  }, stub.execute);
+  persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:01:00Z",
+  }, stub.execute);
+  persistFirstSessionProofCredentialIssuanceFromOperatorPacket({
+    ...inputs,
+    startedAt: "2026-08-05T06:02:00Z",
+    completedAt: "2026-08-05T06:03:00Z",
+  }, stub.execute);
+  persistSecondSessionProofStepAuthorizationFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:04:00Z",
+  }, stub.execute);
+  persistSecondSessionProofCredentialIssuanceFromOperatorPacket({
+    ...inputs,
+    registryConfigFile: "/private/registry-config.json",
+    repositoryTokenFile: "/private/repository-token",
+    startedAt: "2026-08-05T06:05:00Z",
+    completedAt: "2026-08-05T06:06:00Z",
+  }, stub.execute);
+  return persistThirdSessionProofStepAuthorizationFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:07:00Z",
+  }, stub.execute);
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -933,6 +967,61 @@ test("rejects a substituted or existing database-start authorization before live
       observedAt: "2026-08-05T06:07:00Z",
     }, stub.execute), /already exists/);
     assert.equal(stub.calls.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hands only the exact persisted database authorization and manifest to the apply adapter", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const authorization = persistThroughDatabaseAuthorization(inputs, stub);
+    const createCalls = stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length;
+    let received;
+    const result = applySessionProofDatabaseFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:08:00Z",
+      completedAt: "2026-08-05T06:09:00Z",
+    }, stub.execute, (input, runnerArgument) => {
+      received = input;
+      assert.equal(runnerArgument, stub.execute);
+      return { accepted: true };
+    });
+    assert.deepEqual(result, { accepted: true });
+    assert.deepEqual(received.authorization, authorization);
+    assert.equal(received.manifestSource, "synthetic-database-artifact\n");
+    assert.equal(received.startedAt, "2026-08-05T06:08:00Z");
+    assert.equal(received.completedAt, "2026-08-05T06:09:00Z");
+    assert.equal(stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length, createCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("authorization drift fails before the database apply adapter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughDatabaseAuthorization(inputs, stub);
+    const authorization = JSON.parse(readFileSync(inputs.thirdAuthorizationPath, "utf8"));
+    writeFileSync(inputs.thirdAuthorizationPath, `${JSON.stringify({
+      ...authorization,
+      artifactSha256: "f".repeat(64),
+    }, null, 2)}\n`, { mode: 0o600 });
+    let applyCalls = 0;
+    assert.throws(() => applySessionProofDatabaseFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:08:00Z",
+      completedAt: "2026-08-05T06:09:00Z",
+    }, stub.execute, () => {
+      applyCalls += 1;
+    }), /exact persisted artifact/);
+    assert.equal(applyCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

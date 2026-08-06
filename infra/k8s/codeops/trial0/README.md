@@ -719,6 +719,14 @@ predecessor chain on readback. A substituted or existing target fails before
 live reads. It does not import or invoke the database apply adapter and remains
 unreferenced by runners and workflows.
 
+The database-apply handoff then reopens and reconstructs that exact private
+authorization, reads the reviewed database manifest bytes only from the
+immutable operator packet, and passes only those values plus the bounded
+execution timestamps to the existing apply adapter. Authorization, predecessor,
+permission, identity, or manifest drift fails before the apply adapter can be
+reached. The closed itinerary names this exact operator adapter, but no runner
+or workflow invokes it.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
