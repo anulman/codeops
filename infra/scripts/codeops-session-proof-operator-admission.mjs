@@ -240,3 +240,35 @@ export function attachSessionProofOperatorAdmission(input) {
     adapterInvocation: false,
   };
 }
+
+export function readSessionProofOperatorAdmissionAttachment(input) {
+  const packet = readAndVerifyPacket(input.packetPath ?? "");
+  assertAdmissionPath(
+    input.admissionPath ?? "",
+    input.packetPath,
+    packet.manifest.identity.namespace,
+  );
+  const admissionSource = readPrivateFile(
+    input.admissionPath,
+    "proof operator admission",
+  );
+  const admission = parseJson(admissionSource, "proof operator admission");
+  const expected = createSessionProofAdmission({
+    planSource: packet.planSource,
+    reviewedPlanSha256: packet.manifest.planSha256,
+    operator: admission.operator,
+    target: admission.target,
+    approvedAt: admission.approvedAt,
+    expiresAt: admission.expiresAt,
+  });
+  const expectedSource = `${JSON.stringify(expected, null, 2)}\n`;
+  if (!admissionSource.equals(Buffer.from(expectedSource))) {
+    throw new Error("proof operator admission is not the exact attached artifact");
+  }
+  return {
+    planSource: packet.planSource,
+    admission,
+    packetManifestSha256: digest(packet.manifestSource),
+    admissionSha256: digest(admissionSource),
+  };
+}

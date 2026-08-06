@@ -575,16 +575,18 @@ offline verifier and still has no Kubernetes client or apply/delete path:
 infra/scripts/codeops-session-proof-admission.mjs
 ```
 
-Before creation, the read-only live preflight consumes that admission and uses
-only `kubectl config`, `kubectl auth whoami`, and `kubectl get namespace`. It
-hashes the active client certificate in memory without printing certificate or
-key material, rechecks the reviewed plan bytes and exact target, and succeeds
-only while the exact proof namespace is absent. It cannot apply, create, patch,
-delete, issue credentials, or execute any later lifecycle step:
+Before creation, the read-only live preflight consumes the immutable packet and
+its exact adjacent admission directly. It re-verifies both local artifacts
+before its first subprocess, then uses only `kubectl config`, `kubectl auth
+whoami`, and `kubectl get namespace`. It hashes the active client certificate
+in memory without printing certificate or key material, rechecks the reviewed
+plan bytes and exact target, and succeeds only while the exact proof namespace
+is absent. It cannot apply, create, patch, delete, issue credentials, or execute
+any later lifecycle step:
 
 ```bash
-CODEOPS_SESSION_PROOF_PLAN=/path/to/plan.json \
-CODEOPS_SESSION_PROOF_ADMISSION=/path/to/admission.json \
+CODEOPS_SESSION_PROOF_PACKET=/absolute/path/codeops-session-proof-video-1.packet \
+CODEOPS_SESSION_PROOF_ADMISSION=/absolute/path/codeops-session-proof-video-1.admission.json \
   node infra/scripts/run-codeops-session-proof-preflight.mjs
 ```
 

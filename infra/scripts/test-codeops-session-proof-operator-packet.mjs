@@ -17,6 +17,7 @@ import { stringify } from "yaml";
 import { buildSessionProofPlan } from "./codeops-session-proof-plan.mjs";
 import { persistSessionProofOperatorPacket } from "./codeops-session-proof-operator-packet.mjs";
 import { attachSessionProofOperatorAdmission } from "./codeops-session-proof-operator-admission.mjs";
+import { runSessionProofOperatorPacketPreflight } from "./codeops-session-proof-operator-preflight.mjs";
 
 const identity = {
   namespace: "codeops-session-proof-video-1",
@@ -51,16 +52,40 @@ function fixture() {
   return { artifactSources, planSource: JSON.stringify(buildSessionProofPlan({ ...identity, files })) };
 }
 
+const certificateData = Buffer.from("synthetic-client-certificate").toString("base64");
 const admissionInput = {
   operator: {
     username: "operator@example.com",
     uid: null,
-    credentialSha256: "9".repeat(64),
+    credentialSha256: createHash("sha256")
+      .update(Buffer.from(certificateData, "base64"))
+      .digest("hex"),
   },
   target: { context: "proof-context", server: "https://cluster.example.invalid" },
   approvedAt: "2026-08-05T05:00:00Z",
   expiresAt: "2026-08-05T08:00:00Z",
 };
+
+function preflightRunner() {
+  const calls = [];
+  const execute = (_file, args) => {
+    calls.push(args);
+    const command = args.join(" ");
+    if (command === "config current-context") return `${admissionInput.target.context}\n`;
+    if (command === "config view --minify -o json") {
+      return JSON.stringify({ clusters: [{ cluster: { server: admissionInput.target.server } }] });
+    }
+    if (command === "auth whoami -o json") {
+      return JSON.stringify({ status: { userInfo: { username: admissionInput.operator.username } } });
+    }
+    if (command.includes("jsonpath={.users[0].user.client-certificate-data}")) {
+      return certificateData;
+    }
+    if (command.startsWith("get namespace ")) return "";
+    throw new Error(`unexpected kubectl call: ${command}`);
+  };
+  return { calls, execute };
+}
 
 test("atomically persists one private exact-byte reviewed operator packet", () => {
   const root = mkdtempSync(join(tmpdir(), "session-proof-packet-"));
@@ -183,6 +208,50 @@ test("refuses a changed, extra, or permission-weakened packet before attachment"
     } finally {
       rmSync(paths.root, { recursive: true, force: true });
     }
+  }
+});
+
+test("hands the exact packet and admission to the read-only live preflight", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-packet-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const admissionPath = join(root, `${identity.namespace}.admission.json`);
+    persistSessionProofOperatorPacket({ ...fixture(), packetPath });
+    attachSessionProofOperatorAdmission({ packetPath, admissionPath, ...admissionInput });
+    const runner = preflightRunner();
+    const result = runSessionProofOperatorPacketPreflight({
+      packetPath,
+      admissionPath,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, runner.execute);
+    assert.equal(result.result, "ready-for-reviewed-namespace-creation");
+    assert.equal(result.namespace.state, "absent");
+    assert.match(result.packetManifestSha256, /^[0-9a-f]{64}$/);
+    assert.match(result.admissionSha256, /^[0-9a-f]{64}$/);
+    assert.equal(runner.calls.length, 5);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects attachment drift before any Kubernetes read", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-packet-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const admissionPath = join(root, `${identity.namespace}.admission.json`);
+    persistSessionProofOperatorPacket({ ...fixture(), packetPath });
+    attachSessionProofOperatorAdmission({ packetPath, admissionPath, ...admissionInput });
+    const admission = JSON.parse(readFileSync(admissionPath, "utf8"));
+    writeFileSync(admissionPath, `${JSON.stringify({ ...admission, unexpected: true }, null, 2)}\n`);
+    const runner = preflightRunner();
+    assert.throws(() => runSessionProofOperatorPacketPreflight({
+      packetPath,
+      admissionPath,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, runner.execute), /exact attached artifact/i);
+    assert.equal(runner.calls.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
