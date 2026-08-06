@@ -807,6 +807,12 @@ authorization, live identity, and persisted evidence. Existing or substituted
 outputs and interrupted writes fail closed. The itinerary names this boundary,
 but no runner or workflow invokes it.
 
+The next read-only handoff reopens that exact private gateway evidence and
+receipt, verifies the specialized four-resource apply evidence and canonical
+predecessor/hash chain against the live principal, target, and Namespace UID,
+and authorizes only the bounded `wait-gateway-migration` step. It persists no
+authorization, invokes no waiter, and remains referenced only by focused tests.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
