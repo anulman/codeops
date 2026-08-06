@@ -10,10 +10,13 @@ const adapters = {
     "./codeops-session-proof-operator-credential-issuance.mjs",
     "persistFirstSessionProofCredentialIssuanceFromOperatorPacket",
   ],
-  "issue-runtime-capabilities": ["./codeops-session-proof-credential-issuer.mjs", "issueSessionProofCredentials"],
+  "issue-runtime-capabilities": [
+    "./codeops-session-proof-operator-runtime-credential-issuance.mjs",
+    "persistSecondSessionProofCredentialIssuanceFromOperatorPacket",
+  ],
   "start-database": [
     "./codeops-session-proof-operator-database-apply.mjs",
-    "applySessionProofDatabaseFromOperatorPacket",
+    "persistSessionProofDatabaseApplyFromOperatorPacket",
   ],
   "wait-database": ["./codeops-session-proof-database-wait.mjs", "waitForSessionProofDatabase"],
   "start-gateway": ["./codeops-session-proof-gateway-apply.mjs", "applySessionProofGateway"],

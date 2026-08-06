@@ -28,6 +28,7 @@ import {
 } from "./codeops-session-proof-operator-database-step-authorization.mjs";
 import {
   applySessionProofDatabaseFromOperatorPacket,
+  persistSessionProofDatabaseApplyFromOperatorPacket,
 } from "./codeops-session-proof-operator-database-apply.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
@@ -144,6 +145,14 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-04-start-database.authorization.json`,
   );
+  const thirdEvidencePath = join(
+    root,
+    `${identity.namespace}.step-04-start-database.evidence.json`,
+  );
+  const thirdStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-04-start-database.receipt.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -164,6 +173,8 @@ function persistOperatorInputs(root) {
     secondEvidencePath,
     secondStepReceiptPath,
     thirdAuthorizationPath,
+    thirdEvidencePath,
+    thirdStepReceiptPath,
   };
 }
 
@@ -1021,6 +1032,76 @@ test("authorization drift fails before the database apply adapter is reached", (
     }, stub.execute, () => {
       applyCalls += 1;
     }), /exact persisted artifact/);
+    assert.equal(applyCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durably persists the exact database apply evidence and completion receipt", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const authorization = persistThroughDatabaseAuthorization(inputs, stub);
+    const evidenceSource = JSON.stringify({
+      apiVersion: "codeops.renoconcierge.ca/session-proof-apply-evidence/v1",
+      stepId: "start-database",
+      observedAt: "2026-08-05T06:09:00Z",
+    });
+    const receipt = {
+      stepId: "start-database",
+      evidenceSha256: createHash("sha256").update(evidenceSource).digest("hex"),
+    };
+    let applyCalls = 0;
+    const result = persistSessionProofDatabaseApplyFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:08:00Z",
+      completedAt: "2026-08-05T06:09:00Z",
+    }, stub.execute, (received, runnerArgument) => {
+      applyCalls += 1;
+      assert.deepEqual(received.authorization, authorization);
+      assert.equal(received.manifestSource, "synthetic-database-artifact\n");
+      assert.equal(runnerArgument, stub.execute);
+      assert.equal(statSync(inputs.thirdEvidencePath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.thirdStepReceiptPath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.thirdEvidencePath).size, 0);
+      assert.equal(statSync(inputs.thirdStepReceiptPath).size, 0);
+      return { evidenceSource, receipt };
+    });
+    assert.equal(applyCalls, 1);
+    assert.equal(readFileSync(inputs.thirdEvidencePath, "utf8"), evidenceSource);
+    assert.equal(readFileSync(inputs.thirdStepReceiptPath, "utf8"), result.receiptSource);
+    assert.equal(result.receipt.evidenceSha256,
+      createHash("sha256").update(readFileSync(inputs.thirdEvidencePath)).digest("hex"));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reserves exact database output paths before the apply adapter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughDatabaseAuthorization(inputs, stub);
+    let applyCalls = 0;
+    const apply = () => {
+      applyCalls += 1;
+      return { evidenceSource: "{}", receipt: {} };
+    };
+    assert.throws(() => persistSessionProofDatabaseApplyFromOperatorPacket({
+      ...inputs,
+      thirdEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:08:00Z",
+      completedAt: "2026-08-05T06:09:00Z",
+    }, stub.execute, apply), /derive exactly/);
+    writeFileSync(inputs.thirdStepReceiptPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSessionProofDatabaseApplyFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:08:00Z",
+      completedAt: "2026-08-05T06:09:00Z",
+    }, stub.execute, apply), /already exists/);
     assert.equal(applyCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });

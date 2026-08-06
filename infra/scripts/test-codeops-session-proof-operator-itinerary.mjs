@@ -56,10 +56,17 @@ test("wires every closed proof step and exact byte source without invoking an ad
   );
   assert.ok(Object.values(result.artifacts).every((artifact) => artifact.bytes > 1));
   assert.deepEqual(
+    result.steps.find((step) => step.stepId === "issue-runtime-capabilities").adapter,
+    {
+      module: "./codeops-session-proof-operator-runtime-credential-issuance.mjs",
+      export: "persistSecondSessionProofCredentialIssuanceFromOperatorPacket",
+    },
+  );
+  assert.deepEqual(
     result.steps.find((step) => step.stepId === "start-database").adapter,
     {
       module: "./codeops-session-proof-operator-database-apply.mjs",
-      export: "applySessionProofDatabaseFromOperatorPacket",
+      export: "persistSessionProofDatabaseApplyFromOperatorPacket",
     },
   );
   assert.deepEqual(result.finalOutputs, ["receipt:verify-teardown", "evidence:verify-teardown"]);

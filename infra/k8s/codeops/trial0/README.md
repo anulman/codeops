@@ -724,8 +724,17 @@ authorization, reads the reviewed database manifest bytes only from the
 immutable operator packet, and passes only those values plus the bounded
 execution timestamps to the existing apply adapter. Authorization, predecessor,
 permission, identity, or manifest drift fails before the apply adapter can be
-reached. The closed itinerary names this exact operator adapter, but no runner
-or workflow invokes it.
+reached.
+
+Its durable output boundary exclusively reserves the exact Namespace-derived
+adjacent mode-`0600` step-4 evidence and completion-receipt files and fsyncs
+their parent before apply. After a successful create-only apply, it fsyncs the
+exact evidence bytes, then the canonical receipt whose `evidenceSha256` binds
+those bytes, identity-checks both open files, and fsyncs the parent again.
+Existing or substituted outputs fail before apply. Interruption leaves the
+private reserved outputs for explicit operator reconciliation. The closed
+itinerary names this persistence boundary, but no runner or workflow invokes
+it.
 
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
