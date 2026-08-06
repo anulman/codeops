@@ -69,6 +69,13 @@ test("wires every closed proof step and exact byte source without invoking an ad
       export: "persistSessionProofDatabaseApplyFromOperatorPacket",
     },
   );
+  assert.deepEqual(
+    result.steps.find((step) => step.stepId === "wait-database").adapter,
+    {
+      module: "./codeops-session-proof-operator-database-wait.mjs",
+      export: "waitForSessionProofDatabaseFromOperatorPacket",
+    },
+  );
   assert.deepEqual(result.finalOutputs, ["receipt:verify-teardown", "evidence:verify-teardown"]);
 });
 

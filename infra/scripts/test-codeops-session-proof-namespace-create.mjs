@@ -39,6 +39,9 @@ import {
   persistFourthSessionProofStepAuthorizationFromOperatorPacket,
   readFourthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-database-wait-authorization.mjs";
+import {
+  waitForSessionProofDatabaseFromOperatorPacket,
+} from "./codeops-session-proof-operator-database-wait.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
   authorizeFirstSessionProofStepFromOperatorPacket,
@@ -325,6 +328,15 @@ function persistThroughDatabaseOutputs(inputs, stub) {
     completedAt,
   }, stub.execute, () => ({ evidenceSource, receipt }));
   return { authorization, evidenceSource, receipt };
+}
+
+function persistThroughDatabaseWaitAuthorization(inputs, stub) {
+  const outputs = persistThroughDatabaseOutputs(inputs, stub);
+  const authorization = persistFourthSessionProofStepAuthorizationFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:10:00Z",
+  }, stub.execute);
+  return { ...outputs, waitAuthorization: authorization };
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -1240,6 +1252,81 @@ test("rejects a substituted or existing database-readiness authorization before 
       observedAt: "2026-08-05T06:10:00Z",
     }, stub.execute), /already exists/);
     assert.equal(stub.calls.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hands only the exact persisted database-readiness authorization and apply chain to the waiter", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const { evidenceSource, receipt, waitAuthorization } =
+      persistThroughDatabaseWaitAuthorization(inputs, stub);
+    const createCalls = stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length;
+    let received;
+    const result = waitForSessionProofDatabaseFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:11:00Z",
+      completedAt: "2026-08-05T06:12:00Z",
+      maxAttempts: 12,
+      pollIntervalMs: 1000,
+    }, stub.execute, (input, runnerArgument) => {
+      received = input;
+      assert.equal(runnerArgument, stub.execute);
+      return { accepted: true };
+    });
+    assert.deepEqual(result, { accepted: true });
+    assert.deepEqual(received.authorization, waitAuthorization);
+    assert.equal(received.databaseApplyEvidenceSource, evidenceSource);
+    assert.equal(
+      received.databaseApplyReceiptSource,
+      `${JSON.stringify(receipt, null, 2)}\n`,
+    );
+    assert.equal(received.startedAt, "2026-08-05T06:11:00Z");
+    assert.equal(received.completedAt, "2026-08-05T06:12:00Z");
+    assert.equal(received.maxAttempts, 12);
+    assert.equal(received.pollIntervalMs, 1000);
+    assert.deepEqual(Object.keys(received).sort(), [
+      "authorization",
+      "completedAt",
+      "databaseApplyEvidenceSource",
+      "databaseApplyReceiptSource",
+      "maxAttempts",
+      "pollIntervalMs",
+      "startedAt",
+    ]);
+    assert.equal(stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length, createCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("database-readiness authorization drift fails before the waiter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughDatabaseWaitAuthorization(inputs, stub);
+    const authorization = JSON.parse(readFileSync(inputs.fourthAuthorizationPath, "utf8"));
+    writeFileSync(inputs.fourthAuthorizationPath, `${JSON.stringify({
+      ...authorization,
+      maxAttempts: 1,
+    }, null, 2)}\n`, { mode: 0o600 });
+    let waiterCalls = 0;
+    assert.throws(() => waitForSessionProofDatabaseFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:11:00Z",
+      completedAt: "2026-08-05T06:12:00Z",
+      maxAttempts: 12,
+      pollIntervalMs: 1000,
+    }, stub.execute, () => {
+      waiterCalls += 1;
+    }), /exact persisted artifact/);
+    assert.equal(waiterCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

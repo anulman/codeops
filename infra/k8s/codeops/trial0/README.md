@@ -753,6 +753,14 @@ database apply chain on readback. A substituted or existing target fails before
 live reads. It imports and invokes no readiness waiter and remains unreferenced
 by runners and workflows.
 
+The bounded-wait handoff then reopens and reconstructs that exact private
+authorization and re-verifies the exact persisted database apply evidence and
+completion receipt. It passes only the authorization, those predecessor bytes,
+the reviewed polling bounds, and bounded execution timestamps to the existing
+database readiness waiter. Authorization, predecessor, permission, identity,
+or output drift fails before the waiter can be reached. The closed itinerary
+names this exact operator adapter, but no runner or workflow invokes it.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
