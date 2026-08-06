@@ -74,6 +74,9 @@ import {
   persistSessionProofGrantApplyFromOperatorPacket,
   readSessionProofGrantApplyOutputsFromOperatorPacket,
 } from "./codeops-session-proof-operator-grant-apply.mjs";
+import {
+  authorizeEighthSessionProofStepFromOperatorPacket,
+} from "./codeops-session-proof-operator-grant-wait-authorization.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
   authorizeFirstSessionProofStepFromOperatorPacket,
@@ -579,6 +582,36 @@ function persistThroughGatewayWaitOutputs(inputs, stub) {
     pollIntervalMs: 1000,
   }, stub.execute, () => ({ evidenceSource, receipt }));
   return { evidenceSource, receipt };
+}
+
+function persistThroughGrantOutputs(inputs, stub) {
+  persistThroughGatewayWaitOutputs(inputs, stub);
+  const authorization = persistSeventhSessionProofStepAuthorizationFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:19:00Z",
+  }, stub.execute);
+  const completedAt = "2026-08-05T06:21:00Z";
+  const evidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+    authorization,
+    observedAt: completedAt,
+    resources: sessionProofApplyResourceIdentities("grant-receipts").map((resource, index) => ({
+      ...resource,
+      uid: `grant-resource-uid-${index + 1}`,
+    })),
+  }));
+  const receipt = completeSessionProofStep(authorization, {
+    namespaceResource: namespace(),
+    operator,
+    target,
+    completedAt,
+    evidenceSource,
+  });
+  persistSessionProofGrantApplyFromOperatorPacket({
+    ...inputs,
+    startedAt: "2026-08-05T06:20:00Z",
+    completedAt,
+  }, stub.execute, () => ({ evidenceSource, receipt }));
+  return { authorization, evidenceSource, receipt };
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -2406,6 +2439,49 @@ test("reserves exact receipt-grant output paths before the adapter is reached", 
       completedAt: "2026-08-05T06:21:00Z",
     }, stub.execute, adapter), /already exists/);
     assert.equal(adapterCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("authorizes only grant completion from the exact persisted grant outputs", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const { receipt } = persistThroughGrantOutputs(inputs, stub);
+    const callCount = stub.calls.length;
+    const authorization = authorizeEighthSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:22:00Z",
+    }, stub.execute);
+    assert.equal(authorization.stepIndex, 9);
+    assert.equal(authorization.stepId, "wait-grants");
+    assert.equal(authorization.action, "operator-wait-complete");
+    assert.equal(authorization.artifact, null);
+    assert.equal(authorization.artifactSha256, null);
+    assert.equal(authorization.previousReceiptSha256,
+      createHash("sha256").update(`${JSON.stringify(receipt, null, 2)}\n`).digest("hex"));
+    assert.equal(stub.calls.slice(callCount).some(({ args }) => args.includes("job")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("grant apply evidence drift fails before grant completion authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGrantOutputs(inputs, stub);
+    const evidence = JSON.parse(readFileSync(inputs.seventhEvidencePath, "utf8"));
+    writeFileSync(inputs.seventhEvidencePath, JSON.stringify({ ...evidence, extra: true }));
+    const callCount = stub.calls.length;
+    assert.throws(() => authorizeEighthSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:22:00Z",
+    }, stub.execute), /evidence|receipt/);
+    assert.equal(stub.calls.slice(callCount).some(({ args }) => args.includes("job")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
