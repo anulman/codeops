@@ -539,7 +539,28 @@ CODEOPS_SESSION_PROOF_PACKET=/absolute/path/codeops-session-proof-video-1.packet
   node infra/scripts/run-codeops-session-proof-operator-packet.mjs
 ```
 
-Execution admission is a second, operator-owned artifact. It must bind the
+Attach execution admission beside—not inside—the byte-immutable reviewed
+packet. The attachment reopens every private packet file through a no-follow
+descriptor, verifies the exact root/artifact inventory, modes, byte counts,
+SHA-256 digests, plan identity, and Namespace-derived paths, then exclusively
+creates one mode-`0600` adjacent admission file. It performs no live access or
+adapter invocation and refuses overwrite, packet drift, extra files, weakened
+permissions, or an admission path not derived from the exact Namespace:
+
+```bash
+CODEOPS_SESSION_PROOF_PACKET=/absolute/path/codeops-session-proof-video-1.packet \
+CODEOPS_SESSION_PROOF_ADMISSION=/absolute/path/codeops-session-proof-video-1.admission.json \
+CODEOPS_SESSION_PROOF_OPERATOR_USERNAME=<authenticated-username> \
+CODEOPS_SESSION_PROOF_OPERATOR_UID=<authenticated-uid-if-present> \
+CODEOPS_SESSION_PROOF_OPERATOR_CREDENTIAL_SHA256=<active-client-certificate-sha256> \
+CODEOPS_SESSION_PROOF_KUBE_CONTEXT=<exact-context> \
+CODEOPS_SESSION_PROOF_KUBE_SERVER=https://<exact-api-origin> \
+CODEOPS_SESSION_PROOF_APPROVED_AT=<rfc3339-utc> \
+CODEOPS_SESSION_PROOF_EXPIRES_AT=<rfc3339-utc-within-four-hours> \
+  node infra/scripts/run-codeops-session-proof-operator-admission.mjs
+```
+
+Execution admission is the second, operator-owned artifact. It binds the
 SHA-256 of the reviewed plan bytes to the authenticated Kubernetes username,
 UID when the authenticator supplies one, SHA-256 of the active client
 certificate, exact context and API server, and a positive window no longer

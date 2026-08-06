@@ -482,6 +482,22 @@ jobs:
             .clusterMutation == false and .adapterInvocation == false and
             (.files | length) == 10' \
             /tmp/codeops-session-proof-video-1.packet/packet-manifest.json
+          CODEOPS_SESSION_PROOF_PACKET=/tmp/codeops-session-proof-video-1.packet \
+          CODEOPS_SESSION_PROOF_ADMISSION=/tmp/codeops-session-proof-video-1.admission.json \
+          CODEOPS_SESSION_PROOF_OPERATOR_USERNAME=synthetic-ci-operator \
+          CODEOPS_SESSION_PROOF_OPERATOR_CREDENTIAL_SHA256=9999999999999999999999999999999999999999999999999999999999999999 \
+          CODEOPS_SESSION_PROOF_KUBE_CONTEXT=synthetic-ci-context \
+          CODEOPS_SESSION_PROOF_KUBE_SERVER=https://cluster.example.invalid \
+          CODEOPS_SESSION_PROOF_APPROVED_AT=2026-08-05T05:00:00Z \
+          CODEOPS_SESSION_PROOF_EXPIRES_AT=2026-08-05T08:00:00Z \
+            node infra/scripts/run-codeops-session-proof-operator-admission.mjs \
+              > /tmp/codeops-session-proof-operator-admission-result.json
+          jq -e -s '.[0].state == "approved-unbound" and
+            .[0].namespaceUid == null and
+            .[0].identity.namespace == "codeops-session-proof-video-1" and
+            .[0].planSha256 == .[1].planSha256' \
+            /tmp/codeops-session-proof-video-1.admission.json \
+            /tmp/codeops-session-proof-video-1.packet/packet-manifest.json
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD

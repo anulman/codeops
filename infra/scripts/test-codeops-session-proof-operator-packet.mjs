@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   lstatSync,
   mkdtempSync,
   mkdirSync,
   readFileSync,
   rmSync,
   symlinkSync,
+  writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -14,6 +16,7 @@ import test from "node:test";
 import { stringify } from "yaml";
 import { buildSessionProofPlan } from "./codeops-session-proof-plan.mjs";
 import { persistSessionProofOperatorPacket } from "./codeops-session-proof-operator-packet.mjs";
+import { attachSessionProofOperatorAdmission } from "./codeops-session-proof-operator-admission.mjs";
 
 const identity = {
   namespace: "codeops-session-proof-video-1",
@@ -47,6 +50,17 @@ function fixture() {
   const files = Object.fromEntries(Object.entries(artifactSources).map(([id, source]) => [id, { path: `/tmp/${id}.yaml`, source }]));
   return { artifactSources, planSource: JSON.stringify(buildSessionProofPlan({ ...identity, files })) };
 }
+
+const admissionInput = {
+  operator: {
+    username: "operator@example.com",
+    uid: null,
+    credentialSha256: "9".repeat(64),
+  },
+  target: { context: "proof-context", server: "https://cluster.example.invalid" },
+  approvedAt: "2026-08-05T05:00:00Z",
+  expiresAt: "2026-08-05T08:00:00Z",
+};
 
 test("atomically persists one private exact-byte reviewed operator packet", () => {
   const root = mkdtempSync(join(tmpdir(), "session-proof-packet-"));
@@ -91,6 +105,84 @@ test("refuses overwrite, path substitution, and a symbolic-link parent", () => {
     }), /real directory/);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("attaches one private admission beside the exact immutable packet", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-packet-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const admissionPath = join(root, `${identity.namespace}.admission.json`);
+    const input = fixture();
+    persistSessionProofOperatorPacket({ ...input, packetPath });
+    const before = readFileSync(join(packetPath, "packet-manifest.json"));
+    const result = attachSessionProofOperatorAdmission({
+      packetPath,
+      admissionPath,
+      ...admissionInput,
+    });
+    assert.equal(result.result, "attached-approved-unbound-admission");
+    assert.equal(result.liveAccess, false);
+    assert.equal(result.clusterMutation, false);
+    assert.equal(lstatSync(admissionPath).mode & 0o777, 0o600);
+    const admission = JSON.parse(readFileSync(admissionPath, "utf8"));
+    assert.equal(admission.state, "approved-unbound");
+    assert.equal(admission.namespaceUid, null);
+    assert.deepEqual(admission.identity, identity);
+    assert.deepEqual(readFileSync(join(packetPath, "packet-manifest.json")), before);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("refuses admission overwrite and path or authority substitution", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-packet-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const admissionPath = join(root, `${identity.namespace}.admission.json`);
+    persistSessionProofOperatorPacket({ ...fixture(), packetPath });
+    assert.throws(() => attachSessionProofOperatorAdmission({
+      packetPath,
+      admissionPath,
+      ...admissionInput,
+      operator: { ...admissionInput.operator, credentialSha256: "not-a-digest" },
+    }), /credential fingerprint/i);
+    attachSessionProofOperatorAdmission({ packetPath, admissionPath, ...admissionInput });
+    assert.throws(() => attachSessionProofOperatorAdmission({
+      packetPath,
+      admissionPath,
+      ...admissionInput,
+    }), /exist/i);
+    assert.throws(() => attachSessionProofOperatorAdmission({
+      packetPath,
+      admissionPath: join(root, "other.admission.json"),
+      ...admissionInput,
+    }), /derive exactly/i);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("refuses a changed, extra, or permission-weakened packet before attachment", () => {
+  const makePacket = () => {
+    const root = mkdtempSync(join(tmpdir(), "session-proof-packet-"));
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    persistSessionProofOperatorPacket({ ...fixture(), packetPath });
+    return { root, packetPath, admissionPath: join(root, `${identity.namespace}.admission.json`) };
+  };
+  for (const mutate of [
+    ({ packetPath }) => writeFileSync(join(packetPath, "plan.json"), "{}"),
+    ({ packetPath }) => writeFileSync(join(packetPath, "itinerary.json"), "{}"),
+    ({ packetPath }) => writeFileSync(join(packetPath, "unexpected"), "extra"),
+    ({ packetPath }) => chmodSync(join(packetPath, "plan.json"), 0o644),
+  ]) {
+    const paths = makePacket();
+    try {
+      mutate(paths);
+      assert.throws(() => attachSessionProofOperatorAdmission({ ...paths, ...admissionInput }));
+    } finally {
+      rmSync(paths.root, { recursive: true, force: true });
+    }
   }
 });
 
