@@ -16,6 +16,9 @@ import { createSessionProofNamespace } from "./codeops-session-proof-namespace-c
 import {
   buildSessionProofGrantCompletionEvidence,
 } from "./codeops-session-proof-grant-completion-evidence.mjs";
+import {
+  buildSessionProofCodexLoginCompletionEvidence,
+} from "./codeops-session-proof-codex-login-completion-evidence.mjs";
 import { attachSessionProofOperatorAdmission } from "./codeops-session-proof-operator-admission.mjs";
 import {
   authorizeNinthSessionProofStepFromOperatorPacket,
@@ -33,6 +36,8 @@ import {
   readTenthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-codex-login-wait-authorization.mjs";
 import {
+  persistSessionProofCodexLoginWaitFromOperatorPacket,
+  readSessionProofCodexLoginWaitOutputsFromOperatorPacket,
   waitForSessionProofCodexLoginFromOperatorPacket,
 } from "./codeops-session-proof-operator-codex-login-wait.mjs";
 import {
@@ -310,6 +315,14 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-11-wait-codex-login.authorization.json`,
   );
+  const tenthEvidencePath = join(
+    root,
+    `${identity.namespace}.step-11-wait-codex-login.evidence.json`,
+  );
+  const tenthStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-11-wait-codex-login.receipt.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -351,6 +364,8 @@ function persistOperatorInputs(root) {
     ninthEvidencePath,
     ninthStepReceiptPath,
     tenthAuthorizationPath,
+    tenthEvidencePath,
+    tenthStepReceiptPath,
   };
 }
 
@@ -3261,6 +3276,131 @@ test("persisted Codex-login completion authorization drift fails before the wait
     }, stub.execute, () => {
       waiterCalls += 1;
     }), /exact persisted artifact/);
+    assert.equal(waiterCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durably persists the exact Codex-login completion evidence and receipt", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const authorization = persistThroughCodexLoginWaitAuthorization(inputs, stub);
+    const completedAt = "2026-08-05T06:30:00Z";
+    const loginApplyReceiptSource = readFileSync(inputs.ninthStepReceiptPath, "utf8");
+    const loginApplyEvidenceSource = readFileSync(inputs.ninthEvidencePath, "utf8");
+    const resourceInventory = JSON.parse(loginApplyEvidenceSource).resourceInventory;
+    const evidenceSource = JSON.stringify(buildSessionProofCodexLoginCompletionEvidence({
+      authorization,
+      loginApplyReceiptSource,
+      loginApplyEvidenceSource,
+      job: {
+        apiVersion: "batch/v1",
+        kind: "Job",
+        metadata: {
+          name: "codeops-codex-auth-login",
+          namespace: identity.namespace,
+          uid: resourceInventory.find((resource) => resource.kind === "Job").uid,
+          generation: 1,
+        },
+        spec: {
+          completions: 1,
+          parallelism: 1,
+          backoffLimit: 0,
+          activeDeadlineSeconds: 900,
+          ttlSecondsAfterFinished: 3600,
+        },
+        status: {
+          active: 0,
+          succeeded: 1,
+          failed: 0,
+          startTime: "2026-08-05T06:29:00Z",
+          completionTime: "2026-08-05T06:29:30Z",
+          conditions: [{ type: "Complete", status: "True", reason: "CompletionsReached" }],
+        },
+      },
+      persistentVolumeClaim: {
+        apiVersion: "v1",
+        kind: "PersistentVolumeClaim",
+        metadata: {
+          name: "codeops-codex-auth",
+          namespace: identity.namespace,
+          uid: resourceInventory.find(
+            (resource) => resource.kind === "PersistentVolumeClaim",
+          ).uid,
+        },
+        status: { phase: "Bound" },
+      },
+      observedAt: completedAt,
+    }));
+    const receipt = completeSessionProofStep(authorization, {
+      namespaceResource: namespace(),
+      operator,
+      target,
+      completedAt,
+      evidenceSource,
+    });
+    let waiterCalls = 0;
+    const result = persistSessionProofCodexLoginWaitFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:29:00Z",
+      completedAt,
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, stub.execute, () => {
+      waiterCalls += 1;
+      assert.equal(statSync(inputs.tenthEvidencePath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.tenthStepReceiptPath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.tenthEvidencePath).size, 0);
+      assert.equal(statSync(inputs.tenthStepReceiptPath).size, 0);
+      return { evidenceSource, receipt };
+    });
+    assert.equal(waiterCalls, 1);
+    assert.equal(readFileSync(inputs.tenthEvidencePath, "utf8"), evidenceSource);
+    assert.equal(readFileSync(inputs.tenthStepReceiptPath, "utf8"), result.receiptSource);
+    assert.equal(result.receipt.evidenceSha256,
+      createHash("sha256").update(readFileSync(inputs.tenthEvidencePath)).digest("hex"));
+    const reopened = readSessionProofCodexLoginWaitOutputsFromOperatorPacket(
+      inputs,
+      stub.execute,
+    );
+    assert.equal(reopened.tenthEvidenceSource, evidenceSource);
+    assert.equal(reopened.tenthStepReceiptSource, result.receiptSource);
+    assert.deepEqual(reopened.tenthAuthorization, authorization);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reserves exact Codex-login completion output paths before the waiter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughCodexLoginWaitAuthorization(inputs, stub);
+    let waiterCalls = 0;
+    const waiter = () => {
+      waiterCalls += 1;
+      return { evidenceSource: "{}", receipt: {} };
+    };
+    assert.throws(() => persistSessionProofCodexLoginWaitFromOperatorPacket({
+      ...inputs,
+      tenthEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:29:00Z",
+      completedAt: "2026-08-05T06:30:00Z",
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, stub.execute, waiter), /derive exactly/);
+    writeFileSync(inputs.tenthStepReceiptPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSessionProofCodexLoginWaitFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:29:00Z",
+      completedAt: "2026-08-05T06:30:00Z",
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, stub.execute, waiter), /already exists/);
     assert.equal(waiterCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
