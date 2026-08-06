@@ -29,6 +29,8 @@ import {
 } from "./codeops-session-proof-operator-codex-login-apply.mjs";
 import {
   authorizeTenthSessionProofStepFromOperatorPacket,
+  persistTenthSessionProofStepAuthorizationFromOperatorPacket,
+  readTenthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-codex-login-wait-authorization.mjs";
 import {
   persistFirstSessionProofCredentialIssuanceFromOperatorPacket,
@@ -301,6 +303,10 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-10-codex-login.receipt.json`,
   );
+  const tenthAuthorizationPath = join(
+    root,
+    `${identity.namespace}.step-11-wait-codex-login.authorization.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -341,6 +347,7 @@ function persistOperatorInputs(root) {
     ninthAuthorizationPath,
     ninthEvidencePath,
     ninthStepReceiptPath,
+    tenthAuthorizationPath,
   };
 }
 
@@ -3133,6 +3140,55 @@ test("Codex-login apply evidence drift fails before completion authorization", (
       observedAt: "2026-08-05T06:28:00Z",
     }, stub.execute), /evidence|receipt/);
     assert.equal(stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persists the exact private Codex-login completion authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughCodexLoginOutputs(inputs, stub);
+    const authorization = persistTenthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:28:00Z",
+    }, stub.execute);
+    assert.equal(statSync(inputs.tenthAuthorizationPath).mode & 0o777, 0o600);
+    assert.deepEqual(
+      JSON.parse(readFileSync(inputs.tenthAuthorizationPath, "utf8")),
+      authorization,
+    );
+    assert.deepEqual(
+      readTenthSessionProofStepAuthorizationFromOperatorPacket(inputs, stub.execute)
+        .authorization,
+      authorization,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a substituted or existing Codex-login completion authorization before live reads", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    persistThroughCodexLoginOutputs(inputs, runner());
+    const stub = runner(true);
+    assert.throws(() => persistTenthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      tenthAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T06:28:00Z",
+    }, stub.execute), /derive exactly/);
+    assert.equal(stub.calls.length, 0);
+
+    writeFileSync(inputs.tenthAuthorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistTenthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:28:00Z",
+    }, stub.execute), /already exists/);
+    assert.equal(stub.calls.length, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
