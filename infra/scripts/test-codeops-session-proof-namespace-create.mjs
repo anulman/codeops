@@ -15,6 +15,7 @@ import {
 } from "./codeops-session-proof-operator-credential-issuance.mjs";
 import {
   authorizeSecondSessionProofStepFromOperatorPacket,
+  persistSecondSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-next-step-authorization.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
@@ -105,6 +106,10 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-02-issue-broker-capabilities.receipt.json`,
   );
+  const secondAuthorizationPath = join(
+    root,
+    `${identity.namespace}.step-03-issue-runtime-capabilities.authorization.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -121,6 +126,7 @@ function persistOperatorInputs(root) {
     authorizationPath,
     evidencePath,
     stepReceiptPath,
+    secondAuthorizationPath,
   };
 }
 
@@ -463,7 +469,7 @@ test("authorizes only step 3 from the exact persisted broker outputs", () => {
     }, stub.execute);
     const issuerCalls = stub.calls.filter(({ file }) =>
       file.endsWith("issue-codeops-session-proof-secrets.sh")).length;
-    const authorization = authorizeSecondSessionProofStepFromOperatorPacket({
+    const authorization = persistSecondSessionProofStepAuthorizationFromOperatorPacket({
       ...inputs,
       observedAt: "2026-08-05T06:04:00Z",
     }, stub.execute);
@@ -474,8 +480,50 @@ test("authorizes only step 3 from the exact persisted broker outputs", () => {
       authorization.previousReceiptSha256,
       createHash("sha256").update(readFileSync(inputs.stepReceiptPath)).digest("hex"),
     );
+    assert.equal(statSync(inputs.secondAuthorizationPath).mode & 0o777, 0o600);
+    assert.deepEqual(
+      JSON.parse(readFileSync(inputs.secondAuthorizationPath, "utf8")),
+      authorization,
+    );
     assert.equal(stub.calls.filter(({ file }) =>
       file.endsWith("issue-codeops-session-proof-secrets.sh")).length, issuerCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a substituted or existing step-3 authorization before live reads", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const setup = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, setup.execute);
+    persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, setup.execute);
+    persistFirstSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, setup.execute);
+    const stub = runner(true);
+    assert.throws(() => persistSecondSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      secondAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T06:04:00Z",
+    }, stub.execute), /derive exactly/);
+    assert.equal(stub.calls.length, 0);
+
+    writeFileSync(inputs.secondAuthorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSecondSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:04:00Z",
+    }, stub.execute), /already exists/);
+    assert.equal(stub.calls.length, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

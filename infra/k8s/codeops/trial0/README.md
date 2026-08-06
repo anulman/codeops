@@ -676,6 +676,14 @@ permissions, Namespace replacement, operator/target change, or expiry fails
 before any mutation. This boundary performs no credential issuance and is not
 wired to a runner or workflow.
 
+The resulting step-3 authorization is exclusively written beside the other
+operator artifacts at the exact Namespace-derived
+`step-03-issue-runtime-capabilities.authorization.json` path. It is mode
+`0600`, fsynced with its parent, identity-checked through its open descriptor,
+and refused before live reads if the path is substituted or already exists.
+Persistence remains unwired to every runner and workflow and issues no
+credential.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
