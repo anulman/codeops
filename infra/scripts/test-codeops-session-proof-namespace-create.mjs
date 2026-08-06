@@ -66,6 +66,8 @@ import {
 } from "./codeops-session-proof-operator-gateway-wait.mjs";
 import {
   authorizeSeventhSessionProofStepFromOperatorPacket,
+  persistSeventhSessionProofStepAuthorizationFromOperatorPacket,
+  readSeventhSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-grant-step-authorization.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
@@ -232,6 +234,10 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-07-wait-gateway-migration.receipt.json`,
   );
+  const seventhAuthorizationPath = join(
+    root,
+    `${identity.namespace}.step-08-grant-receipts.authorization.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -263,6 +269,7 @@ function persistOperatorInputs(root) {
     sixthAuthorizationPath,
     sixthEvidencePath,
     sixthStepReceiptPath,
+    seventhAuthorizationPath,
   };
 }
 
@@ -2178,6 +2185,59 @@ test("gateway readiness evidence drift fails before receipt-grant authorization"
       ...inputs,
       observedAt: "2026-08-05T06:19:00Z",
     }, stub.execute), /evidence|receipt/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persists the exact private receipt-grant authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGatewayWaitOutputs(inputs, stub);
+    const createCalls = stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length;
+    const authorization = persistSeventhSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:19:00Z",
+    }, stub.execute);
+    assert.equal(statSync(inputs.seventhAuthorizationPath).mode & 0o777, 0o600);
+    assert.deepEqual(
+      JSON.parse(readFileSync(inputs.seventhAuthorizationPath, "utf8")),
+      authorization,
+    );
+    assert.deepEqual(
+      readSeventhSessionProofStepAuthorizationFromOperatorPacket(inputs, stub.execute)
+        .authorization,
+      authorization,
+    );
+    assert.equal(stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length, createCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a substituted or existing receipt-grant authorization before live reads", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const setup = runner();
+    persistThroughGatewayWaitOutputs(inputs, setup);
+    const stub = runner(true);
+    assert.throws(() => persistSeventhSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      seventhAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T06:19:00Z",
+    }, stub.execute), /derive exactly/);
+    assert.equal(stub.calls.length, 0);
+    writeFileSync(inputs.seventhAuthorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSeventhSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:19:00Z",
+    }, stub.execute), /already exists/);
+    assert.equal(stub.calls.length, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

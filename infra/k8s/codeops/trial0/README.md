@@ -845,6 +845,14 @@ and authorizes only `grant-receipts` against the reviewed grants manifest bytes
 retained in the immutable operator packet. It persists no authorization,
 invokes no grant adapter, and remains referenced only by focused tests.
 
+Its persistence boundary requires the exact adjacent absent Namespace-derived
+`step-08-grant-receipts.authorization.json` path before live reads, then
+exclusively creates the canonical authorization as mode `0600`, fsyncs and
+identity-checks its bytes and parent, and reconstructs the exact artifact from
+the private gateway-readiness chain on readback. A substituted or existing
+target fails before live access. It imports and invokes no grant adapter and
+remains unreferenced by runners and workflows.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
