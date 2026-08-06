@@ -39,8 +39,14 @@ const adapters = {
   "wait-codex-login": ["./codeops-session-proof-codex-login-wait.mjs", "waitForSessionProofCodexLogin"],
   "codex-smoke": ["./codeops-session-proof-codex-smoke-replace.mjs", "replaceSessionProofCodexSmoke"],
   "wait-codex-smoke": ["./codeops-session-proof-codex-smoke-wait.mjs", "waitForSessionProofCodexSmoke"],
-  "start-ui": ["./codeops-session-proof-ui-apply.mjs", "applySessionProofUi"],
-  "wait-ui": ["./codeops-session-proof-ui-wait.mjs", "waitForSessionProofUi"],
+  "start-ui": [
+    "./codeops-session-proof-operator-ui-apply.mjs",
+    "persistSessionProofUiApplyFromOperatorPacket",
+  ],
+  "wait-ui": [
+    "./codeops-session-proof-operator-ui-wait.mjs",
+    "persistSessionProofUiWaitFromOperatorPacket",
+  ],
   "start-runtime": ["./codeops-session-proof-runtime-apply.mjs", "applySessionProofRuntime"],
   "wait-runtime": ["./codeops-session-proof-runtime-wait.mjs", "waitForSessionProofRuntime"],
   "record-proof": ["./codeops-session-proof-record.mjs", "completeSessionProofRecording"],

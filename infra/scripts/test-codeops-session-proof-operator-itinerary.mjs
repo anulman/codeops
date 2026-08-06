@@ -97,6 +97,20 @@ test("wires every closed proof step and exact byte source without invoking an ad
       export: "persistSessionProofGrantApplyFromOperatorPacket",
     },
   );
+  assert.deepEqual(
+    result.steps.find((step) => step.stepId === "start-ui").adapter,
+    {
+      module: "./codeops-session-proof-operator-ui-apply.mjs",
+      export: "persistSessionProofUiApplyFromOperatorPacket",
+    },
+  );
+  assert.deepEqual(
+    result.steps.find((step) => step.stepId === "wait-ui").adapter,
+    {
+      module: "./codeops-session-proof-operator-ui-wait.mjs",
+      export: "persistSessionProofUiWaitFromOperatorPacket",
+    },
+  );
   assert.deepEqual(result.finalOutputs, ["receipt:verify-teardown", "evidence:verify-teardown"]);
 });
 

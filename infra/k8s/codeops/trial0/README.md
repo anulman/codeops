@@ -412,6 +412,17 @@ Namespace or resource replacement, manifest/action drift, or timestamp drift
 emits no receipt. CI exercises the adapter only through injected fakes and
 never creates a live UI resource.
 
+The adjacent operator handoff reopens the exact private `start-ui`
+authorization, supplies only that authorization and the reviewed UI manifest
+to the create-only adapter, and reserves the exact private
+`step-15-start-ui` evidence and receipt paths before the adapter can run.
+After success, it fsyncs and identity-checks both outputs. Readback reconstructs
+the receipt from the authorization, evidence, live operator, target, and bound
+Namespace UID. Existing or substituted paths, authorization drift, output
+drift, interruption, and weakened file identity fail closed. The closed
+rehearsal lists this operator adapter but does not invoke it. No workflow or
+runner invokes it, and tests use only an injected adapter.
+
 The separate `wait-ui` completion contract self-contains and hash-verifies the
 exact UI apply receipt/evidence, reuses the create-only Deployment UID at
 generation 1, and requires exactly one desired/current/updated/ready/available
@@ -421,6 +432,17 @@ admission around a two-minute-bounded poll of only that Deployment, then
 double-reads the final ready identity before emitting evidence and a receipt.
 Pending, stale-generation, incomplete, replaced, malformed, chain-drifted,
 extra-field, or final-state-drifted readiness fails closed.
+
+The adjacent operator boundaries reconstruct the exact private UI apply chain,
+persist only the `wait-ui` authorization, and then pass that authorization
+plus the exact UI apply receipt/evidence and reviewed poll bounds to the
+existing waiter. They reserve the private `step-16-wait-ui` evidence and
+receipt paths before polling. After success, readback reconstructs the exact
+receipt against the live operator, target, and bound Namespace UID. Existing or
+substituted paths, predecessor drift, output drift, interruption, and weakened
+file identity fail closed. The closed rehearsal lists the persistence adapter
+but does not invoke it. No workflow or runner invokes these boundaries, and
+tests use only an injected waiter.
 
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their

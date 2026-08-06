@@ -67,6 +67,21 @@ import {
   readThirteenthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-ui-step-authorization.mjs";
 import {
+  persistSessionProofUiApplyFromOperatorPacket,
+  readSessionProofUiApplyOutputsFromOperatorPacket,
+} from "./codeops-session-proof-operator-ui-apply.mjs";
+import {
+  persistFourteenthSessionProofStepAuthorizationFromOperatorPacket,
+  readFourteenthSessionProofStepAuthorizationFromOperatorPacket,
+} from "./codeops-session-proof-operator-ui-wait-authorization.mjs";
+import {
+  persistSessionProofUiWaitFromOperatorPacket,
+  readSessionProofUiWaitOutputsFromOperatorPacket,
+} from "./codeops-session-proof-operator-ui-wait.mjs";
+import {
+  buildSessionProofUiReadinessEvidence,
+} from "./codeops-session-proof-ui-readiness-evidence.mjs";
+import {
   buildSessionProofCodexSmokeReplacementEvidence,
 } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
 import {
@@ -184,6 +199,8 @@ const proofThreeShardOverrides = new Map([
     2,
   ],
   ["persisted Codex-login authorization drift fails before the create-only adapter", 2],
+  ["durably persists exact UI apply outputs behind the private authorization chain", 1],
+  ["durably persists exact UI readiness outputs behind the private apply chain", 2],
 ]);
 const proofSeenTestNames = new Set();
 let proofTestOrdinal = 0;
@@ -426,6 +443,26 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-14-start-ui.authorization.json`,
   );
+  const thirteenthEvidencePath = join(
+    root,
+    `${identity.namespace}.step-15-start-ui.evidence.json`,
+  );
+  const thirteenthStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-15-start-ui.receipt.json`,
+  );
+  const fourteenthAuthorizationPath = join(
+    root,
+    `${identity.namespace}.step-16-wait-ui.authorization.json`,
+  );
+  const fourteenthEvidencePath = join(
+    root,
+    `${identity.namespace}.step-16-wait-ui.evidence.json`,
+  );
+  const fourteenthStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-16-wait-ui.receipt.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -476,6 +513,11 @@ function persistOperatorInputs(root) {
     twelfthEvidencePath,
     twelfthStepReceiptPath,
     thirteenthAuthorizationPath,
+    thirteenthEvidencePath,
+    thirteenthStepReceiptPath,
+    fourteenthAuthorizationPath,
+    fourteenthEvidencePath,
+    fourteenthStepReceiptPath,
   };
 }
 
@@ -1004,6 +1046,207 @@ async function persistThroughCodexSmokeReplacementOutputs(inputs, stub) {
     completedAt,
   }, stub.execute, () => ({ evidenceSource, receipt }));
   return { authorization, evidenceSource, receipt };
+}
+
+async function persistThroughCodexSmokeWaitOutputs(inputs, stub) {
+  await persistThroughCodexSmokeReplacementOutputs(inputs, stub);
+  const authorization = persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:34:00Z",
+  }, stub.execute);
+  const smokeReplacementReceiptSource = readFileSync(
+    inputs.eleventhStepReceiptPath,
+    "utf8",
+  );
+  const smokeReplacementEvidenceSource = readFileSync(inputs.eleventhEvidencePath, "utf8");
+  const smokeApplyEvidence = JSON.parse(
+    JSON.parse(smokeReplacementEvidenceSource).smokeApplyEvidenceSource,
+  );
+  const smokeJob = smokeApplyEvidence.resourceInventory.find((resource) =>
+    resource.kind === "Job" && resource.name === "codeops-codex-auth-smoke");
+  const smokeClaim = smokeApplyEvidence.resourceInventory.find((resource) =>
+    resource.kind === "PersistentVolumeClaim" && resource.name === "codeops-codex-auth");
+  const completedAt = "2026-08-05T06:36:00Z";
+  const evidenceSource = JSON.stringify(buildSessionProofCodexSmokeCompletionEvidence({
+    authorization,
+    smokeReplacementReceiptSource,
+    smokeReplacementEvidenceSource,
+    loginJobAbsent: true,
+    job: {
+      apiVersion: "batch/v1",
+      kind: "Job",
+      metadata: {
+        name: "codeops-codex-auth-smoke",
+        namespace: identity.namespace,
+        uid: smokeJob.uid,
+        generation: 1,
+      },
+      spec: {
+        completions: 1,
+        parallelism: 1,
+        backoffLimit: 0,
+        activeDeadlineSeconds: 900,
+        ttlSecondsAfterFinished: 3600,
+      },
+      status: {
+        active: 0,
+        succeeded: 1,
+        failed: 0,
+        startTime: "2026-08-05T06:35:00Z",
+        completionTime: "2026-08-05T06:35:30Z",
+        conditions: [{ type: "Complete", status: "True" }],
+      },
+    },
+    persistentVolumeClaim: {
+      apiVersion: "v1",
+      kind: "PersistentVolumeClaim",
+      metadata: {
+        name: "codeops-codex-auth",
+        namespace: identity.namespace,
+        uid: smokeClaim.uid,
+      },
+      status: { phase: "Bound" },
+    },
+    observedAt: completedAt,
+  }));
+  const receipt = completeSessionProofStep(authorization, {
+    namespaceResource: namespace(),
+    operator,
+    target,
+    completedAt,
+    evidenceSource,
+  });
+  persistSessionProofCodexSmokeWaitFromOperatorPacket({
+    ...inputs,
+    startedAt: "2026-08-05T06:35:00Z",
+    completedAt,
+    maxAttempts: 96,
+    pollIntervalMs: 10_000,
+  }, stub.execute, () => ({ evidenceSource, receipt }));
+  return { authorization, evidenceSource, receipt };
+}
+
+async function persistThroughUiAuthorization(inputs, stub) {
+  await persistThroughCodexSmokeWaitOutputs(inputs, stub);
+  return persistThirteenthSessionProofStepAuthorizationFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:37:00Z",
+  }, stub.execute);
+}
+
+async function persistThroughUiApplyOutputs(inputs, stub) {
+  const authorization = await persistThroughUiAuthorization(inputs, stub);
+  const completedAt = "2026-08-05T06:39:00Z";
+  const evidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+    authorization,
+    observedAt: completedAt,
+    resources: sessionProofApplyResourceIdentities("start-ui").map((resource, index) => ({
+      ...resource,
+      uid: `ui-resource-uid-${index}`,
+    })),
+  }));
+  const receipt = completeSessionProofStep(authorization, {
+    namespaceResource: namespace(),
+    operator,
+    target,
+    completedAt,
+    evidenceSource,
+  });
+  const persisted = persistSessionProofUiApplyFromOperatorPacket({
+    ...inputs,
+    startedAt: "2026-08-05T06:38:00Z",
+    completedAt,
+  }, stub.execute, (input, runnerArgument) => {
+    assert.equal(runnerArgument, stub.execute);
+    assert.deepEqual(input, {
+      authorization,
+      manifestSource: "synthetic-ui-artifact\n",
+      startedAt: "2026-08-05T06:38:00Z",
+      completedAt,
+    });
+    assert.equal(statSync(inputs.thirteenthEvidencePath).mode & 0o777, 0o600);
+    assert.equal(statSync(inputs.thirteenthStepReceiptPath).mode & 0o777, 0o600);
+    assert.equal(statSync(inputs.thirteenthEvidencePath).size, 0);
+    assert.equal(statSync(inputs.thirteenthStepReceiptPath).size, 0);
+    return { evidenceSource, receipt };
+  });
+  return { authorization, evidenceSource, receipt, persisted };
+}
+
+async function persistThroughUiWaitAuthorization(inputs, stub) {
+  const outputs = await persistThroughUiApplyOutputs(inputs, stub);
+  const authorization = persistFourteenthSessionProofStepAuthorizationFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:40:00Z",
+  }, stub.execute);
+  return { ...outputs, waitAuthorization: authorization };
+}
+
+async function persistThroughUiWaitOutputs(inputs, stub) {
+  const { persisted: uiApply, waitAuthorization: authorization } =
+    await persistThroughUiWaitAuthorization(inputs, stub);
+  const completedAt = "2026-08-05T06:42:00Z";
+  const uiApplyEvidenceSource = readFileSync(inputs.thirteenthEvidencePath, "utf8");
+  const evidenceSource = JSON.stringify(buildSessionProofUiReadinessEvidence({
+    authorization,
+    uiApplyReceiptSource: uiApply.receiptSource,
+    uiApplyEvidenceSource,
+    deployment: {
+      apiVersion: "apps/v1",
+      kind: "Deployment",
+      metadata: {
+        name: "codeops-agents-ui",
+        namespace: identity.namespace,
+        uid: "ui-resource-uid-0",
+        generation: 1,
+      },
+      spec: { replicas: 1 },
+      status: {
+        observedGeneration: 1,
+        replicas: 1,
+        updatedReplicas: 1,
+        readyReplicas: 1,
+        availableReplicas: 1,
+        unavailableReplicas: 0,
+        conditions: [
+          { type: "Available", status: "True" },
+          { type: "Progressing", status: "True" },
+        ],
+      },
+    },
+    observedAt: completedAt,
+  }));
+  const receipt = completeSessionProofStep(authorization, {
+    namespaceResource: namespace(),
+    operator,
+    target,
+    completedAt,
+    evidenceSource,
+  });
+  const persisted = persistSessionProofUiWaitFromOperatorPacket({
+    ...inputs,
+    startedAt: "2026-08-05T06:41:00Z",
+    completedAt,
+    maxAttempts: 120,
+    pollIntervalMs: 1000,
+  }, stub.execute, (input, runnerArgument) => {
+    assert.equal(runnerArgument, stub.execute);
+    assert.deepEqual(input, {
+      authorization,
+      uiApplyReceiptSource: uiApply.receiptSource,
+      uiApplyEvidenceSource,
+      startedAt: "2026-08-05T06:41:00Z",
+      completedAt,
+      maxAttempts: 120,
+      pollIntervalMs: 1000,
+    });
+    assert.equal(statSync(inputs.fourteenthEvidencePath).mode & 0o777, 0o600);
+    assert.equal(statSync(inputs.fourteenthStepReceiptPath).mode & 0o777, 0o600);
+    assert.equal(statSync(inputs.fourteenthEvidencePath).size, 0);
+    assert.equal(statSync(inputs.fourteenthStepReceiptPath).size, 0);
+    return { evidenceSource, receipt };
+  });
+  return { authorization, evidenceSource, receipt, persisted };
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -4152,6 +4395,7 @@ test("authorizes only Codex smoke completion from exact persisted replacement ou
       uiAuthorizationSource,
       { mode: 0o600 },
     );
+
     const beforeOccupiedUiAuthorization = stub.calls.length;
     assert.throws(() => persistThirteenthSessionProofStepAuthorizationFromOperatorPacket({
       ...inputs,
@@ -4177,6 +4421,88 @@ test("authorizes only Codex smoke completion from exact persisted replacement ou
       stub.calls.slice(driftCallCount).some(({ args }) => args.includes("job.batch")),
       false,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durably persists exact UI apply outputs behind the private authorization chain", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const closedStub = runner(true);
+    assert.throws(() => persistSessionProofUiApplyFromOperatorPacket({
+      ...inputs,
+      thirteenthEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:38:00Z",
+      completedAt: "2026-08-05T06:39:00Z",
+    }, closedStub.execute), /derive exactly/);
+    assert.equal(closedStub.calls.length, 0);
+
+    const stub = runner();
+    const result = await persistThroughUiApplyOutputs(inputs, stub);
+    assert.equal(result.authorization.stepIndex, 14);
+    assert.equal(result.authorization.stepId, "start-ui");
+    assert.equal(result.authorization.action, "operator-apply");
+    assert.equal(result.authorization.artifact, "ui");
+    assert.equal(statSync(inputs.thirteenthEvidencePath).mode & 0o777, 0o600);
+    assert.equal(statSync(inputs.thirteenthStepReceiptPath).mode & 0o777, 0o600);
+    assert.equal(readFileSync(inputs.thirteenthEvidencePath, "utf8"), result.evidenceSource);
+    assert.equal(
+      readFileSync(inputs.thirteenthStepReceiptPath, "utf8"),
+      result.persisted.receiptSource,
+    );
+    assert.equal(
+      result.persisted.receipt.evidenceSha256,
+      createHash("sha256").update(result.evidenceSource).digest("hex"),
+    );
+    const reopened = readSessionProofUiApplyOutputsFromOperatorPacket(inputs, stub.execute);
+    assert.deepEqual(reopened.thirteenthAuthorization, result.authorization);
+    assert.equal(reopened.thirteenthEvidenceSource, result.evidenceSource);
+    assert.equal(reopened.thirteenthStepReceiptSource, result.persisted.receiptSource);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durably persists exact UI readiness outputs behind the private apply chain", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const closedStub = runner(true);
+    assert.throws(() => persistFourteenthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      fourteenthAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T06:40:00Z",
+    }, closedStub.execute), /derive exactly/);
+    assert.throws(() => persistSessionProofUiWaitFromOperatorPacket({
+      ...inputs,
+      fourteenthEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:41:00Z",
+      completedAt: "2026-08-05T06:42:00Z",
+      maxAttempts: 120,
+      pollIntervalMs: 1000,
+    }, closedStub.execute), /derive exactly/);
+    assert.equal(closedStub.calls.length, 0);
+
+    const stub = runner();
+    const result = await persistThroughUiWaitOutputs(inputs, stub);
+    assert.equal(result.authorization.stepIndex, 15);
+    assert.equal(result.authorization.stepId, "wait-ui");
+    assert.equal(result.authorization.action, "operator-wait-ready");
+    assert.equal(result.authorization.artifact, null);
+    assert.equal(statSync(inputs.fourteenthAuthorizationPath).mode & 0o777, 0o600);
+    assert.equal(statSync(inputs.fourteenthEvidencePath).mode & 0o777, 0o600);
+    assert.equal(statSync(inputs.fourteenthStepReceiptPath).mode & 0o777, 0o600);
+    assert.equal(readFileSync(inputs.fourteenthEvidencePath, "utf8"), result.evidenceSource);
+    assert.equal(
+      readFileSync(inputs.fourteenthStepReceiptPath, "utf8"),
+      result.persisted.receiptSource,
+    );
+    const reopened = readSessionProofUiWaitOutputsFromOperatorPacket(inputs, stub.execute);
+    assert.deepEqual(reopened.fourteenthAuthorization, result.authorization);
+    assert.equal(reopened.fourteenthEvidenceSource, result.evidenceSource);
+    assert.equal(reopened.fourteenthStepReceiptSource, result.persisted.receiptSource);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
