@@ -861,6 +861,16 @@ grant adapter. Authorization or artifact drift fails before the adapter can be
 reached. The itinerary names this operator boundary, but no runner or workflow
 invokes it.
 
+The grant apply persistence boundary exclusively reserves the exact adjacent
+Namespace-derived mode-`0600` evidence and completion-receipt outputs and
+fsyncs their parent before the create-only adapter can be reached. After
+success it fsyncs and identity-checks the specialized four-resource evidence
+and its hash-bound canonical receipt, then fsyncs the parent again. Readback
+reconstructs the exact result from the private authorization and gateway-
+readiness chain. Existing or substituted outputs and interrupted writes fail
+closed. The itinerary names this persistence boundary, but no runner or
+workflow invokes it.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,

@@ -32,7 +32,7 @@ const adapters = {
   ],
   "grant-receipts": [
     "./codeops-session-proof-operator-grant-apply.mjs",
-    "applySessionProofGrantsFromOperatorPacket",
+    "persistSessionProofGrantApplyFromOperatorPacket",
   ],
   "wait-grants": ["./codeops-session-proof-grant-wait.mjs", "waitForSessionProofGrants"],
   "codex-login": ["./codeops-session-proof-codex-login-apply.mjs", "applySessionProofCodexLogin"],

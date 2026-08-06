@@ -71,6 +71,8 @@ import {
 } from "./codeops-session-proof-operator-grant-step-authorization.mjs";
 import {
   applySessionProofGrantsFromOperatorPacket,
+  persistSessionProofGrantApplyFromOperatorPacket,
+  readSessionProofGrantApplyOutputsFromOperatorPacket,
 } from "./codeops-session-proof-operator-grant-apply.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
@@ -241,6 +243,14 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-08-grant-receipts.authorization.json`,
   );
+  const seventhEvidencePath = join(
+    root,
+    `${identity.namespace}.step-08-grant-receipts.evidence.json`,
+  );
+  const seventhStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-08-grant-receipts.receipt.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -273,6 +283,8 @@ function persistOperatorInputs(root) {
     sixthEvidencePath,
     sixthStepReceiptPath,
     seventhAuthorizationPath,
+    seventhEvidencePath,
+    seventhStepReceiptPath,
   };
 }
 
@@ -2305,6 +2317,94 @@ test("persisted receipt-grant authorization drift fails before the adapter is re
     }, stub.execute, () => {
       adapterCalls += 1;
     }), /exact persisted artifact/);
+    assert.equal(adapterCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durably persists the exact receipt-grant apply evidence and completion receipt", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGatewayWaitOutputs(inputs, stub);
+    const authorization = persistSeventhSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:19:00Z",
+    }, stub.execute);
+    const completedAt = "2026-08-05T06:21:00Z";
+    const evidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+      authorization,
+      observedAt: completedAt,
+      resources: sessionProofApplyResourceIdentities("grant-receipts").map((resource, index) => ({
+        ...resource,
+        uid: `grant-resource-uid-${index + 1}`,
+      })),
+    }));
+    const receipt = completeSessionProofStep(authorization, {
+      namespaceResource: namespace(),
+      operator,
+      target,
+      completedAt,
+      evidenceSource,
+    });
+    let adapterCalls = 0;
+    const result = persistSessionProofGrantApplyFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:20:00Z",
+      completedAt,
+    }, stub.execute, (received, runnerArgument) => {
+      adapterCalls += 1;
+      assert.deepEqual(received.authorization, authorization);
+      assert.equal(runnerArgument, stub.execute);
+      assert.equal(statSync(inputs.seventhEvidencePath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.seventhStepReceiptPath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.seventhEvidencePath).size, 0);
+      assert.equal(statSync(inputs.seventhStepReceiptPath).size, 0);
+      return { evidenceSource, receipt };
+    });
+    assert.equal(adapterCalls, 1);
+    assert.equal(readFileSync(inputs.seventhEvidencePath, "utf8"), evidenceSource);
+    assert.equal(readFileSync(inputs.seventhStepReceiptPath, "utf8"), result.receiptSource);
+    assert.equal(result.receipt.evidenceSha256,
+      createHash("sha256").update(readFileSync(inputs.seventhEvidencePath)).digest("hex"));
+    const reopened = readSessionProofGrantApplyOutputsFromOperatorPacket(inputs, stub.execute);
+    assert.equal(reopened.seventhEvidenceSource, evidenceSource);
+    assert.equal(reopened.seventhStepReceiptSource, result.receiptSource);
+    assert.deepEqual(reopened.seventhAuthorization, authorization);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reserves exact receipt-grant output paths before the adapter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGatewayWaitOutputs(inputs, stub);
+    persistSeventhSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:19:00Z",
+    }, stub.execute);
+    let adapterCalls = 0;
+    const adapter = () => {
+      adapterCalls += 1;
+      return { evidenceSource: "{}", receipt: {} };
+    };
+    assert.throws(() => persistSessionProofGrantApplyFromOperatorPacket({
+      ...inputs,
+      seventhEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:20:00Z",
+      completedAt: "2026-08-05T06:21:00Z",
+    }, stub.execute, adapter), /derive exactly/);
+    writeFileSync(inputs.seventhStepReceiptPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSessionProofGrantApplyFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:20:00Z",
+      completedAt: "2026-08-05T06:21:00Z",
+    }, stub.execute, adapter), /already exists/);
     assert.equal(adapterCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
