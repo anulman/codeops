@@ -23,6 +23,8 @@ import {
 } from "./codeops-session-proof-operator-runtime-credential-issuance.mjs";
 import {
   authorizeThirdSessionProofStepFromOperatorPacket,
+  persistThirdSessionProofStepAuthorizationFromOperatorPacket,
+  readThirdSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-database-step-authorization.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
@@ -135,6 +137,10 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-03-issue-runtime-capabilities.receipt.json`,
   );
+  const thirdAuthorizationPath = join(
+    root,
+    `${identity.namespace}.step-04-start-database.authorization.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -154,6 +160,7 @@ function persistOperatorInputs(root) {
     secondAuthorizationPath,
     secondEvidencePath,
     secondStepReceiptPath,
+    thirdAuthorizationPath,
   };
 }
 
@@ -831,6 +838,101 @@ test("runtime evidence drift fails before database-start authorization", () => {
       ...inputs,
       observedAt: "2026-08-05T06:07:00Z",
     }, stub.execute));
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persists the exact private database-start authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute);
+    persistFirstSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, stub.execute);
+    persistSecondSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:04:00Z",
+    }, stub.execute);
+    persistSecondSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      registryConfigFile: "/private/registry-config.json",
+      repositoryTokenFile: "/private/repository-token",
+      startedAt: "2026-08-05T06:05:00Z",
+      completedAt: "2026-08-05T06:06:00Z",
+    }, stub.execute);
+    const createCalls = stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length;
+    const authorization = persistThirdSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:07:00Z",
+    }, stub.execute);
+    assert.equal(statSync(inputs.thirdAuthorizationPath).mode & 0o777, 0o600);
+    assert.deepEqual(JSON.parse(readFileSync(inputs.thirdAuthorizationPath, "utf8")), authorization);
+    assert.deepEqual(
+      readThirdSessionProofStepAuthorizationFromOperatorPacket(inputs, stub.execute).authorization,
+      authorization,
+    );
+    assert.equal(stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length, createCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a substituted or existing database-start authorization before live reads", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const setup = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, setup.execute);
+    persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, setup.execute);
+    persistFirstSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, setup.execute);
+    persistSecondSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:04:00Z",
+    }, setup.execute);
+    persistSecondSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      registryConfigFile: "/private/registry-config.json",
+      repositoryTokenFile: "/private/repository-token",
+      startedAt: "2026-08-05T06:05:00Z",
+      completedAt: "2026-08-05T06:06:00Z",
+    }, setup.execute);
+    const stub = runner(true);
+    assert.throws(() => persistThirdSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      thirdAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T06:07:00Z",
+    }, stub.execute), /derive exactly/);
+    assert.equal(stub.calls.length, 0);
+    writeFileSync(inputs.thirdAuthorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistThirdSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:07:00Z",
+    }, stub.execute), /already exists/);
+    assert.equal(stub.calls.length, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
