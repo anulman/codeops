@@ -351,6 +351,13 @@ outputs, reconstructs their canonical receipt from the complete predecessor
 chain, repeats live operator/target/Namespace-UID admission, and authorizes only
 `wait-codex-smoke`. It persists no authorization, imports or invokes no waiter,
 and remains unwired to every runner and workflow. The separate
+durable authorization boundary requires the exact absent Namespace-derived
+adjacent `step-13-wait-codex-smoke.authorization.json` path before live reads,
+exclusively creates the canonical artifact as mode `0600`, fsyncs and identity-
+checks its bytes and parent, and reconstructs its exact meaning from the private
+replacement chain on readback. Substituted or occupied targets fail before live
+access. It imports and invokes no waiter and remains unwired to every runner and
+workflow. The separate
 `wait-codex-smoke` completion contract and concrete but uninvoked
 waiter now bind the exact replacement receipt/evidence chain to the same
 create-only smoke Job UID at generation 1, the same bound non-deleting

@@ -52,6 +52,8 @@ import {
 } from "./codeops-session-proof-operator-codex-smoke-replace.mjs";
 import {
   authorizeTwelfthSessionProofStepFromOperatorPacket,
+  persistTwelfthSessionProofStepAuthorizationFromOperatorPacket,
+  readTwelfthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-codex-smoke-wait-authorization.mjs";
 import {
   buildSessionProofCodexSmokeReplacementEvidence,
@@ -351,6 +353,10 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-12-codex-smoke.receipt.json`,
   );
+  const twelfthAuthorizationPath = join(
+    root,
+    `${identity.namespace}.step-13-wait-codex-smoke.authorization.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -397,6 +403,7 @@ function persistOperatorInputs(root) {
     eleventhAuthorizationPath,
     eleventhEvidencePath,
     eleventhStepReceiptPath,
+    twelfthAuthorizationPath,
   };
 }
 
@@ -3815,6 +3822,37 @@ test("authorizes only Codex smoke completion from exact persisted replacement ou
       stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")),
       false,
     );
+
+    const closedStub = runner(true);
+    assert.throws(() => persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      twelfthAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T06:34:00Z",
+    }, closedStub.execute), /derive exactly/);
+    assert.equal(closedStub.calls.length, 0);
+
+    const persisted = persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:34:00Z",
+    }, stub.execute);
+    assert.deepEqual(persisted, authorization);
+    assert.equal(statSync(inputs.twelfthAuthorizationPath).mode & 0o777, 0o600);
+    assert.deepEqual(
+      JSON.parse(readFileSync(inputs.twelfthAuthorizationPath, "utf8")),
+      authorization,
+    );
+    assert.deepEqual(
+      readTwelfthSessionProofStepAuthorizationFromOperatorPacket(inputs, stub.execute)
+        .authorization,
+      authorization,
+    );
+    const beforeOccupied = stub.calls.length;
+    assert.throws(() => persistTwelfthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:34:00Z",
+    }, stub.execute), /already exists/);
+    assert.equal(stub.calls.length, beforeOccupied);
+
     const evidence = JSON.parse(readFileSync(inputs.eleventhEvidencePath, "utf8"));
     writeFileSync(inputs.eleventhEvidencePath, JSON.stringify({ ...evidence, extra: true }));
     const driftCallCount = stub.calls.length;
