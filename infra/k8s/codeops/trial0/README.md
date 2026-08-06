@@ -335,7 +335,12 @@ objects, and creates only the smoke Job extracted from the digest-bound reviewed
 manifest. It double-reads the final smoke and retained identities around live
 operator/target/Namespace-UID admission and emits no receipt after deletion or
 creation failure, replacement, or partial state. CI exercises the adapter only
-through injected fakes and never deletes or creates a live Job. The separate
+through injected fakes and never deletes or creates a live Job. The operator
+handoff reopens the exact private step-12 authorization, reconstructs the
+persisted login-completion evidence/receipt chain, and passes only those bytes,
+the reviewed smoke manifest, bounded timestamps, and the already-verified
+runner into that adapter. It is not invoked by any proof runner or workflow.
+The separate
 `wait-codex-smoke` completion contract and concrete but uninvoked
 waiter now bind the exact replacement receipt/evidence chain to the same
 create-only smoke Job UID at generation 1, the same bound non-deleting

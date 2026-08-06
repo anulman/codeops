@@ -46,6 +46,9 @@ import {
   readEleventhSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-codex-smoke-step-authorization.mjs";
 import {
+  replaceSessionProofCodexSmokeFromOperatorPacket,
+} from "./codeops-session-proof-operator-codex-smoke-replace.mjs";
+import {
   persistFirstSessionProofCredentialIssuanceFromOperatorPacket,
 } from "./codeops-session-proof-operator-credential-issuance.mjs";
 import {
@@ -3575,6 +3578,71 @@ test("rejects a substituted or existing Codex smoke authorization before live re
       observedAt: "2026-08-05T06:31:00Z",
     }, stub.execute), /already exists/);
     assert.equal(stub.calls.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hands only the exact persisted Codex smoke authorization and login-completion outputs to replacement", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughCodexLoginWaitOutputs(inputs, stub);
+    const authorization = persistEleventhSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:31:00Z",
+    }, stub.execute);
+    const callCount = stub.calls.length;
+    let received;
+    const result = await replaceSessionProofCodexSmokeFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:32:00Z",
+      completedAt: "2026-08-05T06:33:00Z",
+    }, stub.execute, (input, dependencies) => {
+      received = input;
+      assert.deepEqual(dependencies, { runner: stub.execute });
+      return { accepted: true };
+    });
+    assert.deepEqual(result, { accepted: true });
+    assert.deepEqual(received, {
+      authorization,
+      manifestSource: "synthetic-codex-smoke-artifact\n",
+      loginCompletionReceiptSource: readFileSync(inputs.tenthStepReceiptPath, "utf8"),
+      loginCompletionEvidenceSource: readFileSync(inputs.tenthEvidencePath, "utf8"),
+      startedAt: "2026-08-05T06:32:00Z",
+      completedAt: "2026-08-05T06:33:00Z",
+    });
+    assert.equal(stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persisted Codex smoke authorization drift fails before replacement is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughCodexLoginWaitOutputs(inputs, stub);
+    persistEleventhSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:31:00Z",
+    }, stub.execute);
+    const authorization = JSON.parse(readFileSync(inputs.eleventhAuthorizationPath, "utf8"));
+    writeFileSync(inputs.eleventhAuthorizationPath, `${JSON.stringify({
+      ...authorization,
+      action: "operator-apply",
+    }, null, 2)}\n`, { mode: 0o600 });
+    let replacementCalls = 0;
+    assert.throws(() => replaceSessionProofCodexSmokeFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:32:00Z",
+      completedAt: "2026-08-05T06:33:00Z",
+    }, stub.execute, () => {
+      replacementCalls += 1;
+    }), /exact persisted artifact/);
+    assert.equal(replacementCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
