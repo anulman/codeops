@@ -59,6 +59,9 @@ import {
   persistSixthSessionProofStepAuthorizationFromOperatorPacket,
   readSixthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-gateway-wait-authorization.mjs";
+import {
+  waitForSessionProofGatewayMigrationFromOperatorPacket,
+} from "./codeops-session-proof-operator-gateway-wait.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
   authorizeFirstSessionProofStepFromOperatorPacket,
@@ -473,6 +476,14 @@ function persistThroughGatewayApplyOutputs(inputs, stub) {
     completedAt,
   }, stub.execute, () => ({ evidenceSource, receipt }));
   return { evidenceSource, receipt };
+}
+
+function persistThroughGatewayWaitAuthorization(inputs, stub) {
+  persistThroughGatewayApplyOutputs(inputs, stub);
+  return persistSixthSessionProofStepAuthorizationFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:16:00Z",
+  }, stub.execute);
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -1886,6 +1897,77 @@ test("rejects a substituted or existing gateway-migration authorization before l
       observedAt: "2026-08-05T06:16:00Z",
     }, stub.execute), /already exists/);
     assert.equal(stub.calls.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hands only the exact persisted gateway readiness authorization and apply outputs to the waiter", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const authorization = persistThroughGatewayWaitAuthorization(inputs, stub);
+    const createCalls = stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length;
+    let received;
+    const result = waitForSessionProofGatewayMigrationFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:17:00Z",
+      completedAt: "2026-08-05T06:18:00Z",
+      maxAttempts: 12,
+      pollIntervalMs: 1000,
+    }, stub.execute, (input, runnerArgument) => {
+      received = input;
+      assert.equal(runnerArgument, stub.execute);
+      return { accepted: true };
+    });
+    assert.deepEqual(result, { accepted: true });
+    assert.deepEqual(received.authorization, authorization);
+    assert.equal(received.gatewayApplyReceiptSource, readFileSync(inputs.fifthStepReceiptPath, "utf8"));
+    assert.equal(received.gatewayApplyEvidenceSource, readFileSync(inputs.fifthEvidencePath, "utf8"));
+    assert.equal(received.startedAt, "2026-08-05T06:17:00Z");
+    assert.equal(received.completedAt, "2026-08-05T06:18:00Z");
+    assert.equal(received.maxAttempts, 12);
+    assert.equal(received.pollIntervalMs, 1000);
+    assert.deepEqual(Object.keys(received).sort(), [
+      "authorization",
+      "completedAt",
+      "gatewayApplyEvidenceSource",
+      "gatewayApplyReceiptSource",
+      "maxAttempts",
+      "pollIntervalMs",
+      "startedAt",
+    ]);
+    assert.equal(stub.calls.filter(({ file, args }) =>
+      file === "kubectl" && args[0] === "create").length, createCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("persisted gateway readiness authorization drift fails before the waiter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGatewayWaitAuthorization(inputs, stub);
+    const authorization = JSON.parse(readFileSync(inputs.sixthAuthorizationPath, "utf8"));
+    writeFileSync(inputs.sixthAuthorizationPath, `${JSON.stringify({
+      ...authorization,
+      action: "operator-apply",
+    }, null, 2)}\n`, { mode: 0o600 });
+    let waiterCalls = 0;
+    assert.throws(() => waitForSessionProofGatewayMigrationFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:17:00Z",
+      completedAt: "2026-08-05T06:18:00Z",
+      maxAttempts: 12,
+      pollIntervalMs: 1000,
+    }, stub.execute, () => {
+      waiterCalls += 1;
+    }), /exact persisted artifact/);
+    assert.equal(waiterCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
