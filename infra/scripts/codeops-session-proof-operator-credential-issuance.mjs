@@ -6,6 +6,7 @@ import {
   fsyncSync,
   lstatSync,
   openSync,
+  readFileSync,
   realpathSync,
   writeFileSync,
 } from "node:fs";
@@ -17,7 +18,7 @@ import {
   readSessionProofOperatorCreationReceipt,
 } from "./codeops-session-proof-operator-namespace-create.mjs";
 
-function assertOutputPath(path, packetPath, namespace, suffix) {
+function assertOutputPath(path, packetPath, namespace, suffix, mustBeAbsent) {
   if (!isAbsolute(path ?? "") || resolve(path) !== path) {
     throw new Error("proof first-step output path must be absolute and normalized");
   }
@@ -32,11 +33,48 @@ function assertOutputPath(path, packetPath, namespace, suffix) {
   ) {
     throw new Error("proof first-step output path must derive exactly from the packet Namespace");
   }
+  if (mustBeAbsent) {
+    try {
+      lstatSync(path);
+      throw new Error("proof first-step output already exists");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+}
+
+function readPrivateOutput(path) {
+  const before = lstatSync(path);
+  if (
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    (before.mode & 0o777) !== 0o600 ||
+    before.size < 2 ||
+    before.size > 1024 * 1024
+  ) {
+    throw new Error("proof first-step output must be one bounded private regular file");
+  }
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    lstatSync(path);
-    throw new Error("proof first-step output already exists");
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
+    const source = readFileSync(descriptor);
+    const opened = fstatSync(descriptor);
+    const after = lstatSync(path);
+    if (
+      source.length !== before.size ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.ctimeMs !== before.ctimeMs ||
+      after.mtimeMs !== before.mtimeMs ||
+      (after.mode & 0o777) !== 0o600
+    ) {
+      throw new Error("proof first-step output changed while it was read");
+    }
+    return source;
+  } finally {
+    closeSync(descriptor);
   }
 }
 
@@ -86,12 +124,14 @@ export function persistFirstSessionProofCredentialIssuanceFromOperatorPacket(
     input.packetPath,
     namespace,
     "step-02-issue-broker-capabilities.evidence.json",
+    true,
   );
   assertOutputPath(
     input.stepReceiptPath,
     input.packetPath,
     namespace,
     "step-02-issue-broker-capabilities.receipt.json",
+    true,
   );
 
   const evidenceDescriptor = reservePrivateOutput(input.evidencePath);
@@ -114,4 +154,28 @@ export function persistFirstSessionProofCredentialIssuanceFromOperatorPacket(
     closeSync(evidenceDescriptor);
     if (receiptDescriptor !== undefined) closeSync(receiptDescriptor);
   }
+}
+
+export function readFirstSessionProofCredentialOutputsFromOperatorPacket(input) {
+  const operatorInput = readSessionProofOperatorCreationReceipt(input);
+  const namespace = operatorInput.creationReceipt.namespace.name;
+  assertOutputPath(
+    input.evidencePath,
+    input.packetPath,
+    namespace,
+    "step-02-issue-broker-capabilities.evidence.json",
+    false,
+  );
+  assertOutputPath(
+    input.stepReceiptPath,
+    input.packetPath,
+    namespace,
+    "step-02-issue-broker-capabilities.receipt.json",
+    false,
+  );
+  return {
+    ...operatorInput,
+    evidenceSource: readPrivateOutput(input.evidencePath).toString("utf8"),
+    stepReceiptSource: readPrivateOutput(input.stepReceiptPath).toString("utf8"),
+  };
 }

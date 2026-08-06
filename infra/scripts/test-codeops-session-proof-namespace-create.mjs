@@ -13,6 +13,9 @@ import { attachSessionProofOperatorAdmission } from "./codeops-session-proof-ope
 import {
   persistFirstSessionProofCredentialIssuanceFromOperatorPacket,
 } from "./codeops-session-proof-operator-credential-issuance.mjs";
+import {
+  authorizeSecondSessionProofStepFromOperatorPacket,
+} from "./codeops-session-proof-operator-next-step-authorization.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
   authorizeFirstSessionProofStepFromOperatorPacket,
@@ -435,6 +438,77 @@ test("reserves exact broker output paths before credential issuance", () => {
       stub.calls.some(({ file }) => file.endsWith("issue-codeops-session-proof-secrets.sh")),
       false,
     );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("authorizes only step 3 from the exact persisted broker outputs", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute);
+    persistFirstSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, stub.execute);
+    const issuerCalls = stub.calls.filter(({ file }) =>
+      file.endsWith("issue-codeops-session-proof-secrets.sh")).length;
+    const authorization = authorizeSecondSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:04:00Z",
+    }, stub.execute);
+    assert.equal(authorization.stepIndex, 3);
+    assert.equal(authorization.stepId, "issue-runtime-capabilities");
+    assert.equal(authorization.artifact, null);
+    assert.equal(
+      authorization.previousReceiptSha256,
+      createHash("sha256").update(readFileSync(inputs.stepReceiptPath)).digest("hex"),
+    );
+    assert.equal(stub.calls.filter(({ file }) =>
+      file.endsWith("issue-codeops-session-proof-secrets.sh")).length, issuerCalls);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects persisted broker evidence drift before step-3 authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute);
+    persistFirstSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, stub.execute);
+    const evidence = JSON.parse(readFileSync(inputs.evidencePath, "utf8"));
+    writeFileSync(inputs.evidencePath, JSON.stringify({ ...evidence, extra: true }));
+    const issuerCalls = stub.calls.filter(({ file }) =>
+      file.endsWith("issue-codeops-session-proof-secrets.sh")).length;
+    assert.throws(() => authorizeSecondSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:04:00Z",
+    }, stub.execute), /evidence/);
+    assert.equal(stub.calls.filter(({ file }) =>
+      file.endsWith("issue-codeops-session-proof-secrets.sh")).length, issuerCalls);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

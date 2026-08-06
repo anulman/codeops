@@ -665,6 +665,17 @@ artifacts for operator reconciliation; it cannot silently replay issuance or
 publish a completion receipt without its exact evidence. This adapter also
 remains uninvoked by workflows and runners.
 
+The read-only step-3 handoff then reopens both outputs through stable no-follow
+descriptors, re-verifies the exact first-step authorization and live Namespace
+identity, requires the evidence observation and receipt completion timestamps
+to match and follow authorization, reconstructs the canonical receipt from the
+exact evidence bytes, and verifies its hash chain. Only then may the ordinary
+step sequencer authorize `issue-runtime-capabilities` with the exact step-2
+receipt as its predecessor. Evidence/receipt drift, extra fields, weakened
+permissions, Namespace replacement, operator/target change, or expiry fails
+before any mutation. This boundary performs no credential issuance and is not
+wired to a runner or workflow.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
