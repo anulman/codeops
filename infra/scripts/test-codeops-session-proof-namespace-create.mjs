@@ -18,6 +18,9 @@ import {
 } from "./codeops-session-proof-grant-completion-evidence.mjs";
 import { attachSessionProofOperatorAdmission } from "./codeops-session-proof-operator-admission.mjs";
 import {
+  authorizeNinthSessionProofStepFromOperatorPacket,
+} from "./codeops-session-proof-operator-codex-login-step-authorization.mjs";
+import {
   persistFirstSessionProofCredentialIssuanceFromOperatorPacket,
 } from "./codeops-session-proof-operator-credential-issuance.mjs";
 import {
@@ -645,6 +648,56 @@ function persistThroughGrantWaitAuthorization(inputs, stub) {
     ...inputs,
     observedAt: "2026-08-05T06:22:00Z",
   }, stub.execute);
+}
+
+function persistThroughGrantWaitOutputs(inputs, stub) {
+  const authorization = persistThroughGrantWaitAuthorization(inputs, stub);
+  const completedAt = "2026-08-05T06:24:00Z";
+  const grantApplyReceiptSource = readFileSync(inputs.seventhStepReceiptPath, "utf8");
+  const grantApplyEvidenceSource = readFileSync(inputs.seventhEvidencePath, "utf8");
+  const grantJobUid = JSON.parse(grantApplyEvidenceSource).resourceInventory.find(
+    (resource) => resource.kind === "Job",
+  ).uid;
+  const evidenceSource = JSON.stringify(buildSessionProofGrantCompletionEvidence({
+    authorization,
+    grantApplyReceiptSource,
+    grantApplyEvidenceSource,
+    job: {
+      apiVersion: "batch/v1",
+      kind: "Job",
+      metadata: {
+        name: "codeops-session-proof-grants",
+        namespace: identity.namespace,
+        uid: grantJobUid,
+        generation: 1,
+      },
+      spec: { completions: 1, parallelism: 1, backoffLimit: 0, activeDeadlineSeconds: 300 },
+      status: {
+        active: 0,
+        succeeded: 1,
+        failed: 0,
+        startTime: "2026-08-05T06:23:00Z",
+        completionTime: "2026-08-05T06:23:04Z",
+        conditions: [{ type: "Complete", status: "True" }],
+      },
+    },
+    observedAt: completedAt,
+  }));
+  const receipt = completeSessionProofStep(authorization, {
+    namespaceResource: namespace(),
+    operator,
+    target,
+    completedAt,
+    evidenceSource,
+  });
+  persistSessionProofGrantWaitFromOperatorPacket({
+    ...inputs,
+    startedAt: "2026-08-05T06:23:00Z",
+    completedAt,
+    maxAttempts: 36,
+    pollIntervalMs: 10_000,
+  }, stub.execute, () => ({ evidenceSource, receipt }));
+  return { authorization, evidenceSource, receipt };
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -2733,6 +2786,54 @@ test("reserves exact grant-completion output paths before the waiter is reached"
       pollIntervalMs: 10_000,
     }, stub.execute, waiter), /already exists/);
     assert.equal(waiterCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("authorizes only Codex login from the exact persisted grant-completion outputs", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const { receipt } = persistThroughGrantWaitOutputs(inputs, stub);
+    const callCount = stub.calls.length;
+    const authorization = authorizeNinthSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:25:00Z",
+    }, stub.execute);
+    assert.equal(authorization.stepIndex, 10);
+    assert.equal(authorization.stepId, "codex-login");
+    assert.equal(authorization.action, "operator-apply");
+    assert.equal(authorization.artifact, "codex-login");
+    assert.equal(
+      authorization.artifactSha256,
+      createHash("sha256").update("synthetic-codex-login-artifact\n").digest("hex"),
+    );
+    assert.equal(
+      authorization.previousReceiptSha256,
+      createHash("sha256").update(`${JSON.stringify(receipt, null, 2)}\n`).digest("hex"),
+    );
+    assert.equal(stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("grant-completion evidence drift fails before Codex login authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGrantWaitOutputs(inputs, stub);
+    const evidence = JSON.parse(readFileSync(inputs.eighthEvidencePath, "utf8"));
+    writeFileSync(inputs.eighthEvidencePath, JSON.stringify({ ...evidence, extra: true }));
+    const callCount = stub.calls.length;
+    assert.throws(() => authorizeNinthSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:25:00Z",
+    }, stub.execute), /evidence|receipt/);
+    assert.equal(stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
