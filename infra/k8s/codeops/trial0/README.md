@@ -966,6 +966,13 @@ the exact result from the private authorization and login apply chain. Existing
 or substituted outputs and interrupted writes fail closed. No runner or
 workflow invokes this persistence boundary.
 
+The next read-only operator handoff reopens those exact private completion
+outputs, reconstructs and re-verifies the complete login apply/completion and
+receipt-hash chain against the live principal, target, and Namespace UID, then
+authorizes only the reviewed `codex-smoke` replacement artifact. It persists no
+authorization, imports or invokes no replacement adapter, and remains unwired
+to every runner and workflow.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,

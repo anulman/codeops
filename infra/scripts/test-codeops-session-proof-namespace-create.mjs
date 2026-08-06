@@ -41,6 +41,9 @@ import {
   waitForSessionProofCodexLoginFromOperatorPacket,
 } from "./codeops-session-proof-operator-codex-login-wait.mjs";
 import {
+  authorizeEleventhSessionProofStepFromOperatorPacket,
+} from "./codeops-session-proof-operator-codex-smoke-step-authorization.mjs";
+import {
   persistFirstSessionProofCredentialIssuanceFromOperatorPacket,
 } from "./codeops-session-proof-operator-credential-issuance.mjs";
 import {
@@ -786,6 +789,72 @@ function persistThroughCodexLoginWaitAuthorization(inputs, stub) {
     ...inputs,
     observedAt: "2026-08-05T06:28:00Z",
   }, stub.execute);
+}
+
+function persistThroughCodexLoginWaitOutputs(inputs, stub) {
+  const authorization = persistThroughCodexLoginWaitAuthorization(inputs, stub);
+  const completedAt = "2026-08-05T06:30:00Z";
+  const loginApplyReceiptSource = readFileSync(inputs.ninthStepReceiptPath, "utf8");
+  const loginApplyEvidenceSource = readFileSync(inputs.ninthEvidencePath, "utf8");
+  const resourceInventory = JSON.parse(loginApplyEvidenceSource).resourceInventory;
+  const evidenceSource = JSON.stringify(buildSessionProofCodexLoginCompletionEvidence({
+    authorization,
+    loginApplyReceiptSource,
+    loginApplyEvidenceSource,
+    job: {
+      apiVersion: "batch/v1",
+      kind: "Job",
+      metadata: {
+        name: "codeops-codex-auth-login",
+        namespace: identity.namespace,
+        uid: resourceInventory.find((resource) => resource.kind === "Job").uid,
+        generation: 1,
+      },
+      spec: {
+        completions: 1,
+        parallelism: 1,
+        backoffLimit: 0,
+        activeDeadlineSeconds: 900,
+        ttlSecondsAfterFinished: 3600,
+      },
+      status: {
+        active: 0,
+        succeeded: 1,
+        failed: 0,
+        startTime: "2026-08-05T06:29:00Z",
+        completionTime: "2026-08-05T06:29:30Z",
+        conditions: [{ type: "Complete", status: "True", reason: "CompletionsReached" }],
+      },
+    },
+    persistentVolumeClaim: {
+      apiVersion: "v1",
+      kind: "PersistentVolumeClaim",
+      metadata: {
+        name: "codeops-codex-auth",
+        namespace: identity.namespace,
+        uid: resourceInventory.find(
+          (resource) => resource.kind === "PersistentVolumeClaim",
+        ).uid,
+      },
+      status: { phase: "Bound" },
+    },
+    observedAt: completedAt,
+  }));
+  const receipt = completeSessionProofStep(authorization, {
+    namespaceResource: namespace(),
+    operator,
+    target,
+    completedAt,
+    evidenceSource,
+  });
+  persistSessionProofCodexLoginWaitFromOperatorPacket({
+    ...inputs,
+    startedAt: "2026-08-05T06:29:00Z",
+    completedAt,
+    maxAttempts: 96,
+    pollIntervalMs: 10_000,
+  }, stub.execute, () => ({ evidenceSource, receipt }));
+  return { authorization, evidenceSource, receipt };
 }
 
 test("creates only the reviewed namespace package after live preflight and binds its UID", () => {
@@ -3402,6 +3471,54 @@ test("reserves exact Codex-login completion output paths before the waiter is re
       pollIntervalMs: 10_000,
     }, stub.execute, waiter), /already exists/);
     assert.equal(waiterCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("authorizes only Codex smoke replacement from exact persisted login-completion outputs", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const { receipt } = persistThroughCodexLoginWaitOutputs(inputs, stub);
+    const callCount = stub.calls.length;
+    const authorization = authorizeEleventhSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:31:00Z",
+    }, stub.execute);
+    assert.equal(authorization.stepIndex, 12);
+    assert.equal(authorization.stepId, "codex-smoke");
+    assert.equal(authorization.action, "operator-replace-auth-job");
+    assert.equal(authorization.artifact, "codex-smoke");
+    assert.equal(
+      authorization.artifactSha256,
+      createHash("sha256").update("synthetic-codex-smoke-artifact\n").digest("hex"),
+    );
+    assert.equal(
+      authorization.previousReceiptSha256,
+      createHash("sha256").update(`${JSON.stringify(receipt, null, 2)}\n`).digest("hex"),
+    );
+    assert.equal(stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("login-completion evidence drift fails before Codex smoke authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughCodexLoginWaitOutputs(inputs, stub);
+    const evidence = JSON.parse(readFileSync(inputs.tenthEvidencePath, "utf8"));
+    writeFileSync(inputs.tenthEvidencePath, JSON.stringify({ ...evidence, extra: true }));
+    const callCount = stub.calls.length;
+    assert.throws(() => authorizeEleventhSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:31:00Z",
+    }, stub.execute), /evidence|receipt/);
+    assert.equal(stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
