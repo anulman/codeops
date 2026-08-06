@@ -934,6 +934,13 @@ Readback reconstructs the exact result from the private authorization and
 grant-completion chain. Existing or substituted outputs and interrupted writes
 fail closed. No runner or workflow invokes this persistence boundary.
 
+The next read-only handoff reopens those exact private login apply outputs,
+re-verifies their specialized four-resource evidence and canonical predecessor/
+hash chain against the live principal, target, and Namespace UID, and
+authorizes only bounded `wait-codex-login` completion. It persists no
+authorization, invokes no waiter, and remains referenced only by focused
+tests.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
