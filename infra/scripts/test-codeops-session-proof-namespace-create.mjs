@@ -10,6 +10,9 @@ import {
 } from "./codeops-session-proof-credential-issuer.mjs";
 import { createSessionProofNamespace } from "./codeops-session-proof-namespace-create.mjs";
 import { attachSessionProofOperatorAdmission } from "./codeops-session-proof-operator-admission.mjs";
+import {
+  persistFirstSessionProofCredentialIssuanceFromOperatorPacket,
+} from "./codeops-session-proof-operator-credential-issuance.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
 import {
   authorizeFirstSessionProofStepFromOperatorPacket,
@@ -91,6 +94,14 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-02-issue-broker-capabilities.authorization.json`,
   );
+  const evidencePath = join(
+    root,
+    `${identity.namespace}.step-02-issue-broker-capabilities.evidence.json`,
+  );
+  const stepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-02-issue-broker-capabilities.receipt.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -100,7 +111,14 @@ function persistOperatorInputs(root) {
     approvedAt: "2026-08-05T05:00:00Z",
     expiresAt: "2026-08-05T08:00:00Z",
   });
-  return { packetPath, admissionPath, receiptPath, authorizationPath };
+  return {
+    packetPath,
+    admissionPath,
+    receiptPath,
+    authorizationPath,
+    evidencePath,
+    stepReceiptPath,
+  };
 }
 
 function namespace() {
@@ -341,6 +359,81 @@ test("the broker issuer consumes only the exact persisted first-step authorizati
     assert.equal(
       stub.calls.filter(({ file }) => file.endsWith("issue-codeops-session-proof-secrets.sh")).length,
       1,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durably persists the exact broker evidence and completion receipt", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute);
+    const execute = (file, args, options) => {
+      if (file.endsWith("issue-codeops-session-proof-secrets.sh")) {
+        assert.equal(statSync(inputs.evidencePath).mode & 0o777, 0o600);
+        assert.equal(statSync(inputs.stepReceiptPath).mode & 0o777, 0o600);
+        assert.equal(statSync(inputs.evidencePath).size, 0);
+        assert.equal(statSync(inputs.stepReceiptPath).size, 0);
+      }
+      return stub.execute(file, args, options);
+    };
+    const result = persistFirstSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, execute);
+    assert.equal(statSync(inputs.evidencePath).mode & 0o777, 0o600);
+    assert.equal(statSync(inputs.stepReceiptPath).mode & 0o777, 0o600);
+    assert.equal(readFileSync(inputs.evidencePath, "utf8"), result.evidenceSource);
+    assert.equal(readFileSync(inputs.stepReceiptPath, "utf8"), result.receiptSource);
+    assert.equal(
+      result.receipt.evidenceSha256,
+      createHash("sha256").update(readFileSync(inputs.evidencePath)).digest("hex"),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reserves exact broker output paths before credential issuance", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    persistFirstSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute);
+
+    assert.throws(() => persistFirstSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      evidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, stub.execute), /derive exactly/);
+    writeFileSync(inputs.stepReceiptPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistFirstSessionProofCredentialIssuanceFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:02:00Z",
+      completedAt: "2026-08-05T06:03:00Z",
+    }, stub.execute), /already exists/);
+    assert.equal(
+      stub.calls.some(({ file }) => file.endsWith("issue-codeops-session-proof-secrets.sh")),
+      false,
     );
   } finally {
     rmSync(root, { recursive: true, force: true });

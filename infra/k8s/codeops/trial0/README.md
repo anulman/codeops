@@ -652,6 +652,19 @@ permission-weakened, non-canonical, or semantically drifted authorization bytes
 fail before the credential script. The closed itinerary names this exact
 operator-packet adapter, but no workflow or runner invokes it.
 
+The next operator boundary reserves both exact Namespace-derived outputs before
+credential issuance: the step-2 metadata-only evidence and its completion
+receipt. Each is exclusively created beside the packet as mode `0600`; the
+parent directory is fsynced before live access. After successful issuance, the
+adapter writes and fsyncs the exact evidence bytes first, then a canonical
+completion receipt whose `evidenceSha256` binds those same bytes, verifies both
+open descriptors still name the expected regular files, and fsyncs the parent
+again. Existing, substituted, permission-weakened, or replaced output paths
+fail closed. An interruption can therefore leave only reserved/partial private
+artifacts for operator reconciliation; it cannot silently replay issuance or
+publish a completion receipt without its exact evidence. This adapter also
+remains uninvoked by workflows and runners.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
