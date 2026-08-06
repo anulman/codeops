@@ -51,6 +51,9 @@ import {
   replaceSessionProofCodexSmokeFromOperatorPacket,
 } from "./codeops-session-proof-operator-codex-smoke-replace.mjs";
 import {
+  authorizeTwelfthSessionProofStepFromOperatorPacket,
+} from "./codeops-session-proof-operator-codex-smoke-wait-authorization.mjs";
+import {
   buildSessionProofCodexSmokeReplacementEvidence,
 } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
 import {
@@ -878,6 +881,48 @@ function persistThroughCodexLoginWaitOutputs(inputs, stub) {
     completedAt,
     maxAttempts: 96,
     pollIntervalMs: 10_000,
+  }, stub.execute, () => ({ evidenceSource, receipt }));
+  return { authorization, evidenceSource, receipt };
+}
+
+async function persistThroughCodexSmokeReplacementOutputs(inputs, stub) {
+  persistThroughCodexLoginWaitOutputs(inputs, stub);
+  const authorization = persistEleventhSessionProofStepAuthorizationFromOperatorPacket({
+    ...inputs,
+    observedAt: "2026-08-05T06:31:00Z",
+  }, stub.execute);
+  const completedAt = "2026-08-05T06:33:00Z";
+  const loginCompletionReceiptSource = readFileSync(inputs.tenthStepReceiptPath, "utf8");
+  const loginCompletionEvidenceSource = readFileSync(inputs.tenthEvidencePath, "utf8");
+  const loginInventory = JSON.parse(readFileSync(inputs.ninthEvidencePath, "utf8"))
+    .resourceInventory;
+  const evidenceSource = JSON.stringify(buildSessionProofCodexSmokeReplacementEvidence({
+    authorization,
+    loginCompletionReceiptSource,
+    loginCompletionEvidenceSource,
+    resources: sessionProofApplyResourceIdentities("codex-smoke").map((resource) => ({
+      ...resource,
+      uid: resource.kind === "Job"
+        ? "codex-smoke-resource-uid"
+        : loginInventory.find((previous) =>
+          previous.apiVersion === resource.apiVersion &&
+          previous.kind === resource.kind &&
+          previous.name === resource.name).uid,
+    })),
+    loginJobAbsent: true,
+    observedAt: completedAt,
+  }));
+  const receipt = completeSessionProofStep(authorization, {
+    namespaceResource: namespace(),
+    operator,
+    target,
+    completedAt,
+    evidenceSource,
+  });
+  await persistSessionProofCodexSmokeReplacementFromOperatorPacket({
+    ...inputs,
+    startedAt: "2026-08-05T06:32:00Z",
+    completedAt,
   }, stub.execute, () => ({ evidenceSource, receipt }));
   return { authorization, evidenceSource, receipt };
 }
@@ -3759,6 +3804,57 @@ test("reserves exact Codex smoke replacement output paths before replacement is 
       completedAt: "2026-08-05T06:33:00Z",
     }, stub.execute, replacement), /already exists/);
     assert.equal(replacementCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("authorizes only Codex smoke completion from exact persisted replacement outputs", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const { receipt } = await persistThroughCodexSmokeReplacementOutputs(inputs, stub);
+    const callCount = stub.calls.length;
+    const authorization = authorizeTwelfthSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:34:00Z",
+    }, stub.execute);
+    assert.equal(authorization.stepIndex, 13);
+    assert.equal(authorization.stepId, "wait-codex-smoke");
+    assert.equal(authorization.action, "operator-wait-complete");
+    assert.equal(authorization.artifact, null);
+    assert.equal(authorization.artifactSha256, null);
+    assert.equal(
+      authorization.previousReceiptSha256,
+      createHash("sha256").update(`${JSON.stringify(receipt, null, 2)}\n`).digest("hex"),
+    );
+    assert.equal(
+      stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")),
+      false,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("Codex smoke replacement evidence drift fails before completion authorization", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    await persistThroughCodexSmokeReplacementOutputs(inputs, stub);
+    const evidence = JSON.parse(readFileSync(inputs.eleventhEvidencePath, "utf8"));
+    writeFileSync(inputs.eleventhEvidencePath, JSON.stringify({ ...evidence, extra: true }));
+    const callCount = stub.calls.length;
+    assert.throws(() => authorizeTwelfthSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:34:00Z",
+    }, stub.execute), /evidence|receipt/);
+    assert.equal(
+      stub.calls.slice(callCount).some(({ args }) => args.includes("job.batch")),
+      false,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

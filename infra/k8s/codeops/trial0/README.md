@@ -346,7 +346,11 @@ replacement can be reached. After success it fsyncs and identity-checks the
 specialized replacement evidence and hash-bound canonical receipt; readback
 reconstructs that exact result from the private authorization and login-
 completion chain. Existing or substituted outputs and interruption fail closed.
-The separate
+The next read-only operator handoff reopens those exact private replacement
+outputs, reconstructs their canonical receipt from the complete predecessor
+chain, repeats live operator/target/Namespace-UID admission, and authorizes only
+`wait-codex-smoke`. It persists no authorization, imports or invokes no waiter,
+and remains unwired to every runner and workflow. The separate
 `wait-codex-smoke` completion contract and concrete but uninvoked
 waiter now bind the exact replacement receipt/evidence chain to the same
 create-only smoke Job UID at generation 1, the same bound non-deleting
