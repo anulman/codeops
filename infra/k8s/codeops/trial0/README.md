@@ -917,6 +917,14 @@ the private grant-completion chain on readback. A substituted or existing
 target fails before live access. It imports and invokes no login adapter and
 remains unreferenced by runners and workflows.
 
+The create-only login-adapter handoff then reopens and reconstructs that exact
+private authorization, re-verifies the persisted grant-completion evidence and
+canonical receipt chain, and reads the reviewed Codex login manifest only from
+the immutable operator packet. It passes only those exact values plus bounded
+execution timestamps to the existing adapter. Authorization, predecessor,
+artifact, principal, target, or Namespace drift fails before login apply can be
+reached. No runner or workflow invokes this operator boundary.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,
