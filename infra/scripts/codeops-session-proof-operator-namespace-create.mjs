@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import {
   closeSync,
   constants,
@@ -6,6 +7,7 @@ import {
   fsyncSync,
   lstatSync,
   openSync,
+  readFileSync,
   realpathSync,
   writeFileSync,
 } from "node:fs";
@@ -13,7 +15,13 @@ import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { createSessionProofNamespace } from "./codeops-session-proof-namespace-create.mjs";
 import { readSessionProofOperatorAdmissionAttachment } from "./codeops-session-proof-operator-admission.mjs";
 
-function assertReceiptPath(receiptPath, packetPath, namespace) {
+const RFC3339 = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d{1,9})?Z$/;
+
+function digest(source) {
+  return createHash("sha256").update(source).digest("hex");
+}
+
+function assertReceiptPath(receiptPath, packetPath, namespace, mustBeAbsent) {
   if (!isAbsolute(receiptPath ?? "") || resolve(receiptPath) !== receiptPath) {
     throw new Error("proof Namespace creation receipt path must be absolute and normalized");
   }
@@ -28,11 +36,45 @@ function assertReceiptPath(receiptPath, packetPath, namespace) {
   ) {
     throw new Error("proof Namespace creation receipt path must derive exactly from the packet Namespace");
   }
+  if (mustBeAbsent) {
+    try {
+      lstatSync(receiptPath);
+      throw new Error("proof Namespace creation receipt already exists");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+}
+
+function readPrivateCreationReceipt(path) {
+  const before = lstatSync(path);
+  if (
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    (before.mode & 0o777) !== 0o600 ||
+    before.size < 2 ||
+    before.size > 1024 * 1024
+  ) {
+    throw new Error("proof Namespace creation receipt must be one bounded private regular file");
+  }
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    lstatSync(receiptPath);
-    throw new Error("proof Namespace creation receipt already exists");
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
+    const source = readFileSync(descriptor);
+    const after = lstatSync(path);
+    if (
+      source.length !== before.size ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.ctimeMs !== before.ctimeMs ||
+      after.mtimeMs !== before.mtimeMs ||
+      (after.mode & 0o777) !== 0o600
+    ) {
+      throw new Error("proof Namespace creation receipt changed while it was read");
+    }
+    return source;
+  } finally {
+    closeSync(descriptor);
   }
 }
 
@@ -80,6 +122,7 @@ export function createSessionProofNamespaceFromOperatorPacket(input, runner = ex
     input.receiptPath,
     input.packetPath,
     attachment.admission.identity.namespace,
+    true,
   );
   const receiptDescriptor = reserveCreationReceipt(input.receiptPath);
   try {
@@ -98,4 +141,66 @@ export function createSessionProofNamespaceFromOperatorPacket(input, runner = ex
   } finally {
     closeSync(receiptDescriptor);
   }
+}
+
+export function readSessionProofOperatorCreationReceipt(input) {
+  const attachment = readSessionProofOperatorAdmissionAttachment(input);
+  assertReceiptPath(
+    input.receiptPath,
+    input.packetPath,
+    attachment.admission.identity.namespace,
+    false,
+  );
+  const receiptBytes = readPrivateCreationReceipt(input.receiptPath);
+  let receipt;
+  try {
+    receipt = JSON.parse(receiptBytes);
+  } catch {
+    throw new Error("proof Namespace creation receipt must be valid JSON");
+  }
+  const uid = receipt.namespace?.uid;
+  const successful = receipt.proceed === true;
+  const checkedAt = Date.parse(receipt.checkedAt ?? "");
+  if (
+    typeof uid !== "string" ||
+    uid.length < 1 ||
+    uid.length > 256 ||
+    !RFC3339.test(receipt.checkedAt ?? "") ||
+    !Number.isFinite(checkedAt) ||
+    checkedAt < Date.parse(attachment.admission.approvedAt) ||
+    checkedAt > Date.parse(attachment.admission.expiresAt) ||
+    !(
+      successful && receipt.result === "created-and-uid-bound" ||
+      receipt.proceed === false && receipt.result === "namespace-uid-bound-create-incomplete"
+    )
+  ) {
+    throw new Error("proof Namespace creation receipt outcome drifted");
+  }
+  const expected = {
+    apiVersion: "codeops.renoconcierge.ca/session-proof-namespace-create/v1",
+    result: receipt.result,
+    checkedAt: receipt.checkedAt,
+    planSha256: attachment.admission.planSha256,
+    namespaceManifestSha256: digest(attachment.namespaceManifestSource),
+    namespace: {
+      name: attachment.admission.identity.namespace,
+      uid,
+    },
+    proceed: receipt.proceed,
+    admission: {
+      ...attachment.admission,
+      state: "approved-bound",
+      namespaceUid: uid,
+    },
+  };
+  const expectedSource = `${JSON.stringify(expected, null, 2)}\n`;
+  if (!receiptBytes.equals(Buffer.from(expectedSource))) {
+    throw new Error("proof Namespace creation receipt is not the exact persisted artifact");
+  }
+  return {
+    ...attachment,
+    creationReceiptSource: expectedSource,
+    creationReceipt: receipt,
+    creationReceiptSha256: digest(expectedSource),
+  };
 }

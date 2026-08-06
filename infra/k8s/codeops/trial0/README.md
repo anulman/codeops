@@ -619,6 +619,22 @@ from the packet Namespace. This preserves the exact successful or
 UID-bound-incomplete creation result for the next receipt-chain or emergency
 teardown boundary without changing the immutable reviewed packet.
 
+After a successful creation, derive the first intermediate-step authorization
+from those exact three private artifacts. The read-only handoff fully
+re-verifies the packet and attached admission, reopens the adjacent creation
+receipt through a no-follow descriptor, requires its exact canonical bytes and
+successful bound outcome, then reads only the active Kubernetes identity and
+the exact Namespace. It authorizes only sequence step 2
+(`issue-broker-capabilities`) with no predecessor receipts and performs no
+mutation:
+
+```bash
+CODEOPS_SESSION_PROOF_PACKET=/absolute/path/codeops-session-proof-video-1.packet \
+CODEOPS_SESSION_PROOF_ADMISSION=/absolute/path/codeops-session-proof-video-1.admission.json \
+CODEOPS_SESSION_PROOF_NAMESPACE_RECEIPT=/absolute/path/codeops-session-proof-video-1.namespace-create-receipt.json \
+  node infra/scripts/run-codeops-session-proof-first-step-authorization.mjs
+```
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,7 @@ import { createSessionProofAdmission } from "./codeops-session-proof-admission.m
 import { createSessionProofNamespace } from "./codeops-session-proof-namespace-create.mjs";
 import { attachSessionProofOperatorAdmission } from "./codeops-session-proof-operator-admission.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
+import { authorizeFirstSessionProofStepFromOperatorPacket } from "./codeops-session-proof-operator-step-authorization.mjs";
 import { persistSessionProofOperatorPacket } from "./codeops-session-proof-operator-packet.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -239,6 +240,105 @@ test("persists the UID-bound non-proceed receipt after partial package creation"
     assert.equal(result.proceed, false);
     assert.equal(result.namespace.uid, "namespace-uid-1");
     assert.deepEqual(JSON.parse(readFileSync(inputs.receiptPath, "utf8")), result);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("authorizes only the first intermediate step from the exact persisted operator artifacts", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    const mutationCount = stub.calls.filter(({ args }) => args[0] === "create").length;
+    const authorization = authorizeFirstSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute);
+    assert.equal(authorization.stepIndex, 2);
+    assert.equal(authorization.stepId, "issue-broker-capabilities");
+    assert.equal(authorization.artifact, null);
+    assert.equal(
+      stub.calls.filter(({ args }) => args[0] === "create").length,
+      mutationCount,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects creation-receipt drift or an incomplete create before live authorization reads", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const driftedInputs = persistOperatorInputs(root);
+    const createStub = runner();
+    createSessionProofNamespaceFromOperatorPacket({
+      ...driftedInputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, createStub.execute);
+    const receipt = JSON.parse(readFileSync(driftedInputs.receiptPath, "utf8"));
+    writeFileSync(
+      driftedInputs.receiptPath,
+      `${JSON.stringify({ ...receipt, checkedAt: "2026-08-05T09:00:00Z" }, null, 2)}\n`,
+    );
+    const timeDriftStub = runner(true);
+    assert.throws(() => authorizeFirstSessionProofStepFromOperatorPacket({
+      ...driftedInputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, timeDriftStub.execute), /outcome drifted/);
+    assert.equal(timeDriftStub.calls.length, 0);
+
+    writeFileSync(
+      driftedInputs.receiptPath,
+      `${JSON.stringify({ ...receipt, extra: true }, null, 2)}\n`,
+    );
+    const driftStub = runner(true);
+    assert.throws(() => authorizeFirstSessionProofStepFromOperatorPacket({
+      ...driftedInputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, driftStub.execute), /exact persisted artifact/);
+    assert.equal(driftStub.calls.length, 0);
+
+    const incompleteRoot = mkdtempSync(join(tmpdir(), "session-proof-create-incomplete-"));
+    try {
+      const incompleteInputs = persistOperatorInputs(incompleteRoot);
+      createSessionProofNamespaceFromOperatorPacket({
+        ...incompleteInputs,
+        observedAt: "2026-08-05T06:00:00Z",
+      }, runner(false, true).execute);
+      const incompleteStub = runner(true);
+      assert.throws(() => authorizeFirstSessionProofStepFromOperatorPacket({
+        ...incompleteInputs,
+        observedAt: "2026-08-05T06:01:00Z",
+      }, incompleteStub.execute), /did not admit/);
+      assert.equal(incompleteStub.calls.length, 0);
+    } finally {
+      rmSync(incompleteRoot, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects a permission-weakened creation receipt before live authorization reads", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, runner().execute);
+    chmodSync(inputs.receiptPath, 0o644);
+    const stub = runner(true);
+    assert.throws(() => authorizeFirstSessionProofStepFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:01:00Z",
+    }, stub.execute), /bounded private regular file/);
+    assert.equal(stub.calls.length, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
