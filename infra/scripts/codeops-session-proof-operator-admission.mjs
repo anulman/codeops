@@ -267,6 +267,10 @@ export function readSessionProofOperatorAdmissionAttachment(input) {
   }
   return {
     planSource: packet.planSource,
+    namespaceManifestSource: readPrivateFile(
+      join(input.packetPath, FILES.namespace),
+      "proof packet Namespace manifest",
+    ).toString("utf8"),
     admission,
     packetManifestSha256: digest(packet.manifestSource),
     admissionSha256: digest(admissionSource),

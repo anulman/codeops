@@ -591,10 +591,13 @@ CODEOPS_SESSION_PROOF_ADMISSION=/absolute/path/codeops-session-proof-video-1.adm
 ```
 
 The first mutating boundary is deliberately limited to creation of the already
-reviewed namespace package. It verifies the namespace-manifest digest before
-contacting the cluster, repeats the live preflight immediately, streams the
-reviewed bytes over stdin to one `kubectl create` (never `apply`), reads back
-the Namespace, and emits the admission bound to its immutable UID. It cannot
+reviewed namespace package. The operational runner accepts only the immutable
+packet and its exact adjacent admission, re-verifies them locally, and obtains
+the Namespace manifest directly from that packet. It verifies the manifest
+digest before contacting the cluster, repeats the live preflight immediately,
+streams the reviewed bytes over stdin to one `kubectl create` (never `apply`),
+reads back the Namespace, and emits the admission bound to its immutable UID.
+It cannot
 issue credentials, start workloads, update an existing object, or delete
 anything. If package creation partially fails after the Namespace exists, it
 still emits a UID-bound non-proceed receipt and exits nonzero so teardown can
@@ -602,9 +605,8 @@ target that exact identity; it never guesses that the remaining resources were
 created. Do not run it until the exact source head has passed review:
 
 ```bash
-CODEOPS_SESSION_PROOF_PLAN=/path/to/plan.json \
-CODEOPS_SESSION_PROOF_ADMISSION=/path/to/admission.json \
-CODEOPS_SESSION_PROOF_NAMESPACE_MANIFEST=/path/to/namespace.yaml \
+CODEOPS_SESSION_PROOF_PACKET=/absolute/path/codeops-session-proof-video-1.packet \
+CODEOPS_SESSION_PROOF_ADMISSION=/absolute/path/codeops-session-proof-video-1.admission.json \
   node infra/scripts/run-codeops-session-proof-namespace-create.mjs \
   > /path/to/bound-namespace-receipt.json
 ```

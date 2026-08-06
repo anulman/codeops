@@ -1,8 +1,14 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { createSessionProofAdmission } from "./codeops-session-proof-admission.mjs";
 import { createSessionProofNamespace } from "./codeops-session-proof-namespace-create.mjs";
+import { attachSessionProofOperatorAdmission } from "./codeops-session-proof-operator-admission.mjs";
+import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
+import { persistSessionProofOperatorPacket } from "./codeops-session-proof-operator-packet.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
 const identity = {
@@ -45,6 +51,36 @@ const admission = createSessionProofAdmission({
   approvedAt: "2026-08-05T05:00:00Z",
   expiresAt: "2026-08-05T08:00:00Z",
 });
+
+function persistOperatorInputs(root) {
+  const artifactSources = Object.fromEntries(artifactIds.map((id) => [
+    id,
+    id === "namespace" ? namespaceManifestSource : `synthetic-${id}-artifact\n`,
+  ]));
+  const packetPlanSource = JSON.stringify({
+    apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+    admission: "closed",
+    execution: "render-and-review-only",
+    identity,
+    artifacts: artifactIds.map((id) => ({
+      id,
+      sha256: createHash("sha256").update(artifactSources[id]).digest("hex"),
+    })),
+    sequence: sessionProofSequence(),
+  });
+  const packetPath = join(root, `${identity.namespace}.packet`);
+  const admissionPath = join(root, `${identity.namespace}.admission.json`);
+  persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
+  attachSessionProofOperatorAdmission({
+    packetPath,
+    admissionPath,
+    operator,
+    target,
+    approvedAt: "2026-08-05T05:00:00Z",
+    expiresAt: "2026-08-05T08:00:00Z",
+  });
+  return { packetPath, admissionPath };
+}
 
 function namespace() {
   return {
@@ -135,4 +171,51 @@ test("rejects manifest drift or an existing namespace before create", () => {
     observedAt: "2026-08-05T06:00:00Z",
   }, existing.execute));
   assert.equal(existing.calls.some(({ args }) => args[0] === "create"), false);
+});
+
+test("creates from only the exact operator packet and attached admission", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const result = createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute);
+    assert.equal(result.result, "created-and-uid-bound");
+    assert.equal(result.admission.namespaceUid, "namespace-uid-1");
+    assert.deepEqual(Object.keys(result).sort(), [
+      "admission",
+      "apiVersion",
+      "checkedAt",
+      "namespace",
+      "namespaceManifestSha256",
+      "planSha256",
+      "proceed",
+      "result",
+    ]);
+    assert.equal(stub.calls.filter(({ args }) => args[0] === "create").length, 1);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects packet attachment drift before any create preflight read", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const admissionValue = JSON.parse(readFileSync(inputs.admissionPath, "utf8"));
+    writeFileSync(
+      inputs.admissionPath,
+      `${JSON.stringify({ ...admissionValue, extra: true }, null, 2)}\n`,
+    );
+    const stub = runner();
+    assert.throws(() => createSessionProofNamespaceFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:00:00Z",
+    }, stub.execute), /exact attached artifact/i);
+    assert.equal(stub.calls.length, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
