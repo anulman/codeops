@@ -485,7 +485,7 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
             "Resolve every must-fix finding without expanding the ticket. Preserve valid prior work and re-run the relevant tests.",
           ]
         : []),
-      "Make the smallest complete source change required by the task. Group related implementation, tests, and documentation into one coherent local increment before you request hosted validation.",
+      "Make small, understandable commits when useful. Pause at normal proof boundaries and run focused tests, typechecks, builds, and review with local or cluster resources. Group related commits into one coherent, reviewable increment before you request hosted CI.",
       "Run the focused tests required to prove the changed behavior before finishing. Add or strengthen tests when a critic finding exposes an unproved bug class.",
       "Do not push, open or merge a PR, deploy, or access Plane/Kubernetes.",
       ...(request.codingRound === undefined

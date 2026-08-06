@@ -476,8 +476,10 @@ test("delivers immutable ticket and sibling decision context to coding jobs", ()
   assert.match(prompt, /Read \/context\/coding-request\.json/);
   assert.match(prompt, /\/context\/project-documents\/SOUL\.md/);
   assert.match(prompt, /bounded same-project task index/);
-  assert.match(prompt, /smallest complete source change/);
-  assert.match(prompt, /one coherent local increment/);
+  assert.match(prompt, /small, understandable commits/);
+  assert.match(prompt, /Pause at normal proof boundaries/);
+  assert.match(prompt, /local or cluster resources/);
+  assert.match(prompt, /one coherent, reviewable increment/);
   const resources = buildRunResources(
     {
       namespace: "codeops-trial",
