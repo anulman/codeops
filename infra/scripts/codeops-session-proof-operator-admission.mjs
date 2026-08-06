@@ -276,3 +276,13 @@ export function readSessionProofOperatorAdmissionAttachment(input) {
     admissionSha256: digest(admissionSource),
   };
 }
+
+export function readSessionProofOperatorArtifact(input, artifactId) {
+  const path = FILES[artifactId];
+  if (!path) throw new Error("proof operator artifact identity is not reviewed");
+  readAndVerifyPacket(input.packetPath ?? "");
+  return readPrivateFile(
+    join(input.packetPath, path),
+    `proof packet ${artifactId} manifest`,
+  ).toString("utf8");
+}

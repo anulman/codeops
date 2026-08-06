@@ -702,6 +702,15 @@ substituted outputs fail before credential issuance. Interruption leaves the
 private reserved outputs for explicit operator reconciliation, and the boundary
 remains unreferenced by runners and workflows.
 
+The next read-only operator handoff reopens those exact private step-3 outputs
+through stable no-follow descriptors, re-verifies the persisted step-3
+authorization and live principal, target, and Namespace UID, reconstructs the
+canonical completion receipt from the exact evidence bytes, and verifies the
+hash chain. Only `start-database` can then be authorized, bound to the exact
+reviewed database manifest retained in the immutable packet. This handoff
+performs no mutation, persists no new authorization, and remains unreferenced
+by runners and workflows.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,

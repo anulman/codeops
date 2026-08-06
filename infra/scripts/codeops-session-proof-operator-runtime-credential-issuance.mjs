@@ -6,16 +6,33 @@ import {
   fsyncSync,
   lstatSync,
   openSync,
+  readFileSync,
   realpathSync,
   writeFileSync,
 } from "node:fs";
 import { basename, dirname, isAbsolute, resolve } from "node:path";
 import { issueSessionProofCredentials } from "./codeops-session-proof-credential-issuer.mjs";
 import {
+  readSessionProofKubeContext,
+  readSessionProofNamespace,
+} from "./codeops-session-proof-preflight.mjs";
+import {
   readSecondSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-next-step-authorization.mjs";
+import {
+  readFirstSessionProofCredentialOutputsFromOperatorPacket,
+} from "./codeops-session-proof-operator-credential-issuance.mjs";
+import { completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 
-function assertOutputPath(path, packetPath, namespace, suffix) {
+function parseJson(source, label) {
+  try {
+    return JSON.parse(source);
+  } catch {
+    throw new Error(`${label} must be valid JSON`);
+  }
+}
+
+function assertOutputPath(path, packetPath, namespace, suffix, mustBeAbsent) {
   if (!isAbsolute(path ?? "") || resolve(path) !== path) {
     throw new Error("proof second-step output path must be absolute and normalized");
   }
@@ -30,11 +47,48 @@ function assertOutputPath(path, packetPath, namespace, suffix) {
   ) {
     throw new Error("proof second-step output path must derive exactly from the packet Namespace");
   }
+  if (mustBeAbsent) {
+    try {
+      lstatSync(path);
+      throw new Error("proof second-step output already exists");
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+}
+
+function readPrivateOutput(path) {
+  const before = lstatSync(path);
+  if (
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    (before.mode & 0o777) !== 0o600 ||
+    before.size < 2 ||
+    before.size > 1024 * 1024
+  ) {
+    throw new Error("proof second-step output must be one bounded private regular file");
+  }
+  const descriptor = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW);
   try {
-    lstatSync(path);
-    throw new Error("proof second-step output already exists");
-  } catch (error) {
-    if (error?.code !== "ENOENT") throw error;
+    const source = readFileSync(descriptor);
+    const opened = fstatSync(descriptor);
+    const after = lstatSync(path);
+    if (
+      source.length !== before.size ||
+      opened.dev !== before.dev ||
+      opened.ino !== before.ino ||
+      after.dev !== before.dev ||
+      after.ino !== before.ino ||
+      after.size !== before.size ||
+      after.ctimeMs !== before.ctimeMs ||
+      after.mtimeMs !== before.mtimeMs ||
+      (after.mode & 0o777) !== 0o600
+    ) {
+      throw new Error("proof second-step output changed while it was read");
+    }
+    return source;
+  } finally {
+    closeSync(descriptor);
   }
 }
 
@@ -104,12 +158,14 @@ export function persistSecondSessionProofCredentialIssuanceFromOperatorPacket(
     input.packetPath,
     namespace,
     "step-03-issue-runtime-capabilities.evidence.json",
+    true,
   );
   assertOutputPath(
     input.secondStepReceiptPath,
     input.packetPath,
     namespace,
     "step-03-issue-runtime-capabilities.receipt.json",
+    true,
   );
 
   const evidenceDescriptor = reservePrivateOutput(input.secondEvidencePath);
@@ -132,4 +188,59 @@ export function persistSecondSessionProofCredentialIssuanceFromOperatorPacket(
     closeSync(evidenceDescriptor);
     if (receiptDescriptor !== undefined) closeSync(receiptDescriptor);
   }
+}
+
+export function readSecondSessionProofCredentialOutputsFromOperatorPacket(
+  input,
+  runner = execFileSync,
+) {
+  const firstOutputs = readFirstSessionProofCredentialOutputsFromOperatorPacket(input);
+  const { authorization } = readSecondSessionProofStepAuthorizationFromOperatorPacket(
+    input,
+    runner,
+  );
+  const namespace = authorization.namespace.name;
+  assertOutputPath(
+    input.secondEvidencePath,
+    input.packetPath,
+    namespace,
+    "step-03-issue-runtime-capabilities.evidence.json",
+    false,
+  );
+  assertOutputPath(
+    input.secondStepReceiptPath,
+    input.packetPath,
+    namespace,
+    "step-03-issue-runtime-capabilities.receipt.json",
+    false,
+  );
+  const secondEvidenceSource = readPrivateOutput(input.secondEvidencePath).toString("utf8");
+  const secondStepReceiptSource = readPrivateOutput(input.secondStepReceiptPath).toString("utf8");
+  const evidence = parseJson(secondEvidenceSource, "proof second-step evidence");
+  const receipt = parseJson(secondStepReceiptSource, "proof second-step receipt");
+  if (
+    receipt.checkedAt !== evidence.observedAt ||
+    Date.parse(receipt.checkedAt ?? "") < Date.parse(authorization.authorizedAt)
+  ) {
+    throw new Error("proof second-step output timestamps drifted");
+  }
+  const { operator, target } = readSessionProofKubeContext(runner);
+  const namespaceResource = readSessionProofNamespace(namespace, runner);
+  const expected = completeSessionProofStep(authorization, {
+    namespaceResource,
+    operator,
+    target,
+    completedAt: receipt.checkedAt,
+    evidenceSource: secondEvidenceSource,
+  });
+  const expectedSource = `${JSON.stringify(expected, null, 2)}\n`;
+  if (secondStepReceiptSource !== expectedSource) {
+    throw new Error("proof second-step receipt is not the exact persisted artifact");
+  }
+  return {
+    ...firstOutputs,
+    secondAuthorization: authorization,
+    secondEvidenceSource,
+    secondStepReceiptSource,
+  };
 }
