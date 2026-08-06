@@ -893,6 +893,15 @@ existing grant waiter. Authorization, predecessor, permission, identity, or
 output drift fails before the waiter can be reached. No runner or workflow
 invokes this operator boundary.
 
+Its durable output boundary exclusively reserves the exact Namespace-derived
+adjacent mode-`0600` step-9 evidence and completion-receipt files and fsyncs
+their parent before the waiter can be reached. After successful bounded grant
+completion it fsyncs and identity-checks the specialized evidence and its hash-
+bound canonical receipt, then fsyncs the parent again. Readback reconstructs
+the exact result from the private authorization and grant apply chain. Existing
+or substituted outputs and interrupted writes fail closed. No runner or
+workflow invokes this persistence boundary.
+
 Before that create-only path may run, the matching cleanup boundary must be
 reviewed and qualified. Cleanup accepts only the exact creation receipt and
 reviewed plan bytes. It repeats the live principal, credential, target, labels,

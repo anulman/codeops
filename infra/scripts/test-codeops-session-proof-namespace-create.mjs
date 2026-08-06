@@ -13,6 +13,9 @@ import {
   issueFirstSessionProofCredentialsFromOperatorPacket,
 } from "./codeops-session-proof-credential-issuer.mjs";
 import { createSessionProofNamespace } from "./codeops-session-proof-namespace-create.mjs";
+import {
+  buildSessionProofGrantCompletionEvidence,
+} from "./codeops-session-proof-grant-completion-evidence.mjs";
 import { attachSessionProofOperatorAdmission } from "./codeops-session-proof-operator-admission.mjs";
 import {
   persistFirstSessionProofCredentialIssuanceFromOperatorPacket,
@@ -80,6 +83,8 @@ import {
   readEighthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-grant-wait-authorization.mjs";
 import {
+  persistSessionProofGrantWaitFromOperatorPacket,
+  readSessionProofGrantWaitOutputsFromOperatorPacket,
   waitForSessionProofGrantsFromOperatorPacket,
 } from "./codeops-session-proof-operator-grant-wait.mjs";
 import { createSessionProofNamespaceFromOperatorPacket } from "./codeops-session-proof-operator-namespace-create.mjs";
@@ -263,6 +268,14 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-09-wait-grants.authorization.json`,
   );
+  const eighthEvidencePath = join(
+    root,
+    `${identity.namespace}.step-09-wait-grants.evidence.json`,
+  );
+  const eighthStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-09-wait-grants.receipt.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -298,6 +311,8 @@ function persistOperatorInputs(root) {
     seventhEvidencePath,
     seventhStepReceiptPath,
     eighthAuthorizationPath,
+    eighthEvidencePath,
+    eighthStepReceiptPath,
   };
 }
 
@@ -2609,6 +2624,114 @@ test("persisted grant-completion authorization drift fails before the waiter is 
     }, stub.execute, () => {
       waiterCalls += 1;
     }), /exact persisted artifact/);
+    assert.equal(waiterCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("durably persists the exact grant completion evidence and receipt", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const authorization = persistThroughGrantWaitAuthorization(inputs, stub);
+    const completedAt = "2026-08-05T06:24:00Z";
+    const grantApplyReceiptSource = readFileSync(inputs.seventhStepReceiptPath, "utf8");
+    const grantApplyEvidenceSource = readFileSync(inputs.seventhEvidencePath, "utf8");
+    const grantJobUid = JSON.parse(grantApplyEvidenceSource).resourceInventory.find(
+      (resource) => resource.kind === "Job",
+    ).uid;
+    const evidenceSource = JSON.stringify(buildSessionProofGrantCompletionEvidence({
+      authorization,
+      grantApplyReceiptSource,
+      grantApplyEvidenceSource,
+      job: {
+        apiVersion: "batch/v1",
+        kind: "Job",
+        metadata: {
+          name: "codeops-session-proof-grants",
+          namespace: identity.namespace,
+          uid: grantJobUid,
+          generation: 1,
+        },
+        spec: { completions: 1, parallelism: 1, backoffLimit: 0, activeDeadlineSeconds: 300 },
+        status: {
+          active: 0,
+          succeeded: 1,
+          failed: 0,
+          startTime: "2026-08-05T06:23:00Z",
+          completionTime: "2026-08-05T06:23:04Z",
+          conditions: [{ type: "Complete", status: "True" }],
+        },
+      },
+      observedAt: completedAt,
+    }));
+    const receipt = completeSessionProofStep(authorization, {
+      namespaceResource: namespace(),
+      operator,
+      target,
+      completedAt,
+      evidenceSource,
+    });
+    let waiterCalls = 0;
+    const result = persistSessionProofGrantWaitFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:23:00Z",
+      completedAt,
+      maxAttempts: 36,
+      pollIntervalMs: 10_000,
+    }, stub.execute, (received, runnerArgument) => {
+      waiterCalls += 1;
+      assert.deepEqual(received.authorization, authorization);
+      assert.equal(runnerArgument, stub.execute);
+      assert.equal(statSync(inputs.eighthEvidencePath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.eighthStepReceiptPath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.eighthEvidencePath).size, 0);
+      assert.equal(statSync(inputs.eighthStepReceiptPath).size, 0);
+      return { evidenceSource, receipt };
+    });
+    assert.equal(waiterCalls, 1);
+    assert.equal(readFileSync(inputs.eighthEvidencePath, "utf8"), evidenceSource);
+    assert.equal(readFileSync(inputs.eighthStepReceiptPath, "utf8"), result.receiptSource);
+    assert.equal(result.receipt.evidenceSha256,
+      createHash("sha256").update(readFileSync(inputs.eighthEvidencePath)).digest("hex"));
+    const reopened = readSessionProofGrantWaitOutputsFromOperatorPacket(inputs, stub.execute);
+    assert.equal(reopened.eighthEvidenceSource, evidenceSource);
+    assert.equal(reopened.eighthStepReceiptSource, result.receiptSource);
+    assert.deepEqual(reopened.eighthAuthorization, authorization);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reserves exact grant-completion output paths before the waiter is reached", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    persistThroughGrantWaitAuthorization(inputs, stub);
+    let waiterCalls = 0;
+    const waiter = () => {
+      waiterCalls += 1;
+      return { evidenceSource: "{}", receipt: {} };
+    };
+    assert.throws(() => persistSessionProofGrantWaitFromOperatorPacket({
+      ...inputs,
+      eighthEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:23:00Z",
+      completedAt: "2026-08-05T06:24:00Z",
+      maxAttempts: 36,
+      pollIntervalMs: 10_000,
+    }, stub.execute, waiter), /derive exactly/);
+    writeFileSync(inputs.eighthStepReceiptPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSessionProofGrantWaitFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:23:00Z",
+      completedAt: "2026-08-05T06:24:00Z",
+      maxAttempts: 36,
+      pollIntervalMs: 10_000,
+    }, stub.execute, waiter), /already exists/);
     assert.equal(waiterCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
