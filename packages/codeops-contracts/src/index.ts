@@ -440,7 +440,10 @@ export const projectContextSchema = projectContextIdentitySchema
     const paths = context.documents.map((document) => document.path);
     if (
       new Set(paths).size !== paths.length ||
-      paths.some((value, index) => index > 0 && paths[index - 1]! >= value)
+      paths.some(
+        (value, index) =>
+          index > 0 && paths[index - 1]!.localeCompare(value) >= 0,
+      )
     ) {
       refinement.addIssue({
         code: z.ZodIssueCode.custom,

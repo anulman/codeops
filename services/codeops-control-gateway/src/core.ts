@@ -458,7 +458,7 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
         ? []
         : [`Autonomous critic loop coding round: ${request.codingRound} of 4`]),
       `Project context digest: ${request.codingRequest.projectContext.digest}`,
-      "Read /context/coding-request.json, /context/project-context.json, and every trusted document under /context/project-documents/ before planning.",
+      "Read /context/coding-request.json, /context/project-context.json, /context/project-documents/SOUL.md, and every trusted document under /context/project-documents/ before planning.",
       "The coding request contains the immutable current ticket, relevant human comments, relations, and a bounded same-project task index. Follow referenced approved decision tickets; do not guess missing product behavior.",
       "Treat /workspace as the exact writable target-base checkout. Trusted project-context documents are supplemental control-plane context, not files in that target checkout.",
       ...(request.codingRequest.researchPacket
@@ -485,7 +485,7 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
             "Resolve every must-fix finding without expanding the ticket. Preserve valid prior work and re-run the relevant tests.",
           ]
         : []),
-      "Make only the smallest source changes required by the task.",
+      "Make the smallest complete source change required by the task. Group related implementation, tests, and documentation into one coherent local increment before you request hosted validation.",
       "Run the focused tests required to prove the changed behavior before finishing. Add or strengthen tests when a critic finding exposes an unproved bug class.",
       "Do not push, open or merge a PR, deploy, or access Plane/Kubernetes.",
       ...(request.codingRound === undefined

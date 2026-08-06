@@ -474,7 +474,10 @@ test("states persona report cardinality and optional-field contracts explicitly"
 test("delivers immutable ticket and sibling decision context to coding jobs", () => {
   const prompt = buildAgentPrompt(codingDispatch);
   assert.match(prompt, /Read \/context\/coding-request\.json/);
+  assert.match(prompt, /\/context\/project-documents\/SOUL\.md/);
   assert.match(prompt, /bounded same-project task index/);
+  assert.match(prompt, /smallest complete source change/);
+  assert.match(prompt, /one coherent local increment/);
   const resources = buildRunResources(
     {
       namespace: "codeops-trial",

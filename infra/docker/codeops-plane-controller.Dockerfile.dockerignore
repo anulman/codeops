@@ -16,6 +16,7 @@
 !services/codeops-plane-controller/src/
 !services/codeops-plane-controller/src/**
 !AGENTS.md
+!SOUL.md
 !docs/
 !docs/agent-context/
 !docs/agent-context/**

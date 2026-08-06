@@ -32,6 +32,10 @@ const requiredDocuments = Object.freeze([
     path: "docs/agent-context/SOURCE-MAP.md",
     purpose: "Authoritative repository sources by product and engineering area",
   },
+  {
+    path: "SOUL.md",
+    purpose: "Coding-agent identity and technical product writing rules",
+  },
 ]);
 
 export async function loadProjectContextDocuments(

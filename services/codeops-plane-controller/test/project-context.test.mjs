@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -22,6 +22,13 @@ test("loads the complete bounded context pack and compiles one digest", async ()
       /^sha256:[0-9a-f]{64}$/.test(document.digest),
     ),
   );
+  const soul = documents.find((document) => document.path === "SOUL.md");
+  assert.ok(soul);
+  assert.equal(
+    soul.content,
+    await readFile(path.join(repositoryRoot, "SOUL.md"), "utf8"),
+  );
+  assert.match(soul.content, /ASD-STE100/);
   const context = compileProjectContext({
     repository: { owner: "anulman", name: "renoconcierge" },
     controlPlaneSha: "b".repeat(40),

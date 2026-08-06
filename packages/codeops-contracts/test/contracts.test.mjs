@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { createHmac } from "node:crypto";
+import { createHash, createHmac } from "node:crypto";
 import { test } from "node:test";
 import {
   adversarialReviewSchema,
@@ -58,6 +58,47 @@ function makeProjectContext(workspaceId, projectId) {
     ],
   });
 }
+
+test("sorts mixed-case project context paths with the canonical comparator", () => {
+  const context = createProjectContext({
+    version: contractVersions.projectContext,
+    repository: { owner: "anulman", name: "renoconcierge" },
+    controlPlaneSha: sha,
+    baseSha: sha,
+    project: {
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      projectId: "22222222-2222-4222-8222-222222222222",
+      name: "Onboarding Auth QA",
+      descriptionHtml: "<p>Canonical context.</p>",
+      updatedAt: now,
+    },
+    documents: [
+      {
+        path: "SOUL.md",
+        purpose: "Writing rules",
+        digest: `sha256:${createHash("sha256").update("# Soul\n").digest("hex")}`,
+        content: "# Soul\n",
+      },
+      {
+        path: "docs/agent-context/PRODUCT.md",
+        purpose: "Product context",
+        digest: `sha256:${createHash("sha256").update("# Product\n").digest("hex")}`,
+        content: "# Product\n",
+      },
+      {
+        path: "AGENTS.md",
+        purpose: "Agent guidance",
+        digest: `sha256:${createHash("sha256").update("# Agents\n").digest("hex")}`,
+        content: "# Agents\n",
+      },
+    ],
+  });
+
+  assert.deepEqual(
+    context.documents.map((document) => document.path),
+    ["AGENTS.md", "docs/agent-context/PRODUCT.md", "SOUL.md"],
+  );
+});
 
 function makeTicketSnapshot(workItemId) {
   return {

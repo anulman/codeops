@@ -108,7 +108,7 @@ for (const document of projectContext.documents) {
     !/^(?!\/)(?!.*(?:^|\/)\.\.(?:\/|$))(?!.*\/\/)[A-Za-z0-9._/-]+$/.test(
       document.path,
     ) ||
-    document.path <= previousPath ||
+    (previousPath !== "" && document.path.localeCompare(previousPath) <= 0) ||
     !/^sha256:[0-9a-f]{64}$/.test(document.digest) ||
     typeof document.content !== "string" ||
     document.content.length === 0 ||
