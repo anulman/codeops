@@ -453,6 +453,15 @@ substituted paths, private-chain drift, manifest drift, live-identity drift, and
 weakened file identity fail closed. It imports and invokes no runtime apply
 adapter, and no workflow or runner invokes it.
 
+The runtime apply handoff reopens that exact persisted authorization and reads
+the reviewed runtime manifest only from the immutable operator packet. It
+passes only those exact values plus bounded execution timestamps to the
+existing create-only runtime adapter. Authorization, predecessor, manifest,
+operator, target, or Namespace-UID drift fails before the injected adapter can
+be reached. The closed rehearsal names this operator handoff but does not
+invoke it. No workflow or runner invokes the handoff, and tests use only an
+injected adapter.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked

@@ -83,8 +83,10 @@ import {
 } from "./codeops-session-proof-ui-readiness-evidence.mjs";
 import {
   persistFifteenthSessionProofStepAuthorizationFromOperatorPacket,
-  readFifteenthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-runtime-step-authorization.mjs";
+import {
+  applySessionProofRuntimeFromOperatorPacket,
+} from "./codeops-session-proof-operator-runtime-apply.mjs";
 import {
   buildSessionProofCodexSmokeReplacementEvidence,
 } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
@@ -4521,24 +4523,39 @@ test("persists exact UI readiness and the private runtime-start authorization", 
 
     const authorizationSource = readFileSync(inputs.fifteenthAuthorizationPath, "utf8");
     assert.equal(authorizationSource, `${JSON.stringify(runtimeAuthorization, null, 2)}\n`);
-    const reopened = readFifteenthSessionProofStepAuthorizationFromOperatorPacket(
-      inputs,
-      stub.execute,
-    );
-    assert.deepEqual(reopened.authorization, runtimeAuthorization);
-    assert.equal(reopened.authorizationSource, authorizationSource);
-    assert.deepEqual(
-      reopened.uiReadinessOutputs.fourteenthAuthorization,
-      result.authorization,
-    );
-    assert.equal(
-      reopened.uiReadinessOutputs.fourteenthEvidenceSource,
-      result.evidenceSource,
-    );
-    assert.equal(
-      reopened.uiReadinessOutputs.fourteenthStepReceiptSource,
-      result.persisted.receiptSource,
-    );
+    let applyCalls = 0;
+    const applyResult = applySessionProofRuntimeFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:44:00Z",
+      completedAt: "2026-08-05T06:45:00Z",
+    }, stub.execute, (received, runnerArgument) => {
+      applyCalls += 1;
+      assert.deepEqual(received.authorization, runtimeAuthorization);
+      assert.equal(received.manifestSource, "synthetic-runtime-artifact\n");
+      assert.equal(received.startedAt, "2026-08-05T06:44:00Z");
+      assert.equal(received.completedAt, "2026-08-05T06:45:00Z");
+      assert.equal(runnerArgument, stub.execute);
+      return { evidenceSource: "synthetic", receipt: { result: "completed" } };
+    });
+    assert.equal(applyCalls, 1);
+    assert.deepEqual(applyResult, {
+      evidenceSource: "synthetic",
+      receipt: { result: "completed" },
+    });
+
+    writeFileSync(inputs.fifteenthAuthorizationPath, `${JSON.stringify({
+      ...runtimeAuthorization,
+      artifact: "ui",
+    }, null, 2)}\n`, { mode: 0o600 });
+    assert.throws(() => applySessionProofRuntimeFromOperatorPacket({
+      ...inputs,
+      startedAt: "2026-08-05T06:44:00Z",
+      completedAt: "2026-08-05T06:45:00Z",
+    }, stub.execute, () => {
+      applyCalls += 1;
+    }), /authorization|artifact/);
+    assert.equal(applyCalls, 1);
+    writeFileSync(inputs.fifteenthAuthorizationPath, authorizationSource, { mode: 0o600 });
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
