@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { bindSessionProofNamespace, createSessionProofAdmission } from "./codeops-session-proof-admission.mjs";
 import {
@@ -10,6 +13,15 @@ import {
   createCredentialDeleteRequest,
   revokeSessionProofCredentials,
 } from "./codeops-session-proof-credential-revoker.mjs";
+import {
+  revokeSessionProofCredentialsFromOperatorPacket,
+  persistSessionProofCredentialRevocationFromOperatorPacket,
+  readSessionProofCredentialRevocationOutputsFromOperatorPacket,
+} from "./codeops-session-proof-operator-credential-revocation.mjs";
+import {
+  buildSessionProofCredentialRevocationEvidence,
+  sessionProofCredentialNames,
+} from "./codeops-session-proof-credential-revocation-evidence.mjs";
 import { buildSessionProofCredentialEvidence } from "./codeops-session-proof-credential-evidence.mjs";
 import { buildSessionProofReadinessEvidence } from "./codeops-session-proof-readiness-evidence.mjs";
 import {
@@ -593,6 +605,157 @@ test("constructs a namespaced Secret DELETE with one exact UID precondition", ()
     kind: "DeleteOptions",
     preconditions: { uid: "issued-uid" },
   });
+});
+
+test("hands only the persisted revocation authorization and exact private predecessor inputs to the revoker", async () => {
+  const inputs = buildRevocationInputs();
+  const receiptKeys = [
+    "stepReceiptSource", "secondStepReceiptSource", "thirdStepReceiptSource",
+    "fourthStepReceiptSource", "fifthStepReceiptSource", "sixthStepReceiptSource",
+    "seventhStepReceiptSource", "eighthStepReceiptSource", "ninthStepReceiptSource",
+    "tenthStepReceiptSource", "eleventhStepReceiptSource", "twelfthStepReceiptSource",
+    "thirteenthStepReceiptSource", "fourteenthStepReceiptSource", "fifteenthStepReceiptSource",
+    "sixteenthStepReceiptSource", "seventeenthStepReceiptSource", "eighteenthStepReceiptSource",
+  ];
+  const runtimeStopOutputs = {
+    evidenceSource: inputs.issuanceEvidenceSources[0],
+    secondEvidenceSource: inputs.issuanceEvidenceSources[1],
+    eighteenthEvidenceSource: inputs.runtimeStopEvidenceSource,
+    ...Object.fromEntries(receiptKeys.map((key, index) => [key, inputs.priorReceiptSources[index]])),
+  };
+  const input = {
+    packetPath: "/private/operator.packet",
+    startedAt: "2026-08-05T19:21:00Z",
+    completedAt: "2026-08-05T19:22:00Z",
+  };
+  let received;
+  const result = await revokeSessionProofCredentialsFromOperatorPacket(
+    input,
+    () => { throw new Error("runner must not be reached by the wrapper test"); },
+    async (revocationInput, dependencies) => {
+      received = revocationInput;
+      assert.equal(typeof dependencies.runner, "function");
+      return { accepted: true };
+    },
+    (readInput) => {
+      assert.equal(readInput, input);
+      return { authorization: inputs.authorization, runtimeStopOutputs };
+    },
+  );
+  assert.deepEqual(result, { accepted: true });
+  assert.deepEqual(received, {
+    authorization: inputs.authorization,
+    priorReceiptSources: inputs.priorReceiptSources,
+    issuanceEvidenceSources: inputs.issuanceEvidenceSources,
+    runtimeStopEvidenceSource: inputs.runtimeStopEvidenceSource,
+    startedAt: input.startedAt,
+    completedAt: input.completedAt,
+  });
+});
+
+test("persists and reopens exact private credential revocation evidence and receipt", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-credential-revocation-"));
+  try {
+    const inputs = buildRevocationInputs();
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const nineteenthEvidencePath = join(
+      root,
+      `${identity.namespace}.step-23-revoke-capabilities.evidence.json`,
+    );
+    const nineteenthStepReceiptPath = join(
+      root,
+      `${identity.namespace}.step-23-revoke-capabilities.receipt.json`,
+    );
+    const completedAt = "2026-08-05T19:22:00Z";
+    const evidenceSource = JSON.stringify(buildSessionProofCredentialRevocationEvidence({
+      authorization: inputs.authorization,
+      observedAt: completedAt,
+      absentCredentialNames: sessionProofCredentialNames(),
+    }));
+    const completed = {
+      evidenceSource,
+      receipt: completeSessionProofStep(inputs.authorization, {
+        namespaceResource: namespaceResource(),
+        operator,
+        target,
+        completedAt,
+        evidenceSource,
+      }),
+    };
+    const runtimeStopOutputs = { marker: "private-runtime-stop-chain" };
+    const readAuthorization = () => ({
+      authorization: inputs.authorization,
+      runtimeStopOutputs,
+    });
+    const stub = makeRunner(inputs);
+    const persisted = await persistSessionProofCredentialRevocationFromOperatorPacket({
+      packetPath,
+      nineteenthEvidencePath,
+      nineteenthStepReceiptPath,
+      startedAt: "2026-08-05T19:21:00Z",
+      completedAt,
+    }, stub.runner, async () => completed, readAuthorization);
+    assert.equal(persisted.evidenceSource, evidenceSource);
+    assert.equal(statSync(nineteenthEvidencePath).mode & 0o777, 0o600);
+    assert.equal(statSync(nineteenthStepReceiptPath).mode & 0o777, 0o600);
+
+    const reopened = readSessionProofCredentialRevocationOutputsFromOperatorPacket({
+      packetPath,
+      nineteenthEvidencePath,
+      nineteenthStepReceiptPath,
+    }, stub.runner, readAuthorization);
+    assert.equal(reopened.marker, runtimeStopOutputs.marker);
+    assert.equal(reopened.nineteenthEvidenceSource, evidenceSource);
+    assert.equal(
+      reopened.nineteenthStepReceiptSource,
+      readFileSync(nineteenthStepReceiptPath, "utf8"),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reserves both revocation outputs before the revoker and rejects unsafe readback", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-credential-revocation-"));
+  try {
+    const inputs = buildRevocationInputs();
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const nineteenthEvidencePath = join(
+      root,
+      `${identity.namespace}.step-23-revoke-capabilities.evidence.json`,
+    );
+    const nineteenthStepReceiptPath = join(
+      root,
+      `${identity.namespace}.step-23-revoke-capabilities.receipt.json`,
+    );
+    let revokeCalls = 0;
+    await assert.rejects(() => persistSessionProofCredentialRevocationFromOperatorPacket({
+      packetPath,
+      nineteenthEvidencePath: join(root, "substituted.evidence.json"),
+      nineteenthStepReceiptPath,
+    }, undefined, async () => { revokeCalls += 1; }), /derive exactly/);
+    writeFileSync(nineteenthStepReceiptPath, "occupied\n", { mode: 0o600 });
+    await assert.rejects(() => persistSessionProofCredentialRevocationFromOperatorPacket({
+      packetPath,
+      nineteenthEvidencePath,
+      nineteenthStepReceiptPath,
+    }, undefined, async () => { revokeCalls += 1; }), /already exists/);
+    assert.equal(revokeCalls, 0);
+    assert.throws(() => statSync(nineteenthEvidencePath), /ENOENT/);
+
+    writeFileSync(nineteenthEvidencePath, "invalid\n", { mode: 0o600 });
+    chmodSync(nineteenthStepReceiptPath, 0o644);
+    assert.throws(() => readSessionProofCredentialRevocationOutputsFromOperatorPacket({
+      packetPath,
+      nineteenthEvidencePath,
+      nineteenthStepReceiptPath,
+    }, undefined, () => ({
+      authorization: inputs.authorization,
+      runtimeStopOutputs: {},
+    })), /bounded private regular file/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("deletes exactly the nine issued Secret UIDs and receipts verified absence", async () => {

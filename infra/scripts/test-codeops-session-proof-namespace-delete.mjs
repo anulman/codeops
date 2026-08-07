@@ -1,11 +1,26 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { createSessionProofAdmission } from "./codeops-session-proof-admission.mjs";
 import {
   createNamespaceDeleteRequest,
   deleteSessionProofNamespace,
 } from "./codeops-session-proof-namespace-delete.mjs";
+import {
+  deleteSessionProofNamespaceFromOperatorPacket,
+  persistSessionProofNamespaceDeletionFromOperatorPacket,
+  readSessionProofNamespaceDeletionOutputsFromOperatorPacket,
+} from "./codeops-session-proof-operator-namespace-delete.mjs";
 import {
   buildSessionProofCredentialRevocationEvidence,
   sessionProofCredentialNames,
@@ -149,6 +164,181 @@ const success = {
   contentType: "application/json",
   body: JSON.stringify({ apiVersion: "v1", kind: "Status", status: "Success" }),
 };
+
+test("hands only exact persisted revocation outputs to Namespace deletion", async () => {
+  const receiptKeys = [
+    "stepReceiptSource", "secondStepReceiptSource", "thirdStepReceiptSource",
+    "fourthStepReceiptSource", "fifthStepReceiptSource", "sixthStepReceiptSource",
+    "seventhStepReceiptSource", "eighthStepReceiptSource", "ninthStepReceiptSource",
+    "tenthStepReceiptSource", "eleventhStepReceiptSource", "twelfthStepReceiptSource",
+    "thirteenthStepReceiptSource", "fourteenthStepReceiptSource", "fifteenthStepReceiptSource",
+    "sixteenthStepReceiptSource", "seventeenthStepReceiptSource", "eighteenthStepReceiptSource",
+    "nineteenthStepReceiptSource",
+  ];
+  const outputs = {
+    planSource,
+    creationReceipt,
+    creationReceiptSource: JSON.stringify(creationReceipt),
+    nineteenthEvidenceSource: revocationEvidenceSource,
+    ...Object.fromEntries(receiptKeys.map((key, index) => [key, `receipt-${index + 1}`])),
+  };
+  outputs.nineteenthStepReceiptSource = revocationReceiptSource;
+  const stub = runner([namespace(), namespace()]);
+  let received;
+  const result = await deleteSessionProofNamespaceFromOperatorPacket(
+    { packetPath: "/private/operator.packet", observedAt: "2026-08-05T06:30:00Z" },
+    stub.execute,
+    async (deletionInput, dependencies) => {
+      received = deletionInput;
+      assert.equal(dependencies.runner, stub.execute);
+      return { accepted: true };
+    },
+    () => outputs,
+    (authorizationInput) => {
+      assert.deepEqual(authorizationInput.priorReceiptSources, receiptKeys.map((key) => outputs[key]));
+      assert.equal(authorizationInput.namespaceResource.metadata.uid, admission.namespaceUid);
+      return { stepId: "delete-namespace", authorizedAt: "2026-08-05T06:30:00Z" };
+    },
+  );
+  assert.deepEqual(result, { accepted: true });
+  assert.deepEqual(received, {
+    planSource,
+    creationReceipt,
+    revocationReceiptSource,
+    revocationEvidenceSource,
+    observedAt: "2026-08-05T06:30:00Z",
+  });
+});
+
+test("reserves and persists exact private Namespace deletion and final absence outputs", async () => {
+  const deletionRunner = runner();
+  const completed = await deleteSessionProofNamespace(deletionInput(), {
+    runner: deletionRunner.execute,
+    deleteRequest: async () => success,
+    now: () => new Date("2026-08-05T06:30:00Z"),
+    sleep: async () => {},
+  });
+  const root = mkdtempSync(join(tmpdir(), "session-proof-namespace-deletion-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const paths = {
+      twentiethEvidencePath: join(root, `${identity.namespace}.step-24-delete-namespace.evidence.json`),
+      twentiethStepReceiptPath: join(root, `${identity.namespace}.step-24-delete-namespace.receipt.json`),
+      twentyFirstEvidencePath: join(root, `${identity.namespace}.step-25-verify-teardown.evidence.json`),
+      twentyFirstStepReceiptPath: join(root, `${identity.namespace}.step-25-verify-teardown.receipt.json`),
+    };
+    let deleteCalls = 0;
+    const persisted = await persistSessionProofNamespaceDeletionFromOperatorPacket({
+      packetPath,
+      ...paths,
+    }, undefined, async () => {
+      deleteCalls += 1;
+      for (const path of Object.values(paths)) {
+        assert.equal(statSync(path).mode & 0o777, 0o600);
+        assert.equal(statSync(path).size, 0);
+      }
+      return completed;
+    });
+    assert.equal(deleteCalls, 1);
+    assert.deepEqual(persisted, {
+      deletionEvidenceSource: completed.deleteEvidenceSource,
+      deletionReceiptSource: completed.deleteReceiptSource,
+      teardownEvidenceSource: completed.teardownEvidenceSource,
+      teardownReceiptSource: JSON.stringify(completed.teardownReceipt),
+    });
+    assert.equal(readFileSync(paths.twentiethEvidencePath, "utf8"), completed.deleteEvidenceSource);
+    assert.equal(readFileSync(paths.twentiethStepReceiptPath, "utf8"), completed.deleteReceiptSource);
+    assert.equal(readFileSync(paths.twentyFirstEvidencePath, "utf8"), completed.teardownEvidenceSource);
+    assert.equal(
+      readFileSync(paths.twentyFirstStepReceiptPath, "utf8"),
+      JSON.stringify(completed.teardownReceipt),
+    );
+    for (const path of Object.values(paths)) {
+      assert.equal(statSync(path).mode & 0o777, 0o600);
+    }
+    assert.deepEqual(readSessionProofNamespaceDeletionOutputsFromOperatorPacket({
+      packetPath,
+      ...paths,
+    }), {
+      twentiethEvidenceSource: completed.deleteEvidenceSource,
+      twentiethStepReceiptSource: completed.deleteReceiptSource,
+      twentyFirstEvidenceSource: completed.teardownEvidenceSource,
+      twentyFirstStepReceiptSource: JSON.stringify(completed.teardownReceipt),
+    });
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects drifted persisted Namespace deletion or final absence outputs", async () => {
+  const completed = await deleteSessionProofNamespace(deletionInput(), {
+    runner: runner().execute,
+    deleteRequest: async () => success,
+    now: () => new Date("2026-08-05T06:30:00Z"),
+    sleep: async () => {},
+  });
+  const root = mkdtempSync(join(tmpdir(), "session-proof-namespace-deletion-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const paths = {
+      twentiethEvidencePath: join(root, `${identity.namespace}.step-24-delete-namespace.evidence.json`),
+      twentiethStepReceiptPath: join(root, `${identity.namespace}.step-24-delete-namespace.receipt.json`),
+      twentyFirstEvidencePath: join(root, `${identity.namespace}.step-25-verify-teardown.evidence.json`),
+      twentyFirstStepReceiptPath: join(root, `${identity.namespace}.step-25-verify-teardown.receipt.json`),
+    };
+    await persistSessionProofNamespaceDeletionFromOperatorPacket({
+      packetPath,
+      ...paths,
+    }, undefined, async () => completed);
+    writeFileSync(paths.twentyFirstStepReceiptPath, JSON.stringify({
+      ...completed.teardownReceipt,
+      checkedAt: "2026-08-05T06:31:00Z",
+    }), { mode: 0o600 });
+    assert.throws(() => readSessionProofNamespaceDeletionOutputsFromOperatorPacket({
+      packetPath,
+      ...paths,
+    }), /exact persisted artifacts/);
+    writeFileSync(
+      paths.twentyFirstStepReceiptPath,
+      JSON.stringify(completed.teardownReceipt),
+    );
+    chmodSync(paths.twentyFirstStepReceiptPath, 0o644);
+    assert.throws(() => readSessionProofNamespaceDeletionOutputsFromOperatorPacket({
+      packetPath,
+      ...paths,
+    }), /bounded private regular file/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects unsafe or occupied Namespace deletion outputs before the deleter", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-namespace-deletion-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const paths = {
+      twentiethEvidencePath: join(root, `${identity.namespace}.step-24-delete-namespace.evidence.json`),
+      twentiethStepReceiptPath: join(root, `${identity.namespace}.step-24-delete-namespace.receipt.json`),
+      twentyFirstEvidencePath: join(root, `${identity.namespace}.step-25-verify-teardown.evidence.json`),
+      twentyFirstStepReceiptPath: join(root, `${identity.namespace}.step-25-verify-teardown.receipt.json`),
+    };
+    let deleteCalls = 0;
+    await assert.rejects(() => persistSessionProofNamespaceDeletionFromOperatorPacket({
+      packetPath,
+      ...paths,
+      twentiethEvidencePath: join(root, "substituted.evidence.json"),
+    }, undefined, async () => { deleteCalls += 1; }), /derive exactly/);
+    writeFileSync(paths.twentyFirstStepReceiptPath, "occupied\n", { mode: 0o600 });
+    await assert.rejects(() => persistSessionProofNamespaceDeletionFromOperatorPacket({
+      packetPath,
+      ...paths,
+    }, undefined, async () => { deleteCalls += 1; }), /already exists/);
+    assert.equal(deleteCalls, 0);
+    assert.throws(() => statSync(paths.twentiethEvidencePath), /ENOENT/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 test("constructs one foreground DELETE with an exact Namespace UID precondition", () => {
   const value = createNamespaceDeleteRequest({

@@ -587,6 +587,43 @@ no artifact, persists no authorization, and cannot invoke the credential
 revoker. The closed itinerary names this authorization adapter, but no runner
 or workflow invokes it.
 
+The durable `revoke-capabilities` authorization boundary requires the exact
+absent adjacent `step-23-revoke-capabilities.authorization.json` path before
+live reads. It exclusively creates one canonical mode-`0600` authorization,
+fsyncs and identity-checks its bytes and parent, and reconstructs the exact
+artifact from the private runtime-stop chain on readback. Unsafe targets,
+permissions, bytes, or live identity fail closed. It imports and invokes no
+credential revoker. The closed itinerary names this persistence boundary, but
+no runner or workflow invokes it.
+
+The persisted `revoke-capabilities` authorization handoff reopens and
+reconstructs the exact private authorization and runtime-stop chain, then
+passes only that authorization, the complete ordered 18-receipt chain, the two
+exact credential-issuance evidence artifacts, the exact runtime-stop evidence,
+and bounded execution timestamps to the UID-preconditioned credential revoker.
+Authorization or predecessor drift fails before the revoker can be reached.
+No runner or workflow invokes this handoff.
+
+The durable credential-revocation output boundary validates both exact absent
+adjacent `step-23-revoke-capabilities` output paths before reaching the
+handoff, exclusively reserves the evidence and receipt as mode-`0600` regular
+files, and fsyncs each reservation and its parent. After injected revocation
+succeeds, it fsyncs and identity-checks the exact evidence bytes and their
+canonical hash-bound receipt. Readback reopens both through stable no-follow
+descriptors, verifies the specialized nine-Secret absence evidence, and
+reconstructs the receipt from live operator, target, and Namespace identity.
+Unsafe, replaced, malformed, chain-drifted, or timestamp-drifted outputs fail
+closed. The closed itinerary names this boundary, but no runner or workflow
+invokes it.
+
+The persisted credential-revocation output handoff reconstructs the exact
+private 19-receipt chain and authorizes only `delete-namespace` against the
+live Namespace UID. It passes only the reviewed plan, bound creation receipt,
+exact revocation evidence and receipt, and authorization timestamp to the
+existing UID-preconditioned Namespace deleter. Predecessor or live identity
+drift fails before the deleter can be reached. The closed itinerary names this
+handoff, but no runner or workflow invokes it.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked
@@ -1227,6 +1264,18 @@ exact deletion receipt/evidence to the final repeated principal/target check
 and Namespace absence. Timeout retains only the deletion receipt for operator
 review; incomplete-create emergency cleanup emits neither lifecycle
 receipt because no intermediate lifecycle was admitted.
+
+The closed operator persistence boundary reserves all four exact Namespace-
+derived adjacent step-24 deletion and step-25 final-absence evidence/receipt
+paths as private mode-`0600` files before it can invoke the deleter. It fsyncs
+each reservation and the parent directory, rejects occupied or substituted
+paths, reconstructs both hash-chained results from the returned exact bytes,
+then fsyncs and identity-checks every persisted file. Canonical readback opens
+all four outputs through stable no-follow descriptors and reconstructs the
+exact deletion and final-absence evidence/receipt chain without requiring the
+deleted Namespace to exist. Unsafe permissions, replaced files, malformed
+JSON, Namespace drift, or non-canonical bytes fail closed. The itinerary names
+this boundary, but no runner or workflow invokes it.
 
 Every intermediate action must additionally pass through the non-mutating
 step-receipt contract in

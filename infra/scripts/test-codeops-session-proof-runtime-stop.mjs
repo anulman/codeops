@@ -15,6 +15,8 @@ import {
 import { buildSessionProofRecordEvidence } from "./codeops-session-proof-record-evidence.mjs";
 import {
   authorizeNineteenthSessionProofStepFromOperatorPacket,
+  persistNineteenthSessionProofStepAuthorizationFromOperatorPacket,
+  readNineteenthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-credential-revocation-authorization.mjs";
 import {
   persistSessionProofRuntimeStopFromOperatorPacket,
@@ -233,6 +235,14 @@ const authorization = {
   artifactSha256: null,
   previousReceiptSha256: digest(recordReceiptSource),
   authorizedAt: "2026-08-05T22:31:30Z",
+};
+const revocationAuthorization = {
+  ...authorization,
+  stepIndex: 20,
+  stepId: "revoke-capabilities",
+  action: "operator-revoke-exact-secrets",
+  previousReceiptSha256: "d".repeat(64),
+  authorizedAt: "2026-08-05T22:33:30Z",
 };
 
 const typeByIdentity = new Map([
@@ -563,4 +573,78 @@ test("stop output drift fails before credential revocation authorization", () =>
   ), /runtime stop receipt drifted/);
   assert.equal(authorizeCalls, 0);
   assert.equal(dependencies.calls.length, 0);
+});
+
+test("persists and reopens the exact private credential revocation authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-revocation-authorization-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const nineteenthAuthorizationPath = join(
+      root,
+      `${identity.namespace}.step-23-revoke-capabilities.authorization.json`,
+    );
+    let authorizeCalls = 0;
+    const persisted = persistNineteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      nineteenthAuthorizationPath,
+    }, undefined, () => {
+      authorizeCalls += 1;
+      return revocationAuthorization;
+    });
+    assert.deepEqual(persisted, revocationAuthorization);
+    assert.equal(authorizeCalls, 1);
+    assert.equal(statSync(nineteenthAuthorizationPath).mode & 0o777, 0o600);
+
+    const reopened = readNineteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      nineteenthAuthorizationPath,
+    }, undefined, () => ({
+      authorization: revocationAuthorization,
+      runtimeStopOutputs: { marker: "private-runtime-stop-chain" },
+    }));
+    assert.deepEqual(reopened.authorization, revocationAuthorization);
+    assert.equal(reopened.runtimeStopOutputs.marker, "private-runtime-stop-chain");
+    assert.equal(
+      reopened.authorizationSource,
+      `${JSON.stringify(revocationAuthorization, null, 2)}\n`,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects unsafe credential revocation authorization paths before predecessor reads", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-revocation-authorization-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const nineteenthAuthorizationPath = join(
+      root,
+      `${identity.namespace}.step-23-revoke-capabilities.authorization.json`,
+    );
+    let authorizeCalls = 0;
+    assert.throws(() => persistNineteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      nineteenthAuthorizationPath: join(root, "substituted.authorization.json"),
+    }, undefined, () => {
+      authorizeCalls += 1;
+      return revocationAuthorization;
+    }), /derive exactly/);
+    writeFileSync(nineteenthAuthorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistNineteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      nineteenthAuthorizationPath,
+    }, undefined, () => {
+      authorizeCalls += 1;
+      return revocationAuthorization;
+    }), /already exists/);
+    assert.equal(authorizeCalls, 0);
+
+    chmodSync(nineteenthAuthorizationPath, 0o644);
+    assert.throws(() => readNineteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      nineteenthAuthorizationPath,
+    }, undefined, () => ({ authorization: revocationAuthorization })), /bounded private regular file/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

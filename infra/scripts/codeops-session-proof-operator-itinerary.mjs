@@ -64,10 +64,13 @@ const adapters = {
     "persistSessionProofRuntimeStopFromOperatorPacket",
   ],
   "revoke-capabilities": [
-    "./codeops-session-proof-operator-credential-revocation-authorization.mjs",
-    "authorizeNineteenthSessionProofStepFromOperatorPacket",
+    "./codeops-session-proof-operator-credential-revocation.mjs",
+    "persistSessionProofCredentialRevocationFromOperatorPacket",
   ],
-  "delete-namespace": ["./codeops-session-proof-namespace-delete.mjs", "deleteSessionProofNamespace"],
+  "delete-namespace": [
+    "./codeops-session-proof-operator-namespace-delete.mjs",
+    "persistSessionProofNamespaceDeletionFromOperatorPacket",
+  ],
 };
 
 function digest(source) {

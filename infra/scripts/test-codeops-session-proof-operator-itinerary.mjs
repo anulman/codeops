@@ -142,11 +142,18 @@ test("wires every closed proof step and exact byte source without invoking an ad
   assert.deepEqual(
     result.steps.find((step) => step.stepId === "revoke-capabilities").adapter,
     {
-      module: "./codeops-session-proof-operator-credential-revocation-authorization.mjs",
-      export: "authorizeNineteenthSessionProofStepFromOperatorPacket",
+      module: "./codeops-session-proof-operator-credential-revocation.mjs",
+      export: "persistSessionProofCredentialRevocationFromOperatorPacket",
     },
   );
   assert.deepEqual(result.finalOutputs, ["receipt:verify-teardown", "evidence:verify-teardown"]);
+  assert.deepEqual(
+    result.steps.find((step) => step.stepId === "delete-namespace").adapter,
+    {
+      module: "./codeops-session-proof-operator-namespace-delete.mjs",
+      export: "persistSessionProofNamespaceDeletionFromOperatorPacket",
+    },
+  );
 });
 
 test("binds the revocation, deletion, and final-absence handoff exactly", () => {
