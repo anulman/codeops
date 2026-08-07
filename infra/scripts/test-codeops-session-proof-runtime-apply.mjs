@@ -1,10 +1,20 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import { bindSessionProofNamespace, createSessionProofAdmission } from "./codeops-session-proof-admission.mjs";
-import { sessionProofApplyResourceIdentities } from "./codeops-session-proof-apply-evidence.mjs";
+import {
+  buildSessionProofApplyEvidence,
+  sessionProofApplyResourceIdentities,
+} from "./codeops-session-proof-apply-evidence.mjs";
+import {
+  readSessionProofRuntimeApplyOutputsFromOperatorPacket,
+} from "./codeops-session-proof-operator-runtime-apply.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 import { applySessionProofRuntime } from "./codeops-session-proof-runtime-apply.mjs";
+import { completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 
 const identity = {
   namespace: "codeops-session-proof-video-1",
@@ -166,6 +176,64 @@ test("creates only the reviewed runtime package and receipts three stable server
   assert.deepEqual(mutations[0].args, [
     "-n", identity.namespace, "create", "--filename", "-", "--request-timeout=30s",
   ]);
+});
+
+test("reopens the exact private runtime apply evidence and canonical receipt", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-runtime-apply-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const fifteenthEvidencePath = join(
+      root,
+      `${identity.namespace}.step-18-start-runtime.evidence.json`,
+    );
+    const fifteenthStepReceiptPath = join(
+      root,
+      `${identity.namespace}.step-18-start-runtime.receipt.json`,
+    );
+    const completedAt = "2026-08-05T22:21:00Z";
+    const evidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+      authorization,
+      observedAt: completedAt,
+      resources: sessionProofApplyResourceIdentities("start-runtime", authorization)
+        .map((resource, index) => ({ ...resource, uid: `resource-uid-${index}` })),
+    }));
+    const receipt = completeSessionProofStep(authorization, {
+      namespaceResource: namespaceResource(),
+      operator,
+      target,
+      completedAt,
+      evidenceSource,
+    });
+    const receiptSource = `${JSON.stringify(receipt, null, 2)}\n`;
+    writeFileSync(fifteenthEvidencePath, evidenceSource, { mode: 0o600 });
+    writeFileSync(fifteenthStepReceiptPath, receiptSource, { mode: 0o600 });
+    const stub = makeRunner();
+    const readAuthorization = (received, runnerArgument) => {
+      assert.equal(received.packetPath, packetPath);
+      assert.equal(runnerArgument, stub.runner);
+      return { authorization, uiReadinessOutputs: { marker: "private-chain" } };
+    };
+    const reopened = readSessionProofRuntimeApplyOutputsFromOperatorPacket({
+      packetPath,
+      fifteenthEvidencePath,
+      fifteenthStepReceiptPath,
+    }, stub.runner, readAuthorization);
+    assert.equal(reopened.marker, "private-chain");
+    assert.deepEqual(reopened.fifteenthAuthorization, authorization);
+    assert.equal(reopened.fifteenthEvidenceSource, evidenceSource);
+    assert.equal(reopened.fifteenthStepReceiptSource, receiptSource);
+    assert.equal(statSync(fifteenthEvidencePath).mode & 0o777, 0o600);
+    assert.equal(readFileSync(fifteenthStepReceiptPath, "utf8"), receiptSource);
+
+    chmodSync(fifteenthEvidencePath, 0o640);
+    assert.throws(() => readSessionProofRuntimeApplyOutputsFromOperatorPacket({
+      packetPath,
+      fifteenthEvidencePath,
+      fifteenthStepReceiptPath,
+    }, stub.runner, readAuthorization), /private regular file/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("rejects manifest, action, or timestamp drift before any Kubernetes call", () => {

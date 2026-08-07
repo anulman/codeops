@@ -86,6 +86,7 @@ import {
 } from "./codeops-session-proof-operator-runtime-step-authorization.mjs";
 import {
   applySessionProofRuntimeFromOperatorPacket,
+  persistSessionProofRuntimeApplyFromOperatorPacket,
 } from "./codeops-session-proof-operator-runtime-apply.mjs";
 import {
   buildSessionProofCodexSmokeReplacementEvidence,
@@ -474,6 +475,14 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-17-start-runtime.authorization.json`,
   );
+  const fifteenthEvidencePath = join(
+    root,
+    `${identity.namespace}.step-18-start-runtime.evidence.json`,
+  );
+  const fifteenthStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-18-start-runtime.receipt.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -530,6 +539,8 @@ function persistOperatorInputs(root) {
     fourteenthEvidencePath,
     fourteenthStepReceiptPath,
     fifteenthAuthorizationPath,
+    fifteenthEvidencePath,
+    fifteenthStepReceiptPath,
   };
 }
 
@@ -4521,10 +4532,31 @@ test("persists exact UI readiness and the private runtime-start authorization", 
     assert.equal(runtimeAuthorization.artifact, "runtime");
     assert.equal(statSync(inputs.fifteenthAuthorizationPath).mode & 0o777, 0o600);
 
+    assert.throws(() => persistSessionProofRuntimeApplyFromOperatorPacket({
+      ...inputs,
+      fifteenthEvidencePath: join(root, "substituted.evidence.json"),
+      startedAt: "2026-08-05T06:44:00Z",
+      completedAt: "2026-08-05T06:45:00Z",
+    }, closedStub.execute), /derive exactly/);
+    assert.equal(closedStub.calls.length, 0);
+
     const authorizationSource = readFileSync(inputs.fifteenthAuthorizationPath, "utf8");
     assert.equal(authorizationSource, `${JSON.stringify(runtimeAuthorization, null, 2)}\n`);
     let applyCalls = 0;
-    const applyResult = applySessionProofRuntimeFromOperatorPacket({
+    const runtimeEvidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+      authorization: runtimeAuthorization,
+      observedAt: "2026-08-05T06:45:00Z",
+      resources: sessionProofApplyResourceIdentities("start-runtime", runtimeAuthorization)
+        .map((resource, index) => ({ ...resource, uid: `runtime-resource-uid-${index}` })),
+    }));
+    const runtimeReceipt = completeSessionProofStep(runtimeAuthorization, {
+      namespaceResource: namespace(),
+      operator,
+      target,
+      completedAt: "2026-08-05T06:45:00Z",
+      evidenceSource: runtimeEvidenceSource,
+    });
+    const applyResult = persistSessionProofRuntimeApplyFromOperatorPacket({
       ...inputs,
       startedAt: "2026-08-05T06:44:00Z",
       completedAt: "2026-08-05T06:45:00Z",
@@ -4535,14 +4567,24 @@ test("persists exact UI readiness and the private runtime-start authorization", 
       assert.equal(received.startedAt, "2026-08-05T06:44:00Z");
       assert.equal(received.completedAt, "2026-08-05T06:45:00Z");
       assert.equal(runnerArgument, stub.execute);
-      return { evidenceSource: "synthetic", receipt: { result: "completed" } };
+      assert.equal(statSync(inputs.fifteenthEvidencePath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.fifteenthStepReceiptPath).mode & 0o777, 0o600);
+      assert.equal(statSync(inputs.fifteenthEvidencePath).size, 0);
+      assert.equal(statSync(inputs.fifteenthStepReceiptPath).size, 0);
+      return { evidenceSource: runtimeEvidenceSource, receipt: runtimeReceipt };
     });
     assert.equal(applyCalls, 1);
-    assert.deepEqual(applyResult, {
-      evidenceSource: "synthetic",
-      receipt: { result: "completed" },
-    });
-
+    assert.equal(applyResult.evidenceSource, runtimeEvidenceSource);
+    assert.equal(
+      readFileSync(inputs.fifteenthEvidencePath, "utf8"),
+      runtimeEvidenceSource,
+    );
+    assert.equal(
+      readFileSync(inputs.fifteenthStepReceiptPath, "utf8"),
+      applyResult.receiptSource,
+    );
+    assert.equal(applyResult.receipt.evidenceSha256,
+      createHash("sha256").update(runtimeEvidenceSource).digest("hex"));
     writeFileSync(inputs.fifteenthAuthorizationPath, `${JSON.stringify({
       ...runtimeAuthorization,
       artifact: "ui",

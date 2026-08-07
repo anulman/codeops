@@ -462,6 +462,17 @@ be reached. The closed rehearsal names this operator handoff but does not
 invoke it. No workflow or runner invokes the handoff, and tests use only an
 injected adapter.
 
+The operator runtime apply boundary reserves the exact adjacent
+`step-18-start-runtime` evidence and receipt paths before the injected adapter
+can run. Both outputs are exclusively created as mode-`0600` regular files,
+their parent directory and file contents are fsynced, and their identities are
+checked before and after each write. Canonical readback reconstructs the exact
+completion receipt from the private authorization chain, live operator and
+target, Namespace UID, and persisted evidence bytes. Substituted, occupied,
+permission-weakened, replaced, malformed, or timestamp-drifted outputs fail
+closed. The closed rehearsal lists this persistence adapter but does not invoke
+it. No workflow or runner invokes it, and tests use only an injected adapter.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked

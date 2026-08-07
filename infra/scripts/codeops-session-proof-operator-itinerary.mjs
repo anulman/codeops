@@ -49,7 +49,7 @@ const adapters = {
   ],
   "start-runtime": [
     "./codeops-session-proof-operator-runtime-apply.mjs",
-    "applySessionProofRuntimeFromOperatorPacket",
+    "persistSessionProofRuntimeApplyFromOperatorPacket",
   ],
   "wait-runtime": ["./codeops-session-proof-runtime-wait.mjs", "waitForSessionProofRuntime"],
   "record-proof": ["./codeops-session-proof-record.mjs", "completeSessionProofRecording"],
