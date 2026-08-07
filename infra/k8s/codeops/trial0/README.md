@@ -495,6 +495,18 @@ Authorization, predecessor, permission, identity, or output drift fails before
 the waiter can be reached. The closed itinerary names this operator adapter,
 but no runner or workflow invokes it.
 
+The runtime readiness persistence boundary reserves the exact adjacent
+`step-20-wait-runtime` evidence and receipt paths before the injected waiter can
+run. Both outputs are exclusively created as mode-`0600` regular files, their
+parent directory and file contents are fsynced, and their identities are
+checked before and after each write. Canonical readback re-verifies the
+specialized Job/Pod readiness evidence against the private runtime-apply chain,
+then reconstructs the exact completion receipt from the live operator, target,
+and bound Namespace UID. Substituted, occupied, permission-weakened, replaced,
+malformed, chain-drifted, or timestamp-drifted outputs fail closed. The closed
+itinerary lists this persistence adapter, but no runner or workflow invokes it;
+tests use only an injected waiter.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked

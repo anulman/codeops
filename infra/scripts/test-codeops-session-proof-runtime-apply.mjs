@@ -18,10 +18,15 @@ import {
   readSixteenthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-runtime-wait-authorization.mjs";
 import {
+  persistSessionProofRuntimeWaitFromOperatorPacket,
+  readSessionProofRuntimeWaitOutputsFromOperatorPacket,
   waitForSessionProofRuntimeFromOperatorPacket,
 } from "./codeops-session-proof-operator-runtime-wait.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 import { applySessionProofRuntime } from "./codeops-session-proof-runtime-apply.mjs";
+import {
+  buildSessionProofRuntimeReadinessEvidence,
+} from "./codeops-session-proof-runtime-readiness-evidence.mjs";
 import { completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
 
 const identity = {
@@ -477,6 +482,243 @@ test("persisted runtime authorization or apply drift fails before the waiter is 
       },
     ), /drifted/);
     assert.equal(waiterCalls, 0);
+  }
+});
+
+function runtimeWaitFixture() {
+  const runtimeApplyEvidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
+    authorization,
+    observedAt: "2026-08-05T22:21:00Z",
+    resources: sessionProofApplyResourceIdentities("start-runtime", authorization)
+      .map((resource, index) => ({ ...resource, uid: `runtime-resource-uid-${index}` })),
+  }));
+  const runtimeApplyReceipt = completeSessionProofStep(authorization, {
+    namespaceResource: namespaceResource(),
+    operator,
+    target,
+    completedAt: "2026-08-05T22:21:00Z",
+    evidenceSource: runtimeApplyEvidenceSource,
+  });
+  const runtimeApplyReceiptSource = `${JSON.stringify(runtimeApplyReceipt, null, 2)}\n`;
+  const waitAuthorization = {
+    ...runtimeWaitAuthorization,
+    previousReceiptSha256: createHash("sha256").update(runtimeApplyReceiptSource).digest("hex"),
+  };
+  const job = {
+    apiVersion: "batch/v1",
+    kind: "Job",
+    metadata: {
+      name: "codeops-session-runtime-video-1",
+      uid: "runtime-resource-uid-0",
+      generation: 1,
+    },
+    spec: { completions: 1, parallelism: 1, backoffLimit: 0, activeDeadlineSeconds: 3600 },
+    status: { active: 1, ready: 1, startTime: "2026-08-05T22:23:00Z" },
+  };
+  const pod = {
+    apiVersion: "v1",
+    kind: "Pod",
+    metadata: {
+      name: "codeops-session-runtime-video-1-abcde",
+      uid: "runtime-pod-uid",
+      labels: { "job-name": "codeops-session-runtime-video-1" },
+      ownerReferences: [{
+        apiVersion: "batch/v1",
+        kind: "Job",
+        uid: "runtime-resource-uid-0",
+        controller: true,
+      }],
+    },
+    status: {
+      phase: "Running",
+      startTime: "2026-08-05T22:23:01Z",
+      conditions: ["Initialized", "Ready", "ContainersReady", "PodScheduled"]
+        .map((type) => ({ type, status: "True" })),
+      initContainerStatuses: [{
+        name: "workspace-builder",
+        restartCount: 0,
+        state: { terminated: { exitCode: 0 } },
+      }],
+      containerStatuses: ["runtime-worker", "coding-agent"].map((name) => ({
+        name,
+        ready: true,
+        restartCount: 0,
+        state: { running: { startedAt: "2026-08-05T22:23:02Z" } },
+      })),
+    },
+  };
+  const completedAt = "2026-08-05T22:24:00Z";
+  const evidenceSource = JSON.stringify(buildSessionProofRuntimeReadinessEvidence({
+    authorization: waitAuthorization,
+    runtimeApplyReceiptSource,
+    runtimeApplyEvidenceSource,
+    job,
+    pod,
+    observedAt: completedAt,
+  }));
+  const receipt = completeSessionProofStep(waitAuthorization, {
+    namespaceResource: namespaceResource(),
+    operator,
+    target,
+    completedAt,
+    evidenceSource,
+  });
+  return {
+    waitAuthorization,
+    runtimeApplyEvidenceSource,
+    runtimeApplyReceiptSource,
+    evidenceSource,
+    receipt,
+    completedAt,
+  };
+}
+
+test("durably persists and reopens exact private runtime readiness outputs", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-runtime-wait-"));
+  try {
+    const fixture = runtimeWaitFixture();
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const sixteenthEvidencePath = join(
+      root,
+      `${identity.namespace}.step-20-wait-runtime.evidence.json`,
+    );
+    const sixteenthStepReceiptPath = join(
+      root,
+      `${identity.namespace}.step-20-wait-runtime.receipt.json`,
+    );
+    const input = {
+      packetPath,
+      sixteenthEvidencePath,
+      sixteenthStepReceiptPath,
+      startedAt: "2026-08-05T22:23:00Z",
+      completedAt: fixture.completedAt,
+      maxAttempts: 120,
+      pollIntervalMs: 1000,
+    };
+    const stub = makeRunner();
+    const readAuthorization = (received, runnerArgument) => {
+      assert.equal(received, input);
+      assert.equal(runnerArgument, stub.runner);
+      return {
+        authorization: fixture.waitAuthorization,
+        runtimeApplyOutputs: {
+          fifteenthEvidenceSource: fixture.runtimeApplyEvidenceSource,
+          fifteenthStepReceiptSource: fixture.runtimeApplyReceiptSource,
+        },
+      };
+    };
+    let waiterCalls = 0;
+    const result = persistSessionProofRuntimeWaitFromOperatorPacket(
+      input,
+      stub.runner,
+      (received, runnerArgument) => {
+        waiterCalls += 1;
+        assert.equal(runnerArgument, stub.runner);
+        assert.deepEqual(received.authorization, fixture.waitAuthorization);
+        assert.equal(received.runtimeApplyEvidenceSource, fixture.runtimeApplyEvidenceSource);
+        assert.equal(received.runtimeApplyReceiptSource, fixture.runtimeApplyReceiptSource);
+        assert.equal(statSync(sixteenthEvidencePath).mode & 0o777, 0o600);
+        assert.equal(statSync(sixteenthStepReceiptPath).mode & 0o777, 0o600);
+        assert.equal(statSync(sixteenthEvidencePath).size, 0);
+        assert.equal(statSync(sixteenthStepReceiptPath).size, 0);
+        return { evidenceSource: fixture.evidenceSource, receipt: fixture.receipt };
+      },
+      readAuthorization,
+    );
+    assert.equal(waiterCalls, 1);
+    assert.equal(readFileSync(sixteenthEvidencePath, "utf8"), fixture.evidenceSource);
+    assert.equal(readFileSync(sixteenthStepReceiptPath, "utf8"), result.receiptSource);
+    const reopened = readSessionProofRuntimeWaitOutputsFromOperatorPacket(
+      input,
+      stub.runner,
+      readAuthorization,
+    );
+    assert.deepEqual(reopened.sixteenthAuthorization, fixture.waitAuthorization);
+    assert.equal(reopened.sixteenthEvidenceSource, fixture.evidenceSource);
+    assert.equal(reopened.sixteenthStepReceiptSource, result.receiptSource);
+    assert.equal(reopened.fifteenthEvidenceSource, fixture.runtimeApplyEvidenceSource);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects unsafe or occupied runtime readiness output paths before the waiter", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-runtime-wait-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const sixteenthEvidencePath = join(
+      root,
+      `${identity.namespace}.step-20-wait-runtime.evidence.json`,
+    );
+    const sixteenthStepReceiptPath = join(
+      root,
+      `${identity.namespace}.step-20-wait-runtime.receipt.json`,
+    );
+    let waiterCalls = 0;
+    const waiter = () => {
+      waiterCalls += 1;
+    };
+    assert.throws(() => persistSessionProofRuntimeWaitFromOperatorPacket({
+      packetPath,
+      sixteenthEvidencePath: join(root, "substituted.evidence.json"),
+      sixteenthStepReceiptPath,
+    }, undefined, waiter), /derive exactly/);
+    writeFileSync(sixteenthEvidencePath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSessionProofRuntimeWaitFromOperatorPacket({
+      packetPath,
+      sixteenthEvidencePath,
+      sixteenthStepReceiptPath,
+    }, undefined, waiter), /already exists/);
+    assert.equal(waiterCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("runtime readiness output permission or canonical receipt drift fails closed", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-runtime-wait-"));
+  try {
+    const fixture = runtimeWaitFixture();
+    const input = {
+      packetPath: join(root, `${identity.namespace}.packet`),
+      sixteenthEvidencePath: join(
+        root,
+        `${identity.namespace}.step-20-wait-runtime.evidence.json`,
+      ),
+      sixteenthStepReceiptPath: join(
+        root,
+        `${identity.namespace}.step-20-wait-runtime.receipt.json`,
+      ),
+    };
+    const stub = makeRunner();
+    const readAuthorization = () => ({
+      authorization: fixture.waitAuthorization,
+      runtimeApplyOutputs: {},
+    });
+    writeFileSync(input.sixteenthEvidencePath, fixture.evidenceSource, { mode: 0o600 });
+    writeFileSync(
+      input.sixteenthStepReceiptPath,
+      `${JSON.stringify(fixture.receipt, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    chmodSync(input.sixteenthEvidencePath, 0o640);
+    assert.throws(() => readSessionProofRuntimeWaitOutputsFromOperatorPacket(
+      input,
+      stub.runner,
+      readAuthorization,
+    ), /private regular file/);
+    chmodSync(input.sixteenthEvidencePath, 0o600);
+    writeFileSync(input.sixteenthStepReceiptPath, `${JSON.stringify({
+      ...fixture.receipt,
+      proceed: false,
+    }, null, 2)}\n`, { mode: 0o600 });
+    assert.throws(() => readSessionProofRuntimeWaitOutputsFromOperatorPacket(
+      input,
+      stub.runner,
+      readAuthorization,
+    ), /exact persisted artifact/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
   }
 });
 
