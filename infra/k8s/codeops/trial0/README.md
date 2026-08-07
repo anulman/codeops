@@ -444,6 +444,15 @@ file identity fail closed. The closed rehearsal lists the persistence adapter
 but does not invoke it. No workflow or runner invokes these boundaries, and
 tests use only an injected waiter.
 
+The next operator boundary reopens the exact private UI-readiness chain and
+persists only the adjacent `step-17-start-runtime` authorization. It binds the
+reviewed runtime manifest digest, all prior exact receipts, the live operator
+and target, and the Namespace UID. The authorization is exclusively created as
+a mode-`0600` regular file, then fsynced and identity-checked. Existing or
+substituted paths, private-chain drift, manifest drift, live-identity drift, and
+weakened file identity fail closed. It imports and invokes no runtime apply
+adapter, and no workflow or runner invokes it.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked

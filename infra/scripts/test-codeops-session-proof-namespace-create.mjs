@@ -82,6 +82,10 @@ import {
   buildSessionProofUiReadinessEvidence,
 } from "./codeops-session-proof-ui-readiness-evidence.mjs";
 import {
+  persistFifteenthSessionProofStepAuthorizationFromOperatorPacket,
+  readFifteenthSessionProofStepAuthorizationFromOperatorPacket,
+} from "./codeops-session-proof-operator-runtime-step-authorization.mjs";
+import {
   buildSessionProofCodexSmokeReplacementEvidence,
 } from "./codeops-session-proof-codex-smoke-replacement-evidence.mjs";
 import {
@@ -200,7 +204,7 @@ const proofThreeShardOverrides = new Map([
   ],
   ["persisted Codex-login authorization drift fails before the create-only adapter", 2],
   ["durably persists exact UI apply outputs behind the private authorization chain", 1],
-  ["durably persists exact UI readiness outputs behind the private apply chain", 2],
+  ["persists exact UI readiness and the private runtime-start authorization", 2],
 ]);
 const proofSeenTestNames = new Set();
 let proofTestOrdinal = 0;
@@ -463,6 +467,10 @@ function persistOperatorInputs(root) {
     root,
     `${identity.namespace}.step-16-wait-ui.receipt.json`,
   );
+  const fifteenthAuthorizationPath = join(
+    root,
+    `${identity.namespace}.step-17-start-runtime.authorization.json`,
+  );
   persistSessionProofOperatorPacket({ packetPath, planSource: packetPlanSource, artifactSources });
   attachSessionProofOperatorAdmission({
     packetPath,
@@ -518,6 +526,7 @@ function persistOperatorInputs(root) {
     fourteenthAuthorizationPath,
     fourteenthEvidencePath,
     fourteenthStepReceiptPath,
+    fifteenthAuthorizationPath,
   };
 }
 
@@ -4465,7 +4474,7 @@ test("durably persists exact UI apply outputs behind the private authorization c
   }
 });
 
-test("durably persists exact UI readiness outputs behind the private apply chain", async () => {
+test("persists exact UI readiness and the private runtime-start authorization", async () => {
   const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
   try {
     const inputs = persistOperatorInputs(root);
@@ -4499,10 +4508,36 @@ test("durably persists exact UI readiness outputs behind the private apply chain
       readFileSync(inputs.fourteenthStepReceiptPath, "utf8"),
       result.persisted.receiptSource,
     );
-    const reopened = readSessionProofUiWaitOutputsFromOperatorPacket(inputs, stub.execute);
-    assert.deepEqual(reopened.fourteenthAuthorization, result.authorization);
-    assert.equal(reopened.fourteenthEvidenceSource, result.evidenceSource);
-    assert.equal(reopened.fourteenthStepReceiptSource, result.persisted.receiptSource);
+    const runtimeAuthorization = persistFifteenthSessionProofStepAuthorizationFromOperatorPacket({
+      ...inputs,
+      observedAt: "2026-08-05T06:43:00Z",
+    }, stub.execute);
+    assert.equal(runtimeAuthorization.stepIndex, 16);
+    assert.equal(runtimeAuthorization.stepId, "start-runtime");
+    assert.equal(runtimeAuthorization.action, "operator-apply");
+    assert.equal(runtimeAuthorization.artifact, "runtime");
+    assert.equal(statSync(inputs.fifteenthAuthorizationPath).mode & 0o777, 0o600);
+
+    const authorizationSource = readFileSync(inputs.fifteenthAuthorizationPath, "utf8");
+    assert.equal(authorizationSource, `${JSON.stringify(runtimeAuthorization, null, 2)}\n`);
+    const reopened = readFifteenthSessionProofStepAuthorizationFromOperatorPacket(
+      inputs,
+      stub.execute,
+    );
+    assert.deepEqual(reopened.authorization, runtimeAuthorization);
+    assert.equal(reopened.authorizationSource, authorizationSource);
+    assert.deepEqual(
+      reopened.uiReadinessOutputs.fourteenthAuthorization,
+      result.authorization,
+    );
+    assert.equal(
+      reopened.uiReadinessOutputs.fourteenthEvidenceSource,
+      result.evidenceSource,
+    );
+    assert.equal(
+      reopened.uiReadinessOutputs.fourteenthStepReceiptSource,
+      result.persisted.receiptSource,
+    );
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
