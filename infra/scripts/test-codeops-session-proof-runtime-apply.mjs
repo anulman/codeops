@@ -12,6 +12,9 @@ import {
 import {
   readSessionProofRuntimeApplyOutputsFromOperatorPacket,
 } from "./codeops-session-proof-operator-runtime-apply.mjs";
+import {
+  authorizeSixteenthSessionProofStepFromOperatorPacket,
+} from "./codeops-session-proof-operator-runtime-wait-authorization.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 import { applySessionProofRuntime } from "./codeops-session-proof-runtime-apply.mjs";
 import { completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
@@ -234,6 +237,76 @@ test("reopens the exact private runtime apply evidence and canonical receipt", (
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+test("authorizes only runtime readiness from the exact persisted runtime outputs", () => {
+  const receiptSources = Array.from({ length: 15 }, (_, index) =>
+    `receipt-${index + 1}\n`);
+  const outputs = {
+    planSource,
+    creationReceiptSource: "creation-receipt\n",
+    creationReceipt: { namespace: { name: identity.namespace } },
+    stepReceiptSource: receiptSources[0],
+    secondStepReceiptSource: receiptSources[1],
+    thirdStepReceiptSource: receiptSources[2],
+    fourthStepReceiptSource: receiptSources[3],
+    fifthStepReceiptSource: receiptSources[4],
+    sixthStepReceiptSource: receiptSources[5],
+    seventhStepReceiptSource: receiptSources[6],
+    eighthStepReceiptSource: receiptSources[7],
+    ninthStepReceiptSource: receiptSources[8],
+    tenthStepReceiptSource: receiptSources[9],
+    eleventhStepReceiptSource: receiptSources[10],
+    twelfthStepReceiptSource: receiptSources[11],
+    thirteenthStepReceiptSource: receiptSources[12],
+    fourteenthStepReceiptSource: receiptSources[13],
+    fifteenthStepReceiptSource: receiptSources[14],
+  };
+  const stub = makeRunner();
+  let readCalls = 0;
+  let authorizeCalls = 0;
+  const result = authorizeSixteenthSessionProofStepFromOperatorPacket({
+    packetPath: "/private/operator.packet",
+    observedAt: "2026-08-05T22:22:00Z",
+  }, stub.runner, (input, runnerArgument) => {
+    readCalls += 1;
+    assert.equal(input.packetPath, "/private/operator.packet");
+    assert.equal(runnerArgument, stub.runner);
+    return outputs;
+  }, (input) => {
+    authorizeCalls += 1;
+    assert.equal(input.planSource, planSource);
+    assert.equal(input.creationReceiptSource, outputs.creationReceiptSource);
+    assert.deepEqual(input.priorReceiptSources, receiptSources);
+    assert.deepEqual(input.namespaceResource, namespaceResource());
+    assert.deepEqual(input.operator, operator);
+    assert.deepEqual(input.target, target);
+    assert.equal(input.observedAt, "2026-08-05T22:22:00Z");
+    assert.equal(Object.hasOwn(input, "artifactSource"), false);
+    return { stepIndex: 17, stepId: "wait-runtime", action: "operator-wait-ready" };
+  });
+  assert.equal(readCalls, 1);
+  assert.equal(authorizeCalls, 1);
+  assert.deepEqual(result, {
+    stepIndex: 17,
+    stepId: "wait-runtime",
+    action: "operator-wait-ready",
+  });
+  assert.equal(stub.calls.some(({ args }) => args.includes("job.batch")), false);
+});
+
+test("runtime apply output drift fails before runtime readiness authorization", () => {
+  const stub = makeRunner();
+  let authorizeCalls = 0;
+  assert.throws(() => authorizeSixteenthSessionProofStepFromOperatorPacket({
+    observedAt: "2026-08-05T22:22:00Z",
+  }, stub.runner, () => {
+    throw new Error("proof runtime apply evidence drifted");
+  }, () => {
+    authorizeCalls += 1;
+  }), /runtime apply evidence drifted/);
+  assert.equal(authorizeCalls, 0);
+  assert.equal(stub.calls.length, 0);
 });
 
 test("rejects manifest, action, or timestamp drift before any Kubernetes call", () => {

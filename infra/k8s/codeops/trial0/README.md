@@ -473,6 +473,12 @@ permission-weakened, replaced, malformed, or timestamp-drifted outputs fail
 closed. The closed rehearsal lists this persistence adapter but does not invoke
 it. No workflow or runner invokes it, and tests use only an injected adapter.
 
+The next read-only handoff reopens those exact private runtime apply outputs,
+re-verifies their specialized three-resource evidence and canonical predecessor/
+hash chain against the live principal, target, and Namespace UID, and
+authorizes only the no-artifact `wait-runtime` readiness step. It persists no
+authorization, invokes no waiter, and remains referenced only by focused tests.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked
