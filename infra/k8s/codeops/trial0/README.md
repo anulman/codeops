@@ -534,9 +534,21 @@ then passes only the authorization, exact persisted runtime-readiness evidence
 and receipt, validated capture-directory path, bounded timestamps, and explicit
 inspection result to the existing non-mutating recording completion adapter.
 Authorization or predecessor drift fails before the recorder can be reached.
-The closed itinerary names this handoff, but no runner or workflow invokes it;
-it does not open a browser, create recording artifacts, or start a proof
+It does not open a browser, create recording artifacts, or start a proof
 workload.
+
+The durable recording-output boundary validates both exact absent adjacent
+`step-21-record-proof` output paths before reaching the handoff, exclusively
+reserves the evidence and receipt as mode-`0600` regular files, and fsyncs each
+reservation and its parent. After injected completion succeeds, it fsyncs and
+identity-checks the exact evidence bytes and their canonical hash-bound receipt
+before returning. Readback reopens both through stable no-follow descriptors,
+re-verifies the specialized recording evidence against the persisted readiness
+chain, and reconstructs the receipt from live operator, target, and Namespace
+identity. Substituted, occupied, permission-weakened, replaced, malformed,
+chain-drifted, or timestamp-drifted outputs fail closed. The closed itinerary
+names this persistence boundary, but no runner or workflow invokes it; tests
+use only an injected completion adapter.
 
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their

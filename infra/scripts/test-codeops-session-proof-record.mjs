@@ -1,9 +1,12 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import {
+  chmodSync,
   mkdirSync,
   mkdtempSync,
+  readFileSync,
   rmSync,
+  statSync,
   symlinkSync,
   truncateSync,
   writeFileSync,
@@ -22,6 +25,8 @@ import {
 import { completeSessionProofRecording } from "./codeops-session-proof-record.mjs";
 import {
   completeSessionProofRecordingFromOperatorPacket,
+  persistSessionProofRecordingFromOperatorPacket,
+  readSessionProofRecordingOutputsFromOperatorPacket,
 } from "./codeops-session-proof-operator-record.mjs";
 import { buildSessionProofRuntimeReadinessEvidence } from "./codeops-session-proof-runtime-readiness-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
@@ -357,4 +362,131 @@ test("authorization readback drift fails before the recorder can be reached", ()
   ), /authorization drifted/);
   assert.equal(recordCalls, 0);
   assert.equal(stub.calls.length, 0);
+});
+
+test("durably persists exact private recording evidence and its canonical receipt", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-record-output-"));
+  roots.push(root);
+  const input = {
+    packetPath: join(root, `${identity.namespace}.packet`),
+    seventeenthEvidencePath: join(
+      root,
+      `${identity.namespace}.step-21-record-proof.evidence.json`,
+    ),
+    seventeenthStepReceiptPath: join(
+      root,
+      `${identity.namespace}.step-21-record-proof.receipt.json`,
+    ),
+  };
+  const stub = makeRunner();
+  const evidenceSource = '{"recording":"verified"}';
+  const receipt = { stepId: "record-proof", checkedAt: "2026-08-05T22:31:00Z" };
+  let completionCalls = 0;
+  const result = persistSessionProofRecordingFromOperatorPacket(
+    input,
+    stub.runner,
+    (received, runnerArgument) => {
+      completionCalls += 1;
+      assert.equal(received, input);
+      assert.equal(runnerArgument, stub.runner);
+      assert.equal(statSync(input.seventeenthEvidencePath).size, 0);
+      assert.equal(statSync(input.seventeenthEvidencePath).mode & 0o777, 0o600);
+      assert.equal(statSync(input.seventeenthStepReceiptPath).size, 0);
+      assert.equal(statSync(input.seventeenthStepReceiptPath).mode & 0o777, 0o600);
+      return { evidenceSource, receipt };
+    },
+  );
+  const receiptSource = `${JSON.stringify(receipt, null, 2)}\n`;
+  assert.equal(completionCalls, 1);
+  assert.equal(result.evidenceSource, evidenceSource);
+  assert.equal(result.receiptSource, receiptSource);
+  assert.deepEqual(result.receipt, receipt);
+  assert.equal(readFileSync(input.seventeenthEvidencePath, "utf8"), evidenceSource);
+  assert.equal(readFileSync(input.seventeenthStepReceiptPath, "utf8"), receiptSource);
+  assert.equal(statSync(input.seventeenthEvidencePath).mode & 0o777, 0o600);
+  assert.equal(statSync(input.seventeenthStepReceiptPath).mode & 0o777, 0o600);
+  assert.equal(stub.calls.length, 0);
+});
+
+test("unsafe or occupied recording outputs fail before completion", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-record-output-"));
+  roots.push(root);
+  const packetPath = join(root, `${identity.namespace}.packet`);
+  const seventeenthEvidencePath = join(
+    root,
+    `${identity.namespace}.step-21-record-proof.evidence.json`,
+  );
+  const seventeenthStepReceiptPath = join(
+    root,
+    `${identity.namespace}.step-21-record-proof.receipt.json`,
+  );
+  let completionCalls = 0;
+  const completion = () => {
+    completionCalls += 1;
+  };
+  assert.throws(() => persistSessionProofRecordingFromOperatorPacket({
+    packetPath,
+    seventeenthEvidencePath: join(root, "substituted.evidence.json"),
+    seventeenthStepReceiptPath,
+  }, undefined, completion), /derive exactly/);
+  writeFileSync(seventeenthStepReceiptPath, "occupied\n", { mode: 0o600 });
+  assert.throws(() => persistSessionProofRecordingFromOperatorPacket({
+    packetPath,
+    seventeenthEvidencePath,
+    seventeenthStepReceiptPath,
+  }, undefined, completion), /already exists/);
+  assert.equal(completionCalls, 0);
+});
+
+test("reopens exact private recording outputs and reconstructs the canonical receipt", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-record-output-"));
+  roots.push(root);
+  const captureDirectory = makeCapture();
+  const stub = makeRunner();
+  const completed = complete(captureDirectory, stub);
+  const input = {
+    packetPath: join(root, `${identity.namespace}.packet`),
+    seventeenthEvidencePath: join(
+      root,
+      `${identity.namespace}.step-21-record-proof.evidence.json`,
+    ),
+    seventeenthStepReceiptPath: join(
+      root,
+      `${identity.namespace}.step-21-record-proof.receipt.json`,
+    ),
+  };
+  const receiptSource = `${JSON.stringify(completed.receipt, null, 2)}\n`;
+  writeFileSync(input.seventeenthEvidencePath, completed.evidenceSource, { mode: 0o600 });
+  writeFileSync(input.seventeenthStepReceiptPath, receiptSource, { mode: 0o600 });
+  const readAuthorization = () => ({
+    authorization,
+    runtimeWaitOutputs: { marker: "private-runtime-readiness-chain" },
+  });
+  const reopened = readSessionProofRecordingOutputsFromOperatorPacket(
+    input,
+    stub.runner,
+    readAuthorization,
+  );
+  assert.equal(reopened.marker, "private-runtime-readiness-chain");
+  assert.deepEqual(reopened.seventeenthAuthorization, authorization);
+  assert.equal(reopened.seventeenthEvidenceSource, completed.evidenceSource);
+  assert.equal(reopened.seventeenthStepReceiptSource, receiptSource);
+
+  chmodSync(input.seventeenthEvidencePath, 0o640);
+  assert.throws(() => readSessionProofRecordingOutputsFromOperatorPacket(
+    input,
+    stub.runner,
+    readAuthorization,
+  ), /private regular file/);
+  chmodSync(input.seventeenthEvidencePath, 0o600);
+  writeFileSync(
+    input.seventeenthStepReceiptPath,
+    `${JSON.stringify({ ...completed.receipt, extra: true }, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  assert.throws(() => readSessionProofRecordingOutputsFromOperatorPacket(
+    input,
+    stub.runner,
+    readAuthorization,
+  ), /exact persisted artifact/);
 });
