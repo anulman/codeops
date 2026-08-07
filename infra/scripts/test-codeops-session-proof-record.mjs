@@ -28,6 +28,9 @@ import {
   persistSessionProofRecordingFromOperatorPacket,
   readSessionProofRecordingOutputsFromOperatorPacket,
 } from "./codeops-session-proof-operator-record.mjs";
+import {
+  authorizeEighteenthSessionProofStepFromOperatorPacket,
+} from "./codeops-session-proof-operator-runtime-stop-authorization.mjs";
 import { buildSessionProofRuntimeReadinessEvidence } from "./codeops-session-proof-runtime-readiness-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -489,4 +492,105 @@ test("reopens exact private recording outputs and reconstructs the canonical rec
     stub.runner,
     readAuthorization,
   ), /exact persisted artifact/);
+});
+
+test("authorizes stop-runtime from the exact persisted recording predecessor chain", () => {
+  const stub = makeRunner();
+  const plan = JSON.parse(planSource);
+  const creationReceipt = {
+    apiVersion: "codeops.renoconcierge.ca/session-proof-namespace-create/v1",
+    result: "created-and-uid-bound",
+    checkedAt: "2026-08-05T22:01:00Z",
+    planSha256,
+    namespaceManifestSha256: plan.artifacts.find((value) => value.id === "namespace").sha256,
+    namespace,
+    proceed: true,
+    admission,
+  };
+  const creationReceiptSource = JSON.stringify(creationReceipt);
+  let previousReceiptSha256 = digest(creationReceiptSource);
+  const receiptSources = plan.sequence.slice(2, 19).map((step, offset) => {
+    const stepIndex = offset + 2;
+    const source = JSON.stringify({
+      apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+      result: "completed",
+      proceed: true,
+      checkedAt: `2026-08-05T22:${String(stepIndex + 1).padStart(2, "0")}:00Z`,
+      planSha256,
+      namespace,
+      stepIndex,
+      stepId: step.id,
+      action: step.action,
+      artifact: step.artifact ?? null,
+      artifactSha256: step.artifact
+        ? plan.artifacts.find((value) => value.id === step.artifact).sha256
+        : null,
+      previousReceiptSha256,
+      evidenceSha256: digest(`evidence-${step.id}`),
+    });
+    previousReceiptSha256 = digest(source);
+    return source;
+  });
+  const outputs = {
+    planSource,
+    creationReceiptSource,
+    creationReceipt,
+    stepReceiptSource: receiptSources[0],
+    secondStepReceiptSource: receiptSources[1],
+    thirdStepReceiptSource: receiptSources[2],
+    fourthStepReceiptSource: receiptSources[3],
+    fifthStepReceiptSource: receiptSources[4],
+    sixthStepReceiptSource: receiptSources[5],
+    seventhStepReceiptSource: receiptSources[6],
+    eighthStepReceiptSource: receiptSources[7],
+    ninthStepReceiptSource: receiptSources[8],
+    tenthStepReceiptSource: receiptSources[9],
+    eleventhStepReceiptSource: receiptSources[10],
+    twelfthStepReceiptSource: receiptSources[11],
+    thirteenthStepReceiptSource: receiptSources[12],
+    fourteenthStepReceiptSource: receiptSources[13],
+    fifteenthStepReceiptSource: receiptSources[14],
+    sixteenthStepReceiptSource: receiptSources[15],
+    seventeenthStepReceiptSource: receiptSources[16],
+  };
+  let readCalls = 0;
+  const result = authorizeEighteenthSessionProofStepFromOperatorPacket(
+    { observedAt: "2026-08-05T22:31:30Z" },
+    stub.runner,
+    (input, runnerArgument) => {
+      readCalls += 1;
+      assert.equal(input.observedAt, "2026-08-05T22:31:30Z");
+      assert.equal(runnerArgument, stub.runner);
+      return outputs;
+    },
+  );
+  assert.equal(readCalls, 1);
+  assert.equal(result.stepIndex, 19);
+  assert.equal(result.stepId, "stop-runtime");
+  assert.equal(result.action, "operator-delete-exact-runtime-job");
+  assert.equal(result.artifact, null);
+  assert.equal(result.artifactSha256, null);
+  assert.equal(result.previousReceiptSha256, digest(receiptSources[16]));
+  assert.equal(result.authorizedAt, "2026-08-05T22:31:30Z");
+  assert.equal(
+    stub.calls.some(({ args }) => args.includes("create") || args.includes("apply") || args.includes("delete")),
+    false,
+  );
+});
+
+test("recording output drift fails before stop-runtime authorization", () => {
+  const stub = makeRunner();
+  let authorizeCalls = 0;
+  assert.throws(() => authorizeEighteenthSessionProofStepFromOperatorPacket(
+    { observedAt: "2026-08-05T22:31:30Z" },
+    stub.runner,
+    () => {
+      throw new Error("proof recording receipt drifted");
+    },
+    () => {
+      authorizeCalls += 1;
+    },
+  ), /recording receipt drifted/);
+  assert.equal(authorizeCalls, 0);
+  assert.equal(stub.calls.length, 0);
 });

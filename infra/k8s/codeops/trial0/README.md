@@ -550,6 +550,16 @@ chain-drifted, or timestamp-drifted outputs fail closed. The closed itinerary
 names this persistence boundary, but no runner or workflow invokes it; tests
 use only an injected completion adapter.
 
+The recording-output to `stop-runtime` authorization handoff reopens the exact
+private recording evidence and canonical receipt, re-verifies their complete
+predecessor chain, and repeats live operator, target, and Namespace-UID
+admission before authorizing only deletion of the exact runtime Job. The
+handoff carries all 17 exact prior receipt sources into the generic step
+authorizer. It supplies no reviewed manifest because `stop-runtime` has no
+cluster artifact, persists no authorization, and does not invoke the runtime
+deleter. The closed itinerary names this authorization adapter, but no runner
+or workflow invokes it.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked
