@@ -60,10 +60,13 @@ const adapters = {
     "persistSessionProofRecordingFromOperatorPacket",
   ],
   "stop-runtime": [
-    "./codeops-session-proof-operator-runtime-stop-authorization.mjs",
-    "authorizeEighteenthSessionProofStepFromOperatorPacket",
+    "./codeops-session-proof-operator-runtime-stop.mjs",
+    "persistSessionProofRuntimeStopFromOperatorPacket",
   ],
-  "revoke-capabilities": ["./codeops-session-proof-credential-revoker.mjs", "revokeSessionProofCredentials"],
+  "revoke-capabilities": [
+    "./codeops-session-proof-operator-credential-revocation-authorization.mjs",
+    "authorizeNineteenthSessionProofStepFromOperatorPacket",
+  ],
   "delete-namespace": ["./codeops-session-proof-namespace-delete.mjs", "deleteSessionProofNamespace"],
 };
 

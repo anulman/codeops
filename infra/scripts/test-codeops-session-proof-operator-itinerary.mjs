@@ -135,8 +135,15 @@ test("wires every closed proof step and exact byte source without invoking an ad
   assert.deepEqual(
     result.steps.find((step) => step.stepId === "stop-runtime").adapter,
     {
-      module: "./codeops-session-proof-operator-runtime-stop-authorization.mjs",
-      export: "authorizeEighteenthSessionProofStepFromOperatorPacket",
+      module: "./codeops-session-proof-operator-runtime-stop.mjs",
+      export: "persistSessionProofRuntimeStopFromOperatorPacket",
+    },
+  );
+  assert.deepEqual(
+    result.steps.find((step) => step.stepId === "revoke-capabilities").adapter,
+    {
+      module: "./codeops-session-proof-operator-credential-revocation-authorization.mjs",
+      export: "authorizeNineteenthSessionProofStepFromOperatorPacket",
     },
   );
   assert.deepEqual(result.finalOutputs, ["receipt:verify-teardown", "evidence:verify-teardown"]);

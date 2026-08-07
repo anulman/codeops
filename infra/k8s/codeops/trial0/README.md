@@ -560,6 +560,33 @@ cluster artifact, persists no authorization, and does not invoke the runtime
 deleter. The closed itinerary names this authorization adapter, but no runner
 or workflow invokes it.
 
+The `stop-runtime` authorization persistence boundary requires the exact
+absent Namespace-derived adjacent step-22 path before live reads. It
+exclusively creates one canonical mode-`0600` authorization, fsyncs and
+identity-checks its bytes and parent, and reconstructs the exact artifact from
+the private recording chain on readback. Unsafe targets, permissions, bytes,
+or live identity fail closed. It imports and invokes no runtime deleter. The
+closed itinerary names this persistence boundary, but no runner or workflow
+invokes it.
+
+The persisted `stop-runtime` authorization handoff reopens and reconstructs
+the exact private authorization and recording chain, then passes only those
+values plus bounded execution timestamps to the UID-preconditioned runtime Job
+deleter. Its output boundary reserves the exact adjacent mode-`0600` evidence
+and receipt paths before the deleter can be reached, fsyncs and
+identity-checks the returned bytes, and reconstructs the canonical receipt
+against specialized Job-absence evidence and live identity on readback. The
+closed itinerary names this complete stop boundary, but no runner or workflow
+invokes it.
+
+The persisted runtime-stop outputs to `revoke-capabilities` authorization
+handoff reopens the exact private stop evidence and canonical receipt,
+re-verifies the complete 18-receipt predecessor chain and live identity, and
+authorizes only deletion of the exact issued Secret UID inventory. It supplies
+no artifact, persists no authorization, and cannot invoke the credential
+revoker. The closed itinerary names this authorization adapter, but no runner
+or workflow invokes it.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked

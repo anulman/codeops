@@ -1,5 +1,8 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { test } from "node:test";
 import {
   bindSessionProofNamespace,
@@ -10,6 +13,14 @@ import {
   sessionProofApplyResourceIdentities,
 } from "./codeops-session-proof-apply-evidence.mjs";
 import { buildSessionProofRecordEvidence } from "./codeops-session-proof-record-evidence.mjs";
+import {
+  authorizeNineteenthSessionProofStepFromOperatorPacket,
+} from "./codeops-session-proof-operator-credential-revocation-authorization.mjs";
+import {
+  persistSessionProofRuntimeStopFromOperatorPacket,
+  readSessionProofRuntimeStopOutputsFromOperatorPacket,
+  stopSessionProofRuntimeFromOperatorPacket,
+} from "./codeops-session-proof-operator-runtime-stop.mjs";
 import { buildSessionProofRuntimeReadinessEvidence } from "./codeops-session-proof-runtime-readiness-evidence.mjs";
 import {
   createRuntimeJobDeleteRequest,
@@ -380,4 +391,176 @@ test("withholds a receipt on replacement, rejection, timeout, or final-state dri
     const dependencies = makeDependencies(options);
     await assert.rejects(() => stop(dependencies));
   }
+});
+
+test("hands only the persisted stop authorization and recording outputs to the deleter", async () => {
+  const dependencies = makeDependencies();
+  const input = {
+    packetPath: "/private/operator.packet",
+    startedAt: "2026-08-05T22:32:00Z",
+    completedAt: "2026-08-05T22:33:00Z",
+  };
+  let received;
+  const result = await stopSessionProofRuntimeFromOperatorPacket(
+    input,
+    dependencies.runner,
+    async (stopInput, stopDependencies) => {
+      received = stopInput;
+      assert.equal(stopDependencies.runner, dependencies.runner);
+      return { accepted: true };
+    },
+    (readInput, runnerArgument) => {
+      assert.equal(readInput, input);
+      assert.equal(runnerArgument, dependencies.runner);
+      return {
+        authorization,
+        recordingOutputs: {
+          seventeenthStepReceiptSource: recordReceiptSource,
+          seventeenthEvidenceSource: recordEvidenceSource,
+        },
+      };
+    },
+  );
+  assert.deepEqual(result, { accepted: true });
+  assert.deepEqual(received, {
+    authorization,
+    recordReceiptSource,
+    recordEvidenceSource,
+    startedAt: input.startedAt,
+    completedAt: input.completedAt,
+  });
+  assert.equal(dependencies.calls.length, 0);
+});
+
+test("persists and reopens exact private runtime stop evidence and receipt", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-runtime-stop-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const eighteenthEvidencePath = join(
+      root,
+      `${identity.namespace}.step-22-stop-runtime.evidence.json`,
+    );
+    const eighteenthStepReceiptPath = join(
+      root,
+      `${identity.namespace}.step-22-stop-runtime.receipt.json`,
+    );
+    const dependencies = makeDependencies();
+    const completed = await stop(dependencies);
+    const readAuthorization = () => ({
+      authorization,
+      recordingOutputs: {
+        marker: "private-recording-chain",
+        seventeenthStepReceiptSource: recordReceiptSource,
+        seventeenthEvidenceSource: recordEvidenceSource,
+      },
+    });
+    const persisted = await persistSessionProofRuntimeStopFromOperatorPacket({
+      packetPath,
+      eighteenthEvidencePath,
+      eighteenthStepReceiptPath,
+      startedAt: "2026-08-05T22:32:00Z",
+      completedAt: "2026-08-05T22:33:00Z",
+    }, dependencies.runner, async () => completed, readAuthorization);
+    assert.equal(persisted.evidenceSource, completed.evidenceSource);
+    assert.equal(statSync(eighteenthEvidencePath).mode & 0o777, 0o600);
+    assert.equal(statSync(eighteenthStepReceiptPath).mode & 0o777, 0o600);
+    const reopened = readSessionProofRuntimeStopOutputsFromOperatorPacket({
+      packetPath,
+      eighteenthEvidencePath,
+      eighteenthStepReceiptPath,
+    }, dependencies.runner, readAuthorization);
+    assert.equal(reopened.marker, "private-recording-chain");
+    assert.equal(reopened.eighteenthEvidenceSource, completed.evidenceSource);
+    assert.equal(
+      reopened.eighteenthStepReceiptSource,
+      readFileSync(eighteenthStepReceiptPath, "utf8"),
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("reserves both stop outputs before the deleter and rejects unsafe readback", async () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-runtime-stop-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const eighteenthEvidencePath = join(
+      root,
+      `${identity.namespace}.step-22-stop-runtime.evidence.json`,
+    );
+    const eighteenthStepReceiptPath = join(
+      root,
+      `${identity.namespace}.step-22-stop-runtime.receipt.json`,
+    );
+    let stopCalls = 0;
+    await assert.rejects(() => persistSessionProofRuntimeStopFromOperatorPacket({
+      packetPath,
+      eighteenthEvidencePath: join(root, "substituted.evidence.json"),
+      eighteenthStepReceiptPath,
+    }, undefined, async () => { stopCalls += 1; }), /derive exactly/);
+    writeFileSync(eighteenthStepReceiptPath, "occupied\n", { mode: 0o600 });
+    await assert.rejects(() => persistSessionProofRuntimeStopFromOperatorPacket({
+      packetPath,
+      eighteenthEvidencePath,
+      eighteenthStepReceiptPath,
+    }, undefined, async () => { stopCalls += 1; }), /already exists/);
+    assert.equal(stopCalls, 0);
+    assert.throws(() => statSync(eighteenthEvidencePath), /ENOENT/);
+
+    writeFileSync(eighteenthEvidencePath, "invalid\n", { mode: 0o600 });
+    chmodSync(eighteenthStepReceiptPath, 0o644);
+    assert.throws(() => readSessionProofRuntimeStopOutputsFromOperatorPacket({
+      packetPath,
+      eighteenthEvidencePath,
+      eighteenthStepReceiptPath,
+    }, undefined, () => ({ authorization, recordingOutputs: {} })), /bounded private regular file/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("authorizes credential revocation from the exact persisted stop chain", () => {
+  const dependencies = makeDependencies();
+  const receiptKeys = [
+    "stepReceiptSource", "secondStepReceiptSource", "thirdStepReceiptSource",
+    "fourthStepReceiptSource", "fifthStepReceiptSource", "sixthStepReceiptSource",
+    "seventhStepReceiptSource", "eighthStepReceiptSource", "ninthStepReceiptSource",
+    "tenthStepReceiptSource", "eleventhStepReceiptSource", "twelfthStepReceiptSource",
+    "thirteenthStepReceiptSource", "fourteenthStepReceiptSource", "fifteenthStepReceiptSource",
+    "sixteenthStepReceiptSource", "seventeenthStepReceiptSource", "eighteenthStepReceiptSource",
+  ];
+  const outputs = {
+    planSource,
+    creationReceiptSource: "creation-receipt",
+    creationReceipt: { namespace },
+    ...Object.fromEntries(receiptKeys.map((key, index) => [key, `receipt-${index + 1}`])),
+  };
+  let authorizedInput;
+  const result = authorizeNineteenthSessionProofStepFromOperatorPacket(
+    { observedAt: "2026-08-05T22:33:30Z" },
+    dependencies.runner,
+    () => outputs,
+    (input) => {
+      authorizedInput = input;
+      return { stepId: "revoke-capabilities" };
+    },
+  );
+  assert.deepEqual(result, { stepId: "revoke-capabilities" });
+  assert.deepEqual(authorizedInput.priorReceiptSources, receiptKeys.map((key) => outputs[key]));
+  assert.equal(authorizedInput.priorReceiptSources.at(-1), outputs.eighteenthStepReceiptSource);
+  assert.equal(authorizedInput.observedAt, "2026-08-05T22:33:30Z");
+  assert.equal(dependencies.calls.some(({ args }) => args?.includes("delete")), false);
+});
+
+test("stop output drift fails before credential revocation authorization", () => {
+  const dependencies = makeDependencies();
+  let authorizeCalls = 0;
+  assert.throws(() => authorizeNineteenthSessionProofStepFromOperatorPacket(
+    { observedAt: "2026-08-05T22:33:30Z" },
+    dependencies.runner,
+    () => { throw new Error("proof runtime stop receipt drifted"); },
+    () => { authorizeCalls += 1; },
+  ), /runtime stop receipt drifted/);
+  assert.equal(authorizeCalls, 0);
+  assert.equal(dependencies.calls.length, 0);
 });

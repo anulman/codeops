@@ -30,6 +30,8 @@ import {
 } from "./codeops-session-proof-operator-record.mjs";
 import {
   authorizeEighteenthSessionProofStepFromOperatorPacket,
+  persistEighteenthSessionProofStepAuthorizationFromOperatorPacket,
+  readEighteenthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-runtime-stop-authorization.mjs";
 import { buildSessionProofRuntimeReadinessEvidence } from "./codeops-session-proof-runtime-readiness-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
@@ -593,4 +595,98 @@ test("recording output drift fails before stop-runtime authorization", () => {
   ), /recording receipt drifted/);
   assert.equal(authorizeCalls, 0);
   assert.equal(stub.calls.length, 0);
+});
+
+test("persists and reopens the exact private stop-runtime authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-runtime-stop-auth-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const eighteenthAuthorizationPath = join(
+      root,
+      `${identity.namespace}.step-22-stop-runtime.authorization.json`,
+    );
+    const authorization = {
+      apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+      planSha256,
+      admission,
+      namespace,
+      stepIndex: 19,
+      stepId: "stop-runtime",
+      action: "operator-delete-exact-runtime-job",
+      artifact: null,
+      artifactSha256: null,
+      previousReceiptSha256: "f".repeat(64),
+      authorizedAt: "2026-08-05T22:31:30Z",
+    };
+    const stub = makeRunner();
+    let builds = 0;
+    const buildAuthorization = (input, runnerArgument) => {
+      builds += 1;
+      assert.equal(input.observedAt, authorization.authorizedAt);
+      assert.equal(runnerArgument, stub.runner);
+      return {
+        authorization,
+        recordingOutputs: { marker: "private-recording-chain" },
+      };
+    };
+    const persisted = persistEighteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      eighteenthAuthorizationPath,
+      observedAt: authorization.authorizedAt,
+    }, stub.runner, (input, runnerArgument) =>
+      buildAuthorization(input, runnerArgument).authorization);
+    assert.deepEqual(persisted, authorization);
+    assert.equal(statSync(eighteenthAuthorizationPath).mode & 0o777, 0o600);
+    assert.equal(
+      readFileSync(eighteenthAuthorizationPath, "utf8"),
+      `${JSON.stringify(authorization, null, 2)}\n`,
+    );
+    const reopened = readEighteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      eighteenthAuthorizationPath,
+    }, stub.runner, buildAuthorization);
+    assert.deepEqual(reopened.authorization, authorization);
+    assert.equal(reopened.authorizationSource, readFileSync(eighteenthAuthorizationPath, "utf8"));
+    assert.equal(reopened.recordingOutputs.marker, "private-recording-chain");
+    assert.equal(builds, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects unsafe stop-runtime authorization targets before authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-runtime-stop-auth-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const eighteenthAuthorizationPath = join(
+      root,
+      `${identity.namespace}.step-22-stop-runtime.authorization.json`,
+    );
+    let authorizeCalls = 0;
+    const authorizeStep = () => {
+      authorizeCalls += 1;
+      throw new Error("authorization must not run");
+    };
+    assert.throws(() => persistEighteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      eighteenthAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: "2026-08-05T22:31:30Z",
+    }, undefined, authorizeStep), /derive exactly/);
+    writeFileSync(eighteenthAuthorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistEighteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      eighteenthAuthorizationPath,
+      observedAt: "2026-08-05T22:31:30Z",
+    }, undefined, authorizeStep), /already exists/);
+    assert.equal(authorizeCalls, 0);
+
+    chmodSync(eighteenthAuthorizationPath, 0o644);
+    assert.throws(() => readEighteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      eighteenthAuthorizationPath,
+    }, undefined, authorizeStep), /bounded private regular file/);
+    assert.equal(authorizeCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
