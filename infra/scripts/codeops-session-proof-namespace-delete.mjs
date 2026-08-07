@@ -148,19 +148,24 @@ export function requestNamespaceDeletion(input) {
   });
 }
 
-function assertDeleteResponse(response) {
+function assertDeleteResponse(response, expected) {
   if (
     ![200, 202].includes(response?.statusCode) ||
     !/^application\/json(?:;|$)/i.test(response.contentType ?? "")
   ) {
     throw new Error(`UID-preconditioned Namespace deletion was rejected (${response?.statusCode ?? "no status"})`);
   }
-  const status = parseJson(response.body, "Kubernetes delete response");
-  if (
-    status.kind !== "Status" ||
-    status.apiVersion !== "v1" ||
-    status.status !== "Success"
-  ) {
+  const result = parseJson(response.body, "Kubernetes delete response");
+  const statusAccepted = result.kind === "Status" &&
+    result.apiVersion === "v1" &&
+    result.status === "Success";
+  const namespaceAccepted = result.kind === "Namespace" &&
+    result.apiVersion === "v1" &&
+    result.metadata?.name === expected.namespace &&
+    result.metadata?.uid === expected.namespaceUid &&
+    typeof result.metadata?.deletionTimestamp === "string" &&
+    !Number.isNaN(Date.parse(result.metadata.deletionTimestamp));
+  if (!statusAccepted && !namespaceAccepted) {
     throw new Error("Kubernetes did not acknowledge Namespace deletion");
   }
 }
@@ -208,7 +213,10 @@ export async function deleteSessionProofNamespace(
     namespaceUid: admission.namespaceUid,
     ...tls,
   });
-  assertDeleteResponse(response);
+  assertDeleteResponse(response, {
+    namespace: admission.identity.namespace,
+    namespaceUid: admission.namespaceUid,
+  });
   const deletionAcceptedAt = now().toISOString();
   if (Date.parse(deletionAcceptedAt) < Date.parse(observedAt)) {
     throw new Error("proof Namespace deletion acknowledgement time drifted");

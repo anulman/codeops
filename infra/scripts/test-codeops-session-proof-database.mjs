@@ -12,7 +12,21 @@ test("packages one immutable disposable PostgreSQL workload", () => {
   const values = resources();
   const pod = values.find((resource) => resource.kind === "Deployment").spec.template.spec;
   assert.equal(pod.automountServiceAccountToken, false);
+  assert.deepEqual(pod.securityContext, {
+    runAsNonRoot: true,
+    runAsUser: 26,
+    runAsGroup: 102,
+    fsGroup: 102,
+    fsGroupChangePolicy: "OnRootMismatch",
+    seccompProfile: { type: "RuntimeDefault" },
+  });
   assert.equal(pod.containers[0].image.endsWith(`@${digest}`), true);
+  assert.deepEqual(pod.containers[0].command, ["/bin/sh", "-ceu", "--"]);
+  assert.match(pod.containers[0].args[0], /if \[ ! -s "\$PGDATA\/PG_VERSION" \]; then/);
+  assert.match(pod.containers[0].args[0], /exec postgres/);
+  assert.deepEqual(pod.containers[0].startupProbe.exec.command, [
+    "pg_isready", "-h", "127.0.0.1", "-U", "codeops_session_broker_owner", "-d", "codeops_session_proof",
+  ]);
   assert.equal(pod.volumes.find((volume) => volume.name === "data").emptyDir.sizeLimit, "2Gi");
   assert.equal(JSON.stringify(values).includes("persistentVolumeClaim"), false);
 });
@@ -37,6 +51,12 @@ test("rejects mutable images, persistence, and network or role drift", () => {
     template.replace("emptyDir: { sizeLimit: 2Gi }", "persistentVolumeClaim: { claimName: retained }") ,
     template.replace("app.kubernetes.io/name: codeops-session-runtime-worker", "app.kubernetes.io/name: unrelated"),
     template.replace("CREATE ROLE codeops_session_runtime_worker", "CREATE ROLE broader_worker"),
+    template.replace("command: [/bin/sh, -ceu, --]", "command: [/bin/sh]"),
+    template.replace("runAsUser: 26", "runAsUser: 999"),
+    template.replace("runAsGroup: 102", "runAsGroup: 999"),
+    template.replace("fsGroup: 102", "fsGroup: 999"),
+    template.replace("exec postgres", "postgres"),
+    template.replace("-h, 127.0.0.1, ", ""),
     `${template}\n---\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata: { name: retained }\n`,
   ]) assert.throws(() => renderSessionProofDatabaseManifest(drifted, digest));
 });

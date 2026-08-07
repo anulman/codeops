@@ -379,6 +379,46 @@ test("deletes only the UID-bound Namespace through an API precondition and verif
   assert.equal(JSON.parse(result.teardownEvidenceSource).namespaceAbsent, true);
 });
 
+test("accepts the exact deleting Namespace returned by Kubernetes", async () => {
+  const result = await deleteSessionProofNamespace(deletionInput(), {
+    runner: runner().execute,
+    deleteRequest: async () => ({
+      statusCode: 200,
+      contentType: "application/json; charset=utf-8",
+      body: JSON.stringify({
+        ...namespace(),
+        metadata: {
+          ...namespace().metadata,
+          deletionTimestamp: "2026-08-05T06:30:00Z",
+        },
+      }),
+    }),
+    now: () => new Date("2026-08-05T06:30:00Z"),
+    sleep: async () => {},
+  });
+  assert.equal(result.result, "deleted-and-absence-verified");
+  assert.equal(result.proceed, true);
+});
+
+test("rejects a drifted or non-deleting Namespace response", async () => {
+  for (const responseNamespace of [
+    namespace("replacement-uid"),
+    { ...namespace(), metadata: { ...namespace().metadata, name: "other" } },
+    namespace(),
+  ]) {
+    await assert.rejects(deleteSessionProofNamespace(deletionInput(), {
+      runner: runner().execute,
+      deleteRequest: async () => ({
+        statusCode: 200,
+        contentType: "application/json",
+        body: JSON.stringify(responseNamespace),
+      }),
+      now: () => new Date("2026-08-05T06:30:00Z"),
+      sleep: async () => {},
+    }), /did not acknowledge/);
+  }
+});
+
 test("rejects a replaced Namespace, receipt drift, or plan drift before deletion", async () => {
   let deleted = false;
   const deleteRequest = async () => {

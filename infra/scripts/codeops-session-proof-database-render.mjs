@@ -2,6 +2,24 @@ import { parseAllDocuments } from "yaml";
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const TOKEN = "__CODEOPS_SESSION_PROOF_POSTGRES_DIGEST__";
+const POSTGRES_COMMAND = ["/bin/sh", "-ceu", "--"];
+const POSTGRES_PROBE = [
+  "pg_isready", "-h", "127.0.0.1", "-U", "codeops_session_broker_owner", "-d", "codeops_session_proof",
+];
+const REQUIRED_BOOTSTRAP_FRAGMENTS = [
+  'owner_user="$(cat "$POSTGRES_USER_FILE")"',
+  'owner_password="$(cat "$POSTGRES_PASSWORD_FILE")"',
+  'owner_database="$(cat "$POSTGRES_DB_FILE")"',
+  'if [ ! -s "$PGDATA/PG_VERSION" ]; then',
+  "--auth-host=scram-sha-256",
+  "--auth-local=trust",
+  "-c listen_addresses=''",
+  "createdb --host=/var/run/postgresql",
+  "for init_file in /docker-entrypoint-initdb.d/*; do",
+  "pg_ctl --pgdata=\"$PGDATA\" --mode=fast --wait stop",
+  "exec postgres",
+  "-c listen_addresses='*'",
+];
 
 export function renderSessionProofDatabaseManifest(template, digest) {
   if (!DIGEST.test(digest)) throw new Error("proof database image must use one lowercase SHA-256 digest");
@@ -29,7 +47,13 @@ export function renderSessionProofDatabaseManifest(template, digest) {
   if (
     account.automountServiceAccountToken !== false || pod.automountServiceAccountToken !== false ||
     pod.serviceAccountName !== "codeops-session-proof-database" || pod.containers.length !== 1 ||
+    pod.securityContext?.runAsNonRoot !== true ||
+    pod.securityContext?.runAsUser !== 26 ||
+    pod.securityContext?.runAsGroup !== 102 ||
+    pod.securityContext?.fsGroup !== 102 ||
     container.image !== `ghcr.io/anulman/renoconcierge/renoconcierge-postgres@${digest}` ||
+    JSON.stringify(container.command) !== JSON.stringify(POSTGRES_COMMAND) ||
+    !Array.isArray(container.args) || container.args.length !== 1 ||
     container.securityContext?.readOnlyRootFilesystem !== true ||
     JSON.stringify(container.securityContext?.capabilities?.drop) !== JSON.stringify(["ALL"]) ||
     JSON.stringify(deployment.spec.selector.matchLabels) !== JSON.stringify(selector) ||
@@ -37,6 +61,14 @@ export function renderSessionProofDatabaseManifest(template, digest) {
     JSON.stringify(service.spec.ports) !== JSON.stringify([{ name: "postgres", protocol: "TCP", port: 5432, targetPort: "postgres" }]) ||
     JSON.stringify(policy.spec.podSelector.matchLabels) !== JSON.stringify(selector)
   ) throw new Error("proof database workload identity drifted");
+
+  const bootstrap = container.args[0];
+  if (
+    REQUIRED_BOOTSTRAP_FRAGMENTS.some((fragment) => !bootstrap.includes(fragment)) ||
+    JSON.stringify(container.startupProbe?.exec?.command) !== JSON.stringify(POSTGRES_PROBE) ||
+    JSON.stringify(container.readinessProbe?.exec?.command) !== JSON.stringify(POSTGRES_PROBE) ||
+    JSON.stringify(container.livenessProbe?.exec?.command) !== JSON.stringify(POSTGRES_PROBE)
+  ) throw new Error("proof database standalone bootstrap drifted");
 
   const env = Object.fromEntries(container.env.map((entry) => [entry.name, entry.value]));
   if (
