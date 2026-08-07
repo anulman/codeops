@@ -116,7 +116,7 @@ concurrency:
 jobs:
   contracts:
     runs-on: ubuntu-latest
-    timeout-minutes: 35
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -426,21 +426,6 @@ jobs:
           node --test infra/scripts/test-codeops-session-proof-plan.mjs
           node --test infra/scripts/test-codeops-session-proof-admission.mjs
           node --test infra/scripts/test-codeops-session-proof-preflight.mjs
-          proof_status=0
-          proof_pids=()
-          for proof_shard in 0 1 2; do
-            CODEOPS_PROOF_TEST_SHARD_COUNT=3 CODEOPS_PROOF_TEST_SHARD_INDEX="$proof_shard" \
-              node --test infra/scripts/test-codeops-session-proof-namespace-create.mjs \
-                > "/tmp/codeops-session-proof-namespace-create-$proof_shard.log" 2>&1 &
-            proof_pids+=("$!")
-          done
-          for proof_shard in 0 1 2; do
-            if ! wait "${proof_pids[$proof_shard]}"; then proof_status=1; fi
-          done
-          for proof_shard in 0 1 2; do
-            cat "/tmp/codeops-session-proof-namespace-create-$proof_shard.log"
-          done
-          test "$proof_status" -eq 0
           node --test infra/scripts/test-codeops-session-proof-namespace-delete.mjs
           node --test infra/scripts/test-codeops-session-proof-teardown-evidence.mjs
           node --test infra/scripts/test-codeops-session-proof-operator-itinerary.mjs
@@ -515,3 +500,79 @@ jobs:
 
       - name: Check whitespace
         run: git diff --check HEAD^ HEAD
+
+  proof-shard:
+    needs: contracts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install Nub
+        shell: bash
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          curl -fsSL https://nubjs.com/install.sh | bash -s -- 0.1.11
+          echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
+
+      - name: Install frozen dependencies
+        run: nub install --frozen-lockfile
+
+      - name: Render closed-proof fixtures
+        env:
+          CODEOPS_AGENT_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
+          CODEOPS_SESSION_RUNTIME_WORKER_DIGEST: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
+          CODEOPS_SESSION_CONTROL_GATEWAY_DIGEST: sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd
+          CODEOPS_SESSION_PROOF_POSTGRES_DIGEST: sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+          CODEOPS_AGENTS_UI_DIGEST: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
+          CODEOPS_SESSION_PROOF_NAMESPACE: codeops-session-proof-video-1
+          CODEOPS_RUN_ID: video-1
+          CODEOPS_BASE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          CODEOPS_BRANCH: feat/agents-ui
+          CODEOPS_LEASE_ID: 11111111-1111-4111-8111-111111111111
+          CODEOPS_REPOSITORY: https://github.com/anulman/renoconcierge
+          CODEOPS_SESSION_ID: ses_video_1
+          CODEOPS_SESSION_SUFFIX: video-1
+          CODEOPS_WORKFLOW_ID: video-proof-1
+        run: |
+          node infra/scripts/render-codeops-session-runtime-worker.mjs > /tmp/codeops-session-runtime-worker.yaml
+          node infra/scripts/render-codeops-session-proof-namespace.mjs > /tmp/codeops-session-proof-namespace.yaml
+          node infra/scripts/render-codeops-session-proof-gateway.mjs > /tmp/codeops-session-proof-gateway.yaml
+          node infra/scripts/render-codeops-session-proof-ui.mjs > /tmp/codeops-session-proof-ui.yaml
+          node infra/scripts/render-codeops-session-proof-database.mjs > /tmp/codeops-session-proof-database.yaml
+          node infra/scripts/render-codeops-session-proof-grants.mjs > /tmp/codeops-session-proof-grants.yaml
+          CODEOPS_AUTH_ACTION=login \
+            node infra/scripts/render-codeops-session-proof-codex-auth.mjs > /tmp/codeops-codex-auth-login.yaml
+          CODEOPS_AUTH_ACTION=smoke \
+            node infra/scripts/render-codeops-session-proof-codex-auth.mjs > /tmp/codeops-codex-auth-smoke.yaml
+
+      - name: Test closed-proof shard ${{ matrix.shard }}
+        env:
+          CODEOPS_PROOF_TEST_SHARD_COUNT: 3
+          CODEOPS_PROOF_TEST_SHARD_INDEX: ${{ matrix.shard }}
+          CODEOPS_SESSION_PROOF_NAMESPACE: codeops-session-proof-video-1
+          CODEOPS_RUN_ID: video-1
+          CODEOPS_BASE_SHA: aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa
+          CODEOPS_SESSION_SUFFIX: video-1
+          CODEOPS_SESSION_PROOF_NAMESPACE_MANIFEST: /tmp/codeops-session-proof-namespace.yaml
+          CODEOPS_SESSION_PROOF_DATABASE_MANIFEST: /tmp/codeops-session-proof-database.yaml
+          CODEOPS_SESSION_PROOF_GATEWAY_MANIFEST: /tmp/codeops-session-proof-gateway.yaml
+          CODEOPS_SESSION_PROOF_GRANTS_MANIFEST: /tmp/codeops-session-proof-grants.yaml
+          CODEOPS_SESSION_PROOF_CODEX_LOGIN_MANIFEST: /tmp/codeops-codex-auth-login.yaml
+          CODEOPS_SESSION_PROOF_CODEX_SMOKE_MANIFEST: /tmp/codeops-codex-auth-smoke.yaml
+          CODEOPS_SESSION_PROOF_UI_MANIFEST: /tmp/codeops-session-proof-ui.yaml
+          CODEOPS_SESSION_PROOF_RUNTIME_MANIFEST: /tmp/codeops-session-runtime-worker.yaml
+        run: node --test infra/scripts/test-codeops-session-proof-namespace-create.mjs

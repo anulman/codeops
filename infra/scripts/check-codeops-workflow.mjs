@@ -9,17 +9,57 @@ assert.equal(workflow.name, "CodeOps CI");
 assert.ok(workflow.on?.pull_request?.paths);
 assert.ok(workflow.on?.push?.paths);
 assert.deepEqual(workflow.permissions, { contents: "read" });
-assert.equal(Object.keys(workflow.jobs).length, 1);
+assert.deepEqual(Object.keys(workflow.jobs), ["contracts", "proof-shard"]);
 
 const contracts = workflow.jobs.contracts;
 assert.equal(contracts["runs-on"], "ubuntu-latest");
-assert.equal(contracts["timeout-minutes"], 35);
+assert.equal(contracts["timeout-minutes"], 15);
 assert.equal(contracts.permissions, undefined);
 assert.ok(Array.isArray(contracts.steps));
 assert.deepEqual(contracts.steps[0]?.with, {
   "fetch-depth": 2,
   "persist-credentials": false,
 });
+
+const proofShard = workflow.jobs["proof-shard"];
+assert.equal(proofShard.needs, "contracts");
+assert.equal(proofShard["runs-on"], "ubuntu-latest");
+assert.equal(proofShard["timeout-minutes"], 30);
+assert.deepEqual(proofShard.strategy, {
+  "fail-fast": false,
+  matrix: { shard: [0, 1, 2] },
+});
+assert.deepEqual(proofShard.steps[0]?.with, {
+  "fetch-depth": 2,
+  "persist-credentials": false,
+});
+const shardStep = proofShard.steps.find((step) =>
+  step.name === "Test closed-proof shard ${{ matrix.shard }}");
+const proofFixtureStep = proofShard.steps.find((step) =>
+  step.name === "Render closed-proof fixtures");
+assert.ok(proofShard.steps.some((step) => step.run === "nub install --frozen-lockfile"));
+for (const renderer of [
+  "render-codeops-session-runtime-worker.mjs",
+  "render-codeops-session-proof-namespace.mjs",
+  "render-codeops-session-proof-gateway.mjs",
+  "render-codeops-session-proof-ui.mjs",
+  "render-codeops-session-proof-database.mjs",
+  "render-codeops-session-proof-grants.mjs",
+  "render-codeops-session-proof-codex-auth.mjs",
+]) {
+  assert.ok(proofFixtureStep?.run?.includes(renderer));
+}
+assert.equal(shardStep?.env?.CODEOPS_PROOF_TEST_SHARD_COUNT, 3);
+assert.equal(shardStep?.env?.CODEOPS_PROOF_TEST_SHARD_INDEX, "${{ matrix.shard }}");
+assert.equal(
+  shardStep?.run,
+  "node --test infra/scripts/test-codeops-session-proof-namespace-create.mjs",
+);
+assert.equal(
+  contracts.steps.some((step) =>
+    step.run?.includes("test-codeops-session-proof-namespace-create.mjs")),
+  false,
+);
 assert.ok(
   contracts.steps.some(
     (step) =>
