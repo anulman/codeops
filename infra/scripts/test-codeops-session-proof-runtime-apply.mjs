@@ -14,6 +14,8 @@ import {
 } from "./codeops-session-proof-operator-runtime-apply.mjs";
 import {
   authorizeSixteenthSessionProofStepFromOperatorPacket,
+  persistSixteenthSessionProofStepAuthorizationFromOperatorPacket,
+  readSixteenthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-runtime-wait-authorization.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 import { applySessionProofRuntime } from "./codeops-session-proof-runtime-apply.mjs";
@@ -92,6 +94,16 @@ const authorization = {
   artifactSha256: artifacts.find((value) => value.id === "runtime").sha256,
   previousReceiptSha256: "a".repeat(64),
   authorizedAt: "2026-08-05T22:19:00Z",
+};
+const runtimeWaitAuthorization = {
+  ...authorization,
+  stepIndex: 17,
+  stepId: "wait-runtime",
+  action: "operator-wait-ready",
+  artifact: null,
+  artifactSha256: null,
+  previousReceiptSha256: "b".repeat(64),
+  authorizedAt: "2026-08-05T22:22:00Z",
 };
 
 const typeByIdentity = new Map([
@@ -307,6 +319,82 @@ test("runtime apply output drift fails before runtime readiness authorization", 
   }), /runtime apply evidence drifted/);
   assert.equal(authorizeCalls, 0);
   assert.equal(stub.calls.length, 0);
+});
+
+test("persists and reopens the exact private runtime readiness authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-runtime-wait-auth-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const sixteenthAuthorizationPath = join(
+      root,
+      `${identity.namespace}.step-19-wait-runtime.authorization.json`,
+    );
+    const stub = makeRunner();
+    let authorizeCalls = 0;
+    const authorizeStep = (input, runnerArgument) => {
+      authorizeCalls += 1;
+      assert.equal(input.observedAt, runtimeWaitAuthorization.authorizedAt);
+      assert.equal(runnerArgument, stub.runner);
+      return runtimeWaitAuthorization;
+    };
+    const result = persistSixteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      sixteenthAuthorizationPath,
+      observedAt: runtimeWaitAuthorization.authorizedAt,
+    }, stub.runner, authorizeStep);
+    assert.deepEqual(result, runtimeWaitAuthorization);
+    assert.equal(statSync(sixteenthAuthorizationPath).mode & 0o777, 0o600);
+    assert.equal(
+      readFileSync(sixteenthAuthorizationPath, "utf8"),
+      `${JSON.stringify(runtimeWaitAuthorization, null, 2)}\n`,
+    );
+    const reopened = readSixteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      sixteenthAuthorizationPath,
+    }, stub.runner, authorizeStep);
+    assert.deepEqual(reopened.authorization, runtimeWaitAuthorization);
+    assert.equal(reopened.authorizationSource, readFileSync(sixteenthAuthorizationPath, "utf8"));
+    assert.equal(authorizeCalls, 2);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects unsafe runtime readiness authorization targets before authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-runtime-wait-auth-"));
+  try {
+    const packetPath = join(root, `${identity.namespace}.packet`);
+    const sixteenthAuthorizationPath = join(
+      root,
+      `${identity.namespace}.step-19-wait-runtime.authorization.json`,
+    );
+    let authorizeCalls = 0;
+    const authorizeStep = () => {
+      authorizeCalls += 1;
+      return runtimeWaitAuthorization;
+    };
+    assert.throws(() => persistSixteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      sixteenthAuthorizationPath: join(root, "substituted.authorization.json"),
+      observedAt: runtimeWaitAuthorization.authorizedAt,
+    }, undefined, authorizeStep), /derive exactly/);
+    writeFileSync(sixteenthAuthorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSixteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      sixteenthAuthorizationPath,
+      observedAt: runtimeWaitAuthorization.authorizedAt,
+    }, undefined, authorizeStep), /already exists/);
+    assert.equal(authorizeCalls, 0);
+
+    chmodSync(sixteenthAuthorizationPath, 0o644);
+    assert.throws(() => readSixteenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      sixteenthAuthorizationPath,
+    }, undefined, authorizeStep), /bounded private regular file/);
+    assert.equal(authorizeCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("rejects manifest, action, or timestamp drift before any Kubernetes call", () => {

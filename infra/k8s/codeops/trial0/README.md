@@ -479,6 +479,14 @@ hash chain against the live principal, target, and Namespace UID, and
 authorizes only the no-artifact `wait-runtime` readiness step. It persists no
 authorization, invokes no waiter, and remains referenced only by focused tests.
 
+Its persistence boundary requires the exact adjacent absent Namespace-derived
+`step-19-wait-runtime.authorization.json` path before live reads, then
+exclusively creates the canonical authorization as mode `0600`, fsyncs and
+identity-checks its bytes and parent, and reconstructs the exact artifact from
+the private runtime apply chain on readback. A substituted, occupied, or
+permission-weakened target fails before live access. It imports and invokes no
+waiter and remains unreferenced by runners and workflows.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked
