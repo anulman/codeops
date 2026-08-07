@@ -57,7 +57,7 @@ const adapters = {
   ],
   "record-proof": [
     "./codeops-session-proof-operator-record-authorization.mjs",
-    "authorizeSeventeenthSessionProofStepFromOperatorPacket",
+    "persistSeventeenthSessionProofStepAuthorizationFromOperatorPacket",
   ],
   "stop-runtime": ["./codeops-session-proof-runtime-stop.mjs", "stopSessionProofRuntime"],
   "revoke-capabilities": ["./codeops-session-proof-credential-revoker.mjs", "revokeSessionProofCredentials"],

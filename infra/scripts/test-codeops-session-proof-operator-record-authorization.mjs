@@ -1,8 +1,20 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
+import {
+  chmodSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  statSync,
+  writeFileSync,
+} from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   authorizeSeventeenthSessionProofStepFromOperatorPacket,
+  persistSeventeenthSessionProofStepAuthorizationFromOperatorPacket,
+  readSeventeenthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-record-authorization.mjs";
 
 const operator = {
@@ -20,6 +32,26 @@ const namespaceResource = {
   apiVersion: "v1",
   kind: "Namespace",
   metadata: { name: "codeops-session-proof-video-1", uid: "namespace-uid-1" },
+};
+const persistedAuthorization = {
+  apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+  planSha256: "1".repeat(64),
+  admission: {
+    planSha256: "1".repeat(64),
+    identity: { namespace: namespaceResource.metadata.name },
+    namespaceUid: namespaceResource.metadata.uid,
+  },
+  namespace: {
+    name: namespaceResource.metadata.name,
+    uid: namespaceResource.metadata.uid,
+  },
+  stepIndex: 18,
+  stepId: "record-proof",
+  action: "operator-record-and-export-evidence",
+  artifact: null,
+  artifactSha256: null,
+  previousReceiptSha256: "2".repeat(64),
+  authorizedAt: "2026-08-07T07:42:00Z",
 };
 
 function makeRunner() {
@@ -129,4 +161,129 @@ test("runtime readiness readback failure stops before live identity or authoriza
   ), /runtime readiness drifted/);
   assert.equal(authorizerCalls, 0);
   assert.equal(stub.calls.length, 0);
+});
+
+test("durably persists and canonically reopens private record-proof authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-record-auth-"));
+  try {
+    const packetPath = join(root, `${namespaceResource.metadata.name}.packet`);
+    const seventeenthAuthorizationPath = join(
+      root,
+      `${namespaceResource.metadata.name}.step-21-record-proof.authorization.json`,
+    );
+    const input = { packetPath, seventeenthAuthorizationPath };
+    const stub = makeRunner();
+    let authorizerCalls = 0;
+    const persisted = persistSeventeenthSessionProofStepAuthorizationFromOperatorPacket(
+      input,
+      stub.runner,
+      (received, runnerArgument) => {
+        authorizerCalls += 1;
+        assert.equal(received, input);
+        assert.equal(runnerArgument, stub.runner);
+        return persistedAuthorization;
+      },
+    );
+    assert.equal(authorizerCalls, 1);
+    assert.deepEqual(persisted, persistedAuthorization);
+    assert.equal(statSync(seventeenthAuthorizationPath).mode & 0o777, 0o600);
+    const expectedSource = `${JSON.stringify(persistedAuthorization, null, 2)}\n`;
+    assert.equal(readFileSync(seventeenthAuthorizationPath, "utf8"), expectedSource);
+
+    const predecessorOutputs = outputs();
+    let builderCalls = 0;
+    const reopened = readSeventeenthSessionProofStepAuthorizationFromOperatorPacket(
+      input,
+      stub.runner,
+      (received, runnerArgument) => {
+        builderCalls += 1;
+        assert.equal(received.observedAt, persistedAuthorization.authorizedAt);
+        assert.equal(runnerArgument, stub.runner);
+        return {
+          authorization: persistedAuthorization,
+          runtimeWaitOutputs: predecessorOutputs,
+        };
+      },
+    );
+    assert.equal(builderCalls, 1);
+    assert.deepEqual(reopened.authorization, persistedAuthorization);
+    assert.equal(reopened.authorizationSource, expectedSource);
+    assert.equal(
+      reopened.runtimeWaitOutputs.sixteenthEvidenceSource,
+      predecessorOutputs.sixteenthEvidenceSource,
+    );
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("rejects unsafe or occupied record-proof authorization paths before authorization", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-record-auth-"));
+  try {
+    const packetPath = join(root, `${namespaceResource.metadata.name}.packet`);
+    const seventeenthAuthorizationPath = join(
+      root,
+      `${namespaceResource.metadata.name}.step-21-record-proof.authorization.json`,
+    );
+    let authorizerCalls = 0;
+    const authorizer = () => {
+      authorizerCalls += 1;
+      return persistedAuthorization;
+    };
+    assert.throws(() => persistSeventeenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      seventeenthAuthorizationPath: join(root, "substituted.authorization.json"),
+    }, undefined, authorizer), /derive exactly/);
+    writeFileSync(seventeenthAuthorizationPath, "occupied\n", { mode: 0o600 });
+    assert.throws(() => persistSeventeenthSessionProofStepAuthorizationFromOperatorPacket({
+      packetPath,
+      seventeenthAuthorizationPath,
+    }, undefined, authorizer), /already exists/);
+    assert.equal(authorizerCalls, 0);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("record-proof authorization permission or canonical byte drift fails closed", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-record-auth-"));
+  try {
+    const input = {
+      packetPath: join(root, `${namespaceResource.metadata.name}.packet`),
+      seventeenthAuthorizationPath: join(
+        root,
+        `${namespaceResource.metadata.name}.step-21-record-proof.authorization.json`,
+      ),
+    };
+    const stub = makeRunner();
+    writeFileSync(
+      input.seventeenthAuthorizationPath,
+      `${JSON.stringify(persistedAuthorization, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    chmodSync(input.seventeenthAuthorizationPath, 0o640);
+    assert.throws(() => readSeventeenthSessionProofStepAuthorizationFromOperatorPacket(
+      input,
+      stub.runner,
+      () => {
+        throw new Error("builder must not be reached");
+      },
+    ), /bounded private regular file/);
+    chmodSync(input.seventeenthAuthorizationPath, 0o600);
+    writeFileSync(
+      input.seventeenthAuthorizationPath,
+      `${JSON.stringify({
+        ...persistedAuthorization,
+        authorizedAt: "2026-08-07T07:42:01Z",
+      }, null, 2)}\n`,
+      { mode: 0o600 },
+    );
+    assert.throws(() => readSeventeenthSessionProofStepAuthorizationFromOperatorPacket(
+      input,
+      stub.runner,
+      () => ({ authorization: persistedAuthorization, runtimeWaitOutputs: outputs() }),
+    ), /exact persisted artifact/);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });

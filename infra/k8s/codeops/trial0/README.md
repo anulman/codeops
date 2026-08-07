@@ -517,6 +517,17 @@ cluster artifact, persists no authorization, reads no recording artifacts, and
 does not invoke the recorder. The closed itinerary names this authorization
 adapter, but no runner or workflow invokes it.
 
+The durable `record-proof` authorization boundary requires the exact absent
+adjacent `step-21-record-proof.authorization.json` path before it performs any
+live read. It exclusively creates one mode-`0600` regular file, fsyncs the
+authorization and its parent directory, and checks the file identity before
+and after writing. Canonical readback reopens the private runtime-readiness
+outputs and complete predecessor chain, repeats live identity admission at the
+persisted authorization timestamp, and reconstructs the exact authorization
+bytes. Substituted, occupied, permission-weakened, replaced, malformed, or
+non-canonical artifacts fail closed. The closed itinerary names this
+persistence adapter, but no runner or workflow invokes it.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked
