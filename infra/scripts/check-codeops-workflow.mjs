@@ -13,6 +13,7 @@ assert.equal(Object.keys(workflow.jobs).length, 1);
 
 const contracts = workflow.jobs.contracts;
 assert.equal(contracts["runs-on"], "ubuntu-latest");
+assert.equal(contracts["timeout-minutes"], 35);
 assert.equal(contracts.permissions, undefined);
 assert.ok(Array.isArray(contracts.steps));
 assert.deepEqual(contracts.steps[0]?.with, {
