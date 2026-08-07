@@ -51,7 +51,10 @@ const adapters = {
     "./codeops-session-proof-operator-runtime-apply.mjs",
     "persistSessionProofRuntimeApplyFromOperatorPacket",
   ],
-  "wait-runtime": ["./codeops-session-proof-runtime-wait.mjs", "waitForSessionProofRuntime"],
+  "wait-runtime": [
+    "./codeops-session-proof-operator-runtime-wait.mjs",
+    "waitForSessionProofRuntimeFromOperatorPacket",
+  ],
   "record-proof": ["./codeops-session-proof-record.mjs", "completeSessionProofRecording"],
   "stop-runtime": ["./codeops-session-proof-runtime-stop.mjs", "stopSessionProofRuntime"],
   "revoke-capabilities": ["./codeops-session-proof-credential-revoker.mjs", "revokeSessionProofCredentials"],

@@ -118,6 +118,13 @@ test("wires every closed proof step and exact byte source without invoking an ad
       export: "persistSessionProofRuntimeApplyFromOperatorPacket",
     },
   );
+  assert.deepEqual(
+    result.steps.find((step) => step.stepId === "wait-runtime").adapter,
+    {
+      module: "./codeops-session-proof-operator-runtime-wait.mjs",
+      export: "waitForSessionProofRuntimeFromOperatorPacket",
+    },
+  );
   assert.deepEqual(result.finalOutputs, ["receipt:verify-teardown", "evidence:verify-teardown"]);
 });
 

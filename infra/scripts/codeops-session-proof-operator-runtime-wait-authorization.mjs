@@ -116,7 +116,7 @@ function writePrivateAuthorization(path, source) {
   }
 }
 
-export function authorizeSixteenthSessionProofStepFromOperatorPacket(
+function buildSixteenthSessionProofStepAuthorizationFromOperatorPacket(
   input,
   runner = execFileSync,
   readRuntimeApplyOutputs = readSessionProofRuntimeApplyOutputsFromOperatorPacket,
@@ -128,7 +128,7 @@ export function authorizeSixteenthSessionProofStepFromOperatorPacket(
     outputs.creationReceipt.namespace.name,
     runner,
   );
-  return authorizeStep({
+  const authorization = authorizeStep({
     planSource: outputs.planSource,
     creationReceiptSource: outputs.creationReceiptSource,
     priorReceiptSources: [
@@ -153,6 +153,21 @@ export function authorizeSixteenthSessionProofStepFromOperatorPacket(
     target,
     observedAt: input.observedAt,
   });
+  return { authorization, runtimeApplyOutputs: outputs };
+}
+
+export function authorizeSixteenthSessionProofStepFromOperatorPacket(
+  input,
+  runner = execFileSync,
+  readRuntimeApplyOutputs = readSessionProofRuntimeApplyOutputsFromOperatorPacket,
+  authorizeStep = authorizeSessionProofStep,
+) {
+  return buildSixteenthSessionProofStepAuthorizationFromOperatorPacket(
+    input,
+    runner,
+    readRuntimeApplyOutputs,
+    authorizeStep,
+  ).authorization;
 }
 
 export function persistSixteenthSessionProofStepAuthorizationFromOperatorPacket(
@@ -185,7 +200,7 @@ export function persistSixteenthSessionProofStepAuthorizationFromOperatorPacket(
 export function readSixteenthSessionProofStepAuthorizationFromOperatorPacket(
   input,
   runner = execFileSync,
-  authorizeStep = authorizeSixteenthSessionProofStepFromOperatorPacket,
+  buildAuthorization = buildSixteenthSessionProofStepAuthorizationFromOperatorPacket,
 ) {
   const packetName = basename(input.packetPath ?? "");
   const namespace = packetName.endsWith(".packet")
@@ -205,7 +220,7 @@ export function readSixteenthSessionProofStepAuthorizationFromOperatorPacket(
     throw new Error("proof sixteenth-step authorization must be valid JSON");
   }
   verifySessionProofStepAuthorization(authorization);
-  const expected = authorizeStep({
+  const { authorization: expected, runtimeApplyOutputs } = buildAuthorization({
     ...input,
     observedAt: authorization.authorizedAt,
   }, runner);
@@ -216,5 +231,9 @@ export function readSixteenthSessionProofStepAuthorizationFromOperatorPacket(
   if (!authorizationBytes.equals(Buffer.from(expectedSource))) {
     throw new Error("proof sixteenth-step authorization is not the exact persisted artifact");
   }
-  return { authorization: expected, authorizationSource: expectedSource };
+  return {
+    authorization: expected,
+    authorizationSource: expectedSource,
+    runtimeApplyOutputs,
+  };
 }

@@ -17,6 +17,9 @@ import {
   persistSixteenthSessionProofStepAuthorizationFromOperatorPacket,
   readSixteenthSessionProofStepAuthorizationFromOperatorPacket,
 } from "./codeops-session-proof-operator-runtime-wait-authorization.mjs";
+import {
+  waitForSessionProofRuntimeFromOperatorPacket,
+} from "./codeops-session-proof-operator-runtime-wait.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 import { applySessionProofRuntime } from "./codeops-session-proof-runtime-apply.mjs";
 import { completeSessionProofStep } from "./codeops-session-proof-step-receipts.mjs";
@@ -331,17 +334,21 @@ test("persists and reopens the exact private runtime readiness authorization", (
     );
     const stub = makeRunner();
     let authorizeCalls = 0;
-    const authorizeStep = (input, runnerArgument) => {
+    const buildAuthorization = (input, runnerArgument) => {
       authorizeCalls += 1;
       assert.equal(input.observedAt, runtimeWaitAuthorization.authorizedAt);
       assert.equal(runnerArgument, stub.runner);
-      return runtimeWaitAuthorization;
+      return {
+        authorization: runtimeWaitAuthorization,
+        runtimeApplyOutputs: { marker: "private-runtime-apply-chain" },
+      };
     };
     const result = persistSixteenthSessionProofStepAuthorizationFromOperatorPacket({
       packetPath,
       sixteenthAuthorizationPath,
       observedAt: runtimeWaitAuthorization.authorizedAt,
-    }, stub.runner, authorizeStep);
+    }, stub.runner, (input, runnerArgument) =>
+      buildAuthorization(input, runnerArgument).authorization);
     assert.deepEqual(result, runtimeWaitAuthorization);
     assert.equal(statSync(sixteenthAuthorizationPath).mode & 0o777, 0o600);
     assert.equal(
@@ -351,9 +358,10 @@ test("persists and reopens the exact private runtime readiness authorization", (
     const reopened = readSixteenthSessionProofStepAuthorizationFromOperatorPacket({
       packetPath,
       sixteenthAuthorizationPath,
-    }, stub.runner, authorizeStep);
+    }, stub.runner, buildAuthorization);
     assert.deepEqual(reopened.authorization, runtimeWaitAuthorization);
     assert.equal(reopened.authorizationSource, readFileSync(sixteenthAuthorizationPath, "utf8"));
+    assert.equal(reopened.runtimeApplyOutputs.marker, "private-runtime-apply-chain");
     assert.equal(authorizeCalls, 2);
   } finally {
     rmSync(root, { recursive: true, force: true });
@@ -394,6 +402,81 @@ test("rejects unsafe runtime readiness authorization targets before authorizatio
     assert.equal(authorizeCalls, 0);
   } finally {
     rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("hands only the exact persisted runtime authorization and apply outputs to the waiter", () => {
+  const stub = makeRunner();
+  const input = {
+    packetPath: "/private/operator.packet",
+    startedAt: "2026-08-05T22:23:00Z",
+    completedAt: "2026-08-05T22:24:00Z",
+    maxAttempts: 120,
+    pollIntervalMs: 1000,
+  };
+  const fifteenthEvidenceSource = "runtime-apply-evidence";
+  const fifteenthStepReceiptSource = "runtime-apply-receipt\n";
+  let authorizationReads = 0;
+  let received;
+  const result = waitForSessionProofRuntimeFromOperatorPacket(
+    input,
+    stub.runner,
+    (waitInput, runnerArgument) => {
+      received = waitInput;
+      assert.equal(runnerArgument, stub.runner);
+      return { accepted: true };
+    },
+    (readInput, runnerArgument) => {
+      authorizationReads += 1;
+      assert.equal(readInput, input);
+      assert.equal(runnerArgument, stub.runner);
+      return {
+        authorization: runtimeWaitAuthorization,
+        runtimeApplyOutputs: { fifteenthEvidenceSource, fifteenthStepReceiptSource },
+      };
+    },
+  );
+  assert.deepEqual(result, { accepted: true });
+  assert.equal(authorizationReads, 1);
+  assert.deepEqual(received, {
+    authorization: runtimeWaitAuthorization,
+    runtimeApplyReceiptSource: fifteenthStepReceiptSource,
+    runtimeApplyEvidenceSource: fifteenthEvidenceSource,
+    startedAt: input.startedAt,
+    completedAt: input.completedAt,
+    maxAttempts: input.maxAttempts,
+    pollIntervalMs: input.pollIntervalMs,
+  });
+  assert.equal(stub.calls.length, 0);
+});
+
+test("persisted runtime authorization or apply drift fails before the waiter is reached", () => {
+  const input = {
+    packetPath: "/private/operator.packet",
+    startedAt: "2026-08-05T22:23:00Z",
+    completedAt: "2026-08-05T22:24:00Z",
+    maxAttempts: 120,
+    pollIntervalMs: 1000,
+  };
+  for (const driftTarget of ["authorization", "apply outputs"]) {
+    let waiterCalls = 0;
+    assert.throws(() => waitForSessionProofRuntimeFromOperatorPacket(
+      input,
+      undefined,
+      () => {
+        waiterCalls += 1;
+      },
+      () => {
+        if (driftTarget === "authorization") throw new Error("authorization drifted");
+        return {
+          authorization: runtimeWaitAuthorization,
+          get runtimeApplyOutputs() {
+            throw new Error("apply outputs drifted");
+          },
+        };
+      },
+    ), /drifted/);
+    assert.equal(waiterCalls, 0);
   }
 });
 

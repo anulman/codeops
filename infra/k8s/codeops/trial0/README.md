@@ -487,6 +487,14 @@ the private runtime apply chain on readback. A substituted, occupied, or
 permission-weakened target fails before live access. It imports and invokes no
 waiter and remains unreferenced by runners and workflows.
 
+The bounded-waiter handoff then reconstructs that exact private authorization,
+re-verifies the exact persisted runtime apply evidence and its canonical
+completion receipt, and passes only those predecessor bytes plus the reviewed
+polling bounds and bounded execution timestamps to the existing runtime waiter.
+Authorization, predecessor, permission, identity, or output drift fails before
+the waiter can be reached. The closed itinerary names this operator adapter,
+but no runner or workflow invokes it.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked
