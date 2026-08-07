@@ -125,6 +125,13 @@ test("wires every closed proof step and exact byte source without invoking an ad
       export: "persistSessionProofRuntimeWaitFromOperatorPacket",
     },
   );
+  assert.deepEqual(
+    result.steps.find((step) => step.stepId === "record-proof").adapter,
+    {
+      module: "./codeops-session-proof-operator-record-authorization.mjs",
+      export: "authorizeSeventeenthSessionProofStepFromOperatorPacket",
+    },
+  );
   assert.deepEqual(result.finalOutputs, ["receipt:verify-teardown", "evidence:verify-teardown"]);
 });
 

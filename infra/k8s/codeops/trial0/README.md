@@ -507,6 +507,16 @@ malformed, chain-drifted, or timestamp-drifted outputs fail closed. The closed
 itinerary lists this persistence adapter, but no runner or workflow invokes it;
 tests use only an injected waiter.
 
+The runtime readiness to `record-proof` authorization handoff reopens the exact
+private readiness evidence and canonical receipt, re-verifies their complete
+predecessor chain, and repeats live operator, target, and Namespace-UID
+admission before authorizing only the non-mutating recording/export step. The
+handoff carries all 16 exact prior receipt sources into the generic step
+authorizer. It supplies no reviewed manifest because `record-proof` has no
+cluster artifact, persists no authorization, reads no recording artifacts, and
+does not invoke the recorder. The closed itinerary names this authorization
+adapter, but no runner or workflow invokes it.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked
