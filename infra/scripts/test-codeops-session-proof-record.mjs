@@ -20,6 +20,9 @@ import {
   sessionProofApplyResourceIdentities,
 } from "./codeops-session-proof-apply-evidence.mjs";
 import { completeSessionProofRecording } from "./codeops-session-proof-record.mjs";
+import {
+  completeSessionProofRecordingFromOperatorPacket,
+} from "./codeops-session-proof-operator-record.mjs";
 import { buildSessionProofRuntimeReadinessEvidence } from "./codeops-session-proof-runtime-readiness-evidence.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
@@ -281,4 +284,77 @@ test("rejects chain, inspection, timestamp, or final Namespace identity drift", 
   }
   const replaced = makeRunner({ replacementNamespace: true });
   assert.throws(() => complete(root, replaced), /Namespace UID/);
+});
+
+test("hands the exact persisted authorization and runtime readiness outputs to the recorder", () => {
+  const input = {
+    packetPath: "/private/codeops-session-proof-video-1.packet",
+    seventeenthAuthorizationPath:
+      "/private/codeops-session-proof-video-1.step-21-record-proof.authorization.json",
+    captureDirectory: "/private/capture",
+    startedAt: "2026-08-05T22:22:00Z",
+    finishedAt: "2026-08-05T22:30:00Z",
+    completedAt: "2026-08-05T22:31:00Z",
+    inspection,
+  };
+  const stub = makeRunner();
+  let readCalls = 0;
+  let recordCalls = 0;
+  const result = completeSessionProofRecordingFromOperatorPacket(
+    input,
+    stub.runner,
+    (received, runnerArgument) => {
+      recordCalls += 1;
+      assert.equal(runnerArgument, stub.runner);
+      assert.deepEqual(received, {
+        authorization,
+        runtimeReadinessReceiptSource: runtimeReceiptSource,
+        runtimeReadinessEvidenceSource: runtimeEvidenceSource,
+        captureDirectory: input.captureDirectory,
+        startedAt: input.startedAt,
+        finishedAt: input.finishedAt,
+        completedAt: input.completedAt,
+        inspection,
+      });
+      return { evidenceSource: "recording-evidence", receipt: { stepId: "record-proof" } };
+    },
+    (received, runnerArgument) => {
+      readCalls += 1;
+      assert.equal(received, input);
+      assert.equal(runnerArgument, stub.runner);
+      return {
+        authorization,
+        authorizationSource: "private authorization bytes",
+        runtimeWaitOutputs: {
+          sixteenthStepReceiptSource: runtimeReceiptSource,
+          sixteenthEvidenceSource: runtimeEvidenceSource,
+          unrelatedPrivatePredecessor: "must not cross the recorder boundary",
+        },
+      };
+    },
+  );
+  assert.equal(readCalls, 1);
+  assert.equal(recordCalls, 1);
+  assert.deepEqual(result, {
+    evidenceSource: "recording-evidence",
+    receipt: { stepId: "record-proof" },
+  });
+  assert.equal(stub.calls.length, 0);
+});
+
+test("authorization readback drift fails before the recorder can be reached", () => {
+  const stub = makeRunner();
+  let recordCalls = 0;
+  assert.throws(() => completeSessionProofRecordingFromOperatorPacket(
+    { packetPath: "/private/codeops-session-proof-video-1.packet" },
+    stub.runner,
+    () => {
+      recordCalls += 1;
+    },
+    () => {
+      throw new Error("proof record authorization drifted");
+    },
+  ), /authorization drifted/);
+  assert.equal(recordCalls, 0);
+  assert.equal(stub.calls.length, 0);
 });

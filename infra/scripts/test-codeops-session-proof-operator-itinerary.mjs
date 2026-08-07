@@ -128,8 +128,8 @@ test("wires every closed proof step and exact byte source without invoking an ad
   assert.deepEqual(
     result.steps.find((step) => step.stepId === "record-proof").adapter,
     {
-      module: "./codeops-session-proof-operator-record-authorization.mjs",
-      export: "persistSeventeenthSessionProofStepAuthorizationFromOperatorPacket",
+      module: "./codeops-session-proof-operator-record.mjs",
+      export: "completeSessionProofRecordingFromOperatorPacket",
     },
   );
   assert.deepEqual(result.finalOutputs, ["receipt:verify-teardown", "evidence:verify-teardown"]);

@@ -528,6 +528,16 @@ bytes. Substituted, occupied, permission-weakened, replaced, malformed, or
 non-canonical artifacts fail closed. The closed itinerary names this
 persistence adapter, but no runner or workflow invokes it.
 
+The persisted `record-proof` authorization handoff reopens and reconstructs
+that exact private authorization from the runtime-readiness predecessor chain,
+then passes only the authorization, exact persisted runtime-readiness evidence
+and receipt, validated capture-directory path, bounded timestamps, and explicit
+inspection result to the existing non-mutating recording completion adapter.
+Authorization or predecessor drift fails before the recorder can be reached.
+The closed itinerary names this handoff, but no runner or workflow invokes it;
+it does not open a browser, create recording artifacts, or start a proof
+workload.
+
 The `start-runtime` apply boundary derives the exact Job, ServiceAccount, and
 NetworkPolicy names from the reviewed proof session suffix and binds their
 server UIDs to the exact reviewed runtime artifact. Its concrete but uninvoked
