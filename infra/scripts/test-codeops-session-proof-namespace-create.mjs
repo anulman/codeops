@@ -205,6 +205,7 @@ const proofThreeShardOverrides = new Map([
   ["persisted Codex-login authorization drift fails before the create-only adapter", 2],
   ["durably persists exact UI apply outputs behind the private authorization chain", 1],
   ["persists exact UI readiness and the private runtime-start authorization", 2],
+  ["durably persists the exact Codex smoke replacement evidence and receipt", 0],
 ]);
 const proofSeenTestNames = new Set();
 let proofTestOrdinal = 0;
