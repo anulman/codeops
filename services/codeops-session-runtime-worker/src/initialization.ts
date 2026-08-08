@@ -70,6 +70,13 @@ export class SessionJobInitializer {
       const result = sessionJobInitializationResponseSchema.parse(
         await boundedJson(response),
       );
+      const exactActiveLease =
+        result.snapshot.lease?.status === "active" &&
+        result.snapshot.lease.leaseId === request.leaseId &&
+        result.snapshot.lease.holderId === request.holderId;
+      const duplicateReleasedLease =
+        result.disposition === "duplicate" &&
+        result.snapshot.lease?.status === "released";
       if (
         result.snapshot.sessionId !== request.sessionId ||
         result.snapshot.identity.repository !== request.identity.repository ||
@@ -79,9 +86,7 @@ export class SessionJobInitializer {
         result.snapshot.identity.runId !== request.identity.runId ||
         result.snapshot.identity.parentSessionId !== null ||
         result.snapshot.identity.forkedAtCursor !== null ||
-        result.snapshot.lease?.status !== "active" ||
-        result.snapshot.lease.leaseId !== request.leaseId ||
-        result.snapshot.lease.holderId !== request.holderId
+        (!exactActiveLease && !duplicateReleasedLease)
       ) {
         throw new SessionRuntimeTransportError(
           "session Job initialization response drifted from the requested root identity",

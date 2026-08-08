@@ -63,6 +63,42 @@ function response(overrides = {}) {
   };
 }
 
+function hibernatedDuplicateResponse() {
+  return {
+    ...response({
+      generation: 2,
+      state: "hibernated",
+      lease: {
+        leaseId: "22222222-2222-4222-8222-222222222222",
+        generation: 2,
+        status: "released",
+        releasedAt: "2026-08-05T03:20:00.000Z",
+      },
+      checkpoint: {
+        version: "codeops.session-checkpoint/v1",
+        checkpointId: "33333333-3333-4333-8333-333333333333",
+        sessionId: "ses_video_1",
+        generation: 2,
+        baseSha: "a".repeat(40),
+        patchDigest: `sha256:${"b".repeat(64)}`,
+        acpSessionId: "acp-session-video-1",
+        eventCursor: 10,
+        evidenceReferences: [],
+        createdAt: "2026-08-05T03:20:00.000Z",
+      },
+      eventCursor: 10,
+      capabilities: capabilities().map((capability) =>
+        capability.action === "resume" || capability.action === "fork"
+          ? { action: capability.action, availability: "enabled" }
+          : capability.action === "archive"
+            ? { action: capability.action, availability: "enabled" }
+            : { action: capability.action, availability: "disabled", reason: "Unavailable." }),
+      updatedAt: "2026-08-05T03:20:00.000Z",
+    }),
+    disposition: "duplicate",
+  };
+}
+
 function json(value, status = 200, headers = {}) {
   return new Response(JSON.stringify(value), {
     status,
@@ -97,6 +133,34 @@ test("rejects a valid-looking response that drifts from the Job root", async () 
     gatewayOrigin: "https://gateway.example.test",
     token,
     fetch: async () => json(response({ sessionId: "ses_other" })),
+  });
+  await assert.rejects(
+    initializer.initialize(request()),
+    SessionRuntimeTransportError,
+  );
+});
+
+test("accepts an exact duplicate root whose successor lease was released", async () => {
+  const initializer = new SessionJobInitializer({
+    gatewayOrigin: "https://gateway.example.test",
+    token,
+    fetch: async () => json(hibernatedDuplicateResponse()),
+  });
+  const result = await initializer.initialize(request());
+  assert.equal(result.disposition, "duplicate");
+  assert.equal(result.snapshot.state, "hibernated");
+  assert.equal(result.snapshot.lease.status, "released");
+  assert.notEqual(result.snapshot.lease.leaseId, request().leaseId);
+});
+
+test("rejects a created root without the exact requested active lease", async () => {
+  const initializer = new SessionJobInitializer({
+    gatewayOrigin: "https://gateway.example.test",
+    token,
+    fetch: async () => json({
+      ...hibernatedDuplicateResponse(),
+      disposition: "created",
+    }),
   });
   await assert.rejects(
     initializer.initialize(request()),
