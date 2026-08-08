@@ -13,6 +13,7 @@ const REQUIRED_BOOTSTRAP_FRAGMENTS = [
   'if [ ! -s "$PGDATA/PG_VERSION" ]; then',
   "--auth-host=scram-sha-256",
   "--auth-local=trust",
+  "host all all all scram-sha-256",
   "-c listen_addresses=''",
   "createdb --host=/var/run/postgresql",
   "for init_file in /docker-entrypoint-initdb.d/*; do",
@@ -93,7 +94,9 @@ export function renderSessionProofDatabaseManifest(template, digest) {
   const ingressNames = policy.spec.ingress[0].from.map((source) => source.podSelector.matchLabels["app.kubernetes.io/name"]);
   const serialized = JSON.stringify(resources);
   if (
-    JSON.stringify(ingressNames) !== JSON.stringify(["codeops-control-gateway", "codeops-session-runtime-worker"]) ||
+    JSON.stringify(ingressNames) !== JSON.stringify([
+      "codeops-control-gateway", "codeops-session-proof-grants", "codeops-session-runtime-worker",
+    ]) ||
     JSON.stringify(policy.spec.ingress[0].ports) !== JSON.stringify([{ protocol: "TCP", port: 5432 }]) ||
     JSON.stringify(policy.spec.egress) !== JSON.stringify([]) ||
     serialized.includes("persistentVolumeClaim") || serialized.includes("hostPath") || serialized.includes("0.0.0.0/0")

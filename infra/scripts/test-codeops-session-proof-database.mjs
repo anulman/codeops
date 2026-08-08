@@ -23,6 +23,7 @@ test("packages one immutable disposable PostgreSQL workload", () => {
   assert.equal(pod.containers[0].image.endsWith(`@${digest}`), true);
   assert.deepEqual(pod.containers[0].command, ["/bin/sh", "-ceu", "--"]);
   assert.match(pod.containers[0].args[0], /if \[ ! -s "\$PGDATA\/PG_VERSION" \]; then/);
+  assert.match(pod.containers[0].args[0], /host all all all scram-sha-256/);
   assert.match(pod.containers[0].args[0], /exec postgres/);
   assert.deepEqual(pod.containers[0].startupProbe.exec.command, [
     "pg_isready", "-h", "127.0.0.1", "-U", "codeops_session_broker_owner", "-d", "codeops_session_proof",
@@ -39,9 +40,11 @@ test("creates the separate receipt worker role without exposing its password", (
   assert.equal(init.includes("set -x"), false);
 });
 
-test("admits only the proof gateway and runtime worker and denies egress", () => {
+test("admits only proof database clients and denies egress", () => {
   const policy = resources().find((resource) => resource.kind === "NetworkPolicy");
-  assert.deepEqual(policy.spec.ingress[0].from.map((source) => source.podSelector.matchLabels["app.kubernetes.io/name"]), ["codeops-control-gateway", "codeops-session-runtime-worker"]);
+  assert.deepEqual(policy.spec.ingress[0].from.map((source) => source.podSelector.matchLabels["app.kubernetes.io/name"]), [
+    "codeops-control-gateway", "codeops-session-proof-grants", "codeops-session-runtime-worker",
+  ]);
   assert.deepEqual(policy.spec.egress, []);
 });
 
@@ -55,6 +58,7 @@ test("rejects mutable images, persistence, and network or role drift", () => {
     template.replace("runAsUser: 26", "runAsUser: 999"),
     template.replace("runAsGroup: 102", "runAsGroup: 999"),
     template.replace("fsGroup: 102", "fsGroup: 999"),
+    template.replace("host all all all scram-sha-256", "host all all all trust"),
     template.replace("exec postgres", "postgres"),
     template.replace("-h, 127.0.0.1, ", ""),
     `${template}\n---\napiVersion: v1\nkind: PersistentVolumeClaim\nmetadata: { name: retained }\n`,
