@@ -9,6 +9,7 @@ import {
   AcpSessionStateStore,
   captureWorkspacePatch,
   createAcpPermissionRelay,
+  forkOrCreateAcpSession,
   SocketAcpWorkspaceLifecycle,
   waitForAcpSocket,
 } from "../dist/acp-workspace.js";
@@ -20,6 +21,28 @@ const idempotencyKey = "22222222-2222-4222-8222-222222222222";
 test("rejects an invalid ACP readiness boundary before opening a socket", async () => {
   await assert.rejects(waitForAcpSocket("relative.sock", 1_000), /absolute path/);
   await assert.rejects(waitForAcpSocket("/run/codeops/agent.sock", 999), /between 1 and 60 seconds/);
+});
+
+test("falls back to a new ACP session only when session/fork is unsupported", async () => {
+  const calls = [];
+  assert.equal(await forkOrCreateAcpSession({
+    fork: async () => {
+      calls.push("fork");
+      throw Object.assign(new Error("Method not found"), { code: -32601 });
+    },
+    create: async () => {
+      calls.push("new");
+      return "acp-session-child";
+    },
+  }), "acp-session-child");
+  assert.deepEqual(calls, ["fork", "new"]);
+
+  await assert.rejects(forkOrCreateAcpSession({
+    fork: async () => {
+      throw Object.assign(new Error("transport failed"), { code: -32000 });
+    },
+    create: async () => "must-not-run",
+  }), /transport failed/);
 });
 
 function capabilities(enabled, hasCheckpoint = false) {

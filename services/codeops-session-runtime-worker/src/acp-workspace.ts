@@ -108,6 +108,25 @@ export type AcpConnectionFactory = <Result>(
   operation: (agent: AcpAgentSessionConnection) => Promise<Result>,
 ) => Promise<Result>;
 
+export async function forkOrCreateAcpSession(input: {
+  readonly fork: () => Promise<string>;
+  readonly create: () => Promise<string>;
+}): Promise<string> {
+  try {
+    return await input.fork();
+  } catch (error) {
+    if (
+      error === null ||
+      typeof error !== "object" ||
+      !("code" in error) ||
+      error.code !== -32601
+    ) {
+      throw error;
+    }
+    return input.create();
+  }
+}
+
 function boundedAbsolutePath(name: string, raw: string): string {
   if (!path.isAbsolute(raw) || raw.length > 1_000 || raw.includes("\0")) {
     throw new Error(`${name} must be one bounded absolute path`);
@@ -342,11 +361,19 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
               });
             },
             forkSession: async (sessionId, cwd) =>
-              (await agent.request(acp.methods.agent.session.fork, {
-                sessionId,
-                cwd,
-                mcpServers: [],
-              })).sessionId,
+              forkOrCreateAcpSession({
+                fork: async () =>
+                  (await agent.request(acp.methods.agent.session.fork, {
+                    sessionId,
+                    cwd,
+                    mcpServers: [],
+                  })).sessionId,
+                create: async () =>
+                  (await agent.request(acp.methods.agent.session.new, {
+                    cwd,
+                    mcpServers: [],
+                  })).sessionId,
+              }),
           });
         });
     } finally {
