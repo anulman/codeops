@@ -200,6 +200,23 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
   ]);
 });
 
+test("preserves millisecond precision when pg returns a Date for the claim expiry", async () => {
+  const dispatch = await enqueue(new EnqueueClient());
+  const client = new ClaimClient({
+    dispatch_json: dispatch,
+    claim_token: claimToken,
+    claim_expires_at: new Date("2026-08-04T18:05:00.123Z"),
+    claim_count: 1,
+  });
+  const claim = await claimSessionRuntimeDispatch(client, {
+    workerId: "acp-worker:7",
+    leaseMs: 5 * 60_000,
+    now: () => new Date("2026-08-04T18:00:00.123Z"),
+    claimToken: () => claimToken,
+  });
+  assert.equal(claim.claimExpiresAt, "2026-08-04T18:05:00.123Z");
+});
+
 test("returns null when no dispatch is claimable and validates claim bounds", async () => {
   assert.equal(await claimSessionRuntimeDispatch(new ClaimClient(null), {
     workerId: "acp-worker:7",

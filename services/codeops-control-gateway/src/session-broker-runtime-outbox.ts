@@ -43,6 +43,14 @@ interface CompletedDispatchRow extends StoredDispatchRow {
   readonly completed_by: unknown;
 }
 
+function postgresTimestamp(value: unknown): string {
+  const parsed = value instanceof Date ? value : new Date(String(value));
+  if (Number.isNaN(parsed.getTime())) {
+    throw new Error("runtime claim persistence returned an invalid timestamp");
+  }
+  return parsed.toISOString();
+}
+
 function canonical(value: unknown): string {
   const normalize = (entry: unknown): unknown => {
     if (Array.isArray(entry)) return entry.map(normalize);
@@ -217,7 +225,7 @@ export async function claimSessionRuntimeDispatch(
   const row = result.rows[0];
   if (
     row.claim_token !== claimToken ||
-    new Date(String(row.claim_expires_at)).toISOString() !== claimExpiresAt ||
+    postgresTimestamp(row.claim_expires_at) !== claimExpiresAt ||
     !Number.isSafeInteger(row.claim_count) ||
     Number(row.claim_count) < 1
   ) {
