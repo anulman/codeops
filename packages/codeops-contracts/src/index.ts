@@ -26,6 +26,7 @@ const VERSION = {
   evidence: "codeops.evidence/v1",
   secretReference: "codeops.secret-reference/v1",
   planeCommentEvent: "codeops.plane-comment-event/v1",
+  planeSessionRequest: "codeops.plane-session-request/v1",
   researchRequest: "codeops.research-request/v3",
   researchPersonaReport: "codeops.research-persona-report/v2",
   researchSynthesis: "codeops.research-synthesis/v1",
@@ -810,6 +811,44 @@ export const researchRequestSchema = z
         code: z.ZodIssueCode.custom,
         path: ["ticketSnapshot", "workItemId"],
         message: "ticket snapshot does not match the research request",
+      });
+    }
+  });
+
+export const planeSessionRequestSchema = z
+  .object({
+    version: z.literal(VERSION.planeSessionRequest),
+    requestId: identifier,
+    ...requestProjectIdentity,
+    workItemId: uuid,
+    triggerCommentId: uuid,
+    requestedBy: uuid,
+    repository,
+    controlPlaneSha: gitSha,
+    baseSha: gitSha,
+    planeRevisionDigest: sha256Digest,
+    ticketSnapshot: ticketSnapshotSchema,
+    intent: z.enum(["research", "response", "source_change", "steering"]),
+    personas: z.array(researchPersonaHandleSchema).max(7),
+    comment: safeText(8_000),
+    requestedAt: isoDateTime,
+  })
+  .strict()
+  .superRefine((request, context) => {
+    validateRequestProjectContext(
+      {
+        ...request,
+        repository: request.repository,
+        controlPlaneSha: request.controlPlaneSha,
+        baseSha: request.baseSha,
+      },
+      context,
+    );
+    if (request.ticketSnapshot.workItemId !== request.workItemId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["ticketSnapshot", "workItemId"],
+        message: "ticket snapshot does not match the Plane session request",
       });
     }
   });
@@ -1640,6 +1679,96 @@ export function parseResearchPersonaRound(
   return { personas, brief };
 }
 
+export function classifyPlaneCommentRequest(
+  comment: string,
+): Readonly<{
+  intent: "research" | "response" | "source_change" | "steering";
+  personas: ResearchPersonaHandle[];
+}> | null {
+  const normalized = z.string().min(1).max(8_000).parse(comment.trim());
+  const personaRound = parseResearchPersonaRound(normalized);
+  const requestText = (personaRound?.brief ?? normalized).trim();
+  const lower = requestText.toLowerCase();
+  const explicitlyRequestsWork =
+    personaRound !== null ||
+    /^(?:please\s+|kindly\s+)?(?:(?:can|could|would|will)\s+you\b|(?:investigate|research|review|fix|update|change|implement|add|remove|explain|answer|respond|continue|resume|pause|stop|cancel|fork)\b)/i.test(
+      requestText,
+    );
+  if (!explicitlyRequestsWork) return null;
+
+  const intent = /\b(?:continue|resume|pause|stop|cancel|fork|steer)\b/.test(lower)
+    ? "steering"
+    : /\b(?:fix|update|change|implement|add|remove|revise|revision|edit)\b/.test(
+          lower,
+        )
+      ? "source_change"
+      : /\?|\b(?:explain|answer|respond|reply)\b/.test(lower)
+        ? "response"
+        : "research";
+  return { intent, personas: personaRound?.personas ?? [] };
+}
+
+export function createPlaneSessionRequestId(input: {
+  eventId: string;
+  commentId: string;
+  planeRevisionDigest: string;
+  intent: "research" | "response" | "source_change" | "steering";
+}): string {
+  return logicalId("plane-session-request", {
+    version: VERSION.planeSessionRequest,
+    eventId: uuid.parse(input.eventId),
+    commentId: uuid.parse(input.commentId),
+    planeRevisionDigest: sha256Digest.parse(input.planeRevisionDigest),
+    intent: input.intent,
+  });
+}
+
+export function createPlaneSessionRequestFromPlaneComment(
+  input: unknown,
+  source: {
+    repository: z.infer<typeof repository>;
+    controlPlaneSha: string;
+    baseSha: string;
+    planeRevisionDigest: string;
+    projectContext: ProjectContext;
+    ticketSnapshot: z.infer<typeof ticketSnapshotSchema>;
+  },
+): PlaneSessionRequest | null {
+  const event = planeCommentEventSchema.parse(input);
+  const classification = classifyPlaneCommentRequest(event.comment);
+  if (
+    event.action !== "create" ||
+    event.actor.kind !== "human" ||
+    classification === null
+  ) {
+    return null;
+  }
+  return planeSessionRequestSchema.parse({
+    version: VERSION.planeSessionRequest,
+    requestId: createPlaneSessionRequestId({
+      eventId: event.eventId,
+      commentId: event.commentId,
+      planeRevisionDigest: source.planeRevisionDigest,
+      intent: classification.intent,
+    }),
+    workspaceId: event.workspaceId,
+    projectId: event.projectId,
+    workItemId: event.workItemId,
+    triggerCommentId: event.commentId,
+    requestedBy: event.actor.id,
+    repository: source.repository,
+    controlPlaneSha: source.controlPlaneSha,
+    baseSha: source.baseSha,
+    planeRevisionDigest: source.planeRevisionDigest,
+    ticketSnapshot: source.ticketSnapshot,
+    projectContext: source.projectContext,
+    intent: classification.intent,
+    personas: classification.personas,
+    comment: event.comment,
+    requestedAt: event.occurredAt,
+  });
+}
+
 export function createResearchRequestId(input: {
   eventId: string;
   commentId: string;
@@ -1746,6 +1875,7 @@ export type WorkflowEvent = z.infer<typeof workflowEventSchema>;
 export type ControlCommand = z.infer<typeof controlCommandSchema>;
 export type ControlResult = z.infer<typeof controlResultSchema>;
 export type PlaneCommentEvent = z.infer<typeof planeCommentEventSchema>;
+export type PlaneSessionRequest = z.infer<typeof planeSessionRequestSchema>;
 export type ResearchRequest = z.infer<typeof researchRequestSchema>;
 export type ResearchPersonaReport = z.infer<
   typeof researchPersonaReportSchema

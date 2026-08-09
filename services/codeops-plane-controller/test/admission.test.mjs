@@ -11,6 +11,7 @@ import {
 import { upgradeResearchPacket } from "./research-fixture.mjs";
 
 const actorId = "88fc36c8-73b0-4547-81c7-96b70f61835e";
+const readyPersonaId = "7a63c616-3b0a-4eb9-8abd-054444577e5e";
 const payload = {
   version: "v2",
   delivery_id: "01ab9316-f978-4449-bad6-dce958be8454",
@@ -288,6 +289,7 @@ function signedReadyInput(overrides = {}) {
     },
     webhookSecret: secret,
     allowedHumanActorIds: new Set([actorId]),
+    aiPersonaUserIds: new Set([readyPersonaId]),
     readyStateId,
     repository: { owner: "anulman", name: "renoconcierge" },
     controlPlaneSha,
@@ -400,6 +402,51 @@ test("admits only a signed allowlisted human transition into configured Ready", 
   assert.equal(admission.request.ticketSnapshot.relations.length, 1);
   assert.match(admission.eventId, /^ready-event:[0-9a-f]{64}$/);
   assert.match(admission.planeRevisionDigest, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("admits Ready tickets assigned only to registered AI personas", async () => {
+  const input = signedReadyInput();
+  input.loadSource = async () => ({
+    ...source,
+    workItem: {
+      ...source.workItem,
+      state: readyStateId,
+      updated_at: readyUpdatedAt,
+      assignees: [readyPersonaId],
+    },
+  });
+  assert.notEqual(await admitPlaneReadyTransition(input), null);
+});
+
+test("ignores human-assigned Ready tickets", async () => {
+  const input = signedReadyInput();
+  input.loadSource = async () => ({
+    ...source,
+    workItem: {
+      ...source.workItem,
+      state: readyStateId,
+      updated_at: readyUpdatedAt,
+      assignees: [actorId],
+    },
+  });
+  assert.equal(await admitPlaneReadyTransition(input), null);
+});
+
+test("fails closed for unknown Ready assignee identities", async () => {
+  const input = signedReadyInput();
+  input.loadSource = async () => ({
+    ...source,
+    workItem: {
+      ...source.workItem,
+      state: readyStateId,
+      updated_at: readyUpdatedAt,
+      assignees: ["55555555-5555-4555-8555-555555555555"],
+    },
+  });
+  await assert.rejects(
+    admitPlaneReadyTransition(input),
+    /unknown assignee identity/,
+  );
 });
 
 test("identifies every signed allowlisted human lifecycle transition", () => {

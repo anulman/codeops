@@ -89,9 +89,15 @@ one or more registered persona mentions delivered through a signature-verified
 Plane webhook. The v2 registry is `@ai-web`, `@ai-security`, `@ai-database`,
 `@ai-infra`, `@ai-design`, `@ai-product`, and `@ai-ml`. Text after the mentions
 is the bounded round brief; a mention-only comment uses the bound ticket title
-and description. Ordinary comments, edited comments, deleted comments,
-unregistered `@ai-*` text, and service-authored comments are context only and
-must not start a run.
+and description. Edited comments, deleted comments, unregistered `@ai-*` text,
+and service-authored comments cannot start a research run.
+
+`codeops.plane-session-request/v1` separately classifies a new human comment
+as research, response, source change, or steering. A registered persona
+mention is always actionable. A comment without a persona must use an explicit
+request form. Discussion-only text returns no request. The request identity
+binds the comment, actor, exact Plane revision, requested personas, and intent
+so delivery retries produce one logical session input.
 
 `qaContractResearcherPolicy` and the research mutation schemas enforce a
 content-only capability envelope. The researcher may propose or apply comments,

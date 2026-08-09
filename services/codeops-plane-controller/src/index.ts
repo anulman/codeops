@@ -760,6 +760,7 @@ export async function admitPlaneReadyTransition(input: {
   headers: PlaneWebhookHeaders;
   webhookSecret: string;
   allowedHumanActorIds: ReadonlySet<string>;
+  aiPersonaUserIds?: ReadonlySet<string>;
   readyStateId: string;
   repository: { owner: string; name: string };
   controlPlaneSha: string;
@@ -810,6 +811,20 @@ export async function admitPlaneReadyTransition(input: {
   ) {
     throw new Error("Plane Ready snapshot is outside the signed event scope");
   }
+
+  const aiPersonaUserIds = input.aiPersonaUserIds ?? new Set<string>();
+  const humanAssigneeIds = workItem.assignees.filter((assigneeId) =>
+    input.allowedHumanActorIds.has(assigneeId),
+  );
+  const unknownAssigneeIds = workItem.assignees.filter(
+    (assigneeId) =>
+      !aiPersonaUserIds.has(assigneeId) &&
+      !input.allowedHumanActorIds.has(assigneeId),
+  );
+  if (unknownAssigneeIds.length > 0) {
+    throw new Error("Plane Ready snapshot has an unknown assignee identity");
+  }
+  if (humanAssigneeIds.length > 0) return null;
 
   const repository = {
     owner: z

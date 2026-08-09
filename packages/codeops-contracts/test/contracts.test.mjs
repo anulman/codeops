@@ -6,12 +6,14 @@ import {
   agentJobDispatchRequestSchema,
   agentJobDispatchResultSchema,
   canonicalSerialize,
+  classifyPlaneCommentRequest,
   codingRequestSchema,
   contractVersions,
   controlCommandSchema,
   controlResultSchema,
   createEventId,
   createProjectContext,
+  createPlaneSessionRequestFromPlaneComment,
   createResearchRequestFromPlaneComment,
   createTransitionId,
   evidenceReferenceSchema,
@@ -935,6 +937,47 @@ test("admits registered persona mentions only from a new human comment", () => {
   );
   assert.throws(() =>
     planeCommentEventSchema.parse({ ...planeCommentEvent, actor: { kind: "human" } }),
+  );
+});
+
+test("classifies actionable Plane comments and ignores discussion", () => {
+  assert.deepEqual(classifyPlaneCommentRequest("Please investigate this."), {
+    intent: "research",
+    personas: [],
+  });
+  assert.deepEqual(
+    classifyPlaneCommentRequest("@ai-security Can you explain this boundary?"),
+    { intent: "response", personas: ["@ai-security"] },
+  );
+  assert.equal(
+    classifyPlaneCommentRequest("This update looks good to me."),
+    null,
+  );
+  assert.equal(classifyPlaneCommentRequest("I agree with the analysis."), null);
+});
+
+test("creates one deterministic Agent Session request for actionable comments", () => {
+  const sourceChange = createPlaneSessionRequestFromPlaneComment(
+    { ...planeCommentEvent, comment: "Please fix the stale lifecycle gate." },
+    researchSource,
+  );
+  assert.equal(sourceChange.intent, "source_change");
+  assert.deepEqual(sourceChange.personas, []);
+  const retry = createPlaneSessionRequestFromPlaneComment(
+    {
+      ...planeCommentEvent,
+      deliveryId: "01ab9316-f978-4449-bad6-dce958be8454",
+      comment: "Please fix the stale lifecycle gate.",
+    },
+    researchSource,
+  );
+  assert.equal(retry.requestId, sourceChange.requestId);
+  assert.equal(
+    createPlaneSessionRequestFromPlaneComment(
+      { ...planeCommentEvent, comment: "Thanks, this is useful." },
+      researchSource,
+    ),
+    null,
   );
 });
 

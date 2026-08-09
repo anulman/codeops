@@ -389,9 +389,14 @@ test("failed Ready enqueue releases both identities for a bounded retry", async 
 test("publishes one fail-closed Ready acknowledgement after durable enqueue", async () => {
   const { root, ledger } = await fixture();
   const accepted = [];
+  const order = [];
   try {
-    const input = readyWebhookInput(ledger, async () => "enqueued");
+    const input = readyWebhookInput(ledger, async () => {
+      order.push("temporal-acknowledged");
+      return "enqueued";
+    });
     input.publishAccepted = async (value) => {
+      order.push("plane-in-progress");
       accepted.push(value);
     };
     const result = await processPlaneReadyWebhook(input);
@@ -399,6 +404,7 @@ test("publishes one fail-closed Ready acknowledgement after durable enqueue", as
     assert.equal(accepted.length, 1);
     assert.equal(accepted[0].request.requestId, result.requestId);
     assert.equal(accepted[0].enqueueResult, "enqueued");
+    assert.deepEqual(order, ["temporal-acknowledged", "plane-in-progress"]);
     assert.equal(
       accepted[0].request.researchDisposition.mode,
       "optional",

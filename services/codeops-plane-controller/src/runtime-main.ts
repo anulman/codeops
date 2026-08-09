@@ -497,6 +497,7 @@ const listener = createPlaneWebhookRequestListener({
         headers,
         webhookSecret,
         allowedHumanActorIds,
+        aiPersonaUserIds: new Set(personaUserIds.keys()),
         repository,
         controlPlaneSha,
         baseSha,
@@ -554,19 +555,32 @@ const listener = createPlaneWebhookRequestListener({
             branch: request.workItem.branch,
             updatedAt: new Date().toISOString(),
           });
-          await planeClient.createComment(
-            request.projectId,
-            request.workItem.workItemId,
-            {
-              comment_html: [
-                "<p><strong>CodeOps admitted this Ready transition.</strong></p>",
-                `<p>Workflow <code>${request.requestId}</code> is ${enqueueResult === "enqueued" ? "queued" : "already queued"} against exact main commit <code>${request.workItem.baseSha}</code>.</p>`,
-                `<p>Research disposition: <code>${request.researchDisposition.mode}</code>. Planning and execution are authorized by the human Ready transition; merge and production remain separately gated.</p>`,
-              ].join(""),
-              external_source: "codeops",
-              external_id: `ready-admitted:${request.requestId}`,
-            },
-          );
+          await transitionWorkItem({
+            projectId: request.projectId,
+            workItemId: request.workItem.workItemId,
+            expectedStateId: readyStateId,
+            targetStateId: inProgressStateId,
+          });
+          try {
+            await planeClient.createComment(
+              request.projectId,
+              request.workItem.workItemId,
+              {
+                comment_html: [
+                  "<p><strong>CodeOps admitted this Ready transition.</strong></p>",
+                  `<p>Workflow <code>${request.requestId}</code> is ${enqueueResult === "enqueued" ? "queued" : "already queued"} against exact main commit <code>${request.workItem.baseSha}</code>.</p>`,
+                  `<p>Research disposition: <code>${request.researchDisposition.mode}</code>. Planning and execution are authorized by the human Ready transition; merge and production remain separately gated.</p>`,
+                ].join(""),
+                external_source: "codeops",
+                external_id: `ready-admitted:${request.requestId}`,
+              },
+            );
+          } catch (error) {
+            console.error(
+              "Plane Ready acknowledgement comment failed after lifecycle commit:",
+              error instanceof Error ? error.message : "unknown error",
+            );
+          }
         },
       });
       if (ready.status !== "ignored") return ready;

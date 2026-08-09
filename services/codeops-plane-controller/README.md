@@ -26,6 +26,9 @@ This service owns the privileged Plane integration boundary. It implements:
   `updated_at` revision to match the signed payload, bind the configured
   repository and exact source SHA, and derive a delivery-independent Ready
   event identity for durable replay handling;
+- admit an unassigned Ready ticket or a ticket assigned only to registered AI
+  persona identities; reject a known human assignment and fail closed on an
+  unknown assignee identity;
 - compile the admitted Ready revision into a strict coding request and
   work-item contract with deterministic workflow/run/branch identities,
   bounded acceptance criteria, the same project-context digest, the immutable
@@ -49,9 +52,10 @@ This service owns the privileged Plane integration boundary. It implements:
   duplicate reuse rejected, running-workflow conflicts rejected, a one-hour
   bound for research or a 24-hour bound for coding, and the complete bound
   request;
-- publish one idempotent internal Plane acknowledgement after Temporal accepts
-  the Ready request, and idempotent terminal completion/failure/cancellation
-  comments through the authenticated internal transition route;
+- after Temporal accepts the Ready request, compare and set Plane from Ready to
+  In Progress and publish one idempotent acknowledgement; publish idempotent
+  terminal completion/failure/cancellation comments through the authenticated
+  internal transition route;
 - preflight an entire proposed mutation batch before the first write;
 - apply only comments, logical-label operations, project/ticket content edits,
   and same-project ticket creation;
