@@ -3,7 +3,8 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 test("fleet and cockpit routes use the live broker while retaining the v1 operator contract", async () => {
-  const [fleet, cockpit] = await Promise.all([
+  const [shell, fleet, cockpit] = await Promise.all([
+    readFile(new URL("../src/components/AppShell.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/index.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/sessions.$sessionId.tsx", import.meta.url), "utf8"),
   ]);
@@ -14,7 +15,12 @@ test("fleet and cockpit routes use the live broker while retaining the v1 operat
   for (const label of ["Prompt", "Approve / deny", "Cancel", "Checkpoint", "Hibernate", "Resume", "Fork", "Archive", "Delete", "Protocol diagnostics"]) {
     assert.match(cockpit, new RegExp(label));
   }
-  assert.match(cockpit, /grid-cols-2/);
+  assert.match(shell, /SessionNavigator/);
+  assert.match(shell, /lg:grid-cols-\[304px_minmax\(0,1fr\)\]/);
+  assert.match(cockpit, /SessionComposer/);
+  assert.match(cockpit, /Prompt this live session/);
+  assert.match(cockpit, /sticky bottom-0/);
+  assert.match(cockpit, /xl:grid-cols-\[minmax\(0,1fr\)_320px\]/);
   assert.match(fleet, /getSessionFleet/);
   assert.match(cockpit, /getSessionDetail/);
   assert.match(cockpit, /getSessionEvents/);

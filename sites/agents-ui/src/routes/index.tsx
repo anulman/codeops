@@ -15,115 +15,127 @@ type Filter = (typeof filters)[number];
 
 function SessionsPage() {
   const sessions = Route.useLoaderData();
-  const [filter, setFilter] = useState<Filter>("all");
-  const [query, setQuery] = useState("");
-  const counts = stateCounts(sessions);
-  const visibleSessions = useMemo(() => sessions.filter((session) => {
-    const matchesState = matchesFilter(session, filter);
-    const searchable = `${session.identity.workflowId} ${session.identity.runId} ${session.identity.branch} ${session.identity.baseSha}`.toLowerCase();
-    return matchesState && searchable.includes(query.trim().toLowerCase());
-  }), [filter, query]);
-
   return (
-    <AppShell>
-      <main className="mx-auto max-w-[1600px] px-4 py-8 sm:px-6 lg:px-8 lg:py-12">
-        <section className="grid gap-8 border-b border-white/8 pb-10 lg:grid-cols-[minmax(0,1fr)_auto] lg:items-end">
-          <div>
-            <div className="mb-4 flex items-center gap-2 text-[10px] font-semibold uppercase tracking-[0.2em] text-[#c8ff5a]/72">
-              <span className="h-px w-7 bg-[#c8ff5a]/50" /> Live control plane
-            </div>
-            <h1 className="max-w-3xl text-4xl font-medium leading-[0.98] tracking-[-0.055em] text-[#f6f4ef] sm:text-5xl lg:text-6xl">
-              See what every agent is doing.
-            </h1>
-            <p className="mt-5 max-w-2xl text-sm leading-6 text-white/48 sm:text-base">
-              One operating surface for live work, review evidence, interventions, and durable session history.
-            </p>
-          </div>
-          <div className="grid grid-cols-3 gap-px overflow-hidden rounded-xl border border-white/8 bg-white/8">
-            <Metric label="Active" value={counts.active} tone="lime" />
-            <Metric label="Needs attention" value={counts.attention} tone="orange" />
-            <Metric label="Archived" value={counts.archived} />
-          </div>
-        </section>
-
-        <section className="mt-8">
-          <div className="flex flex-col gap-4 border-b border-white/8 pb-5 md:flex-row md:items-center md:justify-between">
-            <div className="flex flex-wrap gap-1.5" aria-label="Session filters">
-              {filters.map((item) => (
-                <button
-                  key={item}
-                  type="button"
-                  onClick={() => setFilter(item)}
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium capitalize transition ${filter === item ? "bg-white text-[#0b0d10]" : "text-white/42 hover:bg-white/6 hover:text-white/70"}`}
-                >
-                  {item}
-                </button>
-              ))}
-            </div>
-            <label className="relative block w-full md:w-72">
-              <span className="sr-only">Search sessions</span>
-              <svg viewBox="0 0 20 20" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-white/28" aria-hidden="true">
-                <circle cx="8.5" cy="8.5" r="5.5" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="m13 13 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-              </svg>
-              <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search task, branch, SHA…" className="h-9 w-full rounded-lg border border-white/8 bg-white/[0.025] pl-9 pr-3 text-xs text-white/80 outline-none placeholder:text-white/24 focus:border-[#c8ff5a]/35 focus:ring-2 focus:ring-[#c8ff5a]/8" />
-            </label>
-          </div>
-
-          <div className="mt-4 hidden grid-cols-[minmax(280px,1.5fr)_minmax(180px,0.9fr)_120px_120px_100px] gap-4 px-4 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/28 lg:grid">
-            <span>Session</span><span>Now</span><span>State</span><span>Evidence</span><span>Updated</span>
-          </div>
-          <div className="mt-2 divide-y divide-white/6 border-y border-white/8">
-            {visibleSessions.map((session) => <SessionRow key={session.sessionId} session={session} />)}
-            {visibleSessions.length === 0 ? <div className="py-20 text-center text-sm text-white/35">No sessions match this view.</div> : null}
-          </div>
-        </section>
-      </main>
+    <AppShell sessions={sessions}>
+      <DesktopOverview sessions={sessions} />
+      <MobileFleet sessions={sessions} />
     </AppShell>
   );
 }
 
-function Metric({ label, value, tone = "quiet" }: Readonly<{ label: string; value: number; tone?: "lime" | "orange" | "quiet" }>) {
-  const valueStyle = tone === "lime" ? "text-[#c8ff5a]" : tone === "orange" ? "text-[#ffb18b]" : "text-white/65";
-  return <div className="min-w-24 bg-[#0c0f13] px-4 py-3.5"><div className={`text-2xl font-medium tracking-[-0.04em] ${valueStyle}`}>{value}</div><div className="mt-1 max-w-24 text-[9px] font-semibold uppercase leading-4 tracking-[0.13em] text-white/30">{label}</div></div>;
+function DesktopOverview({ sessions }: Readonly<{ sessions: readonly SessionSnapshot[] }>) {
+  const counts = stateCounts(sessions);
+  const attention = sessions.filter((session) => matchesFilter(session, "attention"));
+  const active = sessions.filter((session) => matchesFilter(session, "running"));
+  const recent = sessions.filter((session) => !attention.includes(session) && !active.includes(session)).slice(0, 6);
+  return (
+    <main className="hidden min-h-dvh bg-[#111113] lg:block">
+      <div className="flex h-13 items-center justify-between border-b border-white/[0.07] px-5">
+        <div className="flex items-center gap-2 text-sm font-semibold tracking-[-0.01em]">Sessions <span className="rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] font-medium text-white/35">{sessions.length}</span></div>
+        <div className="flex items-center gap-2 text-[11px] text-white/35"><span className="size-1.5 rounded-full bg-[#54d18b]" />Live broker state</div>
+      </div>
+      <div className="mx-auto max-w-5xl px-8 py-10 xl:px-12">
+        <div className="flex items-end justify-between gap-8 border-b border-white/[0.07] pb-7">
+          <div>
+            <p className="text-[10px] font-semibold uppercase tracking-[0.15em] text-white/28">CodeOps control surface</p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-[-0.045em] text-white/92">Agent Sessions</h1>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-white/40">Follow active work, respond when an agent needs you, and reopen durable session history.</p>
+          </div>
+          <div className="grid grid-cols-3 divide-x divide-white/[0.07] overflow-hidden rounded-xl border border-white/[0.07] bg-[#171719]">
+            <Metric label="Active" value={counts.active} tone="active" />
+            <Metric label="Needs attention" value={counts.attention} tone="attention" />
+            <Metric label="Archived" value={counts.archived} />
+          </div>
+        </div>
+
+        <div className="mt-8 grid gap-8 xl:grid-cols-[minmax(0,1.25fr)_minmax(280px,.75fr)]">
+          <div className="space-y-8">
+            <OverviewGroup title="Working now" description="Sessions with an active or pending runtime." sessions={active} empty="No agents are working right now." />
+            {attention.length > 0 ? <OverviewGroup title="Needs attention" description="Permission requests and failed sessions." sessions={attention} tone="attention" /> : null}
+          </div>
+          <section>
+            <div className="mb-3 flex items-center justify-between"><h2 className="text-xs font-semibold text-white/72">Recent history</h2><span className="text-[10px] text-white/24">Latest first</span></div>
+            <div className="divide-y divide-white/[0.055] rounded-xl border border-white/[0.07] bg-[#151517] px-3">
+              {recent.map((session) => <CompactSession key={session.sessionId} session={session} />)}
+              {recent.length === 0 ? <div className="py-10 text-center text-xs text-white/28">No session history yet.</div> : null}
+            </div>
+          </section>
+        </div>
+      </div>
+    </main>
+  );
 }
 
-function SessionRow({ session }: Readonly<{ session: SessionSnapshot }>) {
+function MobileFleet({ sessions }: Readonly<{ sessions: readonly SessionSnapshot[] }>) {
+  const [filter, setFilter] = useState<Filter>("all");
+  const [query, setQuery] = useState("");
+  const counts = stateCounts(sessions);
+  const visibleSessions = useMemo(() => sessions.filter((session) => {
+    const searchable = `${session.identity.workflowId} ${session.identity.runId} ${session.identity.branch} ${session.identity.baseSha}`.toLowerCase();
+    return matchesFilter(session, filter) && searchable.includes(query.trim().toLowerCase());
+  }), [filter, query, sessions]);
   return (
-    <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="group grid gap-4 px-3 py-5 transition hover:bg-white/[0.025] sm:px-4 lg:grid-cols-[minmax(280px,1.5fr)_minmax(180px,0.9fr)_120px_120px_100px] lg:items-center">
-      <div className="min-w-0">
-        <div className="flex items-center gap-2">
-          <span className={`size-1.5 shrink-0 rounded-full ${stateDot(session)}`} />
-          <span className="truncate text-sm font-medium tracking-[-0.01em] text-white/88 group-hover:text-white">{session.identity.runId}</span>
-        </div>
-        <div className="mt-1.5 truncate pl-3.5 text-xs text-white/36">{session.identity.workflowId} · <span className="font-mono">{session.identity.baseSha.slice(0, 7)}</span></div>
+    <main className="px-4 pb-10 pt-6 lg:hidden">
+      <div className="flex items-start justify-between gap-4">
+        <div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/28">CodeOps</p><h1 className="mt-1 text-2xl font-semibold tracking-[-0.035em]">Sessions</h1></div>
+        <div className="flex items-center gap-3 pt-1 text-[11px] text-white/35"><span><strong className="text-[#6ee2a0]">{counts.active}</strong> Active</span><span><strong className="text-[#ffae8d]">{counts.attention}</strong> Attention</span></div>
       </div>
-      <div><div className="text-xs capitalize text-white/65">{session.state.replaceAll("_", " ")}</div><div className="mt-1 text-[11px] text-white/28">generation {session.generation}</div></div>
-      <div><StatusBadge state={session.state} /></div>
-      <div className="text-xs text-white/46">{session.checkpoint ? "Checkpointed" : "Live state"}<span className="ml-1 text-white/24">· {session.eventCursor}</span></div>
-      <div className="flex items-center justify-between text-xs text-white/32"><span>{session.updatedAt.slice(11, 16)} UTC</span><span className="translate-x-0 text-white/20 transition group-hover:translate-x-1 group-hover:text-[#c8ff5a]">→</span></div>
+      <label className="relative mt-5 block">
+        <span className="sr-only">Search sessions</span><SearchIcon />
+        <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" className="h-10 w-full rounded-xl border border-white/[0.07] bg-white/[0.035] pl-9 pr-3 text-sm text-white/82 outline-none placeholder:text-white/28 focus:border-[#7774ff]/55 focus:ring-2 focus:ring-[#7774ff]/10" />
+      </label>
+      <div className="no-scrollbar -mx-4 mt-4 flex gap-1 overflow-x-auto border-b border-white/[0.07] px-4 pb-3" aria-label="Session filters">
+        {filters.map((item) => <button key={item} type="button" onClick={() => setFilter(item)} className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium capitalize transition ${filter === item ? "bg-white/[0.09] text-white" : "text-white/38"}`}>{item}</button>)}
+      </div>
+      <div className="mt-2 divide-y divide-white/[0.055]">
+        {visibleSessions.map((session) => <MobileSessionRow key={session.sessionId} session={session} />)}
+        {visibleSessions.length === 0 ? <div className="py-20 text-center text-sm text-white/30">No sessions match this view.</div> : null}
+      </div>
+    </main>
+  );
+}
+
+function OverviewGroup({ title, description, sessions, empty, tone = "default" }: Readonly<{ title: string; description: string; sessions: readonly SessionSnapshot[]; empty?: string; tone?: "default" | "attention" }>) {
+  return (
+    <section>
+      <div className="mb-3"><h2 className="text-xs font-semibold text-white/72">{title}</h2><p className="mt-1 text-[11px] text-white/28">{description}</p></div>
+      <div className={`divide-y divide-white/[0.055] overflow-hidden rounded-xl border bg-[#151517] ${tone === "attention" ? "border-[#ff9b73]/18" : "border-white/[0.07]"}`}>
+        {sessions.map((session) => <DesktopSessionRow key={session.sessionId} session={session} />)}
+        {sessions.length === 0 ? <div className="px-4 py-10 text-center text-xs text-white/28">{empty}</div> : null}
+      </div>
+    </section>
+  );
+}
+
+function DesktopSessionRow({ session }: Readonly<{ session: SessionSnapshot }>) {
+  return (
+    <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="group grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-5 px-4 py-3.5 transition hover:bg-white/[0.035]">
+      <div className="min-w-0"><div className="flex items-center gap-2"><span className={`size-1.5 rounded-full ${stateDot(session)}`} /><span className="truncate text-sm font-medium text-white/78 group-hover:text-white">{session.identity.runId}</span></div><p className="mt-1 truncate pl-3.5 font-mono text-[10px] text-white/26">{session.identity.branch} · {session.identity.baseSha.slice(0, 7)}</p></div>
+      <StatusBadge state={session.state} />
+      <span className="font-mono text-[10px] text-white/22">{session.updatedAt.slice(11, 16)}</span>
     </Link>
   );
 }
 
-function stateDot(session: SessionSnapshot) {
-  if (session.state === "running") return "bg-[#c8ff5a] shadow-[0_0_8px_rgba(200,255,90,0.8)]";
-  if (session.state === "waiting_permission" || session.state === "failed") return "bg-[#ff9f6e] shadow-[0_0_8px_rgba(255,159,110,0.7)]";
-  if (session.state === "queued" || session.state === "checkpointing") return "bg-[#8cb8ff]";
-  return "bg-white/25";
+function CompactSession({ session }: Readonly<{ session: SessionSnapshot }>) {
+  return <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="group flex items-center gap-2.5 py-3 text-xs"><span className={`size-1.5 shrink-0 rounded-full ${stateDot(session)}`} /><span className="min-w-0 flex-1 truncate text-white/52 group-hover:text-white/78">{session.identity.runId}</span><span className="font-mono text-[9px] text-white/20">{session.updatedAt.slice(11, 16)}</span></Link>;
 }
 
-function matchesFilter(session: SessionSnapshot, filter: Filter): boolean {
-  if (filter === "all") return true;
-  if (filter === "running") return ["queued", "running", "checkpointing"].includes(session.state);
-  if (filter === "attention") return ["waiting_permission", "failed"].includes(session.state);
-  if (filter === "completed") return ["completed", "cancelled"].includes(session.state);
-  return ["hibernated", "archived", "deleted"].includes(session.state);
+function MobileSessionRow({ session }: Readonly<{ session: SessionSnapshot }>) {
+  return (
+    <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="group block py-4">
+      <div className="flex items-center gap-2"><span className={`size-1.5 shrink-0 rounded-full ${stateDot(session)}`} /><span className="min-w-0 flex-1 truncate text-[15px] font-medium text-white/82">{session.identity.runId}</span><span className="font-mono text-[10px] text-white/24">{session.updatedAt.slice(11, 16)}</span></div>
+      <div className="mt-1.5 flex items-center justify-between gap-3 pl-3.5"><span className="min-w-0 truncate text-xs text-white/34">{session.identity.branch}</span><StatusBadge state={session.state} /></div>
+    </Link>
+  );
 }
 
-function stateCounts(items: readonly SessionSnapshot[]) {
-  return {
-    active: items.filter((item) => matchesFilter(item, "running")).length,
-    attention: items.filter((item) => matchesFilter(item, "attention")).length,
-    archived: items.filter((item) => matchesFilter(item, "archived")).length,
-  };
+function Metric({ label, value, tone = "quiet" }: Readonly<{ label: string; value: number; tone?: "active" | "attention" | "quiet" }>) {
+  const color = tone === "active" ? "text-[#6ee2a0]" : tone === "attention" ? "text-[#ffae8d]" : "text-white/60";
+  return <div className="min-w-24 px-4 py-3"><div className={`text-xl font-semibold tracking-[-0.035em] ${color}`}>{value}</div><div className="mt-1 max-w-24 text-[8px] font-semibold uppercase leading-3 tracking-[0.12em] text-white/25">{label}</div></div>;
 }
+
+function SearchIcon() { return <svg viewBox="0 0 20 20" className="pointer-events-none absolute left-3 top-1/2 size-4 -translate-y-1/2 text-white/26" aria-hidden="true"><circle cx="8.5" cy="8.5" r="5.25" fill="none" stroke="currentColor" strokeWidth="1.5" /><path d="m12.5 12.5 4 4" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" /></svg>; }
+function stateDot(session: SessionSnapshot) { if (session.state === "running") return "bg-[#54d18b] shadow-[0_0_7px_rgba(84,209,139,.65)]"; if (session.state === "waiting_permission" || session.state === "failed") return "bg-[#ff9b73]"; if (session.state === "queued" || session.state === "checkpointing") return "bg-[#6da8ff]"; return "bg-white/22"; }
+function matchesFilter(session: SessionSnapshot, filter: Filter): boolean { if (filter === "all") return true; if (filter === "running") return ["queued", "running", "checkpointing"].includes(session.state); if (filter === "attention") return ["waiting_permission", "failed"].includes(session.state); if (filter === "completed") return ["completed", "cancelled"].includes(session.state); return ["hibernated", "archived", "deleted"].includes(session.state); }
+function stateCounts(items: readonly SessionSnapshot[]) { return { active: items.filter((item) => matchesFilter(item, "running")).length, attention: items.filter((item) => matchesFilter(item, "attention")).length, archived: items.filter((item) => matchesFilter(item, "archived")).length }; }
