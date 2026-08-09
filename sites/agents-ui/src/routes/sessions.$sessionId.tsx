@@ -1,5 +1,5 @@
 import { createFileRoute, Link, useRouter } from "@tanstack/react-router";
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "react";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { executeSessionCommand, getSessionDetail, getSessionEvents, getSessionFleet } from "@/lib/sessionBroker.data";
@@ -18,9 +18,11 @@ function SessionCockpit() {
   const { session, events, fleet } = Route.useLoaderData();
   const router = useRouter();
   const [optimisticPrompt, setOptimisticPrompt] = useState<{
+    readonly idempotencyKey: string;
     readonly text: string;
     readonly afterCursor: number;
   } | null>(null);
+  const optimisticPromptRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
     if (!session || session.state === "deleted") return;
     let invalidating = false;
@@ -44,6 +46,10 @@ function SessionCockpit() {
       setOptimisticPrompt(null);
     }
   }, [events.events, optimisticPrompt]);
+  useEffect(() => {
+    if (!optimisticPrompt) return;
+    optimisticPromptRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+  }, [optimisticPrompt?.idempotencyKey]);
   if (!session) return <AppShell sessions={fleet}><main className="grid min-h-[calc(100dvh-52px)] place-items-center px-4 text-sm text-white/42 lg:min-h-dvh">Session not found.</main></AppShell>;
   const relatedSessions = fleet.filter((item) => item.identity.workflowId === session.identity.workflowId && item.sessionId !== session.sessionId).slice(0, 6);
   const permissionCapability = session.capabilities.find((item) => item.action === "respond_permission");
@@ -67,16 +73,20 @@ function SessionCockpit() {
               </div>
               <div className="space-y-1">
                 {events.events.map((event) => <EventRow key={event.eventId} event={event} />)}
-                {optimisticPrompt ? <PendingPrompt text={optimisticPrompt.text} /> : null}
+                {optimisticPrompt ? <PendingPrompt anchorRef={optimisticPromptRef} text={optimisticPrompt.text} /> : null}
                 {events.events.length === 0 && !optimisticPrompt ? <div className="py-16 text-center text-sm text-white/28">No events after this cursor.</div> : null}
               </div>
             </div>
             <SessionComposer
               session={session}
-              onSubmitted={(text) => setOptimisticPrompt({
+              onSubmissionStarted={({ idempotencyKey, text }) => setOptimisticPrompt({
+                idempotencyKey,
                 text,
                 afterCursor: session.eventCursor,
               })}
+              onSubmissionFailed={(idempotencyKey) => setOptimisticPrompt((current) =>
+                current?.idempotencyKey === idempotencyKey ? null : current,
+              )}
             />
           </div>
         </section>
@@ -138,8 +148,8 @@ function MessageRow({ event, message }: Readonly<{ event: SessionEvent; message:
   );
 }
 
-function PendingPrompt({ text }: Readonly<{ text: string }>) {
-  return <article className="ml-auto max-w-[88%] py-2 opacity-65 sm:max-w-[78%]"><div className="rounded-2xl rounded-br-md border border-[#7774ff]/12 bg-[#7774ff]/7 px-4 py-3 text-sm leading-6 text-white/62"><p className="whitespace-pre-wrap break-words">{text}</p></div><div className="mt-1.5 flex items-center justify-end gap-2 px-1 text-[9px] text-white/24"><span className="size-1.5 animate-pulse rounded-full bg-[#8e8bff]" /><span>Waiting for agent</span></div></article>;
+function PendingPrompt({ anchorRef, text }: Readonly<{ anchorRef: Ref<HTMLElement>; text: string }>) {
+  return <article ref={anchorRef} aria-label="Prompt submitted. Waiting for agent." className="ml-auto max-w-[88%] scroll-mb-32 py-2 opacity-65 sm:max-w-[78%]"><div className="rounded-2xl rounded-br-md border border-[#7774ff]/12 bg-[#7774ff]/7 px-4 py-3 text-sm leading-6 text-white/62"><p className="whitespace-pre-wrap break-words">{text}</p></div><div className="mt-1.5 flex items-center justify-end gap-2 px-1 text-[9px] text-white/24"><span className="size-1.5 animate-pulse rounded-full bg-[#8e8bff]" /><span>Waiting for agent</span></div></article>;
 }
 
 function PermissionCard({ session, capability }: Readonly<{ session: SessionSnapshot; capability: SessionCapability }>) {
@@ -178,7 +188,16 @@ function PermissionCard({ session, capability }: Readonly<{ session: SessionSnap
   );
 }
 
-function SessionComposer({ session, onSubmitted }: Readonly<{ session: SessionSnapshot; onSubmitted: (prompt: string) => void }>) {
+interface PromptSubmission {
+  readonly idempotencyKey: string;
+  readonly text: string;
+}
+
+function SessionComposer({ session, onSubmissionFailed, onSubmissionStarted }: Readonly<{
+  session: SessionSnapshot;
+  onSubmissionFailed: (idempotencyKey: string) => void;
+  onSubmissionStarted: (submission: PromptSubmission) => void;
+}>) {
   const router = useRouter();
   const [prompt, setPrompt] = useState("");
   const [pending, setPending] = useState(false);
@@ -189,14 +208,18 @@ function SessionComposer({ session, onSubmitted }: Readonly<{ session: SessionSn
     if (disabled || !session.lease) return;
     setError(null);
     setPending(true);
+    const idempotencyKey = crypto.randomUUID();
+    const submittedPrompt = prompt.trim();
+    onSubmissionStarted({ idempotencyKey, text: submittedPrompt });
+    let accepted = false;
     try {
-      const submittedPrompt = prompt.trim();
-      await executeSessionCommand({ data: { version: "codeops.session-command/v1", sessionId: session.sessionId, generation: session.generation, leaseId: session.lease.leaseId, idempotencyKey: crypto.randomUUID(), type: "prompt", prompt: submittedPrompt } });
-      onSubmitted(submittedPrompt);
+      await executeSessionCommand({ data: { version: "codeops.session-command/v1", sessionId: session.sessionId, generation: session.generation, leaseId: session.lease.leaseId, idempotencyKey, type: "prompt", prompt: submittedPrompt } });
+      accepted = true;
       setPrompt("");
       await router.invalidate();
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Session command failed.");
+      if (!accepted) onSubmissionFailed(idempotencyKey);
+      setError(accepted ? "Prompt accepted, but the timeline refresh failed." : cause instanceof Error ? cause.message : "Session command failed.");
     } finally { setPending(false); }
   };
   return (

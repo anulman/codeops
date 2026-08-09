@@ -20,7 +20,17 @@ test("fleet and cockpit routes use the live broker while retaining the v1 operat
   assert.match(cockpit, /SessionComposer/);
   assert.match(cockpit, /MessageRow/);
   assert.match(cockpit, /Waiting for agent/);
+  assert.match(cockpit, /Prompt submitted\. Waiting for agent\./);
   assert.match(cockpit, /event\.cursor > optimisticPrompt\.afterCursor/);
+  assert.match(cockpit, /scrollIntoView\(\{ behavior: "smooth", block: "center" \}\)/);
+  assert.match(cockpit, /if \(!accepted\) onSubmissionFailed\(idempotencyKey\)/);
+  assert.match(cockpit, /Prompt accepted, but the timeline refresh failed\./);
+  const composerSource = cockpit.slice(cockpit.indexOf("function SessionComposer"));
+  assert.ok(
+    composerSource.indexOf("onSubmissionStarted({ idempotencyKey, text: submittedPrompt });") <
+      composerSource.indexOf("await executeSessionCommand"),
+    "the optimistic timeline entry must render before the broker request completes",
+  );
   assert.match(cockpit, /SteeringSheet/);
   assert.match(cockpit, /request\.options\.map/);
   assert.match(cockpit, /Prompt this live session/);
