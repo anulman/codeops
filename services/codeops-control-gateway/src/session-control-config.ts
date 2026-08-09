@@ -3,6 +3,7 @@ export const SESSION_CONTROL_SECRET_NAMES = [
   "writeToken",
   "workerToken",
   "initializationToken",
+  "githubSteeringToken",
 ] as const;
 
 export type SessionControlSecrets = Readonly<

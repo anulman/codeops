@@ -14,7 +14,7 @@ function secrets() {
   );
 }
 
-test("accepts only four bounded and mutually distinct session authorities", () => {
+test("accepts only bounded and mutually distinct session authorities", () => {
   assert.deepEqual(validateSessionControlSecrets(secrets()), secrets());
   for (const patch of [
     { readToken: "short" },

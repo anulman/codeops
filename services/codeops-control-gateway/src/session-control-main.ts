@@ -2,6 +2,12 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
 import { validateSessionControlSecrets } from "./session-control-config.js";
+import {
+  AmbiguousGitHubSessionTargetError,
+  GitHubSessionTargetNotFoundError,
+  InvalidGitHubSessionSteeringRequestError,
+  serveGitHubSessionSteering,
+} from "./github-session-steering.js";
 import { migrateSessionBroker } from "./session-broker-migration.js";
 import {
   InvalidSessionCommandRequestError,
@@ -40,6 +46,7 @@ import {
   SessionForkConflictError,
   SessionNotFoundError,
   SessionRuntimeClaimConflictError,
+  listSessionSnapshots,
 } from "./session-broker-repository.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
@@ -90,6 +97,9 @@ const secrets = validateSessionControlSecrets({
   initializationToken: await secretFile(
     "CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE",
   ),
+  githubSteeringToken: await secretFile(
+    "CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE",
+  ),
 });
 const workerId = required("CODEOPS_SESSION_RUNTIME_WORKER_ID");
 if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(workerId)) {
@@ -110,6 +120,55 @@ const server = createServer((request, response) => {
   void (async () => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    try {
+      const result = await serveGitHubSessionSteering({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        token: secrets.githubSteeringToken,
+        readBody: () => readJson(request),
+        listSessions: async () => {
+          const client = await database.connect();
+          try {
+            return await listSessionSnapshots(client, 200);
+          } finally {
+            client.release();
+          }
+        },
+        enqueue: async (input) => {
+          const client = await database.connect();
+          try {
+            return await enqueueSessionRuntimeDispatch(client, input);
+          } finally {
+            client.release();
+          }
+        },
+      });
+      if (result !== null) {
+        json(response, result.status, result.body);
+        return;
+      }
+    } catch (error) {
+      const status =
+        error instanceof InvalidGitHubSessionSteeringRequestError
+          ? 400
+          : error instanceof GitHubSessionTargetNotFoundError
+            ? 404
+            : error instanceof AmbiguousGitHubSessionTargetError
+              ? 409
+              : 503;
+      json(response, status, {
+        status:
+          status === 400
+            ? "invalid-request"
+            : status === 404
+              ? "not-found"
+              : status === 409
+                ? "conflict"
+                : "unavailable",
+      });
       return;
     }
     try {
