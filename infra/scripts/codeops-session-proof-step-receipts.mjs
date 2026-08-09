@@ -123,6 +123,8 @@ export function authorizeSessionProofStep(input) {
   }
 
   let previousReceiptSha256 = digest(creationReceiptSource);
+  let predecessorReceipt = null;
+  let predecessorReceiptSource = null;
   for (let offset = 0; offset < priorSources.length; offset += 1) {
     const stepIndex = FIRST_EXECUTED_STEP + offset;
     const step = plan.sequence[stepIndex];
@@ -138,6 +140,8 @@ export function authorizeSessionProofStep(input) {
       previousReceiptSha256,
       artifactSha256: artifact?.sha256 ?? null,
     });
+    predecessorReceipt = receipt;
+    predecessorReceiptSource = priorSources[offset];
     previousReceiptSha256 = digest(priorSources[offset]);
   }
 
@@ -147,7 +151,35 @@ export function authorizeSessionProofStep(input) {
     throw new Error("proof intermediate execution is already complete");
   }
   const artifactSha256 = artifactDigest(plan, step, input.artifactSource);
-  verifySessionProofOperation(admission, {
+  let operationAdmission = admission;
+  if (input.recoveryAdmissionSource !== undefined) {
+    const recoveryAdmissionSource = input.recoveryAdmissionSource;
+    const recoveryAdmission = parseJson(
+      recoveryAdmissionSource,
+      "proof recovery admission",
+    );
+    const sourceAdmissionSource = `${JSON.stringify(admission, null, 2)}\n`;
+    if (
+      typeof recoveryAdmissionSource !== "string" ||
+      recoveryAdmission.apiVersion !==
+        "codeops.renoconcierge.ca/session-proof-recovery-admission/v1" ||
+      recoveryAdmission.planSha256 !== planSha256 ||
+      JSON.stringify(recoveryAdmission.identity) !== JSON.stringify(admission.identity) ||
+      JSON.stringify(recoveryAdmission.operator) !== JSON.stringify(admission.operator) ||
+      JSON.stringify(recoveryAdmission.target) !== JSON.stringify(admission.target) ||
+      recoveryAdmission.namespaceUid !== admission.namespaceUid ||
+      Date.parse(recoveryAdmission.approvedAt ?? "") < Date.parse(admission.expiresAt) ||
+      recoveryAdmission.recovery?.sourceAdmissionSha256 !== digest(sourceAdmissionSource) ||
+      predecessorReceipt === null ||
+      recoveryAdmission.recovery?.predecessorStepId !== predecessorReceipt.stepId ||
+      recoveryAdmission.recovery?.predecessorReceiptSha256 !== digest(predecessorReceiptSource) ||
+      recoveryAdmission.authorizedSteps?.[0] !== step.id
+    ) {
+      throw new Error("proof recovery admission does not continue the exact receipt chain");
+    }
+    operationAdmission = recoveryAdmission;
+  }
+  verifySessionProofOperation(operationAdmission, {
     stepId: step.id,
     namespaceResource: input.namespaceResource,
     operator: input.operator,
@@ -158,7 +190,7 @@ export function authorizeSessionProofStep(input) {
   return {
     apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
     planSha256,
-    admission,
+    admission: operationAdmission,
     namespace: creationReceipt.namespace,
     stepIndex,
     stepId: step.id,

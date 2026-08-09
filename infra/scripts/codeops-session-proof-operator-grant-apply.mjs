@@ -15,11 +15,16 @@ import { applySessionProofGrants } from "./codeops-session-proof-grant-apply.mjs
 import { readSessionProofOperatorArtifact } from "./codeops-session-proof-operator-admission.mjs";
 import {
   readSeventhSessionProofStepAuthorizationFromOperatorPacket,
+  readSeventhSessionProofStepAuthorizationFromVerifiedGatewayWaitOutputs,
 } from "./codeops-session-proof-operator-grant-step-authorization.mjs";
 import {
   readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket,
 } from "./codeops-session-proof-operator-gateway-wait.mjs";
 import {
+  readRecoveredSessionProofGatewayMigrationWaitOutputsFromOperatorPacket,
+} from "./codeops-session-proof-operator-recovery-step-authorization.mjs";
+import {
+  createSessionProofReadSnapshot,
   readSessionProofKubeContext,
   readSessionProofNamespace,
 } from "./codeops-session-proof-preflight.mjs";
@@ -195,14 +200,26 @@ export function persistSessionProofGrantApplyFromOperatorPacket(
 export function readSessionProofGrantApplyOutputsFromOperatorPacket(
   input,
   runner = execFileSync,
+  readGatewayMigrationWaitOutputs,
+  readAuthorization =
+    readSeventhSessionProofStepAuthorizationFromVerifiedGatewayWaitOutputs,
+  readRecoveredGatewayMigrationWaitOutputs =
+    readRecoveredSessionProofGatewayMigrationWaitOutputsFromOperatorPacket,
 ) {
-  const priorOutputs = readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket(
-    input,
-    runner,
+  const readSnapshot = createSessionProofReadSnapshot(runner);
+  const readPriorOutputs = readGatewayMigrationWaitOutputs ?? (
+    input.recoveryContinuationPath === undefined
+      ? readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket
+      : readRecoveredGatewayMigrationWaitOutputs
   );
-  const { authorization } = readSeventhSessionProofStepAuthorizationFromOperatorPacket(
+  const priorOutputs = readPriorOutputs(
     input,
-    runner,
+    readSnapshot,
+  );
+  const { authorization } = readAuthorization(
+    input,
+    readSnapshot,
+    priorOutputs,
   );
   const namespace = authorization.namespace.name;
   assertOutputPath(
@@ -229,8 +246,8 @@ export function readSessionProofGrantApplyOutputsFromOperatorPacket(
   ) {
     throw new Error("proof grant apply output timestamps drifted");
   }
-  const { operator, target } = readSessionProofKubeContext(runner);
-  const namespaceResource = readSessionProofNamespace(namespace, runner);
+  const { operator, target } = readSessionProofKubeContext(readSnapshot);
+  const namespaceResource = readSessionProofNamespace(namespace, readSnapshot);
   const expected = completeSessionProofStep(authorization, {
     namespaceResource,
     operator,

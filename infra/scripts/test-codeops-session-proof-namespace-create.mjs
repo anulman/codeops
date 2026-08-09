@@ -2913,11 +2913,27 @@ test("persists the exact private receipt-grant authorization", () => {
       JSON.parse(readFileSync(inputs.seventhAuthorizationPath, "utf8")),
       authorization,
     );
+    let predecessorReads = 0;
+    const kubernetesReadsBefore = stub.calls.length;
     assert.deepEqual(
-      readSeventhSessionProofStepAuthorizationFromOperatorPacket(inputs, stub.execute)
+      readSeventhSessionProofStepAuthorizationFromOperatorPacket(
+        inputs,
+        stub.execute,
+        (received, runnerArgument) => {
+          predecessorReads += 1;
+          assert.equal(received, inputs);
+          assert.notEqual(runnerArgument, stub.execute);
+          return readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket(
+            received,
+            runnerArgument,
+          );
+        },
+      )
         .authorization,
       authorization,
     );
+    assert.equal(predecessorReads, 1);
+    assert.equal(stub.calls.length - kubernetesReadsBefore, 5);
     assert.equal(stub.calls.filter(({ file, args }) =>
       file === "kubectl" && args[0] === "create").length, createCalls);
   } finally {
@@ -3060,10 +3076,65 @@ test("durably persists the exact receipt-grant apply evidence and completion rec
     assert.equal(readFileSync(inputs.seventhStepReceiptPath, "utf8"), result.receiptSource);
     assert.equal(result.receipt.evidenceSha256,
       createHash("sha256").update(readFileSync(inputs.seventhEvidencePath)).digest("hex"));
+    const readStart = stub.calls.length;
     const reopened = readSessionProofGrantApplyOutputsFromOperatorPacket(inputs, stub.execute);
     assert.equal(reopened.seventhEvidenceSource, evidenceSource);
     assert.equal(reopened.seventhStepReceiptSource, result.receiptSource);
     assert.deepEqual(reopened.seventhAuthorization, authorization);
+    assert.equal(stub.calls.length - readStart, 5);
+
+    let predecessorReads = 0;
+    let authorizationReads = 0;
+    const verifiedPredecessor = reopened;
+    const handedOff = readSessionProofGrantApplyOutputsFromOperatorPacket(
+      inputs,
+      stub.execute,
+      (received, runnerArgument) => {
+        predecessorReads += 1;
+        assert.equal(received, inputs);
+        assert.equal(typeof runnerArgument, "function");
+        return verifiedPredecessor;
+      },
+      (received, runnerArgument, receivedPredecessor) => {
+        authorizationReads += 1;
+        assert.equal(received, inputs);
+        assert.equal(typeof runnerArgument, "function");
+        assert.equal(receivedPredecessor, verifiedPredecessor);
+        return {
+          authorization,
+          authorizationSource: `${JSON.stringify(authorization, null, 2)}\n`,
+        };
+      },
+    );
+    assert.equal(predecessorReads, 1);
+    assert.equal(authorizationReads, 1);
+    assert.equal(handedOff.seventhEvidenceSource, evidenceSource);
+
+    let recoveredPredecessorReads = 0;
+    const recovered = readSessionProofGrantApplyOutputsFromOperatorPacket(
+      { ...inputs, recoveryContinuationPath: join(root, "recovery-continuation.json") },
+      stub.execute,
+      undefined,
+      (received, runnerArgument, receivedPredecessor) => {
+        assert.equal(received.recoveryContinuationPath,
+          join(root, "recovery-continuation.json"));
+        assert.equal(typeof runnerArgument, "function");
+        assert.equal(receivedPredecessor, verifiedPredecessor);
+        return {
+          authorization,
+          authorizationSource: `${JSON.stringify(authorization, null, 2)}\n`,
+        };
+      },
+      (received, runnerArgument) => {
+        recoveredPredecessorReads += 1;
+        assert.equal(received.recoveryContinuationPath,
+          join(root, "recovery-continuation.json"));
+        assert.equal(typeof runnerArgument, "function");
+        return verifiedPredecessor;
+      },
+    );
+    assert.equal(recoveredPredecessorReads, 1);
+    assert.equal(recovered.seventhEvidenceSource, evidenceSource);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -3853,6 +3924,83 @@ test("durably persists the exact Codex-login completion evidence and receipt", (
     assert.equal(reopened.tenthEvidenceSource, evidenceSource);
     assert.equal(reopened.tenthStepReceiptSource, result.receiptSource);
     assert.deepEqual(reopened.tenthAuthorization, authorization);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("resumes exact empty Codex-login completion reservations after an interrupted waiter", () => {
+  const root = mkdtempSync(join(tmpdir(), "session-proof-create-"));
+  try {
+    const inputs = persistOperatorInputs(root);
+    const stub = runner();
+    const authorization = persistThroughCodexLoginWaitAuthorization(inputs, stub);
+    const completedAt = "2026-08-05T06:30:00Z";
+    const loginApplyReceiptSource = readFileSync(inputs.ninthStepReceiptPath, "utf8");
+    const loginApplyEvidenceSource = readFileSync(inputs.ninthEvidencePath, "utf8");
+    const resourceInventory = JSON.parse(loginApplyEvidenceSource).resourceInventory;
+    const evidenceSource = JSON.stringify(buildSessionProofCodexLoginCompletionEvidence({
+      authorization,
+      loginApplyReceiptSource,
+      loginApplyEvidenceSource,
+      job: {
+        apiVersion: "batch/v1",
+        kind: "Job",
+        metadata: {
+          name: "codeops-codex-auth-login",
+          namespace: identity.namespace,
+          uid: resourceInventory.find((resource) => resource.kind === "Job").uid,
+          generation: 1,
+        },
+        spec: {
+          completions: 1,
+          parallelism: 1,
+          backoffLimit: 0,
+          activeDeadlineSeconds: 900,
+          ttlSecondsAfterFinished: 3600,
+        },
+        status: {
+          active: 0,
+          succeeded: 1,
+          failed: 0,
+          startTime: "2026-08-05T06:29:00Z",
+          completionTime: "2026-08-05T06:29:30Z",
+          conditions: [{ type: "Complete", status: "True" }],
+        },
+      },
+      persistentVolumeClaim: {
+        apiVersion: "v1",
+        kind: "PersistentVolumeClaim",
+        metadata: {
+          name: "codeops-codex-auth",
+          namespace: identity.namespace,
+          uid: resourceInventory.find(
+            (resource) => resource.kind === "PersistentVolumeClaim",
+          ).uid,
+        },
+        status: { phase: "Bound" },
+      },
+      observedAt: completedAt,
+    }));
+    const receipt = completeSessionProofStep(authorization, {
+      namespaceResource: namespace(),
+      operator,
+      target,
+      completedAt,
+      evidenceSource,
+    });
+    writeFileSync(inputs.tenthEvidencePath, "", { mode: 0o600 });
+    writeFileSync(inputs.tenthStepReceiptPath, "", { mode: 0o600 });
+    const result = persistSessionProofCodexLoginWaitFromOperatorPacket({
+      ...inputs,
+      resumeInterruptedReservation: true,
+      startedAt: "2026-08-05T06:29:00Z",
+      completedAt,
+      maxAttempts: 96,
+      pollIntervalMs: 10_000,
+    }, stub.execute, () => ({ evidenceSource, receipt }));
+    assert.equal(readFileSync(inputs.tenthEvidencePath, "utf8"), evidenceSource);
+    assert.equal(readFileSync(inputs.tenthStepReceiptPath, "utf8"), result.receiptSource);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }

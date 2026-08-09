@@ -123,14 +123,19 @@ test("rejects pending, failed, retried, malformed, or extra-field completion", (
   changedSpec.spec.backoffLimit = 1;
   assert.throws(() => build({ job: changedSpec }), /Job drifted/);
   assert.throws(() => build({ observedAt: "2026-08-05T20:41:03Z" }), /timestamp drifted/);
-  const predatesAuthorization = job();
-  predatesAuthorization.status.startTime = "2026-08-05T20:40:29Z";
-  assert.throws(() => build({ job: predatesAuthorization }), /timestamp drifted/);
   const evidence = build();
   assert.throws(() => verifySessionProofGrantCompletionEvidence(authorization, {
     ...evidence,
     podLogs: "forbidden",
   }), /identity drifted/);
+});
+
+test("allows the applied Job to start before the later wait authorization", () => {
+  const appliedBeforeWaitAuthorization = job();
+  appliedBeforeWaitAuthorization.status.startTime = "2026-08-05T20:40:29Z";
+  const evidence = build({ job: appliedBeforeWaitAuthorization });
+  assert.equal(evidence.job.uid, "grant-job-uid");
+  assert.equal(evidence.job.startTime, "2026-08-05T20:40:29Z");
 });
 
 test("rejects generic, oversized, or wrong-step completion evidence", () => {

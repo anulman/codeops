@@ -194,6 +194,19 @@ test("binds smoke success to the exact replacement Job, claim, and login absence
   assert.equal(evidence.loginJobAbsent, true);
 });
 
+test("allows smoke completion authorization after the exact smoke Job completed", () => {
+  const evidence = buildSessionProofCodexSmokeCompletionEvidence({
+    authorization: { ...authorization, authorizedAt: "2026-08-05T21:21:30Z" },
+    smokeReplacementReceiptSource: replacementReceiptSource,
+    smokeReplacementEvidenceSource: replacementEvidenceSource,
+    loginJobAbsent: true,
+    job: job(),
+    persistentVolumeClaim: claim(),
+    observedAt: "2026-08-05T21:22:00Z",
+  });
+  assert.equal(evidence.job.completionTime, "2026-08-05T21:21:00Z");
+});
+
 test("rejects predecessor, replacement evidence, Job UID, claim UID, or login presence drift", () => {
   assert.throws(() => build({ smokeReplacementReceiptSource: `${replacementReceiptSource}\n` }), /predecessor/);
   assert.throws(() => build({ smokeReplacementEvidenceSource: `${replacementEvidenceSource}\n` }), /receipt identity/);
@@ -218,6 +231,7 @@ test("rejects pending, failed, retried, malformed, deleting, or timestamp-drifte
   assert.throws(() => build({ job: changedSpec }), /Job drifted/);
   assert.throws(() => build({ persistentVolumeClaim: claim({ status: { phase: "Pending" } }) }), /claim drifted/);
   assert.throws(() => build({ persistentVolumeClaim: claim({ metadata: { deletionTimestamp: "2026-08-05T21:21:30Z" } }) }), /claim drifted/);
+  assert.throws(() => build({ job: job({ startTime: "2026-08-05T21:18:59Z" }) }), /timestamp drifted/);
   assert.throws(() => build({ observedAt: "2026-08-05T21:20:59Z" }), /timestamp drifted/);
 });
 

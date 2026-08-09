@@ -3,7 +3,10 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import { createSessionProofAdmission } from "./codeops-session-proof-admission.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
-import { runSessionProofPreflight } from "./codeops-session-proof-preflight.mjs";
+import {
+  createSessionProofReadSnapshot,
+  runSessionProofPreflight,
+} from "./codeops-session-proof-preflight.mjs";
 
 const certificateData = Buffer.from("synthetic-client-certificate").toString("base64");
 const credentialSha256 = createHash("sha256")
@@ -93,4 +96,23 @@ test("rejects an existing namespace, principal drift, and plan drift without mut
   assert.throws(() => runSessionProofPreflight({
     planSource: `${planSource}\n`, admission, observedAt: "2026-08-05T06:00:00Z",
   }, runner().execute));
+});
+
+test("snapshots each reviewed Kubernetes read once and rejects mutation commands", () => {
+  const stub = runner();
+  const snapshot = createSessionProofReadSnapshot(stub.execute);
+  const options = { encoding: "utf8", maxBuffer: 1024 * 1024, timeout: 15_000 };
+  assert.equal(snapshot("kubectl", ["config", "current-context"], options), `${target.context}\n`);
+  assert.equal(snapshot("kubectl", ["config", "current-context"], options), `${target.context}\n`);
+  assert.equal(stub.calls.length, 1);
+  assert.equal(createSessionProofReadSnapshot(snapshot), snapshot);
+  assert.throws(
+    () => snapshot("kubectl", ["create", "namespace", identity.namespace], options),
+    /admits only reviewed Kubernetes identity and Namespace reads/,
+  );
+  assert.throws(
+    () => snapshot("sh", ["-c", "true"], options),
+    /admits only reviewed kubectl reads/,
+  );
+  assert.equal(stub.calls.length, 1);
 });

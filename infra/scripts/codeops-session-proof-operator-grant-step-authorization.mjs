@@ -18,6 +18,13 @@ import {
   readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket,
 } from "./codeops-session-proof-operator-gateway-wait.mjs";
 import {
+  readSessionProofRecoveryContinuationFromOperatorPacket,
+} from "./codeops-session-proof-operator-recovery-continuation.mjs";
+import {
+  readRecoveredSessionProofGatewayMigrationWaitOutputsFromOperatorPacket,
+} from "./codeops-session-proof-operator-recovery-step-authorization.mjs";
+import {
+  createSessionProofReadSnapshot,
   readSessionProofKubeContext,
   readSessionProofNamespace,
 } from "./codeops-session-proof-preflight.mjs";
@@ -120,10 +127,35 @@ export function authorizeSeventhSessionProofStepFromOperatorPacket(
   input,
   runner = execFileSync,
 ) {
-  const outputs = readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket(
+  const readSnapshot = createSessionProofReadSnapshot(runner);
+  const readOutputs = input.recoveryContinuationPath === undefined
+    ? readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket
+    : readRecoveredSessionProofGatewayMigrationWaitOutputsFromOperatorPacket;
+  const outputs = readOutputs(
     input,
-    runner,
+    readSnapshot,
   );
+  const recoveryContinuation = input.recoveryContinuationPath === undefined
+    ? null
+    : readSessionProofRecoveryContinuationFromOperatorPacket(
+      input,
+      readSnapshot,
+      () => outputs,
+    );
+  return authorizeSeventhSessionProofStepFromVerifiedOutputs(
+    input,
+    outputs,
+    readSnapshot,
+    recoveryContinuation?.admissionSource,
+  );
+}
+
+function authorizeSeventhSessionProofStepFromVerifiedOutputs(
+  input,
+  outputs,
+  runner,
+  recoveryAdmissionSource,
+) {
   const { operator, target } = readSessionProofKubeContext(runner);
   const namespaceResource = readSessionProofNamespace(
     outputs.creationReceipt.namespace.name,
@@ -141,6 +173,7 @@ export function authorizeSeventhSessionProofStepFromOperatorPacket(
       outputs.fifthStepReceiptSource,
       outputs.sixthStepReceiptSource,
     ],
+    ...(recoveryAdmissionSource === undefined ? {} : { recoveryAdmissionSource }),
     artifactSource: grantsManifestSource,
     namespaceResource,
     operator,
@@ -177,11 +210,25 @@ export function persistSeventhSessionProofStepAuthorizationFromOperatorPacket(
 export function readSeventhSessionProofStepAuthorizationFromOperatorPacket(
   input,
   runner = execFileSync,
+  readGatewayMigrationWaitOutputs,
 ) {
-  const outputs = readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket(
-    input,
-    runner,
+  const readSnapshot = createSessionProofReadSnapshot(runner);
+  const readOutputs = readGatewayMigrationWaitOutputs ?? (
+    input.recoveryContinuationPath === undefined
+      ? readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket
+      : readRecoveredSessionProofGatewayMigrationWaitOutputsFromOperatorPacket
   );
+  const outputs = readOutputs(
+    input,
+    readSnapshot,
+  );
+  const recoveryContinuation = input.recoveryContinuationPath === undefined
+    ? null
+    : readSessionProofRecoveryContinuationFromOperatorPacket(
+      input,
+      readSnapshot,
+      () => outputs,
+    );
   assertAuthorizationPath(
     input.seventhAuthorizationPath,
     input.packetPath,
@@ -195,13 +242,25 @@ export function readSeventhSessionProofStepAuthorizationFromOperatorPacket(
   } catch {
     throw new Error("proof seventh-step authorization must be valid JSON");
   }
-  const expected = authorizeSeventhSessionProofStepFromOperatorPacket({
+  const expected = authorizeSeventhSessionProofStepFromVerifiedOutputs({
     ...input,
     observedAt: authorization.authorizedAt,
-  }, runner);
+  }, outputs, readSnapshot, recoveryContinuation?.admissionSource);
   const expectedSource = `${JSON.stringify(expected, null, 2)}\n`;
   if (!authorizationBytes.equals(Buffer.from(expectedSource))) {
     throw new Error("proof seventh-step authorization is not the exact persisted artifact");
   }
   return { authorization: expected, authorizationSource: expectedSource };
+}
+
+export function readSeventhSessionProofStepAuthorizationFromVerifiedGatewayWaitOutputs(
+  input,
+  runner,
+  gatewayMigrationWaitOutputs,
+) {
+  return readSeventhSessionProofStepAuthorizationFromOperatorPacket(
+    input,
+    runner,
+    () => gatewayMigrationWaitOutputs,
+  );
 }

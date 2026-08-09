@@ -66,6 +66,35 @@ function reservePrivateOutput(path) {
   );
 }
 
+function reopenPrivateReservation(path) {
+  const before = lstatSync(path);
+  if (
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    (before.mode & 0o777) !== 0o600 ||
+    before.size !== 0
+  ) {
+    throw new Error("proof Codex smoke replacement reservation is not one empty private regular file");
+  }
+  const descriptor = openSync(path, constants.O_WRONLY | constants.O_NOFOLLOW);
+  const opened = fstatSync(descriptor);
+  const after = lstatSync(path);
+  if (
+    opened.dev !== before.dev ||
+    opened.ino !== before.ino ||
+    after.dev !== before.dev ||
+    after.ino !== before.ino ||
+    after.size !== 0 ||
+    after.ctimeMs !== before.ctimeMs ||
+    after.mtimeMs !== before.mtimeMs ||
+    (after.mode & 0o777) !== 0o600
+  ) {
+    closeSync(descriptor);
+    throw new Error("proof Codex smoke replacement reservation changed while it was reopened");
+  }
+  return descriptor;
+}
+
 function readPrivateOutput(path) {
   const before = lstatSync(path);
   if (
@@ -144,6 +173,7 @@ export function replaceSessionProofCodexSmokeFromOperatorPacket(
     manifestSource,
     loginCompletionReceiptSource: outputs.tenthStepReceiptSource,
     loginCompletionEvidenceSource: outputs.tenthEvidenceSource,
+    resumeAfterLoginDeletion: input.resumeAfterLoginDeletion,
     startedAt: input.startedAt,
     completedAt: input.completedAt,
   }, { runner });
@@ -163,21 +193,24 @@ export async function persistSessionProofCodexSmokeReplacementFromOperatorPacket
     input.packetPath,
     namespace,
     "step-12-codex-smoke.evidence.json",
-    true,
+    input.resumeInterruptedReservation !== true,
   );
   assertOutputPath(
     input.eleventhStepReceiptPath,
     input.packetPath,
     namespace,
     "step-12-codex-smoke.receipt.json",
-    true,
+    input.resumeInterruptedReservation !== true,
   );
 
-  const evidenceDescriptor = reservePrivateOutput(input.eleventhEvidencePath);
+  const openOutput = input.resumeInterruptedReservation === true
+    ? reopenPrivateReservation
+    : reservePrivateOutput;
+  const evidenceDescriptor = openOutput(input.eleventhEvidencePath);
   let receiptDescriptor;
   try {
     syncParent(input.eleventhEvidencePath);
-    receiptDescriptor = reservePrivateOutput(input.eleventhStepReceiptPath);
+    receiptDescriptor = openOutput(input.eleventhStepReceiptPath);
     syncParent(input.eleventhStepReceiptPath);
     const result = await replaceSessionProofCodexSmokeFromOperatorPacket(
       input,

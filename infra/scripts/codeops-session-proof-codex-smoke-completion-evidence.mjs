@@ -167,7 +167,11 @@ export function verifySessionProofCodexSmokeReplacementChain(
   if (!job || !claim || replacementEvidence.loginJobAbsent !== true) {
     throw new Error("proof Codex smoke replacement lacks Job, claim, or login absence");
   }
-  return { jobUid: job.uid, persistentVolumeClaimUid: claim.uid };
+  return {
+    jobUid: job.uid,
+    persistentVolumeClaimUid: claim.uid,
+    appliedAt: replacementEvidence.observedAt,
+  };
 }
 
 export function verifySessionProofCodexSmokeCompletionEvidence(authorization, evidence) {
@@ -206,7 +210,7 @@ export function verifySessionProofCodexSmokeCompletionEvidence(authorization, ev
     throw new Error("proof Codex smoke live identity drifted from replacement evidence");
   }
   if (
-    Date.parse(evidence.job.startTime) < Date.parse(authorization.authorizedAt) ||
+    Date.parse(evidence.job.startTime) < Date.parse(applied.appliedAt) ||
     Date.parse(evidence.observedAt) < Date.parse(evidence.job.completionTime)
   ) {
     throw new Error("proof Codex smoke completion timestamp drifted");

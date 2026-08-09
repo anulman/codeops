@@ -153,10 +153,7 @@ export function verifySessionProofGrantCompletionEvidence(authorization, evidenc
   if (evidence.job.uid !== appliedJobUid) {
     throw new Error("proof grant completion Job UID drifted from apply evidence");
   }
-  if (
-    Date.parse(evidence.job.startTime) < Date.parse(authorization.authorizedAt) ||
-    Date.parse(evidence.observedAt) < Date.parse(evidence.job.completionTime)
-  ) {
+  if (Date.parse(evidence.observedAt) < Date.parse(evidence.job.completionTime)) {
     throw new Error("proof grant completion timestamp drifted");
   }
   return true;

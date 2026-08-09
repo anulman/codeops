@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { createSessionProofAdmission, bindSessionProofNamespace } from "./codeops-session-proof-admission.mjs";
+import {
+  bindSessionProofNamespace,
+  createSessionProofAdmission,
+  recoverSessionProofAdmission,
+} from "./codeops-session-proof-admission.mjs";
 import {
   buildSessionProofApplyEvidence,
   sessionProofApplyResourceIdentities,
@@ -559,6 +563,88 @@ test("advances only through exact predecessor bytes", () => {
     () => authorize({ priorReceiptSources: [JSON.stringify(tampered)] }),
     /receipt chain drifted/,
   );
+});
+
+test("continues an expired run only from its exact recovery admission and predecessor", () => {
+  const receiptSources = [];
+  const evidenceSources = [];
+  const sequence = sessionProofSequence();
+  for (let stepIndex = 2; stepIndex <= 6; stepIndex += 1) {
+    const step = sequence[stepIndex];
+    const authorization = authorize({
+      priorReceiptSources: receiptSources,
+      artifactSource: step.artifact ? `${step.artifact}\n` : undefined,
+      observedAt: `2026-08-05T18:10:${String(stepIndex).padStart(2, "0")}Z`,
+    });
+    const currentEvidenceSource = evidenceSource(
+      authorization,
+      `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+      { priorReceiptSources: receiptSources, priorEvidenceSources: evidenceSources },
+    );
+    evidenceSources.push(currentEvidenceSource);
+    receiptSources.push(`${JSON.stringify(completeSessionProofStep(authorization, {
+      namespaceResource,
+      operator,
+      target,
+      completedAt: `2026-08-05T18:11:${String(stepIndex).padStart(2, "0")}Z`,
+      evidenceSource: currentEvidenceSource,
+    }), null, 2)}\n`);
+  }
+  const sourceAdmissionSource = `${JSON.stringify(admission, null, 2)}\n`;
+  const recoveryAdmission = recoverSessionProofAdmission(admission, {
+    sourceAdmissionSource,
+    predecessorStepId: "start-gateway",
+    predecessorReceiptSource: receiptSources.at(-1),
+    namespaceResource,
+    operator,
+    target,
+    approvedAt: "2026-08-05T20:05:00Z",
+    expiresAt: "2026-08-05T21:05:00Z",
+  });
+  const recoveryAdmissionSource = `${JSON.stringify(recoveryAdmission, null, 2)}\n`;
+  const authorization = authorize({
+    priorReceiptSources: receiptSources,
+    recoveryAdmissionSource,
+    observedAt: "2026-08-05T20:10:00Z",
+  });
+  assert.equal(authorization.stepId, "wait-gateway-migration");
+  assert.deepEqual(authorization.admission, recoveryAdmission);
+
+  assert.throws(() => authorize({
+    priorReceiptSources: receiptSources.slice(0, -1),
+    artifactSource: "gateway\n",
+    recoveryAdmissionSource,
+    observedAt: "2026-08-05T20:10:00Z",
+  }), /does not continue the exact receipt chain/);
+  assert.throws(() => authorize({
+    priorReceiptSources: receiptSources,
+    recoveryAdmissionSource: recoveryAdmissionSource.replace(
+      recoveryAdmission.recovery.predecessorReceiptSha256,
+      "f".repeat(64),
+    ),
+    observedAt: "2026-08-05T20:10:00Z",
+  }), /does not continue the exact receipt chain/);
+  for (const driftedRecovery of [
+    {
+      ...recoveryAdmission,
+      operator: { ...recoveryAdmission.operator, username: "substituted@example.com" },
+    },
+    {
+      ...recoveryAdmission,
+      target: { ...recoveryAdmission.target, context: "substituted-context" },
+    },
+    {
+      ...recoveryAdmission,
+      approvedAt: "2026-08-05T19:55:00Z",
+      expiresAt: "2026-08-05T20:55:00Z",
+    },
+  ]) {
+    assert.throws(() => authorize({
+      priorReceiptSources: receiptSources,
+      recoveryAdmissionSource: `${JSON.stringify(driftedRecovery, null, 2)}\n`,
+      observedAt: "2026-08-05T20:10:00Z",
+    }), /does not continue the exact receipt chain/);
+  }
 });
 
 test("binds artifact steps to the reviewed manifest bytes", () => {

@@ -4,6 +4,7 @@ import test from "node:test";
 import {
   bindSessionProofNamespace,
   createSessionProofAdmission,
+  recoverSessionProofAdmission,
   verifySessionProofOperation,
 } from "./codeops-session-proof-admission.mjs";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
@@ -137,4 +138,121 @@ test("fails closed on principal, cluster, expiry, namespace labels, UID, or step
   }, {
     ...base, stepId: "deploy-production",
   }));
+});
+
+test("recovers only the exact expired bound admission, live Namespace UID, and predecessor receipt", () => {
+  const bound = bindSessionProofNamespace(admission(), {
+    namespaceResource: namespace(), operator, target, observedAt,
+  });
+  const sourceAdmissionSource = `${JSON.stringify(bound, null, 2)}\n`;
+  const predecessorReceiptSource = `${JSON.stringify({
+    apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+    result: "completed",
+    proceed: true,
+    checkedAt: "2026-08-05T07:00:00.000Z",
+    planSha256: bound.planSha256,
+    namespace: { name: identity.namespace, uid: bound.namespaceUid },
+    stepIndex: 6,
+    stepId: "start-gateway",
+    action: "operator-apply",
+    artifact: "gateway",
+    artifactSha256: "a".repeat(64),
+    previousReceiptSha256: "b".repeat(64),
+    evidenceSha256: "c".repeat(64),
+  }, null, 2)}\n`;
+  const recovery = recoverSessionProofAdmission(bound, {
+    sourceAdmissionSource,
+    predecessorStepId: "start-gateway",
+    predecessorReceiptSource,
+    namespaceResource: namespace(),
+    operator,
+    target,
+    approvedAt: "2026-08-05T08:05:00.000Z",
+    expiresAt: "2026-08-05T09:05:00.000Z",
+  });
+  assert.equal(recovery.state, "approved-bound");
+  assert.equal(recovery.namespaceUid, "namespace-uid-1");
+  assert.deepEqual(
+    recovery.authorizedSteps,
+    sessionProofSequence().map((step) => step.id).slice(7),
+  );
+  assert.equal(
+    recovery.recovery.sourceAdmissionSha256,
+    createHash("sha256").update(sourceAdmissionSource).digest("hex"),
+  );
+  assert.equal(
+    recovery.recovery.predecessorReceiptSha256,
+    createHash("sha256").update(predecessorReceiptSource).digest("hex"),
+  );
+  assert.equal(verifySessionProofOperation(recovery, {
+    stepId: "wait-gateway-migration",
+    namespaceResource: namespace(),
+    operator,
+    target,
+    observedAt: "2026-08-05T08:30:00.000Z",
+  }), true);
+  assert.throws(() => verifySessionProofOperation(recovery, {
+    stepId: "start-gateway",
+    namespaceResource: namespace(),
+    operator,
+    target,
+    observedAt: "2026-08-05T08:30:00.000Z",
+  }), /not admitted/);
+  assert.throws(() => verifySessionProofOperation(recovery, {
+    stepId: "wait-gateway-migration",
+    namespaceResource: namespace(),
+    operator,
+    target,
+    observedAt: "2026-08-05T09:30:00.000Z",
+  }), /outside its approval window/);
+});
+
+test("refuses recovery drift before it can authorize a remaining step", () => {
+  const bound = bindSessionProofNamespace(admission(), {
+    namespaceResource: namespace(), operator, target, observedAt,
+  });
+  const base = {
+    sourceAdmissionSource: `${JSON.stringify(bound, null, 2)}\n`,
+    predecessorStepId: "start-gateway",
+    predecessorReceiptSource: `${JSON.stringify({
+      apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+      result: "completed",
+      proceed: true,
+      checkedAt: "2026-08-05T07:00:00.000Z",
+      planSha256: bound.planSha256,
+      namespace: { name: identity.namespace, uid: bound.namespaceUid },
+      stepIndex: 6,
+      stepId: "start-gateway",
+      action: "operator-apply",
+      artifact: "gateway",
+      artifactSha256: "a".repeat(64),
+      previousReceiptSha256: "b".repeat(64),
+      evidenceSha256: "c".repeat(64),
+    })}\n`,
+    namespaceResource: namespace(),
+    operator,
+    target,
+    approvedAt: "2026-08-05T08:05:00.000Z",
+    expiresAt: "2026-08-05T09:05:00.000Z",
+  };
+  assert.throws(() => recoverSessionProofAdmission(bound, {
+    ...base,
+    sourceAdmissionSource: `${JSON.stringify({ ...bound, namespaceUid: "other" })}\n`,
+  }), /do not match/);
+  assert.throws(() => recoverSessionProofAdmission(bound, {
+    ...base,
+    predecessorReceiptSource: base.predecessorReceiptSource.replace(
+      '"stepId":"start-gateway"',
+      '"stepId":"wait-database"',
+    ),
+  }), /predecessor drifted/);
+  assert.throws(() => recoverSessionProofAdmission(bound, {
+    ...base,
+    namespaceResource: namespace("replacement-uid"),
+  }), /UID drifted/);
+  assert.throws(() => recoverSessionProofAdmission(bound, {
+    ...base,
+    approvedAt: "2026-08-05T07:59:00.000Z",
+  }), /window must start after source expiry/);
+  assert.throws(() => recoverSessionProofAdmission(admission(), base), /bound admission/);
 });

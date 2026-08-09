@@ -152,6 +152,7 @@ export function persistSessionProofGatewayMigrationWaitFromOperatorPacket(
   input,
   runner = execFileSync,
   waitForGatewayMigration = waitForSessionProofGatewayMigration,
+  waitFromOperatorPacket = waitForSessionProofGatewayMigrationFromOperatorPacket,
 ) {
   const packetName = basename(input.packetPath ?? "");
   const namespace = packetName.endsWith(".packet")
@@ -178,7 +179,7 @@ export function persistSessionProofGatewayMigrationWaitFromOperatorPacket(
     syncParent(input.sixthEvidencePath);
     receiptDescriptor = reservePrivateOutput(input.sixthStepReceiptPath);
     syncParent(input.sixthStepReceiptPath);
-    const result = waitForSessionProofGatewayMigrationFromOperatorPacket(
+    const result = waitFromOperatorPacket(
       input,
       runner,
       waitForGatewayMigration,
@@ -201,11 +202,13 @@ export function persistSessionProofGatewayMigrationWaitFromOperatorPacket(
 export function readSessionProofGatewayMigrationWaitOutputsFromOperatorPacket(
   input,
   runner = execFileSync,
+  readAuthorization = readSixthSessionProofStepAuthorizationFromOperatorPacket,
 ) {
   const priorOutputs = readSessionProofGatewayApplyOutputsFromOperatorPacket(input, runner);
-  const { authorization } = readSixthSessionProofStepAuthorizationFromOperatorPacket(
+  const { authorization } = readAuthorization(
     input,
     runner,
+    priorOutputs,
   );
   const namespace = authorization.namespace.name;
   assertOutputPath(

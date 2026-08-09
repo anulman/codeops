@@ -65,6 +65,35 @@ function reservePrivateOutput(path) {
   );
 }
 
+function reopenPrivateReservation(path) {
+  const before = lstatSync(path);
+  if (
+    !before.isFile() ||
+    before.isSymbolicLink() ||
+    (before.mode & 0o777) !== 0o600 ||
+    before.size !== 0
+  ) {
+    throw new Error("proof Codex login completion reservation is not one empty private regular file");
+  }
+  const descriptor = openSync(path, constants.O_WRONLY | constants.O_NOFOLLOW);
+  const opened = fstatSync(descriptor);
+  const after = lstatSync(path);
+  if (
+    opened.dev !== before.dev ||
+    opened.ino !== before.ino ||
+    after.dev !== before.dev ||
+    after.ino !== before.ino ||
+    after.size !== 0 ||
+    after.ctimeMs !== before.ctimeMs ||
+    after.mtimeMs !== before.mtimeMs ||
+    (after.mode & 0o777) !== 0o600
+  ) {
+    closeSync(descriptor);
+    throw new Error("proof Codex login completion reservation changed while it was reopened");
+  }
+  return descriptor;
+}
+
 function readPrivateOutput(path) {
   const before = lstatSync(path);
   if (
@@ -162,21 +191,24 @@ export function persistSessionProofCodexLoginWaitFromOperatorPacket(
     input.packetPath,
     namespace,
     "step-11-wait-codex-login.evidence.json",
-    true,
+    input.resumeInterruptedReservation !== true,
   );
   assertOutputPath(
     input.tenthStepReceiptPath,
     input.packetPath,
     namespace,
     "step-11-wait-codex-login.receipt.json",
-    true,
+    input.resumeInterruptedReservation !== true,
   );
 
-  const evidenceDescriptor = reservePrivateOutput(input.tenthEvidencePath);
+  const openOutput = input.resumeInterruptedReservation === true
+    ? reopenPrivateReservation
+    : reservePrivateOutput;
+  const evidenceDescriptor = openOutput(input.tenthEvidencePath);
   let receiptDescriptor;
   try {
     syncParent(input.tenthEvidencePath);
-    receiptDescriptor = reservePrivateOutput(input.tenthStepReceiptPath);
+    receiptDescriptor = openOutput(input.tenthStepReceiptPath);
     syncParent(input.tenthStepReceiptPath);
     const result = waitForSessionProofCodexLoginFromOperatorPacket(
       input,

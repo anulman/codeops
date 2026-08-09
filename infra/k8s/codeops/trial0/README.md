@@ -1402,8 +1402,10 @@ Jobs, retries, timestamp drift, and replacement Jobs cannot complete the step.
 The concrete but uninvoked waiter repeats live operator, target, and
 Namespace-UID admission around a bounded six-minute poll, reads only the exact
 Job, fails immediately on terminal failure, and double-reads the successful
-state before emitting evidence and a receipt. CI tests the closed adapter but
-cannot create or run this Job.
+state before emitting evidence and a receipt. The Job has no time-based TTL:
+it remains available for this UID-bound completion proof until the explicit
+Namespace teardown deletes the proof resource set. CI tests the closed adapter
+but cannot create or run this Job.
 
 ```bash
 CODEOPS_SESSION_PROOF_POSTGRES_DIGEST=sha256:<64-lowercase-hex> \

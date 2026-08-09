@@ -259,24 +259,32 @@ export async function replaceSessionProofCodexSmoke(input, dependencies = {}) {
   );
 
   const live = readAndVerifyLiveIdentity(authorization, input.startedAt, runner);
-  const loginJobUid = verifyBeforeReplacement(authorization, loginCompletionEvidence, runner);
-  const tls = readSessionProofKubeTlsConfig({ operator: live.operator, target: live.target }, runner);
-  const response = await deleteRequest({
-    target: live.target,
-    namespace: authorization.namespace.name,
-    uid: loginJobUid,
-    ...tls,
-  });
-  assertDeleteResponse(response);
-
-  const deadline = now().getTime() + VERIFY_TIMEOUT_MS;
-  while (readResource(authorization.namespace.name, {
-    apiVersion: "batch/v1", kind: "Job", name: "codeops-codex-auth-login",
-  }, runner) !== null) {
-    if (now().getTime() >= deadline) {
-      throw new Error("proof Codex login Job absence was not verified");
+  if (input.resumeAfterLoginDeletion === true) {
+    if (readResource(authorization.namespace.name, {
+      apiVersion: "batch/v1", kind: "Job", name: "codeops-codex-auth-login",
+    }, runner) !== null) {
+      throw new Error("proof Codex login Job still exists during replacement recovery");
     }
-    await sleep(VERIFY_INTERVAL_MS);
+  } else {
+    const loginJobUid = verifyBeforeReplacement(authorization, loginCompletionEvidence, runner);
+    const tls = readSessionProofKubeTlsConfig({ operator: live.operator, target: live.target }, runner);
+    const response = await deleteRequest({
+      target: live.target,
+      namespace: authorization.namespace.name,
+      uid: loginJobUid,
+      ...tls,
+    });
+    assertDeleteResponse(response);
+
+    const deadline = now().getTime() + VERIFY_TIMEOUT_MS;
+    while (readResource(authorization.namespace.name, {
+      apiVersion: "batch/v1", kind: "Job", name: "codeops-codex-auth-login",
+    }, runner) !== null) {
+      if (now().getTime() >= deadline) {
+        throw new Error("proof Codex login Job absence was not verified");
+      }
+      await sleep(VERIFY_INTERVAL_MS);
+    }
   }
 
   readAndVerifyLiveIdentity(authorization, input.startedAt, runner);

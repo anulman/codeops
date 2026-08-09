@@ -122,6 +122,21 @@ test("binds Codex login completion to the exact apply evidence, Job, and credent
   assert.equal(evidence.persistentVolumeClaim.phase, "Bound");
 });
 
+test("allows completion authorization after the exact login Job has started or completed", () => {
+  const evidence = buildSessionProofCodexLoginCompletionEvidence({
+    authorization: {
+      ...authorization,
+      authorizedAt: "2026-08-05T21:17:30Z",
+    },
+    loginApplyReceiptSource: applyReceiptSource,
+    loginApplyEvidenceSource: applyEvidenceSource,
+    job: job(),
+    persistentVolumeClaim: claim(),
+    observedAt: "2026-08-05T21:18:00Z",
+  });
+  assert.equal(evidence.job.completionTime, "2026-08-05T21:17:00Z");
+});
+
 test("rejects predecessor, apply evidence, Job UID, or claim UID drift", () => {
   assert.throws(() => build({ loginApplyReceiptSource: `${applyReceiptSource}\n` }), /predecessor/);
   assert.throws(() => build({ loginApplyEvidenceSource: `${applyEvidenceSource}\n` }), /receipt identity/);
@@ -145,6 +160,7 @@ test("rejects pending, failed, retried, malformed, or deleting login completion"
   assert.throws(() => build({ job: changedSpec }), /Job drifted/);
   assert.throws(() => build({ persistentVolumeClaim: claim({ status: { phase: "Pending" } }) }), /claim drifted/);
   assert.throws(() => build({ persistentVolumeClaim: claim({ metadata: { deletionTimestamp: "2026-08-05T21:17:30Z" } }) }), /claim drifted/);
+  assert.throws(() => build({ job: job({ startTime: "2026-08-05T21:14:59Z" }) }), /timestamp drifted/);
   assert.throws(() => build({ observedAt: "2026-08-05T21:16:59Z" }), /timestamp drifted/);
 });
 

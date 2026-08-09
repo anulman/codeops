@@ -187,7 +187,7 @@ const typeByIdentity = new Map([
 ]);
 
 function makeDependencies(options = {}) {
-  let loginExists = true;
+  let loginExists = options.loginExists ?? true;
   let smokeExists = options.smokePreexists ?? false;
   let created = false;
   const calls = [];
@@ -279,6 +279,14 @@ test("UID-deletes only the completed login Job and creates only the reviewed smo
   const evidence = JSON.parse(result.evidenceSource);
   assert.equal(evidence.replacedLoginJobUid, "login-job-uid");
   assert.equal(evidence.loginJobAbsent, true);
+});
+
+test("resumes smoke creation after the exact login Job deletion completed", async () => {
+  const dependencies = makeDependencies({ loginExists: false });
+  const result = await replace(dependencies, { resumeAfterLoginDeletion: true });
+  assert.equal(result.receipt.stepId, "codex-smoke");
+  assert.equal(dependencies.calls.filter((call) => call.deleteInput).length, 0);
+  assert.equal(dependencies.calls.filter((call) => call.args?.[2] === "create").length, 1);
 });
 
 test("builds an exact UID-preconditioned foreground Job deletion request", () => {

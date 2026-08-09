@@ -13,6 +13,7 @@ test("packages one immutable non-retrying post-migration grant Job", () => {
   const job = values.find((resource) => resource.kind === "Job");
   assert.equal(job.spec.backoffLimit, 0);
   assert.equal(job.spec.activeDeadlineSeconds, 300);
+  assert.equal(Object.hasOwn(job.spec, "ttlSecondsAfterFinished"), false);
   assert.equal(job.spec.template.spec.automountServiceAccountToken, false);
   assert.equal(job.spec.template.spec.containers[0].image.endsWith(`@${digest}`), true);
 });
@@ -42,6 +43,7 @@ test("rejects mutable images, retries, broad grants, and network drift", () => {
   for (const invalid of ["", "latest", "sha256:abc", `sha256:${"A".repeat(64)}`]) assert.throws(() => renderSessionProofGrantsManifest(template, invalid));
   for (const drifted of [
     template.replace("backoffLimit: 0", "backoffLimit: 2"),
+    template.replace("activeDeadlineSeconds: 300", "activeDeadlineSeconds: 300\n  ttlSecondsAfterFinished: 3600"),
     template.replace("GRANT SELECT (dispatch_id, dispatch_digest, status, result_json)", "GRANT SELECT ON ALL TABLES IN SCHEMA codeops"),
     template.replace("app.kubernetes.io/name: codeops-session-proof-database", "app.kubernetes.io/name: unrelated"),
     `${template}\n---\napiVersion: v1\nkind: Secret\nmetadata: { name: extra }\n`,

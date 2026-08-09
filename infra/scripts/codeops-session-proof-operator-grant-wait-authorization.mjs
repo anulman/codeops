@@ -15,6 +15,10 @@ import {
   readSessionProofGrantApplyOutputsFromOperatorPacket,
 } from "./codeops-session-proof-operator-grant-apply.mjs";
 import {
+  readSessionProofGrantRecoveryContinuationFromOperatorPacket,
+} from "./codeops-session-proof-operator-grant-recovery-continuation.mjs";
+import {
+  createSessionProofReadSnapshot,
   readSessionProofKubeContext,
   readSessionProofNamespace,
 } from "./codeops-session-proof-preflight.mjs";
@@ -113,17 +117,29 @@ function writePrivateAuthorization(path, source) {
   }
 }
 
-export function authorizeEighthSessionProofStepFromOperatorPacket(
+function buildEighthSessionProofStepAuthorizationFromOperatorPacket(
   input,
   runner = execFileSync,
+  readGrantApplyOutputs = readSessionProofGrantApplyOutputsFromOperatorPacket,
+  readGrantRecoveryContinuation =
+    readSessionProofGrantRecoveryContinuationFromOperatorPacket,
+  authorizeStep = authorizeSessionProofStep,
 ) {
-  const outputs = readSessionProofGrantApplyOutputsFromOperatorPacket(input, runner);
-  const { operator, target } = readSessionProofKubeContext(runner);
+  const readSnapshot = createSessionProofReadSnapshot(runner);
+  const outputs = readGrantApplyOutputs(input, readSnapshot);
+  const recoveryContinuation = input.grantRecoveryContinuationPath === undefined
+    ? null
+    : readGrantRecoveryContinuation(
+      input,
+      readSnapshot,
+      () => outputs,
+    );
+  const { operator, target } = readSessionProofKubeContext(readSnapshot);
   const namespaceResource = readSessionProofNamespace(
     outputs.creationReceipt.namespace.name,
-    runner,
+    readSnapshot,
   );
-  return authorizeSessionProofStep({
+  const authorization = authorizeStep({
     planSource: outputs.planSource,
     creationReceiptSource: outputs.creationReceiptSource,
     priorReceiptSources: [
@@ -135,16 +151,38 @@ export function authorizeEighthSessionProofStepFromOperatorPacket(
       outputs.sixthStepReceiptSource,
       outputs.seventhStepReceiptSource,
     ],
+    ...(recoveryContinuation === null
+      ? {}
+      : { recoveryAdmissionSource: recoveryContinuation.admissionSource }),
     namespaceResource,
     operator,
     target,
     observedAt: input.observedAt,
   });
+  return { authorization, grantApplyOutputs: outputs, recoveryContinuation };
+}
+
+export function authorizeEighthSessionProofStepFromOperatorPacket(
+  input,
+  runner = execFileSync,
+  readGrantApplyOutputs = readSessionProofGrantApplyOutputsFromOperatorPacket,
+  readGrantRecoveryContinuation =
+    readSessionProofGrantRecoveryContinuationFromOperatorPacket,
+  authorizeStep = authorizeSessionProofStep,
+) {
+  return buildEighthSessionProofStepAuthorizationFromOperatorPacket(
+    input,
+    runner,
+    readGrantApplyOutputs,
+    readGrantRecoveryContinuation,
+    authorizeStep,
+  ).authorization;
 }
 
 export function persistEighthSessionProofStepAuthorizationFromOperatorPacket(
   input,
   runner = execFileSync,
+  authorizeStep = authorizeEighthSessionProofStepFromOperatorPacket,
 ) {
   const packetName = basename(input.packetPath ?? "");
   const namespace = packetName.endsWith(".packet")
@@ -156,7 +194,7 @@ export function persistEighthSessionProofStepAuthorizationFromOperatorPacket(
     namespace,
     true,
   );
-  const authorization = authorizeEighthSessionProofStepFromOperatorPacket(input, runner);
+  const authorization = authorizeStep(input, runner);
   if (authorization.namespace.name !== namespace) {
     throw new Error("proof eighth-step authorization Namespace drifted from the operator packet path");
   }
@@ -170,12 +208,16 @@ export function persistEighthSessionProofStepAuthorizationFromOperatorPacket(
 export function readEighthSessionProofStepAuthorizationFromOperatorPacket(
   input,
   runner = execFileSync,
+  buildAuthorization = buildEighthSessionProofStepAuthorizationFromOperatorPacket,
 ) {
-  const outputs = readSessionProofGrantApplyOutputsFromOperatorPacket(input, runner);
+  const packetName = basename(input.packetPath ?? "");
+  const namespace = packetName.endsWith(".packet")
+    ? packetName.slice(0, -".packet".length)
+    : "";
   assertAuthorizationPath(
     input.eighthAuthorizationPath,
     input.packetPath,
-    outputs.creationReceipt.namespace.name,
+    namespace,
     false,
   );
   const authorizationBytes = readPrivateAuthorization(input.eighthAuthorizationPath);
@@ -185,13 +227,28 @@ export function readEighthSessionProofStepAuthorizationFromOperatorPacket(
   } catch {
     throw new Error("proof eighth-step authorization must be valid JSON");
   }
-  const expected = authorizeEighthSessionProofStepFromOperatorPacket({
+  const result = buildAuthorization({
     ...input,
     observedAt: authorization.authorizedAt,
   }, runner);
+  const expected = result.authorization;
+  if (
+    expected.namespace.name !== namespace ||
+    expected.stepId !== "wait-grants" ||
+    (input.grantRecoveryContinuationPath !== undefined &&
+      expected.admission?.apiVersion !==
+        "codeops.renoconcierge.ca/session-proof-recovery-admission/v1")
+  ) {
+    throw new Error("proof eighth-step authorization drifted from the operator packet");
+  }
   const expectedSource = `${JSON.stringify(expected, null, 2)}\n`;
   if (!authorizationBytes.equals(Buffer.from(expectedSource))) {
     throw new Error("proof eighth-step authorization is not the exact persisted artifact");
   }
-  return { authorization: expected, authorizationSource: expectedSource };
+  return {
+    authorization: expected,
+    authorizationSource: expectedSource,
+    grantApplyOutputs: result.grantApplyOutputs,
+    recoveryContinuation: result.recoveryContinuation,
+  };
 }

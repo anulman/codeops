@@ -131,16 +131,16 @@ export function waitForSessionProofGrantsFromOperatorPacket(
   input,
   runner = execFileSync,
   waitForGrants = waitForSessionProofGrants,
+  readAuthorization = readEighthSessionProofStepAuthorizationFromOperatorPacket,
 ) {
-  const { authorization } = readEighthSessionProofStepAuthorizationFromOperatorPacket(
+  const { authorization, grantApplyOutputs } = readAuthorization(
     input,
     runner,
   );
-  const outputs = readSessionProofGrantApplyOutputsFromOperatorPacket(input, runner);
   return waitForGrants({
     authorization,
-    grantApplyReceiptSource: outputs.seventhStepReceiptSource,
-    grantApplyEvidenceSource: outputs.seventhEvidenceSource,
+    grantApplyReceiptSource: grantApplyOutputs.seventhStepReceiptSource,
+    grantApplyEvidenceSource: grantApplyOutputs.seventhEvidenceSource,
     startedAt: input.startedAt,
     completedAt: input.completedAt,
     maxAttempts: input.maxAttempts,

@@ -155,7 +155,11 @@ export function verifySessionProofCodexLoginApplyChain(authorization, receiptSou
   if (!job || !claim) {
     throw new Error("proof Codex login apply evidence lacks Job or credential claim identity");
   }
-  return { jobUid: job.uid, persistentVolumeClaimUid: claim.uid };
+  return {
+    jobUid: job.uid,
+    persistentVolumeClaimUid: claim.uid,
+    appliedAt: applyEvidence.observedAt,
+  };
 }
 
 export function verifySessionProofCodexLoginCompletionEvidence(authorization, evidence) {
@@ -193,7 +197,7 @@ export function verifySessionProofCodexLoginCompletionEvidence(authorization, ev
     throw new Error("proof Codex login live identity drifted from apply evidence");
   }
   if (
-    Date.parse(evidence.job.startTime) < Date.parse(authorization.authorizedAt) ||
+    Date.parse(evidence.job.startTime) < Date.parse(applied.appliedAt) ||
     Date.parse(evidence.observedAt) < Date.parse(evidence.job.completionTime)
   ) {
     throw new Error("proof Codex login completion timestamp drifted");

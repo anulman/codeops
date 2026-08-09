@@ -81,8 +81,10 @@ function assertAdmissionShape(admission) {
   const expectedNamespace = `codeops-session-proof-${admission.identity?.runId ?? ""}`;
   const approved = parseTime(admission.approvedAt, "approval time");
   const expires = parseTime(admission.expiresAt, "expiry time");
+  const isInitial = admission.apiVersion === "codeops.renoconcierge.ca/session-proof-admission/v1";
+  const isRecovery = admission.apiVersion === "codeops.renoconcierge.ca/session-proof-recovery-admission/v1";
   if (
-    admission.apiVersion !== "codeops.renoconcierge.ca/session-proof-admission/v1" ||
+    (!isInitial && !isRecovery) ||
     !SHA256.test(admission.planSha256 ?? "") ||
     !RUN_ID.test(admission.identity?.runId ?? "") ||
     admission.identity?.namespace !== expectedNamespace ||
@@ -96,13 +98,29 @@ function assertAdmissionShape(admission) {
     ) ||
     !SHA256.test(admission.operator?.credentialSha256 ?? "") ||
     !BOUNDED_IDENTITY.test(admission.target?.context ?? "") ||
-    JSON.stringify(admission.authorizedSteps) !== JSON.stringify(expectedSteps) ||
     expires <= approved ||
     expires - approved > MAX_WINDOW_MS
   ) {
     throw new Error("proof admission artifact drifted");
   }
   assertServer(admission.target.server);
+  if (isInitial && JSON.stringify(admission.authorizedSteps) !== JSON.stringify(expectedSteps)) {
+    throw new Error("proof admission authorized steps drifted");
+  }
+  if (isRecovery) {
+    const predecessorIndex = expectedSteps.indexOf(admission.recovery?.predecessorStepId);
+    if (
+      admission.state !== "approved-bound" ||
+      !BOUNDED_IDENTITY.test(admission.namespaceUid ?? "") ||
+      !SHA256.test(admission.recovery?.sourceAdmissionSha256 ?? "") ||
+      !SHA256.test(admission.recovery?.predecessorReceiptSha256 ?? "") ||
+      predecessorIndex < 0 ||
+      predecessorIndex === expectedSteps.length - 1 ||
+      JSON.stringify(admission.authorizedSteps) !== JSON.stringify(expectedSteps.slice(predecessorIndex + 1))
+    ) {
+      throw new Error("proof recovery admission drifted");
+    }
+  }
   if (
     !(
       (admission.state === "approved-unbound" && admission.namespaceUid === null) ||
@@ -110,6 +128,17 @@ function assertAdmissionShape(admission) {
     )
   ) {
     throw new Error("proof admission Namespace binding drifted");
+  }
+}
+
+function parseExactJson(source, label) {
+  if (typeof source !== "string" || source.length < 2 || source.length > 1024 * 1024) {
+    throw new Error(`${label} must be bounded JSON source`);
+  }
+  try {
+    return JSON.parse(source);
+  } catch {
+    throw new Error(`${label} must be valid JSON`);
   }
 }
 
@@ -231,6 +260,86 @@ export function bindSessionProofNamespace(admission, input) {
     ...admission,
     state: "approved-bound",
     namespaceUid: input.namespaceResource.metadata.uid,
+  };
+}
+
+export function recoverSessionProofAdmission(admission, input) {
+  assertAdmissionShape(admission);
+  if (
+    admission.apiVersion !== "codeops.renoconcierge.ca/session-proof-admission/v1" ||
+    admission.state !== "approved-bound"
+  ) {
+    throw new Error("proof recovery requires the original Namespace-UID-bound admission");
+  }
+  const sourceAdmission = parseExactJson(input.sourceAdmissionSource, "source proof admission");
+  if (JSON.stringify(sourceAdmission) !== JSON.stringify(admission)) {
+    throw new Error("source proof admission bytes do not match the bound admission");
+  }
+  assertPrincipal(input.operator, admission.operator);
+  assertTarget(input.target, admission.target);
+  assertNamespaceIdentity(admission, input.namespaceResource);
+  if (input.namespaceResource.metadata.uid !== admission.namespaceUid) {
+    throw new Error("live proof Namespace UID drifted");
+  }
+
+  const steps = sessionProofSequence().map((step) => step.id);
+  const predecessorIndex = steps.indexOf(input.predecessorStepId);
+  const predecessorReceipt = parseExactJson(
+    input.predecessorReceiptSource,
+    "proof predecessor receipt",
+  );
+  const predecessorStep = sessionProofSequence()[predecessorIndex];
+  if (
+    predecessorIndex < 0 ||
+    predecessorIndex === steps.length - 1 ||
+    predecessorReceipt.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+    predecessorReceipt.result !== "completed" ||
+    predecessorReceipt.proceed !== true ||
+    predecessorReceipt.planSha256 !== admission.planSha256 ||
+    predecessorReceipt.namespace?.name !== admission.identity.namespace ||
+    predecessorReceipt.namespace?.uid !== admission.namespaceUid ||
+    predecessorReceipt.stepIndex !== predecessorIndex ||
+    predecessorReceipt.stepId !== input.predecessorStepId ||
+    predecessorReceipt.action !== predecessorStep?.action ||
+    predecessorReceipt.artifact !== (predecessorStep?.artifact ?? null) ||
+    !SHA256.test(predecessorReceipt.previousReceiptSha256 ?? "") ||
+    !SHA256.test(predecessorReceipt.evidenceSha256 ?? "") ||
+    !RFC3339.test(predecessorReceipt.checkedAt ?? "")
+  ) {
+    throw new Error("proof recovery predecessor drifted");
+  }
+
+  const sourceExpiry = parseTime(admission.expiresAt, "source admission expiry time");
+  const approved = parseTime(input.approvedAt, "recovery approval time");
+  const expires = parseTime(input.expiresAt, "recovery expiry time");
+  if (
+    approved < sourceExpiry ||
+    expires <= approved ||
+    expires - approved > MAX_WINDOW_MS
+  ) {
+    throw new Error("proof recovery window must start after source expiry and be positive and at most four hours");
+  }
+
+  return {
+    apiVersion: "codeops.renoconcierge.ca/session-proof-recovery-admission/v1",
+    state: "approved-bound",
+    planSha256: admission.planSha256,
+    identity: admission.identity,
+    operator: admission.operator,
+    target: admission.target,
+    approvedAt: input.approvedAt,
+    expiresAt: input.expiresAt,
+    namespaceUid: admission.namespaceUid,
+    authorizedSteps: steps.slice(predecessorIndex + 1),
+    recovery: {
+      sourceAdmissionSha256: createHash("sha256")
+        .update(input.sourceAdmissionSource)
+        .digest("hex"),
+      predecessorStepId: input.predecessorStepId,
+      predecessorReceiptSha256: createHash("sha256")
+        .update(input.predecessorReceiptSource)
+        .digest("hex"),
+    },
   };
 }
 

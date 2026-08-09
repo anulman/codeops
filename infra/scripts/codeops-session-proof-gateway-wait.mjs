@@ -74,7 +74,7 @@ WITH relation AS (
 SELECT jsonb_build_object(
   'schema', 'codeops',
   'name', 'session_runtime_execution_receipts',
-  'oid', relation.oid,
+  'oid', relation.oid::bigint,
   'columns', columns.value,
   'primaryKey', primary_key.value,
   'foreignKeys', foreign_keys.value,

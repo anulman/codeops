@@ -4,6 +4,53 @@ import { verifySessionProofOperation } from "./codeops-session-proof-admission.m
 
 const MAX_OUTPUT_BYTES = 1024 * 1024;
 const BASE64 = /^[A-Za-z0-9+/]+={0,2}$/;
+const SESSION_PROOF_READ_SNAPSHOT = Symbol("session-proof-read-snapshot");
+
+function assertReadOnlyKubectl(args) {
+  const command = JSON.stringify(args);
+  if (![
+    JSON.stringify(["config", "current-context"]),
+    JSON.stringify(["config", "view", "--minify", "-o", "json"]),
+    JSON.stringify([
+      "config",
+      "view",
+      "--minify",
+      "--raw",
+      "-o",
+      "jsonpath={.users[0].user.client-certificate-data}",
+    ]),
+    JSON.stringify(["auth", "whoami", "-o", "json"]),
+  ].includes(command) && !(
+    args.length === 6 &&
+    args[0] === "get" &&
+    args[1] === "namespace" &&
+    typeof args[2] === "string" &&
+    args[2].length > 0 &&
+    args[3] === "-o" &&
+    args[4] === "json" &&
+    args[5] === "--ignore-not-found"
+  )) {
+    throw new Error("proof read snapshot admits only reviewed Kubernetes identity and Namespace reads");
+  }
+}
+
+export function createSessionProofReadSnapshot(runner = execFileSync) {
+  if (runner?.[SESSION_PROOF_READ_SNAPSHOT]) return runner;
+  const results = new Map();
+  const snapshotRunner = (file, args, options) => {
+    if (file !== "kubectl" || !Array.isArray(args)) {
+      throw new Error("proof read snapshot admits only reviewed kubectl reads");
+    }
+    assertReadOnlyKubectl(args);
+    const key = JSON.stringify([file, args, options]);
+    if (!results.has(key)) results.set(key, runner(file, args, options));
+    return results.get(key);
+  };
+  Object.defineProperty(snapshotRunner, SESSION_PROOF_READ_SNAPSHOT, {
+    value: true,
+  });
+  return snapshotRunner;
+}
 
 function runKubectl(args, runner) {
   return runner("kubectl", args, {
