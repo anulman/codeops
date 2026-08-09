@@ -21,6 +21,8 @@ test("fleet and cockpit routes use the live broker while retaining the v1 operat
   assert.match(cockpit, /MessageRow/);
   assert.match(cockpit, /ExecutionRow/);
   assert.match(cockpit, /ActionRow/);
+  assert.match(cockpit, /Selected.*permission option/);
+  assert.match(cockpit, /Denied the permission request/);
   assert.match(cockpit, /Reasoning/);
   assert.match(cockpit, /Agent attachment/);
   assert.match(cockpit, /External attachment/);

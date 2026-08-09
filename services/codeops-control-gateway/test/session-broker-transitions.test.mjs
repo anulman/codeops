@@ -131,6 +131,22 @@ test("permission response resolves only the exact pending request", () => {
   assert.equal(result.snapshot.lease.status, "active");
   assert.equal(result.event.type, "command_committed");
   assert.equal(result.event.cursor, 185);
+  assert.deepEqual(result.event.action, {
+    type: "respond_permission",
+    decision: { outcome: "selected", optionLabel: "Allow once" },
+  });
+  const denied = applyPermissionSessionTransition(
+    current,
+    {
+      ...permission,
+      decision: { outcome: "denied" },
+    },
+    occurredAt,
+  );
+  assert.deepEqual(denied.event.action, {
+    type: "respond_permission",
+    decision: { outcome: "denied" },
+  });
   assert.throws(() =>
     applyPermissionSessionTransition(
       current,
