@@ -183,6 +183,13 @@ export const sessionIdentitySchema = z
     baseSha: gitSha,
     workflowId: workflowRunIdentifier,
     runId: workflowRunIdentifier,
+    workItemId: uuid.optional(),
+    pullRequestNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+    pullRequestHeadSha: gitSha.optional(),
+    agentRole: z
+      .enum(["coordinator", "research", "persona", "coding", "critic", "revision"])
+      .optional(),
+    round: z.number().int().positive().max(100).optional(),
     parentSessionId: identifier.nullable(),
     forkedAtCursor: z
       .number()
@@ -197,7 +204,36 @@ export const sessionIdentitySchema = z
       (identity.parentSessionId === null) ===
       (identity.forkedAtCursor === null),
     "fork lineage requires both parent session and event cursor",
+  )
+  .refine(
+    (identity) =>
+      (identity.pullRequestNumber === undefined) ===
+      (identity.pullRequestHeadSha === undefined),
+    "pull request identity requires both number and head SHA",
+  )
+  .refine(
+    (identity) =>
+      (identity.agentRole === undefined) === (identity.round === undefined),
+    "agent role and round must be supplied together",
   );
+
+export const temporalCodeOpsSessionIdentitySchema = sessionIdentitySchema
+  .superRefine((identity, context) => {
+    if (identity.workItemId === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["workItemId"],
+        message: "Temporal CodeOps sessions require a Plane work item identity",
+      });
+    }
+    if (identity.agentRole === undefined || identity.round === undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["agentRole"],
+        message: "Temporal CodeOps sessions require an agent role and round",
+      });
+    }
+  });
 
 export const sessionSnapshotSchema = z
   .object({
@@ -530,6 +566,10 @@ export type SessionCapability = z.infer<typeof sessionCapabilitySchema>;
 export type SessionState = z.infer<typeof sessionStateSchema>;
 export type SessionLease = z.infer<typeof sessionLeaseSchema>;
 export type SessionCheckpoint = z.infer<typeof sessionCheckpointSchema>;
+export type SessionIdentity = z.infer<typeof sessionIdentitySchema>;
+export type TemporalCodeOpsSessionIdentity = z.infer<
+  typeof temporalCodeOpsSessionIdentitySchema
+>;
 export type SessionPermissionRequest = z.infer<
   typeof sessionPermissionRequestSchema
 >;

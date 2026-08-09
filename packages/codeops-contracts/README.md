@@ -109,6 +109,14 @@ broker must still enforce lease compare-and-swap, persist command idempotency
 and checkpoints transactionally, audit the authenticated principal, and return
 only a committed result after durable state changes.
 
+## Agent Sessions identity
+
+Generic Agent Sessions can omit `workItemId`, agent role, and round. The
+Temporal CodeOps boundary requires all three before dispatch. Pull request
+number and pull request head SHA are optional before publication and must be
+supplied together after binding. Parent session and fork cursor also remain a
+paired lineage identity.
+
 ## QA Contract Researcher
 
 The only automated research trigger is a new human-authored comment containing

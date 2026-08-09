@@ -12,6 +12,7 @@ import {
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
   sessionSnapshotSchema,
+  temporalCodeOpsSessionIdentitySchema,
 } from "../dist/index.js";
 
 const sessionId = "ses_91a4";
@@ -97,6 +98,49 @@ test("binds a root Job initialization request to one created snapshot", () => {
     }).snapshot.sessionId,
     sessionId,
   );
+});
+
+test("keeps work-item identity optional for generic Agent Sessions", () => {
+  const request = sessionJobInitializationRequestSchema.parse({
+    version: "codeops.session-job-initialization/v1",
+    sessionId,
+    identity: snapshot().identity,
+    leaseId,
+    holderId: "job:generic-session",
+  });
+  assert.equal(request.identity.workItemId, undefined);
+});
+
+test("requires work-item, role, and round at the Temporal CodeOps boundary", () => {
+  assert.throws(
+    () => temporalCodeOpsSessionIdentitySchema.parse(snapshot().identity),
+    /Plane work item identity/,
+  );
+  const identity = temporalCodeOpsSessionIdentitySchema.parse({
+    ...snapshot().identity,
+    workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
+    agentRole: "coding",
+    round: 1,
+  });
+  assert.equal(identity.workItemId, "088a83b9-a53f-4dda-b2bc-c860cf455997");
+});
+
+test("binds pull request number and head SHA as one optional identity", () => {
+  assert.throws(() =>
+    sessionSnapshotSchema.parse({
+      ...snapshot(),
+      identity: { ...snapshot().identity, pullRequestNumber: 159 },
+    }),
+  );
+  const parsed = sessionSnapshotSchema.parse({
+    ...snapshot(),
+    identity: {
+      ...snapshot().identity,
+      pullRequestNumber: 159,
+      pullRequestHeadSha: "c".repeat(40),
+    },
+  });
+  assert.equal(parsed.identity.pullRequestHeadSha, "c".repeat(40));
 });
 
 test("requires one explicit capability decision for every session action", () => {
