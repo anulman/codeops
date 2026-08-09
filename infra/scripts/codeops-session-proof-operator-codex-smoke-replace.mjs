@@ -173,7 +173,9 @@ export function replaceSessionProofCodexSmokeFromOperatorPacket(
     manifestSource,
     loginCompletionReceiptSource: outputs.tenthStepReceiptSource,
     loginCompletionEvidenceSource: outputs.tenthEvidenceSource,
-    resumeAfterLoginDeletion: input.resumeAfterLoginDeletion,
+    ...(input.resumeAfterLoginDeletion === true
+      ? { resumeAfterLoginDeletion: true }
+      : {}),
     startedAt: input.startedAt,
     completedAt: input.completedAt,
   }, { runner });
