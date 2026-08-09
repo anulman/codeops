@@ -12,7 +12,7 @@ import {
 } from "../src/lib/cloudflareAccess.server.ts";
 
 const issuer = "https://renoconcierge.cloudflareaccess.com";
-const audience = "mission_control_audience_2026";
+const audience = "agents_control_plane_audience_2026";
 const allowedEmail = "operator@example.com";
 const currentDate = new Date("2026-08-09T18:00:00.000Z");
 

@@ -2,10 +2,10 @@
 {{- fail "agents-system must be installed in the agents-system namespace" -}}
 {{- end -}}
 {{- if ne .Values.ingress.host "agents.renoconcierge.ca" -}}
-{{- fail "Mission Control has one fixed public host: agents.renoconcierge.ca" -}}
+{{- fail "The Agents control plane has one fixed public host: agents.renoconcierge.ca" -}}
 {{- end -}}
-{{- if not (regexMatch "^https://[a-z0-9-]+\\.cloudflareaccess\\.com/?$" .Values.missionControl.access.issuer) -}}
-{{- fail "missionControl.access.issuer must be one Cloudflare Access team-domain origin" -}}
+{{- if not (regexMatch "^https://[a-z0-9-]+\\.cloudflareaccess\\.com/?$" .Values.agentsUi.access.issuer) -}}
+{{- fail "agentsUi.access.issuer must be one Cloudflare Access team-domain origin" -}}
 {{- end -}}
 {{- if not (regexMatch "^[0-9a-f]{40}$" .Values.githubController.controlPlaneSha) -}}
 {{- fail "githubController.controlPlaneSha must be one exact lowercase Git SHA" -}}

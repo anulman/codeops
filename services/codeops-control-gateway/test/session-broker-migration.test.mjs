@@ -3,13 +3,15 @@ import test from "node:test";
 
 import {
   applySessionBrokerMigration,
+  grantSessionRuntimeReceiptAccess,
   migrateSessionBroker,
+  sessionRuntimeDatabaseCredentials,
   stripTransactionEnvelope,
 } from "../dist/session-broker-migration.js";
 
 const migration = "BEGIN;\nCREATE TABLE example (id bigint);\nCOMMIT;\n";
 
-function fakeClient(existingSha) {
+function fakeClient(existingSha, roleExists = false) {
   const calls = [];
   return {
     calls,
@@ -19,6 +21,12 @@ function fakeClient(existingSha) {
         return {
           rowCount: existingSha === undefined ? 0 : 1,
           rows: existingSha === undefined ? [] : [{ sha256: existingSha }],
+        };
+      }
+      if (text.includes("FROM pg_catalog.pg_roles")) {
+        return {
+          rowCount: roleExists ? 1 : 0,
+          rows: roleExists ? [{ present: 1 }] : [],
         };
       }
       return { rowCount: null, rows: [] };
@@ -105,4 +113,61 @@ test("applies broker runtime, Job initialization, and permission relay in order"
     "session-job-initialization-v1",
     "session-runtime-permission-relay-v1",
   ]);
+});
+
+test("grants the runtime role only execution-receipt access", async () => {
+  const client = fakeClient();
+  await grantSessionRuntimeReceiptAccess(
+    client,
+    "agents_session_runtime",
+    "runtime_password_0123456789abcdef",
+  );
+  const sql = client.calls.map(({ text }) => text).join("\n");
+  assert.match(sql, /CREATE ROLE "agents_session_runtime" LOGIN PASSWORD 'runtime_password_0123456789abcdef' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION/);
+  assert.match(sql, /REVOKE ALL ON ALL TABLES IN SCHEMA codeops/);
+  assert.match(sql, /GRANT SELECT \(dispatch_id, dispatch_digest, status, result_json\)/);
+  assert.match(sql, /GRANT INSERT \(dispatch_id, dispatch_digest, status\)/);
+  assert.match(sql, /GRANT UPDATE \(status, result_json, completed_at\)/);
+  assert.doesNotMatch(sql, /session_runtime_outbox/);
+  assert.equal(client.calls.at(-1).text, "COMMIT");
+  const existing = fakeClient(undefined, true);
+  await grantSessionRuntimeReceiptAccess(
+    existing,
+    "agents_session_runtime",
+    "rotated_password_0123456789abcdef",
+  );
+  const existingSql = existing.calls.map(({ text }) => text).join("\n");
+  assert.match(existingSql, /ALTER ROLE "agents_session_runtime" LOGIN PASSWORD 'rotated_password_0123456789abcdef'/);
+  assert.doesNotMatch(existingSql, /CREATE ROLE/);
+  await assert.rejects(
+    grantSessionRuntimeReceiptAccess(
+      fakeClient(),
+      'unsafe"role',
+      "runtime_password_0123456789abcdef",
+    ),
+    /role is invalid/,
+  );
+});
+
+test("binds the receipt-only role to one in-cluster runtime database URL", () => {
+  assert.deepEqual(
+    sessionRuntimeDatabaseCredentials(
+      "postgres://agents_session_runtime:runtime_password_0123456789abcdef@agents-system-postgresql:5432/agents",
+      "agents_session_runtime",
+    ),
+    {
+      role: "agents_session_runtime",
+      password: "runtime_password_0123456789abcdef",
+    },
+  );
+  for (const value of [
+    "postgres://other:runtime_password_0123456789abcdef@agents-system-postgresql:5432/agents",
+    "postgres://agents_session_runtime:runtime_password_0123456789abcdef@example.com:5432/agents",
+    "postgres://agents_session_runtime:short@agents-system-postgresql:5432/agents",
+  ]) {
+    assert.throws(
+      () => sessionRuntimeDatabaseCredentials(value, "agents_session_runtime"),
+      /receipt-only boundary|password is invalid/,
+    );
+  }
 });

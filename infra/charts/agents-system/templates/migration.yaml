@@ -1,0 +1,69 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: agents-system-session-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agents-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-migration
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation
+    helm.sh/hook-weight: "-10"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agents-system-session-migrate
+        app.kubernetes.io/component: session-migration
+        app.kubernetes.io/part-of: agents-system
+    spec:
+      restartPolicy: Never
+      serviceAccountName: agents-system-session-gateway
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: migrate
+          image: {{ include "agents-system.image" .Values.gateway.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [node, services/codeops-control-gateway/dist/session-migrate-main.js]
+          env:
+            - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/agents-system/database-url }
+            - { name: CODEOPS_RUNTIME_DATABASE_URL_FILE, value: /var/run/secrets/agents-system/runtime-database-url }
+            - { name: CODEOPS_RUNTIME_DATABASE_ROLE_FILE, value: /var/run/secrets/agents-system/runtime-database-role }
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: secrets, mountPath: /var/run/secrets/agents-system, readOnly: true }
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ .Values.gateway.secretName }}
+            defaultMode: 256
+            items:
+              - { key: database-url, path: database-url }
+              - { key: runtime-database-url, path: runtime-database-url }
+              - { key: runtime-database-role, path: runtime-database-role }
+        - name: temp
+          emptyDir: { sizeLimit: 32Mi }
+{{- end }}

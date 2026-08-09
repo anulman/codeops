@@ -49,6 +49,9 @@ on:
       - "infra/scripts/codeops-codex-auth-render.mjs"
       - "infra/scripts/render-codeops-codex-auth.mjs"
       - "infra/scripts/test-codeops-codex-auth.mjs"
+      - "infra/scripts/*agents-system*.mjs"
+      - "infra/charts/agents-system/**"
+      - "infra/k8s/codeops/agents-system-root-session-template.yaml"
       - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
@@ -102,6 +105,9 @@ on:
       - "infra/scripts/codeops-codex-auth-render.mjs"
       - "infra/scripts/render-codeops-codex-auth.mjs"
       - "infra/scripts/test-codeops-codex-auth.mjs"
+      - "infra/scripts/*agents-system*.mjs"
+      - "infra/charts/agents-system/**"
+      - "infra/k8s/codeops/agents-system-root-session-template.yaml"
       - "infra/k8s/codeops/trial0/**"
       - "package.json"
       - "lock.yaml"
@@ -295,8 +301,10 @@ jobs:
           node infra/scripts/render-codeops-control-gateway.mjs > /tmp/codeops-control-gateway.yaml
           node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-control-gateway.yaml
 
-      - name: Test the independent Mission Control package
-        run: node --test infra/scripts/test-agents-system-chart.mjs
+      - name: Test the independent Agents control plane package
+        run: |
+          node --test infra/scripts/test-agents-system-chart.mjs
+          node --test infra/scripts/test-agents-system-root-session.mjs
 
       - name: Test and render the scoped cluster-native image path
         env:

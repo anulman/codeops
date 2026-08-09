@@ -12,11 +12,11 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: agents-system-mission-control
+  name: agents-system-agents-ui
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
-    matchLabels: { app.kubernetes.io/name: agents-system-mission-control }
+    matchLabels: { app.kubernetes.io/name: agents-system-agents-ui }
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -55,8 +55,30 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/component
                 operator: In
-                values: [mission-control, runtime, github-controller]
+                values: [agents-ui, runtime, github-controller]
       ports: [{ protocol: TCP, port: 8080 }]
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: agents-system-postgresql }
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: agents-system-session-migration
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/component: session-migration }
+  policyTypes: [Ingress, Egress]
+  ingress: []
   egress:
     - to:
         - podSelector:

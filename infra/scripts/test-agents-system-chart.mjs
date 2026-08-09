@@ -5,14 +5,14 @@ import { parseAllDocuments } from "yaml";
 
 const chart = "infra/charts/agents-system";
 const digestSets = [
-  "missionControl.image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "agentsUi.image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "gateway.image.digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "githubController.image.digest=sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   "githubController.controlPlaneSha=1111111111111111111111111111111111111111",
   "postgresql.image.digest=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "runtime.workerImage.digest=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "runtime.agentImage.digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
-  "missionControl.access.issuer=https://renoconcierge.cloudflareaccess.com",
+  "agentsUi.access.issuer=https://renoconcierge.cloudflareaccess.com",
 ];
 
 function helm(args) {
@@ -26,7 +26,7 @@ function helm(args) {
 
 function render() {
   const output = helm([
-    "template", "mission-control", chart,
+    "template", "agents-system", chart,
     "--namespace", "agents-system",
     ...digestSets.flatMap((value) => ["--set", value]),
   ]);
@@ -55,23 +55,36 @@ test("renders one independent agents-system package with immutable images", () =
     ...(candidate.spec?.template?.spec?.containers ?? []),
     ...(candidate.spec?.template?.spec?.initContainers ?? []),
   ]).map((container) => container.image).filter(Boolean);
-  assert.equal(images.length, 4);
+  assert.equal(images.length, 5);
   assert.ok(images.every((image) => /@sha256:[0-9a-f]{64}$/.test(image)));
 
   resource(resources, "StatefulSet", "agents-system-postgresql");
   resource(resources, "Deployment", "agents-system-session-gateway");
   resource(resources, "Deployment", "agents-system-github-controller");
-  resource(resources, "Deployment", "agents-system-mission-control");
+  resource(resources, "Deployment", "agents-system-agents-ui");
+  const migration = resource(resources, "Job", "agents-system-session-migrate");
+  assert.equal(migration.metadata.annotations["helm.sh/hook"], "pre-upgrade");
+  assert.equal(migration.metadata.annotations["helm.sh/hook-delete-policy"], "before-hook-creation");
+  assert.equal(migration.spec.backoffLimit, 0);
+  assert.equal(migration.spec.template.spec.automountServiceAccountToken, false);
+  assert.deepEqual(migration.spec.template.spec.containers[0].command, [
+    "node",
+    "services/codeops-control-gateway/dist/session-migrate-main.js",
+  ]);
+  assert.deepEqual(
+    migration.spec.template.spec.volumes.find(({ name }) => name === "secrets").secret.items.map(({ key }) => key).sort(),
+    ["database-url", "runtime-database-role", "runtime-database-url"],
+  );
   resource(resources, "PersistentVolumeClaim", "agents-system-codex-auth");
   resource(resources, "PersistentVolumeClaim", "agents-system-controller-state");
   resource(resources, "ConfigMap", "agents-system-runtime-images");
-  for (const name of ["mission-control", "session-gateway", "github-controller", "runtime"]) {
+  for (const name of ["agents-ui", "session-gateway", "github-controller", "runtime"]) {
     const account = resource(resources, "ServiceAccount", `agents-system-${name}`);
     assert.equal(account.automountServiceAccountToken, false);
   }
 });
 
-test("exposes only Mission Control and requires signed Access configuration", () => {
+test("exposes only the Agents UI and requires signed Access configuration", () => {
   const resources = render();
   const ingresses = resources.filter(({ kind }) => kind === "Ingress");
   assert.equal(ingresses.length, 1);
@@ -87,7 +100,7 @@ test("exposes only Mission Control and requires signed Access configuration", ()
   const deployment = resource(
     resources,
     "Deployment",
-    "agents-system-mission-control",
+    "agents-system-agents-ui",
   );
   const env = new Map(
     deployment.spec.template.spec.containers[0].env.map((entry) => [entry.name, entry]),
@@ -106,6 +119,11 @@ test("exposes only Mission Control and requires signed Access configuration", ()
     "/var/run/secrets/agents-system-access/allowed-emails",
   );
   assert.equal(JSON.stringify(deployment).includes("cf-access-authenticated-user-email"), false);
+
+  const gateway = resource(resources, "Deployment", "agents-system-session-gateway");
+  const gatewaySource = JSON.stringify(gateway);
+  assert.match(gatewaySource, /initialization-token/);
+  assert.equal(JSON.stringify(deployment).includes("initialization-token"), false);
 
   const controller = resource(
     resources,
@@ -128,7 +146,7 @@ test("exposes only Mission Control and requires signed Access configuration", ()
 test("defaults to deny and opens only explicit component paths", () => {
   const resources = render();
   const policies = resources.filter(({ kind }) => kind === "NetworkPolicy");
-  assert.equal(policies.length, 6);
+  assert.equal(policies.length, 7);
   const deny = resource(resources, "NetworkPolicy", "agents-system-default-deny");
   assert.deepEqual(deny.spec.podSelector, {});
   assert.deepEqual(deny.spec.policyTypes, ["Ingress", "Egress"]);
@@ -140,18 +158,24 @@ test("defaults to deny and opens only explicit component paths", () => {
   assert.ok(JSON.stringify(gateway).includes("agents-system-postgresql"));
   const controller = resource(resources, "NetworkPolicy", "agents-system-github-controller");
   assert.ok(JSON.stringify(controller).includes("agents-system-session-gateway"));
+  const migration = resource(resources, "NetworkPolicy", "agents-system-session-migration");
+  assert.ok(JSON.stringify(migration).includes("agents-system-postgresql"));
+  assert.deepEqual(
+    migration.spec.egress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)).sort(),
+    ["TCP:53", "TCP:5432", "UDP:53"],
+  );
 });
 
 test("fails closed on the wrong namespace, host, issuer, or mutable image", () => {
   const cases = [
     ["--namespace", "renoconcierge"],
     ["--namespace", "agents-system", "--set", "ingress.host=other.example.com"],
-    ["--namespace", "agents-system", "--set", "missionControl.access.issuer=https://example.com"],
+    ["--namespace", "agents-system", "--set", "agentsUi.access.issuer=https://example.com"],
     ["--namespace", "agents-system", "--set", "gateway.image.digest=latest"],
   ];
   for (const extra of cases) {
     assert.throws(() => helm([
-      "template", "mission-control", chart,
+      "template", "agents-system", chart,
       ...digestSets.flatMap((value) => ["--set", value]),
       ...extra,
     ]));

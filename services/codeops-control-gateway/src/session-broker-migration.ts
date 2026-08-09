@@ -106,3 +106,83 @@ export async function migrateSessionBroker(
   }
   return results;
 }
+
+export async function grantSessionRuntimeReceiptAccess(
+  client: TransactionClient,
+  role: string,
+  password: string,
+): Promise<void> {
+  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(role)) {
+    throw new Error("session runtime database role is invalid");
+  }
+  if (!/^[A-Za-z0-9._~-]{32,256}$/.test(password)) {
+    throw new Error("session runtime database password is invalid");
+  }
+  const identifier = `"${role}"`;
+  await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('codeops.session-runtime-role', 0))",
+    );
+    const existing = await client.query(
+      "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $1",
+      [role],
+    );
+    const verb = existing.rows[0] ? "ALTER" : "CREATE";
+    await client.query(`${verb} ROLE ${identifier} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`);
+    await client.query(`REVOKE ALL ON SCHEMA codeops FROM ${identifier}`);
+    await client.query(`REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM ${identifier}`);
+    await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA codeops FROM ${identifier}`);
+    await client.query(`GRANT USAGE ON SCHEMA codeops TO ${identifier}`);
+    await client.query(`GRANT SELECT (dispatch_id, dispatch_digest, status, result_json) ON codeops.session_runtime_execution_receipts TO ${identifier}`);
+    await client.query(`GRANT INSERT (dispatch_id, dispatch_digest, status) ON codeops.session_runtime_execution_receipts TO ${identifier}`);
+    await client.query(`GRANT UPDATE (status, result_json, completed_at) ON codeops.session_runtime_execution_receipts TO ${identifier}`);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+export function sessionRuntimeDatabaseCredentials(
+  databaseUrl: string,
+  role: string,
+): { readonly role: string; readonly password: string } {
+  let parsed: URL;
+  try {
+    parsed = new URL(databaseUrl);
+  } catch {
+    throw new Error("session runtime database URL is invalid");
+  }
+  const allowedHosts = new Set([
+    "agents-system-postgresql",
+    "agents-system-postgresql.agents-system.svc",
+    "agents-system-postgresql.agents-system.svc.cluster.local",
+  ]);
+  let username: string;
+  let password: string;
+  try {
+    username = decodeURIComponent(parsed.username);
+    password = decodeURIComponent(parsed.password);
+  } catch {
+    throw new Error("session runtime database credentials are invalid");
+  }
+  if (
+    !["postgres:", "postgresql:"].includes(parsed.protocol) ||
+    !allowedHosts.has(parsed.hostname) ||
+    (parsed.port !== "" && parsed.port !== "5432") ||
+    parsed.pathname !== "/agents" ||
+    parsed.search !== "" ||
+    parsed.hash !== "" ||
+    username !== role
+  ) {
+    throw new Error("session runtime database URL is outside the receipt-only boundary");
+  }
+  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(role)) {
+    throw new Error("session runtime database role is invalid");
+  }
+  if (!/^[A-Za-z0-9._~-]{32,256}$/.test(password)) {
+    throw new Error("session runtime database password is invalid");
+  }
+  return { role, password };
+}
