@@ -6,8 +6,10 @@ CodeOps sessions.
 The fleet and cockpit load strict session snapshots and ordered event pages
 through server functions. The server reads its broker token from a mounted
 file, validates every upstream response, and never includes that credential in
-the browser bundle. Production server functions require Cloudflare Access's
-authenticated-user header. The cockpit always renders the complete action set
+the browser bundle. Production server functions verify Cloudflare Access's
+signed JWT assertion. They validate its issuer, audience, RS256 signature,
+expiry, and allowlisted email identity. The forgeable authenticated-user email
+header grants no authority. The cockpit always renders the complete action set
 on desktop and mobile; availability comes only from the broker capability
 snapshot, unavailable actions stay visible, and the browser never simulates
 completion.
@@ -20,6 +22,9 @@ Server configuration:
   must be distinct from the read credential.
 - `AGENTS_UI_ACCESS_REQUIRED` — optional local override; production always
   requires Access.
+- `AGENTS_UI_ACCESS_ISSUER` — exact Cloudflare Access team-domain HTTPS origin.
+- `AGENTS_UI_ACCESS_AUDIENCE` — exact Access application audience tag.
+- `AGENTS_UI_ACCESS_ALLOWED_EMAILS_FILE` — mounted newline-delimited allowlist.
 
 The shared wire boundary lives at
 `@renoconcierge/codeops-contracts/session-broker`. Mutations must carry the

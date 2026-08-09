@@ -230,6 +230,6 @@ test("server functions require Access middleware and never read the token in bro
   assert.equal((dataSource.match(/\.middleware\(\[agentsAuthMiddleware\]\)/g) ?? []).length, 4);
   assert.doesNotMatch(dataSource, /TOKEN_FILE|readFile/);
   assert.match(authSource, /NODE_ENV === "production"/);
-  assert.match(authSource, /cf-access-authenticated-user-email/);
-  assert.doesNotMatch(authSource, /cf-access-jwt-assertion/);
+  assert.match(authSource, /cf-access-jwt-assertion/);
+  assert.doesNotMatch(authSource, /cf-access-authenticated-user-email/);
 });
