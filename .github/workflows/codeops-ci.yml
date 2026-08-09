@@ -295,6 +295,9 @@ jobs:
           node infra/scripts/render-codeops-control-gateway.mjs > /tmp/codeops-control-gateway.yaml
           node infra/scripts/check-codeops-manifests.mjs /tmp/codeops-control-gateway.yaml
 
+      - name: Test the independent Mission Control package
+        run: node --test infra/scripts/test-agents-system-chart.mjs
+
       - name: Test and render the scoped cluster-native image path
         env:
           CODEOPS_BASE_SHA: bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb

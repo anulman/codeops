@@ -1,0 +1,98 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: agents-system-session-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agents-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-gateway
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agents-system-session-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agents-system-session-gateway
+        app.kubernetes.io/component: session-gateway
+        app.kubernetes.io/part-of: agents-system
+    spec:
+      serviceAccountName: agents-system-session-gateway
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: session-gateway
+          image: {{ include "agents-system.image" .Values.gateway.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: CODEOPS_HTTP_HOST, value: 0.0.0.0 }
+            - { name: CODEOPS_HTTP_PORT, value: "8080" }
+            - { name: CODEOPS_SESSION_RUNTIME_WORKER_ID, value: {{ .Values.gateway.workerId | quote }} }
+            - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/agents-system/database-url }
+            - { name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE, value: /var/run/secrets/agents-system/read-token }
+            - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/agents-system/write-token }
+            - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/agents-system/runtime-worker-token }
+            - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/agents-system/initialization-token }
+            - { name: CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE, value: /var/run/secrets/agents-system/github-steering-token }
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: secrets, mountPath: /var/run/secrets/agents-system, readOnly: true }
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ .Values.gateway.secretName }}
+            defaultMode: 256
+            items:
+              - { key: database-url, path: database-url }
+              - { key: read-token, path: read-token }
+              - { key: write-token, path: write-token }
+              - { key: runtime-worker-token, path: runtime-worker-token }
+              - { key: initialization-token, path: initialization-token }
+              - { key: github-steering-token, path: github-steering-token }
+        - name: temp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: agents-session-control-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agents-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: agents-system-session-gateway
+  ports:
+    - { name: http, protocol: TCP, port: 8080, targetPort: http }

@@ -1,0 +1,79 @@
+nameOverride: agents-system
+
+imagePullSecrets:
+  - name: ghcr-renoconcierge
+
+nodeSelector:
+  renoconcierge.ca/codeops: "true"
+
+missionControl:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agents-ui
+    digest: ""
+  access:
+    issuer: ""
+    secretName: agents-system-access
+    audienceKey: audience
+    allowedEmailsKey: allowed-emails
+  resources:
+    requests: { cpu: 25m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+gateway:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-control-gateway
+    digest: ""
+  secretName: agents-system-session-secrets
+  workerId: agents-system:runtime-worker
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+githubController:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-plane-controller
+    digest: ""
+  controlPlaneSha: ""
+  configSecretName: agents-system-controller-config
+  secretName: agents-system-controller-secrets
+  storageClassName: ""
+  storage: 2Gi
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+postgresql:
+  image:
+    repository: ghcr.io/anulman/renoconcierge/renoconcierge-postgres
+    digest: ""
+  secretName: agents-system-postgres
+  storageClassName: ""
+  storage: 20Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+runtime:
+  workerImage:
+    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-runtime-worker
+    digest: ""
+  agentImage:
+    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent
+    digest: ""
+  codexAuth:
+    storageClassName: ""
+    storage: 1Gi
+
+ingress:
+  className: nginx
+  host: agents.renoconcierge.ca
+  tlsSecretName: agents-renoconcierge-ca-tls
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod-dns
+    nginx.ingress.kubernetes.io/proxy-body-size: 2m
+
+networkPolicy:
+  ingressNamespace: ingress-nginx

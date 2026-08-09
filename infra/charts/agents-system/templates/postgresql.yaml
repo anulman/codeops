@@ -1,0 +1,97 @@
+apiVersion: v1
+kind: Service
+metadata:
+  name: agents-system-postgresql
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agents-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  clusterIP: None
+  selector:
+    app.kubernetes.io/name: agents-system-postgresql
+  ports:
+    - { name: postgresql, protocol: TCP, port: 5432, targetPort: postgresql }
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: agents-system-postgresql
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "agents-system.labels" . | nindent 4 }}
+    app.kubernetes.io/component: postgresql
+spec:
+  serviceName: agents-system-postgresql
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: agents-system-postgresql
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: agents-system-postgresql
+        app.kubernetes.io/component: postgresql
+        app.kubernetes.io/part-of: agents-system
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: postgresql
+          image: {{ include "agents-system.image" .Values.postgresql.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: POSTGRES_DB, value: agents }
+            - { name: POSTGRES_USER, value: agents }
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.postgresql.secretName }}, key: password }
+            - { name: PGDATA, value: /var/lib/postgresql/data/pgdata }
+          ports:
+            - { name: postgresql, containerPort: 5432 }
+          startupProbe:
+            exec: { command: ["pg_isready", "-U", "agents", "-d", "agents"] }
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            exec: { command: ["pg_isready", "-U", "agents", "-d", "agents"] }
+            periodSeconds: 5
+          livenessProbe:
+            exec: { command: ["pg_isready", "-U", "agents", "-d", "agents"] }
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.postgresql.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: data, mountPath: /var/lib/postgresql/data }
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - name: temp
+          emptyDir: { sizeLimit: 64Mi }
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+        labels:
+          app.kubernetes.io/name: agents-system-postgresql
+          app.kubernetes.io/part-of: agents-system
+      spec:
+        accessModes: [ReadWriteOnce]
+        {{- with .Values.postgresql.storageClassName }}
+        storageClassName: {{ . | quote }}
+        {{- end }}
+        resources:
+          requests: { storage: {{ .Values.postgresql.storage }} }
