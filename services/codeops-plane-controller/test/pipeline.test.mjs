@@ -177,7 +177,7 @@ function readyWebhookInput(ledger, enqueue, body = readyPayload) {
     },
     webhookSecret: secret,
     allowedHumanActorIds: new Set([actorId]),
-    allowedAiAssigneeIds: new Set([aiAssigneeId]),
+    aiPersonaUserIds: new Set([aiAssigneeId]),
     readyStateId,
     repository: { owner: "anulman", name: "renoconcierge" },
     controlPlaneSha,
