@@ -27,6 +27,7 @@ import type {
   ResearchWebhookProcessingResult,
 } from "./index.js";
 import type { ResearchProjectionResult } from "./projection.js";
+import type { GitHubSessionSteeringRequest } from "./github-session-reconciler.js";
 import { z } from "zod";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
@@ -312,6 +313,73 @@ export function createGitHubStackLinker(input: {
       throw new Error(`GitHub stack link failed with ${response.status}`);
     }
     return githubPullRequestStackSnapshotSchema.parse(await response.json());
+  };
+}
+
+export function createGitHubSessionSteeringClient(input: {
+  origin: string;
+  token: string;
+  fetch?: typeof fetch;
+}): (request: GitHubSessionSteeringRequest) => Promise<{ sessionId: string }> {
+  const origin = new URL(input.origin);
+  if (
+    origin.protocol !== "http:" ||
+    !new Set([
+      "codeops-session-control-gateway",
+      "agents-session-control-gateway",
+    ]).has(origin.hostname) ||
+    origin.port !== "8080" ||
+    origin.pathname !== "/" ||
+    origin.username !== "" ||
+    origin.password !== "" ||
+    origin.search !== "" ||
+    origin.hash !== ""
+  ) {
+    throw new Error("GitHub session steering origin must be the internal session gateway");
+  }
+  const token = internalCapabilityToken(input.token, "GitHub session steering");
+  return async (request) => {
+    const response = await (input.fetch ?? fetch)(
+      new URL("/v1/github-session-events", origin),
+      {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          version: "codeops.github-session-steering/v1",
+          binding: request.binding,
+          event: request.event,
+          prompt: request.prompt,
+          idempotencyKey: request.idempotencyKey,
+          principalId: request.principalId,
+        }),
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(`GitHub session steering failed with ${response.status}`);
+    }
+    const result = z
+      .object({
+        version: z.literal("codeops.github-session-steering-result/v1"),
+        status: z.literal("accepted"),
+        sessionId: z.string().min(1).max(128),
+        workItemId: z.string().uuid(),
+        idempotencyKey: z.string().uuid(),
+      })
+      .strict()
+      .parse(await response.json());
+    if (
+      result.workItemId !== request.binding.workItemId ||
+      result.idempotencyKey !== request.idempotencyKey
+    ) {
+      throw new Error("GitHub session steering response identity mismatch");
+    }
+    return { sessionId: result.sessionId };
   };
 }
 

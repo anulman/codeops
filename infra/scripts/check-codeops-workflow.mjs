@@ -31,6 +31,13 @@ assert.ok(
 assert.ok(
   contracts.steps.some(
     (step) =>
+      step.name === "Verify independent product and internal release routing" &&
+      step.run === "node --test infra/scripts/test-release-scope.mjs",
+  ),
+);
+assert.ok(
+  contracts.steps.some(
+    (step) =>
       step.name === "Verify trusted release image plan" &&
       step.run === "node infra/scripts/test-ci-image-plan.mjs",
   ),

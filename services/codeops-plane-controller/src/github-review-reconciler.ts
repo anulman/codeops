@@ -144,7 +144,10 @@ export async function reconcileGitHubPullRequestReviewEvent(input: {
   }) => Promise<void>;
 }): Promise<GitHubReviewReconciliationResult> {
   const receivedAt = z.string().datetime({ offset: true }).parse(input.receivedAt);
-  if (!input.allowedReviewerIds.has(input.event.reviewerId)) {
+  if (
+    input.event.reviewerType !== "User" ||
+    !input.allowedReviewerIds.has(input.event.reviewerId)
+  ) {
     return { status: "ignored", reason: "reviewer-is-not-allowlisted" };
   }
   const binding = await input.bindings.getByPullRequest({

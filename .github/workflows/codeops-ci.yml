@@ -195,6 +195,9 @@ jobs:
       - name: Verify trusted release image plan
         run: node infra/scripts/test-ci-image-plan.mjs
 
+      - name: Verify independent product and internal release routing
+        run: node --test infra/scripts/test-release-scope.mjs
+
       - name: Validate workflow syntax
         run: node infra/scripts/check-codeops-workflow.mjs
 

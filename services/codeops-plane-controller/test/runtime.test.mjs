@@ -8,11 +8,78 @@ import {
   createPlaneWebhookRequestListener,
   createGitHubHeadQualifier,
   createGitHubReviewCommentsLoader,
+  createGitHubSessionSteeringClient,
   createGitHubStackLinker,
   createGitHubStackLoader,
   createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "../dist/index.js";
+
+test("projects one normalized GitHub event only through the internal session gateway", async () => {
+  const seen = [];
+  const steer = createGitHubSessionSteeringClient({
+    origin: "http://agents-session-control-gateway:8080",
+    token: "s".repeat(64),
+    fetch: async (url, init) => {
+      seen.push({ url: String(url), init });
+      const body = JSON.parse(init.body);
+      return Response.json({
+        version: "codeops.github-session-steering-result/v1",
+        status: "accepted",
+        sessionId: "session-159",
+        workItemId: body.binding.workItemId,
+        idempotencyKey: body.idempotencyKey,
+      });
+    },
+  });
+  const binding = {
+    version: "codeops.pull-request-binding/v1",
+    workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",
+    projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
+    workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
+    workflowId: "coding-initial",
+    repository: "anulman/renoconcierge",
+    number: 159,
+    state: "open",
+    headSha: "b".repeat(40),
+    headRef: "feat/agents-ui",
+    baseRef: "feat/codeops-contracts-ci",
+    qualified: false,
+    updatedAt: "2026-08-09T17:00:00.000Z",
+  };
+  const result = await steer({
+    binding,
+    event: {
+      kind: "issue_comment",
+      repository: binding.repository,
+      number: binding.number,
+      action: "created",
+      title: "Agent Sessions",
+      pullRequestState: "open",
+      commentId: 7001,
+      body: "Keep this exact.",
+      url: "https://github.com/anulman/renoconcierge/pull/159#issuecomment-7001",
+      actorId: 6723643628,
+      actorLogin: "anulman",
+      actorType: "User",
+      createdAt: "2026-08-09T17:10:00.000Z",
+      updatedAt: "2026-08-09T17:10:00.000Z",
+    },
+    prompt: "Keep this exact.",
+    idempotencyKey: "11111111-1111-5111-8111-111111111111",
+    principalId: "github:6723643628",
+  });
+  assert.deepEqual(result, { sessionId: "session-159" });
+  assert.equal(seen[0].url, "http://agents-session-control-gateway:8080/v1/github-session-events");
+  assert.equal(seen[0].init.headers.Authorization, `Bearer ${"s".repeat(64)}`);
+  assert.throws(
+    () => createGitHubSessionSteeringClient({
+      origin: "https://agents.renoconcierge.ca",
+      token: "s".repeat(64),
+    }),
+    /internal session gateway/,
+  );
+});
 
 test("reads and links native stacks only through bounded internal capabilities", async () => {
   const stack = {
@@ -420,10 +487,14 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
     repository: { full_name: "anulman/renoconcierge" },
     pull_request: {
       number: 158,
+      title: "Bounded PR",
+      html_url: "https://github.com/anulman/renoconcierge/pull/158",
+      updated_at: "2026-07-30T22:45:00.000Z",
       merged: true,
       head: { sha: "a".repeat(40), ref: "feat/a" },
       base: { ref: "main" },
     },
+    sender: { id: 6723643628, login: "anulman", type: "User" },
   });
   const signature = `sha256=${createHmac("sha256", secret)
     .update(body)
@@ -510,6 +581,12 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
           headRef: "feat/a",
           baseRef: "main",
           stack: null,
+          title: "Bounded PR",
+          url: "https://github.com/anulman/renoconcierge/pull/158",
+          actorId: 6723643628,
+          actorLogin: "anulman",
+          actorType: "User",
+          updatedAt: "2026-07-30T22:45:00.000Z",
         },
       },
       {
@@ -524,6 +601,7 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
           body: "Please cover the stale-head case.",
           reviewerId: 6723643628,
           reviewerLogin: "anulman",
+          reviewerType: "User",
           reviewedHeadSha: "b".repeat(40),
           currentHeadSha: "b".repeat(40),
           headRef: "feat/reviewed",

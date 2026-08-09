@@ -10,6 +10,7 @@ import {
   createGitHubHeadQualifier,
   createGitHubReviewCommentsLoader,
   createGitHubStackLoader,
+  createGitHubSessionSteeringClient,
   createPlaneLifecycleClient,
   createTemporalCodingCanceller,
   createFileResearchPacketStore,
@@ -21,6 +22,7 @@ import {
   processPlaneResearchWebhook,
   reconcileGitHubPullRequestReviewEvent,
   reconcileGitHubPullRequestMergeGroup,
+  reconcileGitHubSessionEvent,
 } from "./index.js";
 import {
   createPlaneWebhookRequestListener,
@@ -69,6 +71,20 @@ const repositoryHeadToken = await secretFile(
 const githubWebhookSecret = await secretFile(
   "CODEOPS_GITHUB_WEBHOOK_SECRET_FILE",
 );
+const githubSessionSteeringOrigin = process.env.CODEOPS_GITHUB_SESSION_STEERING_ORIGIN?.trim();
+const githubSessionSteeringTokenFile = process.env.CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE?.trim();
+if ((githubSessionSteeringOrigin === undefined) !== (githubSessionSteeringTokenFile === undefined)) {
+  throw new Error(
+    "CODEOPS_GITHUB_SESSION_STEERING_ORIGIN and CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE must be configured together",
+  );
+}
+const steerGitHubSession =
+  githubSessionSteeringOrigin === undefined || githubSessionSteeringTokenFile === undefined
+    ? null
+    : createGitHubSessionSteeringClient({
+        origin: githubSessionSteeringOrigin,
+        token: await secretFile("CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE"),
+      });
 const repositoryFullName = `${required("CODEOPS_REPOSITORY_OWNER")}/${required("CODEOPS_REPOSITORY_NAME")}`;
 const loadGitHubReviewComments = createGitHubReviewCommentsLoader({
   origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
@@ -453,6 +469,31 @@ const listener = createPlaneWebhookRequestListener({
           },
         });
         return;
+      }
+      if (
+        event.kind === "issue_comment" ||
+        event.kind === "pull_request_review_comment"
+      ) {
+        if (steerGitHubSession === null) return;
+        await reconcileGitHubSessionEvent({
+          event,
+          receivedAt,
+          allowedActorIds: allowedGitHubReviewerIds,
+          bindings: pullRequestBindings,
+          ledger,
+          steer: steerGitHubSession,
+        });
+        return;
+      }
+      if (steerGitHubSession !== null) {
+        await reconcileGitHubSessionEvent({
+          event,
+          receivedAt,
+          allowedActorIds: allowedGitHubReviewerIds,
+          bindings: pullRequestBindings,
+          ledger,
+          steer: steerGitHubSession,
+        });
       }
       await reconcileGitHubPullRequestMergeGroup({
         event,

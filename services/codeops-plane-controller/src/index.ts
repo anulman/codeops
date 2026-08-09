@@ -47,7 +47,9 @@ export {
   parseGitHubPullRequestEvent,
   verifyGitHubWebhookSignature,
   type GitHubEvent,
+  type GitHubIssueCommentEvent,
   type GitHubPullRequestEvent,
+  type GitHubPullRequestReviewCommentEvent,
   type GitHubPullRequestReviewEvent,
 } from "./github-events.js";
 export {
@@ -60,6 +62,12 @@ export {
   reconcileGitHubPullRequestReviewEvent,
   type GitHubReviewReconciliationResult,
 } from "./github-review-reconciler.js";
+export {
+  reconcileGitHubSessionEvent,
+  type GitHubSessionEvent,
+  type GitHubSessionReconciliationResult,
+  type GitHubSessionSteeringRequest,
+} from "./github-session-reconciler.js";
 export {
   createFileCodingRequestStore,
   type CodingRequestStore,
@@ -107,6 +115,7 @@ export {
   createGitHubHeadQualifier,
   createGitHubStackLinker,
   createGitHubStackLoader,
+  createGitHubSessionSteeringClient,
   createRepositoryHeadResolver,
   createTemporalCodingCanceller,
   createTemporalCodingEnqueuer,

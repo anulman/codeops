@@ -84,8 +84,9 @@ Job execution; merge and production deployment remain separate human gates.
 
 ## GitHub review and stack reconciliation
 
-The controller also accepts exact GitHub pull-request and submitted-review
-events through the separately authenticated GitHub webhook route. A review
+The controller also accepts exact GitHub pull-request, submitted-review,
+top-level PR comment, and inline review-comment events through the separately
+authenticated GitHub webhook route. A review
 request is admitted only when the reviewer is allowlisted, the review names the
 current bound repository, pull request, branch, and head SHA, and the delivery
 has not already been claimed. The review body and inline comments are retained
@@ -99,6 +100,16 @@ returns the ticket to Needs attention. An exact-head approval may restore
 qualification only after the required GitHub checks are successful. Bot,
 edited, stale-head, duplicate, and foreign-repository review events fail
 closed.
+
+Allowlisted top-level and inline PR comments are normalized as bounded GitHub
+session-steering requests. The controller binds each request to the current
+durable ticket↔PR record and claims a deterministic event identity before it
+contacts the internal session gateway. Inline comments must name the exact
+current head, branch, and base. Edited comments use their exact update time as
+a new immutable steering event. If the independent Agent Sessions deployment
+is not configured, review/merge reconciliation remains available but comment
+projection is disabled. Session steering never grants merge or deployment
+authority.
 
 GitHub's public-preview native stack object is treated as a verified execution
 primitive, not as the dependency source of truth. Plane relations and the

@@ -117,6 +117,7 @@ function event(overrides = {}) {
     body: "Please make the exact-head check explicit.",
     reviewerId: 6723643628,
     reviewerLogin: "anulman",
+    reviewerType: "User",
     reviewedHeadSha: reviewHead,
     currentHeadSha: reviewHead,
     headRef: binding.headRef,

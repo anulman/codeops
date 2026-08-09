@@ -235,6 +235,12 @@ export async function reconcileGitHubPullRequestMergeGroup(input: {
           headSha: pullRequest.head.sha,
           headRef: pullRequest.head.ref,
           baseRef: pullRequest.base.ref,
+          title: input.event.title,
+          url: input.event.url,
+          actorId: input.event.actorId,
+          actorLogin: input.event.actorLogin,
+          actorType: input.event.actorType,
+          updatedAt: input.event.updatedAt,
           stack: {
             number: snapshot.number,
             size: snapshot.pullRequests.length,
