@@ -12,6 +12,7 @@ import {
   type SessionPermissionRequest,
   type SessionSnapshot,
   type SessionState,
+  type SessionTimelineUpdate,
 } from "@renoconcierge/codeops-contracts";
 
 type LocalLifecycleCommand = Extract<
@@ -34,6 +35,7 @@ export interface RuntimePromptMaterial {
     | "max_turn_requests"
     | "refusal"
     | "cancelled";
+  readonly updates?: readonly SessionTimelineUpdate[];
 }
 
 export interface RuntimeCheckpointMaterial {
@@ -136,6 +138,10 @@ export function applyLocalSessionTransition(
     generation: snapshot.generation,
     cursor,
     type: transition.eventType,
+    action: {
+      type: command.type,
+      ...(command.reason ? { detail: command.reason } : {}),
+    },
     occurredAt,
   } as const;
   const event = sessionEventSchema.parse({
@@ -167,6 +173,16 @@ export function applyPermissionSessionTransition(
     }
   }
   const cursor = snapshot.eventCursor + 1;
+  const selectedOptionId =
+    command.decision.outcome === "selected" ? command.decision.optionId : null;
+  const actionDecision = selectedOptionId === null
+    ? ({ outcome: "denied" } as const)
+    : ({
+        outcome: "selected",
+        optionLabel: request.options.find(
+          ({ optionId }) => optionId === selectedOptionId,
+        )!.label,
+      } as const);
   const nextSnapshot = sessionSnapshotSchema.parse({
     ...snapshot,
     state: "running",
@@ -180,6 +196,10 @@ export function applyPermissionSessionTransition(
     generation: snapshot.generation,
     cursor,
     type: "command_committed",
+    action: {
+      type: "respond_permission",
+      decision: actionDecision,
+    },
     occurredAt,
   } as const;
   return {
@@ -242,12 +262,6 @@ export function applyPromptSessionTransition(
     throw new Error("prompt completion requires a running session");
   }
   const userCursor = snapshot.eventCursor + 1;
-  const assistantCursor = userCursor + 1;
-  const nextSnapshot = sessionSnapshotSchema.parse({
-    ...snapshot,
-    eventCursor: assistantCursor,
-    updatedAt: occurredAt,
-  });
   const userEventBody = {
     sessionId: snapshot.sessionId,
     generation: snapshot.generation,
@@ -259,21 +273,75 @@ export function applyPromptSessionTransition(
     },
     occurredAt,
   } as const;
-  const assistantEventBody = {
-    sessionId: snapshot.sessionId,
-    generation: snapshot.generation,
-    cursor: assistantCursor,
-    type: "acp_update",
-    message: {
-      role: "assistant",
-      text: material.response,
-      stopReason: material.stopReason,
-    },
-    occurredAt,
-  } as const;
+  const retainedUpdates = (material.updates ?? []).filter(
+    (update, index) =>
+      !(
+        index === 0 &&
+        update.kind === "user_content" &&
+        update.content.type === "text" &&
+        update.content.text === command.prompt
+      ),
+  );
+  const lastAssistantText = retainedUpdates.findLastIndex(
+    (update) => update.kind === "assistant_content" && update.content.type === "text",
+  );
+  const updateEventBodies = retainedUpdates.map((update, index) => {
+    const base = {
+      sessionId: snapshot.sessionId,
+      generation: snapshot.generation,
+      cursor: userCursor + index + 1,
+      type: "acp_update" as const,
+      occurredAt,
+    };
+    if (update.kind === "assistant_content" && update.content.type === "text") {
+      return {
+        ...base,
+        message: {
+          role: "assistant" as const,
+          text: update.content.text,
+          ...(update.messageId !== undefined ? { messageId: update.messageId } : {}),
+          ...(index === lastAssistantText ? { stopReason: material.stopReason } : {}),
+        },
+      };
+    }
+    if (update.kind === "user_content" && update.content.type === "text") {
+      return {
+        ...base,
+        message: {
+          role: "user" as const,
+          text: update.content.text,
+          ...(update.messageId !== undefined ? { messageId: update.messageId } : {}),
+        },
+      };
+    }
+    return { ...base, update };
+  });
+  if (
+    lastAssistantText === -1 &&
+    (material.response.length > 0 || retainedUpdates.length === 0)
+  ) {
+    updateEventBodies.push({
+      sessionId: snapshot.sessionId,
+      generation: snapshot.generation,
+      cursor: userCursor + updateEventBodies.length + 1,
+      type: "acp_update",
+      message: {
+        role: "assistant",
+        text: material.response,
+        stopReason: material.stopReason,
+      },
+      occurredAt,
+    });
+  }
+  const eventBodies = [userEventBody, ...updateEventBodies];
+  const nextSnapshot = sessionSnapshotSchema.parse({
+    ...snapshot,
+    eventCursor: eventBodies.at(-1)!.cursor,
+    updatedAt: occurredAt,
+  });
   return {
     snapshot: nextSnapshot,
-    events: [userEventBody, assistantEventBody].map((body) =>
+    events: eventBodies.map((body) =>
       sessionEventSchema.parse({
         version: SESSION_BROKER_VERSION.event,
         eventId: eventId(body),
@@ -285,9 +353,9 @@ export function applyPromptSessionTransition(
 
 export function applyCheckpointSessionTransition(
   snapshot: SessionSnapshot,
+  command: Extract<SessionCommand, { readonly type: "checkpoint" | "hibernate" }>,
   material: RuntimeCheckpointMaterial,
   occurredAt: string,
-  hibernate = false,
 ): {
   readonly snapshot: SessionSnapshot;
   readonly events: readonly SessionEvent[];
@@ -308,6 +376,7 @@ export function applyCheckpointSessionTransition(
     eventCursor: checkpointCursor,
     createdAt: occurredAt,
   });
+  const hibernate = command.type === "hibernate";
   const eventBodies: readonly Omit<SessionEvent, "version" | "eventId">[] =
     hibernate
       ? [
@@ -316,6 +385,10 @@ export function applyCheckpointSessionTransition(
             generation: snapshot.generation,
             cursor: checkpointCursor,
             type: "checkpoint_committed",
+            action: {
+              type: "hibernate",
+              ...(command.reason ? { detail: command.reason } : {}),
+            },
             occurredAt,
           },
           {
@@ -332,6 +405,7 @@ export function applyCheckpointSessionTransition(
             generation: snapshot.generation,
             cursor: checkpointCursor,
             type: "checkpoint_committed",
+            action: { type: "checkpoint" },
             occurredAt,
           },
         ];
@@ -393,6 +467,7 @@ export function applyResumeSessionTransition(
     generation,
     cursor,
     type: "lease_changed",
+    action: { type: "resume" },
     occurredAt,
   } as const;
   return {
@@ -450,6 +525,7 @@ export function applyForkSessionTransition(
     generation: child.generation,
     cursor: 1,
     type: "session_created",
+    action: { type: "fork", detail: command.title },
     occurredAt,
   } as const;
   return {

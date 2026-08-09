@@ -139,6 +139,64 @@ test("commits one prompt and assistant response as ordered transcript events", (
   ]);
 });
 
+test("commits ordered ACP execution updates, message boundaries, and attachments", () => {
+  const updates = [
+    { kind: "user_content", messageId: "prompt-echo", content: { type: "text", text: "Continue the focused implementation." } },
+    { kind: "user_content", messageId: "external-review", content: { type: "text", text: "Please also cover the PR review note." } },
+    { kind: "plan", entries: [{ content: "Inspect the boundary", priority: "high", status: "in_progress" }] },
+    { kind: "thought", messageId: "thought-1", content: { type: "text", text: "I need to inspect the exact contract." } },
+    { kind: "tool_call", toolCallId: "tool-1", title: "Read contract", toolKind: "read", status: "in_progress" },
+    { kind: "tool_call_update", toolCallId: "tool-1", status: "completed", content: [{ type: "content", content: { type: "text", text: "Contract loaded." } }] },
+    { kind: "assistant_content", messageId: "message-1", content: { type: "text", text: "The contract is valid." } },
+    { kind: "assistant_content", messageId: "message-2", content: { type: "image", data: "aGVsbG8=", mimeType: "image/png" } },
+    { kind: "assistant_content", messageId: "message-2", content: { type: "text", text: "Here is the visual proof." } },
+  ];
+  const mutation = applySessionRuntimeCompletion(
+    dispatch("prompt"),
+    completion("prompt", { ...promptMaterial, updates }),
+    context,
+  );
+  assert.equal(mutation.result.eventCursor, 193);
+  assert.equal(mutation.events.length, 9);
+  assert.equal(
+    mutation.events.filter(({ message }) => message?.role === "user").length,
+    2,
+    "the broker prompt appears once and the external user prompt is retained",
+  );
+  assert.equal(
+    mutation.events.find(({ message }) => message?.text === "Please also cover the PR review note.")?.message?.role,
+    "user",
+  );
+  assert.equal(
+    mutation.events.find(({ message }) => message?.text === "Please also cover the PR review note.")?.message?.messageId,
+    "external-review",
+  );
+  assert.deepEqual(mutation.events.filter(({ message }) => message?.role === "assistant").map(({ message }) => message), [
+    { role: "assistant", text: "The contract is valid.", messageId: "message-1" },
+    { role: "assistant", text: "Here is the visual proof.", messageId: "message-2", stopReason: "end_turn" },
+  ]);
+  assert.deepEqual(mutation.events.filter(({ update }) => update).map(({ update }) => update.kind), [
+    "plan", "thought", "tool_call", "tool_call_update", "assistant_content",
+  ]);
+  const laterMatchingPrompt = applySessionRuntimeCompletion(
+    dispatch("prompt"),
+    completion("prompt", {
+      ...promptMaterial,
+      updates: [
+        updates[2],
+        { kind: "user_content", messageId: "external-later", content: { type: "text", text: "Continue the focused implementation." } },
+        updates[6],
+      ],
+    }),
+    context,
+  );
+  assert.equal(
+    laterMatchingPrompt.events.filter(({ message }) => message?.role === "user").length,
+    2,
+    "only a leading ACP prompt echo is removed",
+  );
+});
+
 test("commits a prompt after one exact permission request and decision", () => {
   const permissionResolved = snapshot({
     eventCursor: 186,

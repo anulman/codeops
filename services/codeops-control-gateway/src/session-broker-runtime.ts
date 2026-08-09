@@ -136,9 +136,9 @@ export function applySessionRuntimeCompletion(
         }
         return applyCheckpointSessionTransition(
           snapshot,
+          command,
           completion.material,
           context.committedAt,
-          command.type === "hibernate",
         );
       }
       case "resume": {

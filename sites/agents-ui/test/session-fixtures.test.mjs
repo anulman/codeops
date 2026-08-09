@@ -19,6 +19,13 @@ test("fleet and cockpit routes use the live broker while retaining the v1 operat
   assert.match(shell, /lg:grid-cols-\[304px_minmax\(0,1fr\)\]/);
   assert.match(cockpit, /SessionComposer/);
   assert.match(cockpit, /MessageRow/);
+  assert.match(cockpit, /ExecutionRow/);
+  assert.match(cockpit, /ActionRow/);
+  assert.match(cockpit, /Reasoning/);
+  assert.match(cockpit, /Agent attachment/);
+  assert.match(cockpit, /External attachment/);
+  assert.match(cockpit, /<audio controls/);
+  assert.match(cockpit, /update\.status/);
   assert.match(cockpit, /Waiting for agent/);
   assert.match(cockpit, /Prompt submitted\. Waiting for agent\./);
   assert.match(cockpit, /event\.cursor > optimisticPrompt\.afterCursor/);

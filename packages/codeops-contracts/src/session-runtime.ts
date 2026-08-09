@@ -4,6 +4,7 @@ import {
   sessionCommandSchema,
   sessionPermissionRequestSchema,
   sessionSnapshotSchema,
+  sessionTimelineUpdateSchema,
   type SessionCommand,
 } from "./session-broker.js";
 
@@ -151,6 +152,7 @@ export const sessionRuntimeCompletionSchema = z.discriminatedUnion("type", [
         .object({
           response: z.string().max(200_000),
           stopReason: promptStopReason,
+          updates: z.array(sessionTimelineUpdateSchema).max(499).optional(),
         })
         .strict(),
     })

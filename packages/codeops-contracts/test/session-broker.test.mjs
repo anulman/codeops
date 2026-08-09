@@ -383,11 +383,11 @@ test("binds durable transcript messages to their exact broker event types", () =
     text: "I completed the review.",
     stopReason: "end_turn",
   });
-  assert.throws(() => sessionEventSchema.parse({
+  assert.deepEqual(sessionEventSchema.parse({
     ...common,
     type: "acp_update",
-    message: { role: "user", text: "Wrong event binding." },
-  }));
+    message: { role: "user", text: "External review prompt." },
+  }).message, { role: "user", text: "External review prompt." });
   assert.throws(() => sessionEventSchema.parse({
     ...common,
     type: "command_committed",
@@ -397,6 +397,32 @@ test("binds durable transcript messages to their exact broker event types", () =
     ...common,
     type: "acp_update",
     message: { role: "assistant", text: "x".repeat(200_001), stopReason: "end_turn" },
+  }));
+  assert.equal(sessionEventSchema.parse({
+    ...common,
+    type: "acp_update",
+    update: {
+      kind: "tool_call",
+      toolCallId: "tool-1",
+      title: "Read contract",
+      toolKind: "read",
+      status: "completed",
+      content: [{ type: "content", content: { type: "text", text: "Done." } }],
+    },
+  }).update.kind, "tool_call");
+  assert.equal(sessionEventSchema.parse({
+    ...common,
+    type: "command_committed",
+    action: {
+      type: "respond_permission",
+      decision: { outcome: "selected", optionLabel: "Allow once" },
+    },
+  }).action.decision.optionLabel, "Allow once");
+  assert.throws(() => sessionEventSchema.parse({
+    ...common,
+    type: "acp_update",
+    message: { role: "assistant", text: "Duplicate shape." },
+    update: { kind: "thought", content: { type: "text", text: "Hidden duplicate." } },
   }));
 });
 

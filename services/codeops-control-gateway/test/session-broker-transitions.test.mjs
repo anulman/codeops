@@ -238,6 +238,7 @@ test("commits a checkpoint and hibernates with one released lease", () => {
   };
   const checkpointed = applyCheckpointSessionTransition(
     current,
+    command("checkpoint"),
     material,
     occurredAt,
   );
@@ -250,9 +251,9 @@ test("commits a checkpoint and hibernates with one released lease", () => {
 
   const hibernated = applyCheckpointSessionTransition(
     current,
+    command("hibernate", { reason: "Wait for review." }),
     material,
     occurredAt,
-    true,
   );
   assert.equal(hibernated.snapshot.state, "hibernated");
   assert.equal(hibernated.snapshot.lease.status, "released");
@@ -262,6 +263,10 @@ test("commits a checkpoint and hibernates with one released lease", () => {
     ["checkpoint_committed", 185],
     ["lease_changed", 186],
   ]);
+  assert.deepEqual(hibernated.events[0].action, {
+    type: "hibernate",
+    detail: "Wait for review.",
+  });
 });
 
 test("resumes only the exact checkpoint into a new active generation", () => {

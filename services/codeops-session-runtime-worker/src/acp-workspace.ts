@@ -7,7 +7,12 @@ import path from "node:path";
 import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
-import type { SessionRuntimeDispatch } from "@renoconcierge/codeops-contracts";
+import {
+  sessionTimelineUpdateSchema,
+  type SessionContentBlock,
+  type SessionRuntimeDispatch,
+  type SessionTimelineUpdate,
+} from "@renoconcierge/codeops-contracts";
 import type {
   AcpWorkspaceLifecycle,
 } from "./lifecycle.js";
@@ -19,6 +24,8 @@ import type {
 const execFileAsync = promisify(execFile);
 const MAX_PATCH_BYTES = 2_000_000;
 const MAX_ASSISTANT_RESPONSE_CHARS = 200_000;
+const MAX_TIMELINE_UPDATES = 499;
+const MAX_TIMELINE_UPDATE_BYTES = 800_000;
 
 export function appendAcpAssistantText(
   current: string,
@@ -29,6 +36,190 @@ export function appendAcpAssistantText(
     throw new Error("ACP assistant response exceeds 200000 characters");
   }
   return response;
+}
+
+export interface AcpPromptCapture {
+  readonly response: string;
+  readonly updates: SessionTimelineUpdate[];
+}
+
+function optionalValue<Value>(value: Value | null | undefined): Value | undefined {
+  return value === null || value === undefined ? undefined : value;
+}
+
+function normalizeAcpContent(content: acp.ContentBlock): SessionContentBlock {
+  switch (content.type) {
+    case "text":
+      return { type: "text", text: content.text };
+    case "image":
+      return {
+        type: "image",
+        data: content.data,
+        mimeType: content.mimeType,
+        ...(content.uri ? { uri: content.uri } : {}),
+      };
+    case "audio":
+      return { type: "audio", data: content.data, mimeType: content.mimeType };
+    case "resource_link":
+      return {
+        type: "resource_link",
+        name: content.name,
+        uri: content.uri,
+        ...(content.title ? { title: content.title } : {}),
+        ...(content.description ? { description: content.description } : {}),
+        ...(content.mimeType ? { mimeType: content.mimeType } : {}),
+        ...(content.size !== null && content.size !== undefined
+          ? { size: Number(content.size) }
+          : {}),
+      };
+    case "resource": {
+      const resource = content.resource;
+      return "text" in resource
+        ? {
+            type: "resource",
+            uri: resource.uri,
+            text: resource.text,
+            ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
+          }
+        : {
+            type: "resource",
+            uri: resource.uri,
+            blob: resource.blob,
+            ...(resource.mimeType ? { mimeType: resource.mimeType } : {}),
+          };
+    }
+  }
+}
+
+function normalizeToolContent(
+  content: acp.ToolCallContent,
+): NonNullable<Extract<SessionTimelineUpdate, { kind: "tool_call" }>["content"]>[number] {
+  switch (content.type) {
+    case "content":
+      return { type: "content", content: normalizeAcpContent(content.content) };
+    case "diff":
+      return {
+        type: "diff",
+        path: content.path,
+        newText: content.newText,
+        ...(content.oldText !== undefined ? { oldText: content.oldText } : {}),
+      };
+    case "terminal":
+      return { type: "terminal", terminalId: content.terminalId };
+  }
+}
+
+function normalizeToolFields(update: acp.ToolCall | acp.ToolCallUpdate) {
+  return {
+    toolCallId: update.toolCallId,
+    ...(optionalValue(update.name) ? { name: optionalValue(update.name) } : {}),
+    ...(optionalValue(update.kind) ? { toolKind: optionalValue(update.kind) } : {}),
+    ...(optionalValue(update.status) ? { status: optionalValue(update.status) } : {}),
+    ...(update.content ? { content: update.content.map(normalizeToolContent) } : {}),
+    ...(update.locations
+      ? {
+          locations: update.locations.map((location) => ({
+            path: location.path,
+            ...(location.line !== null && location.line !== undefined
+              ? { line: location.line }
+              : {}),
+          })),
+        }
+      : {}),
+  };
+}
+
+export function normalizeAcpTimelineUpdate(
+  update: acp.SessionUpdate,
+): SessionTimelineUpdate | null {
+  const normalized = (() => {
+    switch (update.sessionUpdate) {
+      case "user_message_chunk":
+        if (update.content.type === "text" && update.content.text.length === 0) return null;
+        return {
+          kind: "user_content" as const,
+          ...(update.messageId !== undefined ? { messageId: update.messageId } : {}),
+          content: normalizeAcpContent(update.content),
+        };
+      case "agent_message_chunk":
+        if (update.content.type === "text" && update.content.text.length === 0) return null;
+        return {
+          kind: "assistant_content" as const,
+          ...(update.messageId !== undefined ? { messageId: update.messageId } : {}),
+          content: normalizeAcpContent(update.content),
+        };
+      case "agent_thought_chunk":
+        if (update.content.type === "text" && update.content.text.length === 0) return null;
+        return {
+          kind: "thought" as const,
+          ...(update.messageId !== undefined ? { messageId: update.messageId } : {}),
+          content: normalizeAcpContent(update.content),
+        };
+      case "tool_call":
+        return { kind: "tool_call" as const, title: update.title, ...normalizeToolFields(update) };
+      case "tool_call_update":
+        return {
+          kind: "tool_call_update" as const,
+          ...(optionalValue(update.title) ? { title: optionalValue(update.title) } : {}),
+          ...normalizeToolFields(update),
+        };
+      case "plan":
+        return { kind: "plan" as const, entries: update.entries };
+      case "plan_update": {
+        const plan = update.plan;
+        if (plan.type === "items") return { kind: "plan_update" as const, planId: plan.planId, content: { type: "items" as const, entries: plan.entries } };
+        if (plan.type === "markdown") return { kind: "plan_update" as const, planId: plan.planId, content: { type: "markdown" as const, markdown: plan.content } };
+        return { kind: "plan_update" as const, planId: plan.planId, content: { type: "file" as const, uri: plan.uri } };
+      }
+      case "plan_removed":
+        return { kind: "plan_removed" as const, planId: update.planId };
+      case "available_commands_update":
+      case "current_mode_update":
+      case "config_option_update":
+      case "session_info_update":
+      case "usage_update":
+        return null;
+    }
+  })();
+  return normalized === null ? null : sessionTimelineUpdateSchema.parse(normalized);
+}
+
+export function captureAcpTimelineUpdate(
+  current: AcpPromptCapture,
+  update: acp.SessionUpdate,
+): AcpPromptCapture {
+  const normalized = normalizeAcpTimelineUpdate(update);
+  const response =
+    update.sessionUpdate === "agent_message_chunk" && update.content.type === "text"
+      ? appendAcpAssistantText(current.response, update.content.text)
+      : current.response;
+  if (normalized === null) return { response, updates: current.updates };
+  const updates = [...current.updates];
+  const previous = updates.at(-1);
+  if (
+    (normalized.kind === "user_content" ||
+      normalized.kind === "assistant_content" ||
+      normalized.kind === "thought") &&
+    previous?.kind === normalized.kind &&
+    previous.messageId === normalized.messageId &&
+    previous.content.type === "text" &&
+    normalized.content.type === "text"
+  ) {
+    updates[updates.length - 1] = sessionTimelineUpdateSchema.parse({
+      ...previous,
+      content: {
+        type: "text",
+        text: appendAcpAssistantText(previous.content.text, normalized.content.text),
+      },
+    });
+  } else {
+    updates.push(normalized);
+  }
+  if (updates.length > MAX_TIMELINE_UPDATES) throw new Error("ACP timeline exceeds 499 retained updates");
+  if (Buffer.byteLength(JSON.stringify(updates)) > MAX_TIMELINE_UPDATE_BYTES) {
+    throw new Error("ACP timeline exceeds 800000 retained bytes");
+  }
+  return { response, updates };
 }
 
 type PromptDispatch = SessionRuntimeDispatch & {
@@ -114,6 +305,7 @@ export interface AcpAgentSessionConnection {
   prompt(sessionId: string, prompt: string): Promise<{
     readonly response: string;
     readonly stopReason: acp.PromptResponse["stopReason"];
+    readonly updates?: SessionTimelineUpdate[];
   }>;
   forkSession(sessionId: string, cwd: string): Promise<string>;
 }
@@ -335,7 +527,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
       Writable.toWeb(socket),
       Readable.toWeb(socket) as ReadableStream<Uint8Array>,
     );
-    const promptOutput = new Map<string, string>();
+    const promptOutput = new Map<string, AcpPromptCapture>();
     try {
       return await acp
         .client({ name: "renoconcierge-session-runtime-worker" })
@@ -352,17 +544,11 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
           acp.methods.client.session.update,
           ({ params }) => {
             const { sessionId, update } = params;
-            if (
-              update.sessionUpdate !== "agent_message_chunk" ||
-              update.content.type !== "text"
-            ) {
-              return;
-            }
             promptOutput.set(
               sessionId,
-              appendAcpAssistantText(
-                promptOutput.get(sessionId) ?? "",
-                update.content.text,
+              captureAcpTimelineUpdate(
+                promptOutput.get(sessionId) ?? { response: "", updates: [] },
+                update,
               ),
             );
           },
@@ -389,15 +575,13 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
               });
             },
             prompt: async (sessionId, prompt) => {
-              promptOutput.set(sessionId, "");
+              promptOutput.set(sessionId, { response: "", updates: [] });
               const result = await agent.request(acp.methods.agent.session.prompt, {
                 sessionId,
                 prompt: [{ type: "text", text: prompt }],
               });
-              return {
-                response: promptOutput.get(sessionId) ?? "",
-                stopReason: result.stopReason,
-              };
+              const capture = promptOutput.get(sessionId) ?? { response: "", updates: [] };
+              return { ...capture, stopReason: result.stopReason };
             },
             forkSession: async (sessionId, cwd) =>
               forkOrCreateAcpSession({

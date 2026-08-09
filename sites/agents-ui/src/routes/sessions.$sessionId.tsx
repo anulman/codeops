@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { executeSessionCommand, getSessionDetail, getSessionEvents, getSessionFleet } from "@/lib/sessionBroker.data";
-import type { SessionCommand, SessionActionType, SessionCapability, SessionEvent, SessionSnapshot } from "@renoconcierge/codeops-contracts/session-broker";
+import type { SessionCommand, SessionActionType, SessionCapability, SessionContentBlock, SessionEvent, SessionSnapshot, SessionTimelineUpdate, SessionUserAction } from "@renoconcierge/codeops-contracts/session-broker";
 
 export const Route = createFileRoute("/sessions/$sessionId")({
   loader: async ({ params }) => {
@@ -114,6 +114,8 @@ function CockpitHeader({ session }: Readonly<{ session: SessionSnapshot }>) {
 
 function EventRow({ event }: Readonly<{ event: SessionEvent }>) {
   if (event.message) return <MessageRow event={event} message={event.message} />;
+  if (event.action) return <ActionRow event={event} action={event.action} />;
+  if (event.update) return <ExecutionRow event={event} update={event.update} />;
   return (
     <article className="group grid grid-cols-[28px_minmax(0,1fr)] gap-3 py-3.5">
       <div className={`mt-0.5 grid size-7 place-items-center rounded-lg border ${eventTone(event)}`}><EventIcon event={event} /></div>
@@ -141,12 +143,144 @@ function MessageRow({ event, message }: Readonly<{ event: SessionEvent; message:
       <div className="mb-2 flex items-center gap-2"><span className="grid size-6 place-items-center rounded-lg bg-[#6d6af7] text-[9px] text-white">⌁</span><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/30">Agent</span><span className="font-mono text-[9px] text-white/18">#{event.cursor}</span></div>
       <div className="pl-8 text-sm leading-6 text-white/68">
         <p className="whitespace-pre-wrap break-words">{message.text || "The agent completed without a textual response."}</p>
-        {message.stopReason !== "end_turn" ? <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.1em] text-[#ffae8d]/70">Stopped: {message.stopReason.replaceAll("_", " ")}</p> : null}
+        {message.stopReason && message.stopReason !== "end_turn" ? <p className="mt-2 text-[10px] font-medium uppercase tracking-[0.1em] text-[#ffae8d]/70">Stopped: {message.stopReason.replaceAll("_", " ")}</p> : null}
       </div>
       <time className="mt-2 block pl-8 font-mono text-[9px] text-white/18">{event.occurredAt.slice(11, 19)}</time>
     </article>
   );
 }
+
+const actionCopy: Record<Exclude<SessionActionType, "prompt" | "respond_permission">, string> = {
+  cancel: "Cancelled the session",
+  checkpoint: "Created a checkpoint",
+  hibernate: "Hibernated the session",
+  resume: "Resumed the session",
+  fork: "Forked the session",
+  archive: "Archived the session",
+  delete: "Deleted the session",
+};
+
+function ActionRow({ event, action }: Readonly<{ event: SessionEvent; action: SessionUserAction }>) {
+  const label = action.type === "respond_permission"
+    ? action.decision?.outcome === "selected"
+      ? `Selected ${action.decision.optionLabel ?? "a permission option"}`
+      : "Denied the permission request"
+    : actionCopy[action.type];
+  return (
+    <article className="ml-auto max-w-[94%] py-2 sm:max-w-[86%]">
+      <div className="flex items-start justify-end gap-2 text-right">
+        <div className="min-w-0 rounded-xl border border-[#7774ff]/10 bg-[#7774ff]/[0.055] px-3 py-2">
+          <p className="text-xs font-medium text-white/58"><span className="mr-1.5 text-white/26">You</span>{label}</p>
+          {action.detail ? <p className="mt-1 whitespace-pre-wrap break-words text-[11px] leading-4 text-white/34">{action.detail}</p> : null}
+        </div>
+        <span className="mt-2 size-1.5 shrink-0 rounded-full bg-[#7774ff]/55" />
+      </div>
+      <div className="mt-1 flex justify-end gap-2 pr-3 font-mono text-[9px] text-white/18"><span>#{event.cursor}</span><time>{event.occurredAt.slice(11, 19)}</time></div>
+    </article>
+  );
+}
+
+function ExecutionRow({ event, update }: Readonly<{ event: SessionEvent; update: SessionTimelineUpdate }>) {
+  if (update.kind === "user_content") {
+    return <AttachmentRow event={event} content={update.content} actor="user" />;
+  }
+  if (update.kind === "assistant_content") {
+    return <AttachmentRow event={event} content={update.content} actor="assistant" />;
+  }
+  const summary = executionSummary(update);
+  return (
+    <details className="group/execution border-b border-white/[0.04] py-1.5">
+      <summary className="flex min-h-10 cursor-pointer list-none items-center gap-2.5 rounded-lg px-2 text-xs text-white/38 transition hover:bg-white/[0.025] hover:text-white/60">
+        <span className={`grid size-6 shrink-0 place-items-center rounded-md border text-[10px] ${executionTone(update)}`}>{executionIcon(update)}</span>
+        <span className="min-w-0 flex-1 truncate">{summary.label}</span>
+        {summary.status ? <span className="rounded-md bg-white/[0.035] px-1.5 py-0.5 text-[9px] uppercase tracking-[0.08em] text-white/28">{summary.status}</span> : null}
+        <span className="font-mono text-[9px] text-white/16">#{event.cursor}</span>
+        <span className="text-white/16 transition group-open/execution:rotate-45">＋</span>
+      </summary>
+      <div className="ml-10 border-l border-white/[0.055] pb-3 pl-4 pr-2 pt-2 text-xs leading-5 text-white/42">
+        <ExecutionContent update={update} />
+        <time className="mt-3 block font-mono text-[9px] text-white/16">{event.occurredAt.slice(11, 19)}</time>
+      </div>
+    </details>
+  );
+}
+
+type ExecutionUpdate = Exclude<SessionTimelineUpdate, { kind: "assistant_content" | "user_content" }>;
+
+function executionSummary(update: ExecutionUpdate) {
+  if (update.kind === "thought") return { label: "Reasoning", status: null };
+  if (update.kind === "plan") return { label: "Plan", status: `${update.entries.filter((entry) => entry.status === "completed").length}/${update.entries.length}` };
+  if (update.kind === "plan_update") return { label: "Plan update", status: update.content.type };
+  if (update.kind === "plan_removed") return { label: "Plan removed", status: null };
+  return {
+    label: update.title ?? update.name ?? `${update.toolKind ?? "Tool"} call`,
+    status: update.status?.replaceAll("_", " ") ?? (update.kind === "tool_call" ? "started" : "updated"),
+  };
+}
+
+function executionIcon(update: ExecutionUpdate) {
+  if (update.kind === "thought") return "◇";
+  if (update.kind === "plan" || update.kind === "plan_update" || update.kind === "plan_removed") return "☷";
+  return update.status === "failed" ? "!" : update.status === "completed" ? "✓" : "›";
+}
+
+function executionTone(update: ExecutionUpdate) {
+  if (update.kind === "thought") return "border-[#b39cff]/12 bg-[#b39cff]/6 text-[#c5b6ff]/55";
+  if (update.kind === "plan" || update.kind === "plan_update" || update.kind === "plan_removed") return "border-[#6da8ff]/12 bg-[#6da8ff]/6 text-[#8dbbff]/60";
+  if (update.status === "failed") return "border-[#ff747b]/16 bg-[#ff747b]/7 text-[#ff989d]/70";
+  if (update.status === "completed") return "border-[#54d18b]/12 bg-[#54d18b]/6 text-[#6ee2a0]/65";
+  return "border-white/[0.06] bg-white/[0.025] text-white/32";
+}
+
+function ExecutionContent({ update }: Readonly<{ update: ExecutionUpdate }>) {
+  if (update.kind === "thought") return <ContentBlockView content={update.content} compact />;
+  if (update.kind === "plan") {
+    const entries = update.entries;
+    return <ol className="space-y-2">{entries.map((entry, index) => <li key={`${index}-${entry.content}`} className="grid grid-cols-[16px_minmax(0,1fr)] gap-2"><span className={entry.status === "completed" ? "text-[#6ee2a0]/65" : entry.status === "in_progress" ? "text-[#8dbbff]/70" : "text-white/20"}>{entry.status === "completed" ? "✓" : entry.status === "in_progress" ? "●" : "○"}</span><span><span className="text-white/48">{entry.content}</span><span className="ml-2 text-[9px] uppercase tracking-[0.08em] text-white/18">{entry.priority}</span></span></li>)}</ol>;
+  }
+  if (update.kind === "plan_update") {
+    if (update.content.type === "items") {
+      return <ol className="space-y-2">{update.content.entries.map((entry, index) => <li key={`${index}-${entry.content}`} className="grid grid-cols-[16px_minmax(0,1fr)] gap-2"><span className={entry.status === "completed" ? "text-[#6ee2a0]/65" : entry.status === "in_progress" ? "text-[#8dbbff]/70" : "text-white/20"}>{entry.status === "completed" ? "✓" : entry.status === "in_progress" ? "●" : "○"}</span><span><span className="text-white/48">{entry.content}</span><span className="ml-2 text-[9px] uppercase tracking-[0.08em] text-white/18">{entry.priority}</span></span></li>)}</ol>;
+    }
+    return update.content.type === "markdown"
+      ? <pre className="whitespace-pre-wrap break-words font-sans text-xs leading-5">{update.content.markdown}</pre>
+      : <ResourceLink uri={update.content.uri} label="Open plan file" />;
+  }
+  if (update.kind === "plan_removed") return <p>Plan <code className="font-mono text-[10px] text-white/54">{update.planId}</code> was removed.</p>;
+  return <div className="space-y-3">{update.name ? <p className="font-mono text-[10px] text-white/28">{update.name}</p> : null}{update.locations?.length ? <div className="flex flex-wrap gap-1.5">{update.locations.map((location) => <code key={`${location.path}:${location.line ?? ""}`} className="rounded bg-black/20 px-1.5 py-0.5 font-mono text-[9px] text-white/34">{location.path}{location.line === undefined ? "" : `:${location.line}`}</code>)}</div> : null}{update.content?.map((content, index) => <ToolContentView key={index} content={content} />)}</div>;
+}
+
+function ToolContentView({ content }: Readonly<{ content: NonNullable<Extract<SessionTimelineUpdate, { kind: "tool_call" }>["content"]>[number] }>) {
+  if (content.type === "content") return <ContentBlockView content={content.content} compact />;
+  if (content.type === "terminal") return <p>Terminal <code className="font-mono text-[10px] text-white/54">{content.terminalId}</code></p>;
+  return <details className="rounded-lg border border-white/[0.05] bg-black/15 px-3 py-2"><summary className="cursor-pointer list-none font-mono text-[10px] text-white/42">Diff · {content.path}</summary><div className="mt-2 grid gap-2"><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-black/20 p-2 font-mono text-[9px] leading-4 text-[#ffb0b4]/65">{content.oldText ?? "New file"}</pre><pre className="max-h-48 overflow-auto whitespace-pre-wrap break-words rounded bg-black/20 p-2 font-mono text-[9px] leading-4 text-[#93e8b7]/70">{content.newText}</pre></div></details>;
+}
+
+function AttachmentRow({ event, content, actor }: Readonly<{ event: SessionEvent; content: SessionContentBlock; actor: "user" | "assistant" }>) {
+  const user = actor === "user";
+  return <article className={`${user ? "ml-auto" : ""} max-w-[94%] py-3 sm:max-w-[88%]`}><div className={`mb-2 flex items-center gap-2 ${user ? "justify-end" : ""}`}><span className={`grid size-6 place-items-center rounded-lg text-[9px] text-white ${user ? "order-3 bg-[#7774ff]/55" : "bg-[#6d6af7]"}`}>{user ? "You" : "⌁"}</span><span className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/30">{user ? "External attachment" : "Agent attachment"}</span><span className="font-mono text-[9px] text-white/18">#{event.cursor}</span></div><div className={user ? "" : "pl-8"}><ContentBlockView content={content} actor={actor} /></div><time className={`mt-2 block font-mono text-[9px] text-white/18 ${user ? "text-right" : "pl-8"}`}>{event.occurredAt.slice(11, 19)}</time></article>;
+}
+
+function ContentBlockView({ content, compact = false, actor = "assistant" }: Readonly<{ content: SessionContentBlock; compact?: boolean; actor?: "user" | "assistant" }>) {
+  if (content.type === "text") return <p className="whitespace-pre-wrap break-words">{content.text}</p>;
+  if (content.type === "image") return <figure className={`overflow-hidden rounded-xl border border-white/[0.065] bg-white/[0.02] ${compact ? "max-w-md" : "max-w-xl"}`}><div className="grid min-h-28 place-items-center bg-black/20 p-2"><img src={`data:${content.mimeType};base64,${content.data}`} alt={actor === "user" ? "Externally provided attachment" : "Agent-provided attachment"} className="max-h-96 max-w-full rounded-lg object-contain" /></div><figcaption className="flex items-center justify-between gap-3 px-3 py-2 text-[9px] text-white/24"><span>Image attachment</span><span className="min-w-0 truncate font-mono">{content.uri ?? content.mimeType}</span></figcaption></figure>;
+  if (content.type === "audio") return <div className="max-w-xl rounded-xl border border-white/[0.065] bg-white/[0.02] p-3"><p className="mb-2 text-[9px] font-medium uppercase tracking-[0.1em] text-white/24">Audio attachment · {content.mimeType}</p><audio controls preload="metadata" src={`data:${content.mimeType};base64,${content.data}`} className="h-10 w-full" /></div>;
+  if (content.type === "resource_link") return <div className="rounded-xl border border-white/[0.065] bg-white/[0.02] p-3"><ResourceLink uri={content.uri} label={content.title ?? content.name} /><p className="mt-1 text-[10px] text-white/25">{content.description ?? content.mimeType ?? "Linked resource"}{content.size === undefined ? "" : ` · ${formatBytes(content.size)}`}</p></div>;
+  if (content.text !== undefined) return <details className="rounded-xl border border-white/[0.065] bg-white/[0.02] p-3"><summary className="cursor-pointer list-none text-xs font-medium text-white/52">Embedded resource <span className="ml-1 font-mono text-[9px] text-white/22">{content.uri}</span></summary><pre className="mt-3 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/20 p-3 font-mono text-[10px] leading-5 text-white/42">{content.text}</pre></details>;
+  const mimeType = content.mimeType ?? "application/octet-stream";
+  if (mimeType.startsWith("image/")) return <figure className="max-w-xl overflow-hidden rounded-xl border border-white/[0.065] bg-white/[0.02]"><div className="grid min-h-28 place-items-center bg-black/20 p-2"><img src={`data:${mimeType};base64,${content.blob}`} alt="Embedded agent resource" className="max-h-96 max-w-full rounded-lg object-contain" /></div><figcaption className="truncate px-3 py-2 font-mono text-[9px] text-white/24">{content.uri}</figcaption></figure>;
+  if (mimeType.startsWith("audio/")) return <div className="max-w-xl rounded-xl border border-white/[0.065] bg-white/[0.02] p-3"><p className="mb-2 text-[9px] font-medium uppercase tracking-[0.1em] text-white/24">Embedded audio · {content.uri}</p><audio controls preload="metadata" src={`data:${mimeType};base64,${content.blob}`} className="h-10 w-full" /></div>;
+  return <a href={`data:${mimeType};base64,${content.blob}`} download={resourceName(content.uri)} className="inline-flex min-h-10 items-center rounded-lg border border-white/[0.08] px-3 text-xs font-medium text-[#9cc3ff] transition hover:bg-white/[0.04]">Download embedded resource</a>;
+}
+
+function ResourceLink({ uri, label }: Readonly<{ uri: string; label: string }>) {
+  const href = safeResourceHref(uri);
+  return href ? <a href={href} target="_blank" rel="noreferrer" className="text-xs font-medium text-[#9cc3ff] underline decoration-[#9cc3ff]/25 underline-offset-4 hover:text-[#bdd7ff]">{label}</a> : <span className="font-mono text-[10px] text-white/42">{label} · {uri}</span>;
+}
+
+function safeResourceHref(uri: string) { try { const parsed = new URL(uri); return ["https:", "http:"].includes(parsed.protocol) ? parsed.href : null; } catch { return null; } }
+function resourceName(uri: string) { const value = uri.split("/").filter(Boolean).at(-1); return value && value.length < 200 ? value : "agent-resource"; }
+function formatBytes(bytes: number) { if (bytes < 1_000) return `${bytes} B`; if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} KB`; return `${(bytes / 1_000_000).toFixed(1)} MB`; }
 
 function PendingPrompt({ anchorRef, text }: Readonly<{ anchorRef: Ref<HTMLElement>; text: string }>) {
   return <article ref={anchorRef} aria-label="Prompt submitted. Waiting for agent." className="ml-auto max-w-[88%] scroll-mb-32 py-2 opacity-65 sm:max-w-[78%]"><div className="rounded-2xl rounded-br-md border border-[#7774ff]/12 bg-[#7774ff]/7 px-4 py-3 text-sm leading-6 text-white/62"><p className="whitespace-pre-wrap break-words">{text}</p></div><div className="mt-1.5 flex items-center justify-end gap-2 px-1 text-[9px] text-white/24"><span className="size-1.5 animate-pulse rounded-full bg-[#8e8bff]" /><span>Waiting for agent</span></div></article>;

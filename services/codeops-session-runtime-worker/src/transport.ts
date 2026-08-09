@@ -10,6 +10,7 @@ import {
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
+  sessionTimelineUpdateSchema,
   type SessionCommandResult,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
@@ -39,6 +40,7 @@ export const runtimeExecutionResultSchema = z.discriminatedUnion("type", [
             "refusal",
             "cancelled",
           ]),
+          updates: z.array(sessionTimelineUpdateSchema).max(499).optional(),
         })
         .strict(),
     })

@@ -27,6 +27,7 @@ export {
   sessionCommandResultSchema,
   sessionCommandSchema,
   sessionCommandSubmissionSchema,
+  sessionContentBlockSchema,
   sessionEventSchema,
   sessionIdentitySchema,
   temporalCodeOpsSessionIdentitySchema,
@@ -35,6 +36,8 @@ export {
   sessionLeaseSchema,
   sessionSnapshotSchema,
   sessionStateSchema,
+  sessionTimelineUpdateSchema,
+  sessionUserActionSchema,
   type SessionActionType,
   type SessionCapability,
   type SessionCheckpoint,
@@ -42,6 +45,7 @@ export {
   type SessionCommand,
   type SessionCommandResult,
   type SessionCommandSubmission,
+  type SessionContentBlock,
   type SessionEvent,
   type SessionJobInitializationRequest,
   type SessionJobInitializationResponse,
@@ -51,6 +55,8 @@ export {
   type SessionPermissionRequest,
   type SessionSnapshot,
   type SessionState,
+  type SessionTimelineUpdate,
+  type SessionUserAction,
 } from "./session-broker.js";
 export {
   sessionRuntimeClaimRequestSchema,

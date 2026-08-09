@@ -15,6 +15,7 @@ const sha256Digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const isoDateTime = z.string().datetime({ offset: true });
 const uuid = z.string().uuid();
 const safeText = (maximum: number) => z.string().min(1).max(maximum);
+const optionalText = (maximum: number) => z.string().max(maximum).optional();
 
 export const SESSION_BROKER_VERSION = {
   snapshot: "codeops.session-snapshot/v1",
@@ -539,6 +540,162 @@ export const sessionCommandSubmissionSchema = z.union([
   sessionCommandAcceptedSchema,
 ]);
 
+const encodedMedia = z
+  .string()
+  .min(1)
+  .max(700_000)
+  .regex(/^[A-Za-z0-9+/]*={0,2}$/);
+const mimeType = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i);
+const resourceUri = z.string().min(1).max(4_000);
+
+export const sessionContentBlockSchema = z.union([
+  z.object({ type: z.literal("text"), text: safeText(100_000) }).strict(),
+  z
+    .object({
+      type: z.literal("image"),
+      data: encodedMedia,
+      mimeType: mimeType.refine((value) => value.startsWith("image/")),
+      uri: resourceUri.optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("audio"),
+      data: encodedMedia,
+      mimeType: mimeType.refine((value) => value.startsWith("audio/")),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("resource_link"),
+      name: safeText(500),
+      uri: resourceUri,
+      title: optionalText(500),
+      description: optionalText(2_000),
+      mimeType: mimeType.optional(),
+      size: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("resource"),
+      uri: resourceUri,
+      mimeType: mimeType.optional(),
+      text: optionalText(100_000),
+      blob: encodedMedia.optional(),
+    })
+    .strict()
+    .refine((resource) => (resource.text === undefined) !== (resource.blob === undefined), {
+      message: "embedded resource must contain exactly one text or blob payload",
+    }),
+]);
+
+const sessionPlanEntrySchema = z
+  .object({
+    content: safeText(10_000),
+    priority: z.enum(["high", "medium", "low"]),
+    status: z.enum(["pending", "in_progress", "completed"]),
+  })
+  .strict();
+
+const sessionToolContentSchema = z.discriminatedUnion("type", [
+  z.object({ type: z.literal("content"), content: sessionContentBlockSchema }).strict(),
+  z
+    .object({
+      type: z.literal("diff"),
+      path: safeText(2_000),
+      oldText: z.string().max(100_000).nullable().optional(),
+      newText: z.string().max(100_000),
+    })
+    .strict(),
+  z.object({ type: z.literal("terminal"), terminalId: safeText(500) }).strict(),
+]);
+
+const sessionToolFields = {
+  toolCallId: safeText(500),
+  title: safeText(2_000),
+  name: optionalText(500),
+  toolKind: z
+    .enum(["read", "edit", "delete", "move", "search", "execute", "think", "fetch", "switch_mode", "other"])
+    .optional(),
+  status: z.enum(["pending", "in_progress", "completed", "failed"]).optional(),
+  content: z.array(sessionToolContentSchema).max(100).optional(),
+  locations: z
+    .array(
+      z
+        .object({
+          path: safeText(2_000),
+          line: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).optional(),
+        })
+        .strict(),
+    )
+    .max(100)
+    .optional(),
+} as const;
+
+export const sessionTimelineUpdateSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("user_content"),
+      messageId: z.string().min(1).max(500).nullable().optional(),
+      content: sessionContentBlockSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("assistant_content"),
+      messageId: z.string().min(1).max(500).nullable().optional(),
+      content: sessionContentBlockSchema,
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("thought"),
+      messageId: z.string().min(1).max(500).nullable().optional(),
+      content: sessionContentBlockSchema,
+    })
+    .strict(),
+  z.object({ kind: z.literal("plan"), entries: z.array(sessionPlanEntrySchema).max(100) }).strict(),
+  z
+    .object({
+      kind: z.literal("plan_update"),
+      planId: safeText(500),
+      content: z.discriminatedUnion("type", [
+        z.object({ type: z.literal("items"), entries: z.array(sessionPlanEntrySchema).max(100) }).strict(),
+        z.object({ type: z.literal("markdown"), markdown: safeText(100_000) }).strict(),
+        z.object({ type: z.literal("file"), uri: resourceUri }).strict(),
+      ]),
+    })
+    .strict(),
+  z.object({ kind: z.literal("plan_removed"), planId: safeText(500) }).strict(),
+  z.object({ kind: z.literal("tool_call"), ...sessionToolFields }).strict(),
+  z
+    .object({
+      kind: z.literal("tool_call_update"),
+      ...sessionToolFields,
+      title: optionalText(2_000),
+    })
+    .strict(),
+]);
+
+export const sessionUserActionSchema = z
+  .object({
+    type: sessionActionTypeSchema.exclude(["prompt"]),
+    detail: optionalText(2_000),
+    decision: z
+      .object({
+        outcome: z.enum(["selected", "denied"]),
+        optionLabel: optionalText(500),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict();
+
 export const sessionEventSchema = z
   .object({
     version: z.literal(SESSION_BROKER_VERSION.event),
@@ -563,31 +720,47 @@ export const sessionEventSchema = z
           .object({
             role: z.literal("user"),
             text: safeText(100_000),
+            messageId: z.string().min(1).max(500).nullable().optional(),
           })
           .strict(),
         z
           .object({
             role: z.literal("assistant"),
             text: z.string().max(200_000),
-            stopReason: z.enum([
-              "end_turn",
-              "max_tokens",
-              "max_turn_requests",
-              "refusal",
-              "cancelled",
-            ]),
+            messageId: z.string().min(1).max(500).nullable().optional(),
+            stopReason: z
+              .enum([
+                "end_turn",
+                "max_tokens",
+                "max_turn_requests",
+                "refusal",
+                "cancelled",
+              ])
+              .optional(),
           })
           .strict(),
       ])
       .optional(),
+    update: sessionTimelineUpdateSchema.optional(),
+    action: sessionUserActionSchema.optional(),
     occurredAt: isoDateTime,
   })
   .strict()
   .superRefine((event, context) => {
-    if (event.message?.role === "user" && event.type !== "command_committed") {
+    if ([event.message, event.update, event.action].filter(Boolean).length > 1) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "user message events must be command_committed events",
+        message: "session event may contain only one message, update, or user action",
+      });
+    }
+    if (
+      event.message?.role === "user" &&
+      event.type !== "command_committed" &&
+      event.type !== "acp_update"
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "user message events must be command_committed or acp_update events",
         path: ["type"],
       });
     }
@@ -625,4 +798,7 @@ export type SessionCommandAccepted = z.infer<typeof sessionCommandAcceptedSchema
 export type SessionCommandSubmission = z.infer<
   typeof sessionCommandSubmissionSchema
 >;
+export type SessionContentBlock = z.infer<typeof sessionContentBlockSchema>;
+export type SessionTimelineUpdate = z.infer<typeof sessionTimelineUpdateSchema>;
+export type SessionUserAction = z.infer<typeof sessionUserActionSchema>;
 export type SessionEvent = z.infer<typeof sessionEventSchema>;

@@ -8,6 +8,7 @@ import { promisify } from "node:util";
 import {
   AcpSessionStateStore,
   appendAcpAssistantText,
+  captureAcpTimelineUpdate,
   captureWorkspacePatch,
   createAcpPermissionRelay,
   forkOrCreateAcpSession,
@@ -34,6 +35,42 @@ test("collects ordered ACP assistant chunks within the transcript bound", () => 
     () => appendAcpAssistantText("x".repeat(200_000), "y"),
     /exceeds 200000 characters/,
   );
+});
+
+test("normalizes ACP plans, tools, reasoning, message boundaries, and media", () => {
+  const input = [
+    { sessionUpdate: "user_message_chunk", messageId: "user-1", content: { type: "text", text: "External " } },
+    { sessionUpdate: "user_message_chunk", messageId: "user-1", content: { type: "text", text: "prompt." } },
+    { sessionUpdate: "plan", entries: [{ content: "Inspect", priority: "high", status: "in_progress" }] },
+    { sessionUpdate: "agent_thought_chunk", messageId: "thought-1", content: { type: "text", text: "Check " } },
+    { sessionUpdate: "agent_thought_chunk", messageId: "thought-1", content: { type: "text", text: "the contract." } },
+    { sessionUpdate: "tool_call", toolCallId: "tool-1", title: "Read contract", kind: "read", status: "in_progress", content: [], locations: [{ path: "/workspace/contract.ts", line: 9 }] },
+    { sessionUpdate: "tool_call_update", toolCallId: "tool-1", status: "completed", content: [{ type: "content", content: { type: "text", text: "Done." } }] },
+    { sessionUpdate: "agent_message_chunk", messageId: "message-1", content: { type: "text", text: "First message." } },
+    { sessionUpdate: "agent_message_chunk", messageId: "message-2", content: { type: "image", data: "aGVsbG8=", mimeType: "image/png" } },
+    { sessionUpdate: "agent_message_chunk", messageId: "message-2", content: { type: "text", text: "Second message." } },
+  ];
+  const capture = input.reduce(
+    (current, update) => captureAcpTimelineUpdate(current, update),
+    { response: "", updates: [] },
+  );
+  assert.equal(capture.response, "First message.Second message.");
+  assert.equal(capture.updates.length, 8);
+  assert.deepEqual(capture.updates[0], {
+    kind: "user_content",
+    messageId: "user-1",
+    content: { type: "text", text: "External prompt." },
+  });
+  assert.deepEqual(capture.updates[2], {
+    kind: "thought",
+    messageId: "thought-1",
+    content: { type: "text", text: "Check the contract." },
+  });
+  assert.deepEqual(capture.updates.slice(-3).map(({ kind, messageId }) => [kind, messageId]), [
+    ["assistant_content", "message-1"],
+    ["assistant_content", "message-2"],
+    ["assistant_content", "message-2"],
+  ]);
 });
 
 test("falls back to a new ACP session only when session/fork is unsupported", async () => {
