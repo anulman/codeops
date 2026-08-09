@@ -140,6 +140,27 @@ test("rejects a valid-looking response that drifts from the Job root", async () 
   );
 });
 
+test("rejects drift in optional CodeOps session identity", async () => {
+  const codeOpsRequest = {
+    ...request(),
+    identity: {
+      ...request().identity,
+      workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
+      agentRole: "coding",
+      round: 1,
+    },
+  };
+  const initializer = new SessionJobInitializer({
+    gatewayOrigin: "https://gateway.example.test",
+    token,
+    fetch: async () => json(response()),
+  });
+  await assert.rejects(
+    initializer.initialize(codeOpsRequest),
+    /root identity/,
+  );
+});
+
 test("accepts an exact duplicate root whose successor lease was released", async () => {
   const initializer = new SessionJobInitializer({
     gatewayOrigin: "https://gateway.example.test",

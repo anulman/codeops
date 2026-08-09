@@ -79,13 +79,8 @@ export class SessionJobInitializer {
         result.snapshot.lease?.status === "released";
       if (
         result.snapshot.sessionId !== request.sessionId ||
-        result.snapshot.identity.repository !== request.identity.repository ||
-        result.snapshot.identity.branch !== request.identity.branch ||
-        result.snapshot.identity.baseSha !== request.identity.baseSha ||
-        result.snapshot.identity.workflowId !== request.identity.workflowId ||
-        result.snapshot.identity.runId !== request.identity.runId ||
-        result.snapshot.identity.parentSessionId !== null ||
-        result.snapshot.identity.forkedAtCursor !== null ||
+        JSON.stringify(result.snapshot.identity) !==
+          JSON.stringify(request.identity) ||
         (!exactActiveLease && !duplicateReleasedLease)
       ) {
         throw new SessionRuntimeTransportError(
