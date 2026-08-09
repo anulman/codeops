@@ -26,7 +26,23 @@ const TOKEN_PATTERN = /^[\x21-\x7e]{32,4096}$/;
 export class SessionRuntimeTransportError extends Error {}
 
 export const runtimeExecutionResultSchema = z.discriminatedUnion("type", [
-  z.object({ type: z.literal("prompt") }).strict(),
+  z
+    .object({
+      type: z.literal("prompt"),
+      material: z
+        .object({
+          response: z.string().max(200_000),
+          stopReason: z.enum([
+            "end_turn",
+            "max_tokens",
+            "max_turn_requests",
+            "refusal",
+            "cancelled",
+          ]),
+        })
+        .strict(),
+    })
+    .strict(),
   z
     .object({
       type: z.literal("checkpoint"),
@@ -95,11 +111,11 @@ export function buildSessionRuntimeCompletion(
     observedEventCursor: dispatch.snapshot.eventCursor,
     completedAt: completedAt.toISOString(),
   };
-  return sessionRuntimeCompletionSchema.parse(
-    execution.type === "prompt"
-      ? { ...envelope, type: execution.type }
-      : { ...envelope, type: execution.type, material: execution.material },
-  );
+  return sessionRuntimeCompletionSchema.parse({
+    ...envelope,
+    type: execution.type,
+    material: execution.material,
+  });
 }
 
 export function exactGatewayOrigin(raw: string): string {

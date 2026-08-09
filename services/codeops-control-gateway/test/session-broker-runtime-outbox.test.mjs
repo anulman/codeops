@@ -11,6 +11,10 @@ const leaseId = "11111111-1111-4111-8111-111111111111";
 const idempotencyKey = "33333333-3333-4333-8333-333333333333";
 const dispatchId = "44444444-4444-4444-8444-444444444444";
 const claimToken = "55555555-5555-4555-8555-555555555555";
+const promptMaterial = {
+  response: "I updated the focused implementation and verified the result.",
+  stopReason: "end_turn",
+};
 
 function snapshot(overrides = {}) {
   const enabled = new Set(["prompt", "cancel", "checkpoint", "hibernate"]);
@@ -242,6 +246,7 @@ function completion(overrides = {}) {
     idempotencyKey,
     observedEventCursor: 184,
     type: "prompt",
+    material: promptMaterial,
     completedAt: "2026-08-04T19:05:00.000Z",
     ...overrides,
   };
@@ -346,7 +351,7 @@ test("atomically commits only an exact unexpired claim completion", async () => 
     commandId: () => "66666666-6666-4666-8666-666666666666",
   });
   assert.equal(result.disposition, "committed");
-  assert.equal(result.eventCursor, 185);
+  assert.equal(result.eventCursor, 186);
   assert.equal(client.calls[2].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
   assert.match(client.calls[3].text, /codeops\.sessions[\s\S]*FOR UPDATE/);
   assert.match(client.calls[4].text, /session_runtime_outbox[\s\S]*FOR UPDATE/);
@@ -423,8 +428,8 @@ test("commits a prompt against the exact permission-mediated snapshot", async ()
     now: () => new Date("2026-08-04T19:10:00.000Z"),
     commandId: () => "99999999-9999-4999-8999-999999999999",
   });
-  assert.equal(result.eventCursor, 187);
-  assert.equal(result.snapshot.eventCursor, 187);
+  assert.equal(result.eventCursor, 188);
+  assert.equal(result.snapshot.eventCursor, 188);
 });
 
 test("rolls back stale tokens, expired claims, and changed snapshots", async () => {

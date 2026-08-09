@@ -26,6 +26,16 @@ type ResumeCommand = Extract<SessionCommand, { readonly type: "resume" }>;
 type ForkCommand = Extract<SessionCommand, { readonly type: "fork" }>;
 type PromptCommand = Extract<SessionCommand, { readonly type: "prompt" }>;
 
+export interface RuntimePromptMaterial {
+  readonly response: string;
+  readonly stopReason:
+    | "end_turn"
+    | "max_tokens"
+    | "max_turn_requests"
+    | "refusal"
+    | "cancelled";
+}
+
 export interface RuntimeCheckpointMaterial {
   readonly checkpointId: string;
   readonly patchDigest: string;
@@ -221,32 +231,55 @@ export function applyRuntimePermissionRequestTransition(
 
 export function applyPromptSessionTransition(
   snapshot: SessionSnapshot,
-  _command: PromptCommand,
+  command: PromptCommand,
+  material: RuntimePromptMaterial,
   occurredAt: string,
-): LocalSessionTransition {
+): {
+  readonly snapshot: SessionSnapshot;
+  readonly events: readonly SessionEvent[];
+} {
   if (snapshot.state !== "running") {
     throw new Error("prompt completion requires a running session");
   }
-  const cursor = snapshot.eventCursor + 1;
+  const userCursor = snapshot.eventCursor + 1;
+  const assistantCursor = userCursor + 1;
   const nextSnapshot = sessionSnapshotSchema.parse({
     ...snapshot,
-    eventCursor: cursor,
+    eventCursor: assistantCursor,
     updatedAt: occurredAt,
   });
-  const eventBody = {
+  const userEventBody = {
     sessionId: snapshot.sessionId,
     generation: snapshot.generation,
-    cursor,
+    cursor: userCursor,
+    type: "command_committed",
+    message: {
+      role: "user",
+      text: command.prompt,
+    },
+    occurredAt,
+  } as const;
+  const assistantEventBody = {
+    sessionId: snapshot.sessionId,
+    generation: snapshot.generation,
+    cursor: assistantCursor,
     type: "acp_update",
+    message: {
+      role: "assistant",
+      text: material.response,
+      stopReason: material.stopReason,
+    },
     occurredAt,
   } as const;
   return {
     snapshot: nextSnapshot,
-    event: sessionEventSchema.parse({
-      version: SESSION_BROKER_VERSION.event,
-      eventId: eventId(eventBody),
-      ...eventBody,
-    }),
+    events: [userEventBody, assistantEventBody].map((body) =>
+      sessionEventSchema.parse({
+        version: SESSION_BROKER_VERSION.event,
+        eventId: eventId(body),
+        ...body,
+      }),
+    ),
   };
 }
 

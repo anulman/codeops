@@ -20,6 +20,10 @@ function completion(overrides = {}) {
     idempotencyKey: "33333333-3333-4333-8333-333333333333",
     observedEventCursor: 184,
     type: "prompt",
+    material: {
+      response: "I updated the focused implementation and verified the result.",
+      stopReason: "end_turn",
+    },
     completedAt: "2026-08-04T19:05:00.000Z",
     ...overrides,
   };

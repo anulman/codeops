@@ -2,6 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { runSessionRuntimeWorker } from "../dist/runner.js";
 
+const promptResult = {
+  type: "prompt",
+  material: {
+    response: "I completed the bounded implementation.",
+    stopReason: "end_turn",
+  },
+};
+
 const committed = {
   version: "codeops.session-command-result/v1",
   commandId: "66666666-6666-4666-8666-666666666666",
@@ -29,7 +37,7 @@ test("polls serially, reports completion, and stops on its signal", async () => 
         return null;
       },
     },
-    execute: async () => ({ type: "prompt" }),
+    execute: async () => promptResult,
     leaseMs: 900_000,
     idlePollMs: 100,
     signal: controller.signal,
@@ -51,7 +59,7 @@ test("propagates execution errors without automatically claiming again", async (
           throw new Error("ambiguous ACP operation");
         },
       },
-      execute: async () => ({ type: "prompt" }),
+      execute: async () => promptResult,
       leaseMs: 1_000,
       idlePollMs: 100,
       signal: new AbortController().signal,
@@ -66,14 +74,14 @@ test("rejects poll and lease bounds before claiming", async () => {
   const transport = { async runOne() { calls += 1; return null; } };
   await assert.rejects(runSessionRuntimeWorker({
     transport,
-    execute: async () => ({ type: "prompt" }),
+    execute: async () => promptResult,
     leaseMs: 999,
     idlePollMs: 100,
     signal: new AbortController().signal,
   }), /claim lease/);
   await assert.rejects(runSessionRuntimeWorker({
     transport,
-    execute: async () => ({ type: "prompt" }),
+    execute: async () => promptResult,
     leaseMs: 1_000,
     idlePollMs: 31_000,
     signal: new AbortController().signal,

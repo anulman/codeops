@@ -3,6 +3,14 @@ import test from "node:test";
 import { sessionRuntimeDispatchDigest } from "../dist/lifecycle.js";
 import { reconcileIncompleteRuntimeExecution } from "../dist/repair.js";
 
+const promptResult = {
+  type: "prompt",
+  material: {
+    response: "I completed the bounded implementation.",
+    stopReason: "end_turn",
+  },
+};
+
 function dispatch() {
   return {
     version: "codeops.session-runtime-dispatch/v1",
@@ -68,18 +76,18 @@ test("adopts one exact reconciled result without executing side effects", async 
   const store = receipts();
   assert.deepEqual(await reconcileIncompleteRuntimeExecution({
     dispatch: dispatch(),
-    result: { type: "prompt" },
+    result: promptResult,
     receipts: store,
-  }), { type: "prompt" });
-  assert.deepEqual(store.state.reservation.result, { type: "prompt" });
+  }), promptResult);
+  assert.deepEqual(store.state.reservation.result, promptResult);
 });
 
 test("replays the exact completed repair but rejects a conflicting result", async () => {
   const completed = receipts();
-  completed.state.reservation = { ...completed.state.reservation, result: { type: "prompt" } };
+  completed.state.reservation = { ...completed.state.reservation, result: promptResult };
   assert.deepEqual(await reconcileIncompleteRuntimeExecution({
-    dispatch: dispatch(), result: { type: "prompt" }, receipts: completed,
-  }), { type: "prompt" });
+    dispatch: dispatch(), result: promptResult, receipts: completed,
+  }), promptResult);
 
   completed.state.reservation = {
     ...completed.state.reservation,
@@ -94,7 +102,7 @@ test("replays the exact completed repair but rejects a conflicting result", asyn
     },
   };
   await assert.rejects(reconcileIncompleteRuntimeExecution({
-    dispatch: dispatch(), result: { type: "prompt" }, receipts: completed,
+    dispatch: dispatch(), result: promptResult, receipts: completed,
   }), /conflicted with the reconciled result/);
 });
 
@@ -102,13 +110,13 @@ test("rejects absent, drifted, or wrong-type reservations", async () => {
   const absent = receipts();
   absent.read = async () => null;
   await assert.rejects(reconcileIncompleteRuntimeExecution({
-    dispatch: dispatch(), result: { type: "prompt" }, receipts: absent,
+    dispatch: dispatch(), result: promptResult, receipts: absent,
   }), /exact incomplete reservation/);
 
   const drifted = receipts();
   drifted.state.reservation = { ...drifted.state.reservation, dispatchDigest: `sha256:${"b".repeat(64)}` };
   await assert.rejects(reconcileIncompleteRuntimeExecution({
-    dispatch: dispatch(), result: { type: "prompt" }, receipts: drifted,
+    dispatch: dispatch(), result: promptResult, receipts: drifted,
   }), /exact incomplete reservation/);
 
   await assert.rejects(reconcileIncompleteRuntimeExecution({

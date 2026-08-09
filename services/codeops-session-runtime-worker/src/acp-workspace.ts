@@ -18,6 +18,18 @@ import type {
 
 const execFileAsync = promisify(execFile);
 const MAX_PATCH_BYTES = 2_000_000;
+const MAX_ASSISTANT_RESPONSE_CHARS = 200_000;
+
+export function appendAcpAssistantText(
+  current: string,
+  chunk: string,
+): string {
+  const response = `${current}${chunk}`;
+  if (response.length > MAX_ASSISTANT_RESPONSE_CHARS) {
+    throw new Error("ACP assistant response exceeds 200000 characters");
+  }
+  return response;
+}
 
 type PromptDispatch = SessionRuntimeDispatch & {
   readonly command: Extract<
@@ -99,7 +111,10 @@ interface StoredAcpState {
 export interface AcpAgentSessionConnection {
   newSession(cwd: string): Promise<string>;
   loadSession(sessionId: string, cwd: string): Promise<void>;
-  prompt(sessionId: string, prompt: string): Promise<void>;
+  prompt(sessionId: string, prompt: string): Promise<{
+    readonly response: string;
+    readonly stopReason: acp.PromptResponse["stopReason"];
+  }>;
   forkSession(sessionId: string, cwd: string): Promise<string>;
 }
 
@@ -320,6 +335,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
       Writable.toWeb(socket),
       Readable.toWeb(socket) as ReadableStream<Uint8Array>,
     );
+    const promptOutput = new Map<string, string>();
     try {
       return await acp
         .client({ name: "renoconcierge-session-runtime-worker" })
@@ -332,7 +348,25 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
             return this.#permissions.request(dispatch as PromptDispatch, params);
           },
         )
-        .onNotification(acp.methods.client.session.update, () => {})
+        .onNotification(
+          acp.methods.client.session.update,
+          ({ params }) => {
+            const { sessionId, update } = params;
+            if (
+              update.sessionUpdate !== "agent_message_chunk" ||
+              update.content.type !== "text"
+            ) {
+              return;
+            }
+            promptOutput.set(
+              sessionId,
+              appendAcpAssistantText(
+                promptOutput.get(sessionId) ?? "",
+                update.content.text,
+              ),
+            );
+          },
+        )
         .connectWith(stream, async (agent) => {
           await agent.request(acp.methods.agent.initialize, {
             protocolVersion: acp.PROTOCOL_VERSION,
@@ -355,10 +389,15 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
               });
             },
             prompt: async (sessionId, prompt) => {
-              await agent.request(acp.methods.agent.session.prompt, {
+              promptOutput.set(sessionId, "");
+              const result = await agent.request(acp.methods.agent.session.prompt, {
                 sessionId,
                 prompt: [{ type: "text", text: prompt }],
               });
+              return {
+                response: promptOutput.get(sessionId) ?? "",
+                stopReason: result.stopReason,
+              };
             },
             forkSession: async (sessionId, cwd) =>
               forkOrCreateAcpSession({
@@ -401,11 +440,11 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   }
 
   async prompt(dispatch: PromptDispatch): Promise<RuntimeExecutionResult> {
-    await this.#connect(dispatch, async (agent) => {
+    const material = await this.#connect(dispatch, async (agent) => {
       const sessionId = await this.#activeAcpSession(dispatch, agent);
-      await agent.prompt(sessionId, dispatch.command.prompt);
+      return agent.prompt(sessionId, dispatch.command.prompt);
     });
-    return { type: "prompt" };
+    return { type: "prompt", material };
   }
 
   async #checkpoint(

@@ -557,9 +557,48 @@ export const sessionEventSchema = z
       "session_archived",
       "session_deleted",
     ]),
+    message: z
+      .discriminatedUnion("role", [
+        z
+          .object({
+            role: z.literal("user"),
+            text: safeText(100_000),
+          })
+          .strict(),
+        z
+          .object({
+            role: z.literal("assistant"),
+            text: z.string().max(200_000),
+            stopReason: z.enum([
+              "end_turn",
+              "max_tokens",
+              "max_turn_requests",
+              "refusal",
+              "cancelled",
+            ]),
+          })
+          .strict(),
+      ])
+      .optional(),
     occurredAt: isoDateTime,
   })
-  .strict();
+  .strict()
+  .superRefine((event, context) => {
+    if (event.message?.role === "user" && event.type !== "command_committed") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "user message events must be command_committed events",
+        path: ["type"],
+      });
+    }
+    if (event.message?.role === "assistant" && event.type !== "acp_update") {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "assistant message events must be acp_update events",
+        path: ["type"],
+      });
+    }
+  });
 
 export type SessionActionType = z.infer<typeof sessionActionTypeSchema>;
 export type SessionCapability = z.infer<typeof sessionCapabilitySchema>;

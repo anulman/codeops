@@ -8,6 +8,13 @@ import { SessionRuntimeTransportError } from "../dist/transport.js";
 const dispatchId = "44444444-4444-4444-8444-444444444444";
 const leaseId = "11111111-1111-4111-8111-111111111111";
 const idempotencyKey = "33333333-3333-4333-8333-333333333333";
+const promptResult = {
+  type: "prompt",
+  material: {
+    response: "I completed the bounded implementation.",
+    stopReason: "end_turn",
+  },
+};
 
 function capabilities() {
   return [
@@ -87,7 +94,7 @@ function memoryReceipts() {
 
 function lifecycle(overrides = {}) {
   return {
-    async prompt() { return { type: "prompt" }; },
+    async prompt() { return promptResult; },
     async checkpoint() { throw new Error("unexpected checkpoint"); },
     async hibernate() { throw new Error("unexpected hibernate"); },
     async resume() { throw new Error("unexpected resume"); },
@@ -106,12 +113,12 @@ test("prepares one ACP/workspace result and replays its immutable receipt", asyn
         calls += 1;
         assert.deepEqual(value, dispatch());
         assert.equal("claimToken" in value, false);
-        return { type: "prompt" };
+        return promptResult;
       },
     }),
   });
-  assert.deepEqual(await execute(dispatch()), { type: "prompt" });
-  assert.deepEqual(await execute(dispatch()), { type: "prompt" });
+  assert.deepEqual(await execute(dispatch()), promptResult);
+  assert.deepEqual(await execute(dispatch()), promptResult);
   assert.equal(calls, 1);
   assert.match(receipts.records.get(dispatchId).dispatchDigest, /^sha256:[0-9a-f]{64}$/);
 });
@@ -142,7 +149,7 @@ test("fails closed on an incomplete reservation without repeating side effects",
   let calls = 0;
   const execute = createSessionRuntimeLifecycleExecutor({
     receipts,
-    lifecycle: lifecycle({ async prompt() { calls += 1; return { type: "prompt" }; } }),
+    lifecycle: lifecycle({ async prompt() { calls += 1; return promptResult; } }),
   });
   await assert.rejects(
     execute(dispatch()),

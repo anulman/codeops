@@ -115,12 +115,16 @@ export function applySessionRuntimeCompletion(
   const transition = (() => {
     switch (command.type) {
       case "prompt": {
+        if (completion.type !== "prompt") {
+          throw new Error("runtime prompt completion type drifted");
+        }
         const result = applyPromptSessionTransition(
           snapshot,
           command,
+          completion.material,
           context.committedAt,
         );
-        return { snapshot: result.snapshot, events: [result.event] };
+        return result;
       }
       case "checkpoint":
       case "hibernate": {

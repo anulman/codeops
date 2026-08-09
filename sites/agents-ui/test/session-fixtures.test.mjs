@@ -18,6 +18,11 @@ test("fleet and cockpit routes use the live broker while retaining the v1 operat
   assert.match(shell, /SessionNavigator/);
   assert.match(shell, /lg:grid-cols-\[304px_minmax\(0,1fr\)\]/);
   assert.match(cockpit, /SessionComposer/);
+  assert.match(cockpit, /MessageRow/);
+  assert.match(cockpit, /Waiting for agent/);
+  assert.match(cockpit, /event\.cursor > optimisticPrompt\.afterCursor/);
+  assert.match(cockpit, /SteeringSheet/);
+  assert.match(cockpit, /request\.options\.map/);
   assert.match(cockpit, /Prompt this live session/);
   assert.match(cockpit, /sticky bottom-0/);
   assert.match(cockpit, /xl:grid-cols-\[minmax\(0,1fr\)_320px\]/);
@@ -26,8 +31,9 @@ test("fleet and cockpit routes use the live broker while retaining the v1 operat
   assert.match(cockpit, /getSessionEvents/);
   assert.match(cockpit, /executeSessionCommand/);
   assert.match(cockpit, /window\.setInterval/);
-  assert.match(cockpit, /type: action, prompt/);
+  assert.match(cockpit, /commandForAction/);
   assert.match(cockpit, /checkpointId: checkpoint\.checkpointId/);
+  assert.doesNotMatch(cockpit, /window\.prompt|window\.confirm/);
   assert.doesNotMatch(cockpit, /ACP runtime adapter pending/);
   assert.match(cockpit, /session\.capabilities\.map/);
   assert.doesNotMatch(fleet, /sessionFixtures/);

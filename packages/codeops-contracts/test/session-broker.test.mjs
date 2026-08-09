@@ -6,6 +6,7 @@ import {
   sessionActionTypeSchema,
   sessionCommandResultSchema,
   sessionCommandSchema,
+  sessionEventSchema,
   sessionJobInitializationRequestSchema,
   sessionJobInitializationResponseSchema,
   sessionRuntimePermissionPollSchema,
@@ -353,6 +354,50 @@ test("returns a committed durable snapshot for success and retry", () => {
       snapshot: { ...snapshot(), sessionId: "ses_foreign" },
     }),
   );
+});
+
+test("binds durable transcript messages to their exact broker event types", () => {
+  const common = {
+    version: SESSION_BROKER_VERSION.event,
+    eventId: `sha256:${"c".repeat(64)}`,
+    sessionId,
+    generation: 3,
+    cursor: 185,
+    occurredAt: "2026-08-04T03:04:01.000Z",
+  };
+  assert.deepEqual(sessionEventSchema.parse({
+    ...common,
+    type: "command_committed",
+    message: { role: "user", text: "Continue the review." },
+  }).message, { role: "user", text: "Continue the review." });
+  assert.deepEqual(sessionEventSchema.parse({
+    ...common,
+    type: "acp_update",
+    message: {
+      role: "assistant",
+      text: "I completed the review.",
+      stopReason: "end_turn",
+    },
+  }).message, {
+    role: "assistant",
+    text: "I completed the review.",
+    stopReason: "end_turn",
+  });
+  assert.throws(() => sessionEventSchema.parse({
+    ...common,
+    type: "acp_update",
+    message: { role: "user", text: "Wrong event binding." },
+  }));
+  assert.throws(() => sessionEventSchema.parse({
+    ...common,
+    type: "command_committed",
+    message: { role: "assistant", text: "Wrong event binding.", stopReason: "end_turn" },
+  }));
+  assert.throws(() => sessionEventSchema.parse({
+    ...common,
+    type: "acp_update",
+    message: { role: "assistant", text: "x".repeat(200_001), stopReason: "end_turn" },
+  }));
 });
 
 test("binds ACP permission options to one durable broker request and decision", () => {

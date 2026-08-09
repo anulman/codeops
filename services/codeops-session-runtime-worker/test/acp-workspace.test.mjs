@@ -7,6 +7,7 @@ import test from "node:test";
 import { promisify } from "node:util";
 import {
   AcpSessionStateStore,
+  appendAcpAssistantText,
   captureWorkspacePatch,
   createAcpPermissionRelay,
   forkOrCreateAcpSession,
@@ -21,6 +22,18 @@ const idempotencyKey = "22222222-2222-4222-8222-222222222222";
 test("rejects an invalid ACP readiness boundary before opening a socket", async () => {
   await assert.rejects(waitForAcpSocket("relative.sock", 1_000), /absolute path/);
   await assert.rejects(waitForAcpSocket("/run/codeops/agent.sock", 999), /between 1 and 60 seconds/);
+});
+
+test("collects ordered ACP assistant chunks within the transcript bound", () => {
+  assert.equal(
+    appendAcpAssistantText("I made ", "one safe edit."),
+    "I made one safe edit.",
+  );
+  assert.equal(appendAcpAssistantText("x".repeat(200_000), ""), "x".repeat(200_000));
+  assert.throws(
+    () => appendAcpAssistantText("x".repeat(200_000), "y"),
+    /exceeds 200000 characters/,
+  );
 });
 
 test("falls back to a new ACP session only when session/fork is unsupported", async () => {
@@ -214,6 +227,10 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
       },
       prompt: async (sessionId, prompt) => {
         calls.push(["prompt", sessionId, prompt]);
+        return {
+          response: "I made one safe edit.",
+          stopReason: "end_turn",
+        };
       },
       forkSession: async (sessionId, cwd) => {
         calls.push(["fork", sessionId, cwd]);
@@ -224,7 +241,13 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
 
   assert.deepEqual(
     await lifecycle.prompt(dispatch("prompt", { prompt: "Make one safe edit." })),
-    { type: "prompt" },
+    {
+      type: "prompt",
+      material: {
+        response: "I made one safe edit.",
+        stopReason: "end_turn",
+      },
+    },
   );
   const checkpoint = await lifecycle.checkpoint(dispatch("checkpoint"));
   assert.equal(checkpoint.type, "checkpoint");

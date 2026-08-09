@@ -11,6 +11,13 @@ const dispatchId = "44444444-4444-4444-8444-444444444444";
 const claimToken = "55555555-5555-4555-8555-555555555555";
 const leaseId = "11111111-1111-4111-8111-111111111111";
 const idempotencyKey = "33333333-3333-4333-8333-333333333333";
+const promptResult = {
+  type: "prompt",
+  material: {
+    response: "I completed the bounded implementation.",
+    stopReason: "end_turn",
+  },
+};
 
 function capabilities() {
   return [
@@ -82,6 +89,7 @@ function completion(overrides = {}) {
     idempotencyKey,
     observedEventCursor: 184,
     type: "prompt",
+    material: promptResult.material,
     completedAt: "2026-08-04T20:03:00.000Z",
     ...overrides,
   };
@@ -115,8 +123,8 @@ test("claims and completes one exact dispatch through the worker-only boundary",
         leaseId,
         idempotencyKey,
         type: "prompt",
-        eventCursor: 185,
-        snapshot: { ...claim().dispatch.snapshot, eventCursor: 185 },
+        eventCursor: 186,
+        snapshot: { ...claim().dispatch.snapshot, eventCursor: 186 },
         committedAt: "2026-08-04T20:03:01.000Z",
         disposition: "committed",
       });
@@ -129,7 +137,7 @@ test("claims and completes one exact dispatch through the worker-only boundary",
     execute: async (runtimeDispatch) => {
       assert.deepEqual(runtimeDispatch, claim().dispatch);
       assert.equal("claimToken" in runtimeDispatch, false);
-      return { type: "prompt" };
+      return promptResult;
     },
   });
   assert.equal(result.disposition, "committed");
@@ -211,8 +219,8 @@ test("relays permission through a claim-hidden executor callback", async () => {
         leaseId,
         idempotencyKey,
         type: "prompt",
-        eventCursor: 185,
-        snapshot: { ...claim().dispatch.snapshot, eventCursor: 185 },
+        eventCursor: 186,
+        snapshot: { ...claim().dispatch.snapshot, eventCursor: 186 },
         committedAt: "2026-08-04T20:03:01.000Z",
         disposition: "committed",
       });
@@ -238,7 +246,7 @@ test("relays permission through a claim-hidden executor callback", async () => {
         outcome: "selected",
         acpOptionId: "opaque-allow-once",
       });
-      return { type: "prompt" };
+      return promptResult;
     },
   });
   assert.equal(result.disposition, "committed");
@@ -251,7 +259,7 @@ test("builds the completion envelope from the claim instead of trusting the exec
   assert.deepEqual(
     buildSessionRuntimeCompletion(
       claim(),
-      { type: "prompt" },
+      promptResult,
       new Date("2026-08-04T20:03:00.000Z"),
     ),
     completion(),
@@ -259,7 +267,7 @@ test("builds the completion envelope from the claim instead of trusting the exec
   assert.throws(
     () => buildSessionRuntimeCompletion(
       claim(),
-      { type: "prompt", dispatchId: "77777777-7777-4777-8777-777777777777" },
+      { ...promptResult, dispatchId: "77777777-7777-4777-8777-777777777777" },
       new Date("2026-08-04T20:03:00.000Z"),
     ),
   );
@@ -319,7 +327,7 @@ test("rejects identity drift and expired claims before completion crosses the ne
     now: () => new Date("2026-08-04T20:05:00.000Z"),
     execute: async () => {
       executed = true;
-      return { type: "prompt" };
+      return promptResult;
     },
   }), SessionRuntimeTransportError);
   assert.equal(claimCalls, 1);

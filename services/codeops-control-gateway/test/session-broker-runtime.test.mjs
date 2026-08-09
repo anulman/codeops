@@ -12,6 +12,10 @@ const checkpointId = "22222222-2222-4222-8222-222222222222";
 const idempotencyKey = "33333333-3333-4333-8333-333333333333";
 const dispatchId = "44444444-4444-4444-8444-444444444444";
 const completedAt = "2026-08-04T16:55:00.000Z";
+const promptMaterial = {
+  response: "I updated the focused implementation and verified the result.",
+  stopReason: "end_turn",
+};
 const actions = [
   "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
   "resume", "fork", "archive", "delete",
@@ -112,17 +116,26 @@ test("builds only an exact enabled ACP runtime dispatch", () => {
   }));
 });
 
-test("commits an acknowledged prompt as one ordered ACP update", () => {
+test("commits one prompt and assistant response as ordered transcript events", () => {
   const mutation = applySessionRuntimeCompletion(
     dispatch("prompt"),
-    completion("prompt"),
+    completion("prompt", promptMaterial),
     context,
   );
   assert.equal(mutation.result.type, "prompt");
   assert.equal(mutation.result.snapshot.state, "running");
-  assert.equal(mutation.result.eventCursor, 185);
+  assert.equal(mutation.result.eventCursor, 186);
   assert.deepEqual(mutation.events.map(({ type, cursor }) => [type, cursor]), [
-    ["acp_update", 185],
+    ["command_committed", 185],
+    ["acp_update", 186],
+  ]);
+  assert.deepEqual(mutation.events.map(({ message }) => message), [
+    { role: "user", text: "Continue the focused implementation." },
+    {
+      role: "assistant",
+      text: promptMaterial.response,
+      stopReason: promptMaterial.stopReason,
+    },
   ]);
 });
 
@@ -133,17 +146,18 @@ test("commits a prompt after one exact permission request and decision", () => {
   });
   const mutation = applySessionRuntimeCompletion(
     dispatch("prompt"),
-    completion("prompt"),
+    completion("prompt", promptMaterial),
     context,
     permissionResolved,
   );
-  assert.equal(mutation.result.eventCursor, 187);
+  assert.equal(mutation.result.eventCursor, 188);
   assert.deepEqual(mutation.events.map(({ type, cursor }) => [type, cursor]), [
-    ["acp_update", 187],
+    ["command_committed", 187],
+    ["acp_update", 188],
   ]);
   assert.throws(() => applySessionRuntimeCompletion(
     dispatch("prompt"),
-    completion("prompt"),
+    completion("prompt", promptMaterial),
     context,
     snapshot({
       eventCursor: 186,
@@ -169,7 +183,7 @@ test("rejects a completion that drifts from its exact dispatch snapshot", () => 
   ]) {
     assert.throws(() => applySessionRuntimeCompletion(
       current,
-      { ...completion("prompt"), ...drift },
+      { ...completion("prompt", promptMaterial), ...drift },
       context,
     ), /exact dispatch|Invalid/);
   }

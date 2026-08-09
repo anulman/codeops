@@ -26,6 +26,13 @@ const principal = z
   .max(256)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/);
 const boundedAcpIdentity = z.string().min(1).max(500);
+const promptStopReason = z.enum([
+  "end_turn",
+  "max_tokens",
+  "max_turn_requests",
+  "refusal",
+  "cancelled",
+]);
 
 export const sessionRuntimeCommandTypes = [
   "prompt",
@@ -137,7 +144,17 @@ export const sessionRuntimeForkMaterialSchema = z
   );
 
 export const sessionRuntimeCompletionSchema = z.discriminatedUnion("type", [
-  completionBase.extend({ type: z.literal("prompt") }).strict(),
+  completionBase
+    .extend({
+      type: z.literal("prompt"),
+      material: z
+        .object({
+          response: z.string().max(200_000),
+          stopReason: promptStopReason,
+        })
+        .strict(),
+    })
+    .strict(),
   completionBase
     .extend({
       type: z.literal("checkpoint"),

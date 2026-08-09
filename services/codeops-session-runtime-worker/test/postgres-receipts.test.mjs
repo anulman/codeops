@@ -4,6 +4,13 @@ import { PostgresRuntimeExecutionReceiptStore } from "../dist/postgres-receipts.
 
 const dispatchId = "44444444-4444-4444-8444-444444444444";
 const digest = `sha256:${"a".repeat(64)}`;
+const promptResult = {
+  type: "prompt",
+  material: {
+    response: "I completed the bounded implementation.",
+    stopReason: "end_turn",
+  },
+};
 
 function fakeDatabase(existing = null) {
   const state = { row: existing };
@@ -51,12 +58,12 @@ test("reads an absent or schema-valid durable receipt", async () => {
   database.state.row = {
     dispatch_id: dispatchId,
     dispatch_digest: digest,
-    result_json: { type: "prompt" },
+    result_json: promptResult,
   };
   assert.deepEqual(await store.read(dispatchId), {
     dispatchId,
     dispatchDigest: digest,
-    result: { type: "prompt" },
+    result: promptResult,
   });
 });
 
@@ -76,7 +83,7 @@ test("returns an existing reservation without acquiring execution authority", as
   const winner = {
     dispatch_id: dispatchId,
     dispatch_digest: `sha256:${"b".repeat(64)}`,
-    result_json: { type: "prompt" },
+    result_json: promptResult,
   };
   const database = fakeDatabase(winner);
   const store = new PostgresRuntimeExecutionReceiptStore(database);
@@ -87,7 +94,7 @@ test("returns an existing reservation without acquiring execution authority", as
       reservation: {
         dispatchId,
         dispatchDigest: winner.dispatch_digest,
-        result: { type: "prompt" },
+        result: promptResult,
       },
     },
   );
@@ -104,7 +111,7 @@ test("completes only the exact started reservation", async () => {
   const receipt = {
     dispatchId,
     dispatchDigest: digest,
-    result: { type: "prompt" },
+    result: promptResult,
   };
   assert.deepEqual(await store.complete(receipt), receipt);
   assert.equal(database.calls.length, 1);
@@ -112,6 +119,6 @@ test("completes only the exact started reservation", async () => {
   assert.deepEqual(database.calls[0].values, [
     dispatchId,
     digest,
-    JSON.stringify({ type: "prompt" }),
+    JSON.stringify(promptResult),
   ]);
 });
