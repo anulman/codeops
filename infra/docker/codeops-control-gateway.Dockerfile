@@ -7,7 +7,9 @@ COPY packages/codeops-contracts/tsconfig.json packages/codeops-contracts/tsconfi
 COPY packages/codeops-contracts/src ./packages/codeops-contracts/src
 
 COPY services/codeops-control-gateway/package.json services/codeops-control-gateway/package-lock.json ./services/codeops-control-gateway/
-RUN npm ci --ignore-scripts --prefix services/codeops-control-gateway \
+COPY infra/scripts/rewrite-workspace-dependency-for-npm.mjs ./infra/scripts/
+RUN node infra/scripts/rewrite-workspace-dependency-for-npm.mjs services/codeops-control-gateway/package.json \
+  && npm ci --ignore-scripts --prefix services/codeops-control-gateway \
   && ln -s services/codeops-control-gateway/node_modules node_modules
 COPY services/codeops-control-gateway/tsconfig.json services/codeops-control-gateway/tsconfig.build.json ./services/codeops-control-gateway/
 COPY services/codeops-control-gateway/src ./services/codeops-control-gateway/src

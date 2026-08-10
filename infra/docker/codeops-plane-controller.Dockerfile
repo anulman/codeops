@@ -7,7 +7,9 @@ COPY packages/codeops-contracts/tsconfig.json packages/codeops-contracts/tsconfi
 COPY packages/codeops-contracts/src ./packages/codeops-contracts/src
 
 COPY services/codeops-plane-controller/package.json services/codeops-plane-controller/package-lock.json ./services/codeops-plane-controller/
-RUN npm ci --ignore-scripts --prefix services/codeops-plane-controller \
+COPY infra/scripts/rewrite-workspace-dependency-for-npm.mjs ./infra/scripts/
+RUN node infra/scripts/rewrite-workspace-dependency-for-npm.mjs services/codeops-plane-controller/package.json \
+  && npm ci --ignore-scripts --prefix services/codeops-plane-controller \
   && ln -s services/codeops-plane-controller/node_modules node_modules
 COPY services/codeops-plane-controller/tsconfig.json services/codeops-plane-controller/tsconfig.build.json ./services/codeops-plane-controller/
 COPY services/codeops-plane-controller/src ./services/codeops-plane-controller/src

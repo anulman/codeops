@@ -7,7 +7,9 @@ COPY packages/codeops-contracts/tsconfig.json packages/codeops-contracts/tsconfi
 COPY packages/codeops-contracts/src ./packages/codeops-contracts/src
 
 COPY services/codeops-session-runtime-worker/package.json services/codeops-session-runtime-worker/package-lock.json ./services/codeops-session-runtime-worker/
-RUN npm ci --ignore-scripts --prefix services/codeops-session-runtime-worker \
+COPY infra/scripts/rewrite-workspace-dependency-for-npm.mjs ./infra/scripts/
+RUN node infra/scripts/rewrite-workspace-dependency-for-npm.mjs services/codeops-session-runtime-worker/package.json \
+  && npm ci --ignore-scripts --prefix services/codeops-session-runtime-worker \
   && ln -s services/codeops-session-runtime-worker/node_modules node_modules
 COPY services/codeops-session-runtime-worker/tsconfig.json services/codeops-session-runtime-worker/tsconfig.build.json ./services/codeops-session-runtime-worker/
 COPY services/codeops-session-runtime-worker/src ./services/codeops-session-runtime-worker/src
