@@ -18,6 +18,7 @@ import {
 } from "@renoconcierge/codeops-contracts";
 import {
   parseGitHubEvent,
+  parseGitHubWebhookRepository,
   verifyGitHubWebhookSignature,
   type GitHubEvent,
 } from "./github-events.js";
@@ -666,7 +667,7 @@ export function createPlaneWebhookRequestListener(input: {
     process: (notice: WorkflowTransitionNotice) => Promise<void>;
   };
   github?: {
-    secret: string;
+    resolveSecret: (repository: string) => string;
     process: (input: {
       delivery: string;
       event: GitHubEvent;
@@ -768,10 +769,18 @@ export function createPlaneWebhookRequestListener(input: {
       try {
         const rawBody = await readRawBody(request);
         const signature = requiredHeader(request, "x-hub-signature-256");
+        const repository = parseGitHubWebhookRepository(rawBody);
+        let secret: string;
+        try {
+          secret = input.github.resolveSecret(repository);
+        } catch {
+          json(response, 401, { status: "unauthorized" });
+          return;
+        }
         if (
           !verifyGitHubWebhookSignature({
             rawBody,
-            secret: input.github.secret,
+            secret,
             signature,
           })
         ) {

@@ -119,20 +119,24 @@ test("loads a strict two-repository manifest through only Secret file references
             repositoryUrl: "https://github.com/anulman/renoconcierge.git",
             readTokenFile: "/var/run/codeops/renoconcierge-read",
             writeTokenFile: "/var/run/codeops/renoconcierge-write",
+            githubWebhookSecretFile: "/var/run/codeops/renoconcierge-webhook",
           },
           {
             repository: "anulman/codeops",
             repositoryUrl: "https://github.com/anulman/codeops.git",
             readTokenFile: "/var/run/codeops/codeops-read",
             writeTokenFile: "/var/run/codeops/codeops-write",
+            githubWebhookSecretFile: "/var/run/codeops/codeops-webhook",
           },
         ],
       }),
     ],
     ["/var/run/codeops/renoconcierge-read", `${"a".repeat(32)}\n`],
     ["/var/run/codeops/renoconcierge-write", `${"b".repeat(32)}\n`],
+    ["/var/run/codeops/renoconcierge-webhook", `${"e".repeat(32)}\n`],
     ["/var/run/codeops/codeops-read", `${"c".repeat(32)}\n`],
     ["/var/run/codeops/codeops-write", `${"d".repeat(32)}\n`],
+    ["/var/run/codeops/codeops-webhook", `${"f".repeat(32)}\n`],
   ]);
   const registry = await loadRepositoryRegistryFile(
     "/var/run/codeops/repositories.json",
@@ -147,6 +151,10 @@ test("loads a strict two-repository manifest through only Secret file references
     "anulman/codeops",
   ]);
   assert.equal(registry.resolve("anulman/codeops").readToken, "c".repeat(32));
+  assert.equal(
+    registry.resolve("anulman/codeops").githubWebhookSecret,
+    "f".repeat(32),
+  );
 });
 
 test("rejects inline credentials, ambiguous paths, and shared Secret files", async () => {

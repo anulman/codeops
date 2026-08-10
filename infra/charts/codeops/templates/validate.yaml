@@ -7,3 +7,6 @@
 {{- if not (regexMatch "^[0-9a-f]{40}$" .Values.githubController.controlPlaneSha) -}}
 {{- fail "githubController.controlPlaneSha must be one exact lowercase Git SHA" -}}
 {{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .Values.githubController.repositoryWebhookRegistrySecretName) -}}
+{{- fail "githubController.repositoryWebhookRegistrySecretName must be one Kubernetes Secret name" -}}
+{{- end -}}

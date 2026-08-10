@@ -45,6 +45,7 @@ export {
 export {
   parseGitHubEvent,
   parseGitHubPullRequestEvent,
+  parseGitHubWebhookRepository,
   verifyGitHubWebhookSignature,
   type GitHubEvent,
   type GitHubIssueCommentEvent,
@@ -52,6 +53,11 @@ export {
   type GitHubPullRequestReviewCommentEvent,
   type GitHubPullRequestReviewEvent,
 } from "./github-events.js";
+export {
+  createGitHubWebhookRegistry,
+  loadGitHubWebhookRegistryFile,
+  type GitHubWebhookRegistry,
+} from "./repository-webhooks.js";
 export {
   reconcileGitHubPullRequestMergeGroup,
   reconcileGitHubPullRequestEvent,

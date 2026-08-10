@@ -597,7 +597,12 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
   const listener = createPlaneWebhookRequestListener({
     process: async () => ({ status: "ignored" }),
     github: {
-      secret,
+      resolveSecret: (repository) => {
+        if (repository !== "anulman/renoconcierge") {
+          throw new Error("repository not admitted");
+        }
+        return secret;
+      },
       process: async (event) => seen.push(event),
     },
   });

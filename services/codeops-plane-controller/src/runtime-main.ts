@@ -9,6 +9,7 @@ import {
   createFileWorkflowBindingStore,
   createGitHubHeadQualifier,
   createGitHubReviewCommentsLoader,
+  createGitHubWebhookRegistry,
   createGitHubStackLoader,
   createGitHubSessionSteeringClient,
   createGitHubCurrentPullRequestResolver,
@@ -17,6 +18,7 @@ import {
   createFileResearchPacketStore,
   createPlaneApiClient,
   identifyPlaneReadyTransition,
+  loadGitHubWebhookRegistryFile,
   loadProjectContextDocuments,
   projectResearchPacket,
   processPlaneReadyWebhook,
@@ -69,9 +71,6 @@ if (projectionToken.length < 32 || projectionToken.length > 4_096) {
 const repositoryHeadToken = await secretFile(
   "CODEOPS_REPOSITORY_HEAD_TOKEN_FILE",
 );
-const githubWebhookSecret = await secretFile(
-  "CODEOPS_GITHUB_WEBHOOK_SECRET_FILE",
-);
 const githubSessionSteeringOrigin = process.env.CODEOPS_GITHUB_SESSION_STEERING_ORIGIN?.trim();
 const githubSessionSteeringTokenFile = process.env.CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE?.trim();
 if ((githubSessionSteeringOrigin === undefined) !== (githubSessionSteeringTokenFile === undefined)) {
@@ -87,6 +86,17 @@ const steerGitHubSession =
         token: await secretFile("CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE"),
       });
 const repositoryFullName = `${required("CODEOPS_REPOSITORY_OWNER")}/${required("CODEOPS_REPOSITORY_NAME")}`;
+const repositoryRegistryFile =
+  process.env.CODEOPS_REPOSITORY_REGISTRY_FILE?.trim();
+const githubWebhookRegistry =
+  repositoryRegistryFile === undefined || repositoryRegistryFile === ""
+    ? createGitHubWebhookRegistry([
+        {
+          repository: repositoryFullName,
+          secret: await secretFile("CODEOPS_GITHUB_WEBHOOK_SECRET_FILE"),
+        },
+      ])
+    : await loadGitHubWebhookRegistryFile(repositoryRegistryFile);
 const loadGitHubReviewComments = createGitHubReviewCommentsLoader({
   origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
   token: repositoryHeadToken,
@@ -421,7 +431,8 @@ const listener = createPlaneWebhookRequestListener({
     },
   },
   github: {
-    secret: githubWebhookSecret,
+    resolveSecret: (repository) =>
+      githubWebhookRegistry.resolve(repository),
     process: async ({ event }) => {
       const receivedAt = new Date().toISOString();
       if (event.kind === "pull_request_review") {

@@ -51,6 +51,7 @@ githubController:
   controlPlaneSha: ""
   configSecretName: codeops-controller-config
   secretName: codeops-controller-secrets
+  repositoryWebhookRegistrySecretName: codeops-repository-webhooks
   storageClassName: ""
   storage: 2Gi
   resources:

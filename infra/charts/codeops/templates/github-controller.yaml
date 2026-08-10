@@ -64,7 +64,7 @@ spec:
             - { name: CODEOPS_PLANE_WEBHOOK_SECRET_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/plane-webhook-secret }
             - { name: CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/research-projection-token }
             - { name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/repository-head-token }
-            - { name: CODEOPS_GITHUB_WEBHOOK_SECRET_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/github-webhook-secret }
+            - { name: CODEOPS_REPOSITORY_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-repositories/registry.json }
             - { name: CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/github-steering-token }
           ports:
             - { name: http, containerPort: 8080 }
@@ -88,6 +88,7 @@ spec:
           volumeMounts:
             - { name: controller-state, mountPath: /var/lib/codeops/controller }
             - { name: controller-secrets, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-controller, readOnly: true }
+            - { name: repository-registry, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-repositories, readOnly: true }
             - { name: temp, mountPath: /tmp }
       volumes:
         - { name: controller-state, persistentVolumeClaim: { claimName: {{ include "codeops.fullname" . }}-controller-state } }
@@ -100,8 +101,11 @@ spec:
               - { key: plane-webhook-secret, path: plane-webhook-secret }
               - { key: research-projection-token, path: research-projection-token }
               - { key: repository-head-token, path: repository-head-token }
-              - { key: github-webhook-secret, path: github-webhook-secret }
               - { key: github-steering-token, path: github-steering-token }
+        - name: repository-registry
+          secret:
+            secretName: {{ .Values.githubController.repositoryWebhookRegistrySecretName }}
+            defaultMode: 256
         - name: temp
           emptyDir: { sizeLimit: 64Mi }
 ---

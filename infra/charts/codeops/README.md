@@ -29,16 +29,26 @@ release boundary must create these Secrets:
 - `codeops-access`: `audience`, `allowed-emails`.
 - `codeops-controller-secrets`: `plane-api-key`, `plane-webhook-secret`,
   `research-projection-token`, `repository-head-token`,
-  `github-webhook-secret`, `github-steering-token`.
+  `github-steering-token`.
 - `codeops-controller-config`: the controller's non-file runtime
   configuration, including Temporal, Plane, repository, actor, persona, and
   lifecycle state identities.
+- `codeops-repository-webhooks`: `registry.json` plus only the repository-scoped
+  GitHub webhook secret files referenced by that manifest. Use schema
+  `codeops.repository-registry/v1`. Keep the read-token and write-token file
+  references in the manifest, but do not include those credentials in this
+  Secret. The webhook controller must not receive repository read or write
+  authority. Do not put credentials inline. Do not reuse a webhook Secret key
+  or credential value across repositories.
 - `codeops-runtime-source`: `repository-read-token`. Only the trusted
   root-session Job uses this read-only source credential.
 
-The GitHub webhook controller is a separate HMAC-authenticated process. It uses
-the gateway's dedicated steering token and has no browser, merge, release, or
-Kubernetes authority. Per-session runtime Jobs consume the immutable worker
+The GitHub webhook controller is a separate HMAC-authenticated process. It
+selects the signing key from the untrusted payload's bounded repository
+identity, verifies the exact raw body, and then admits the parsed event. An
+unknown repository or a signature from another repository fails closed. The
+controller uses the gateway's dedicated steering token and has no browser,
+merge, release, or Kubernetes authority. Per-session runtime Jobs consume the immutable worker
 and coding-agent image references from `codeops-runtime-images`; the
 runtime ServiceAccount does not receive a Kubernetes API token or RBAC grant.
 The gateway and model proxy mount the same `signing-key` from

@@ -17,6 +17,18 @@ const githubActorSchema = z
   })
   .passthrough();
 
+const githubWebhookRepositorySchema = z
+  .object({
+    repository: z
+      .object({
+        full_name: z
+          .string()
+          .regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/),
+      })
+      .passthrough(),
+  })
+  .passthrough();
+
 const pullRequestEventSchema = z
   .object({
     action: z.enum([
@@ -276,6 +288,12 @@ export function verifyGitHubWebhookSignature(input: {
     expected.length === received.length &&
     timingSafeEqual(expected, received)
   );
+}
+
+export function parseGitHubWebhookRepository(rawBody: Buffer): string {
+  return githubWebhookRepositorySchema.parse(
+    JSON.parse(rawBody.toString("utf8")) as unknown,
+  ).repository.full_name;
 }
 
 export function parseGitHubEvent(input: {

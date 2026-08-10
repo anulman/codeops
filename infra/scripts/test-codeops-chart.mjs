@@ -20,6 +20,7 @@ const digestSets = [
   "modelProxy.secretName=team-a-codeops-model-proxy-credentials",
   "githubController.configSecretName=team-a-codeops-controller-config",
   "githubController.secretName=team-a-codeops-controller-secrets",
+  "githubController.repositoryWebhookRegistrySecretName=team-a-codeops-repository-webhooks",
   "postgresql.secretName=team-a-codeops-postgres",
 ];
 
@@ -155,8 +156,20 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
     "http://team-a-codeops-session-control-gateway:8080",
   );
   assert.equal(
-    controllerEnv.get("CODEOPS_GITHUB_WEBHOOK_SECRET_FILE").value,
-    "/var/run/secrets/team-a-codeops-controller/github-webhook-secret",
+    controllerEnv.get("CODEOPS_REPOSITORY_REGISTRY_FILE").value,
+    "/var/run/secrets/team-a-codeops-repositories/registry.json",
+  );
+  assert.equal(controllerEnv.has("CODEOPS_GITHUB_WEBHOOK_SECRET_FILE"), false);
+  const registryVolume = controller.spec.template.spec.volumes.find(
+    ({ name }) => name === "repository-registry",
+  );
+  assert.equal(
+    registryVolume.secret.secretName,
+    "team-a-codeops-repository-webhooks",
+  );
+  assert.equal(
+    JSON.stringify(controller).includes("github-webhook-secret"),
+    false,
   );
 });
 
@@ -200,6 +213,7 @@ test("accepts arbitrary namespaces and fails closed on invalid configuration", (
     ["--namespace", "engineering", "--set", "agentsUi.access.issuer=https://example.com"],
     ["--namespace", "engineering", "--set", "gateway.image.digest=latest"],
     ["--namespace", "engineering", "--set", "githubController.controlPlaneSha=main"],
+    ["--namespace", "engineering", "--set", "githubController.repositoryWebhookRegistrySecretName=Invalid_Name"],
   ];
   for (const extra of cases) {
     assert.throws(() => helm([

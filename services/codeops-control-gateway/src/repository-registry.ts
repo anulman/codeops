@@ -31,6 +31,7 @@ const repositoryRegistryFileSchema = z
             repositoryUrl: z.string().min(1).max(1_024),
             readTokenFile: secretFilePathSchema,
             writeTokenFile: secretFilePathSchema,
+            githubWebhookSecretFile: secretFilePathSchema.optional(),
           })
           .strict(),
       )
@@ -44,6 +45,7 @@ export interface RepositoryAuthority {
   readonly repositoryUrl: string;
   readonly readToken: string;
   readonly writeToken: string;
+  readonly githubWebhookSecret?: string;
 }
 
 export interface RepositoryRegistry {
@@ -102,20 +104,35 @@ export function createRepositoryRegistry(
     }
     const readToken = validateCredential(entry.readToken, "read token");
     const writeToken = validateCredential(entry.writeToken, "write token");
+    const githubWebhookSecret =
+      entry.githubWebhookSecret === undefined
+        ? undefined
+        : validateCredential(
+            entry.githubWebhookSecret,
+            "GitHub webhook secret",
+          );
     if (
       readToken === writeToken ||
       credentials.has(readToken) ||
-      credentials.has(writeToken)
+      credentials.has(writeToken) ||
+      (githubWebhookSecret !== undefined &&
+        (credentials.has(githubWebhookSecret) ||
+          githubWebhookSecret === readToken ||
+          githubWebhookSecret === writeToken))
     ) {
       throw new Error("repository registry credentials must be repository-scoped");
     }
     credentials.add(readToken);
     credentials.add(writeToken);
+    if (githubWebhookSecret !== undefined) {
+      credentials.add(githubWebhookSecret);
+    }
     byRepository.set(entry.repository, {
       repository: entry.repository,
       repositoryUrl: entry.repositoryUrl,
       readToken,
       writeToken,
+      ...(githubWebhookSecret === undefined ? {} : { githubWebhookSecret }),
     });
   }
   return {
@@ -159,17 +176,23 @@ export async function loadRepositoryRegistryFile(
   );
   const secretFiles = new Set<string>();
   for (const entry of manifest.repositories) {
+    const paths = [
+      entry.readTokenFile,
+      entry.writeTokenFile,
+      ...(entry.githubWebhookSecretFile === undefined
+        ? []
+        : [entry.githubWebhookSecretFile]),
+    ];
     if (
       entry.readTokenFile === entry.writeTokenFile ||
-      secretFiles.has(entry.readTokenFile) ||
-      secretFiles.has(entry.writeTokenFile)
+      new Set(paths).size !== paths.length ||
+      paths.some((secretPath) => secretFiles.has(secretPath))
     ) {
       throw new Error(
         "repository registry secret files must be repository-scoped",
       );
     }
-    secretFiles.add(entry.readTokenFile);
-    secretFiles.add(entry.writeTokenFile);
+    for (const secretPath of paths) secretFiles.add(secretPath);
   }
   return createRepositoryRegistry(
     await Promise.all(
@@ -182,6 +205,17 @@ export async function loadRepositoryRegistryFile(
         writeToken: (
           await readBoundedText(entry.writeTokenFile, 4_098, readTextFile)
         ).trim(),
+        ...(entry.githubWebhookSecretFile === undefined
+          ? {}
+          : {
+              githubWebhookSecret: (
+                await readBoundedText(
+                  entry.githubWebhookSecretFile,
+                  4_098,
+                  readTextFile,
+                )
+              ).trim(),
+            }),
       })),
     ),
   );
