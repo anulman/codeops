@@ -124,3 +124,112 @@ test("does not contact OpenAI for invalid authority or unsupported paths", async
   );
   assert.equal(calls, 0);
 });
+
+test("warns on large permitted requests without logging request bodies", async () => {
+  const logs = [];
+  const body = JSON.stringify({ input: "x".repeat(4 * 1024 * 1024) });
+  await withProxy(
+    createModelProxyRequestListener({
+      openAiApiKey: "test-openai-key-never-exposed",
+      signingKey,
+      now: () => now,
+      log: (entry) => logs.push(entry),
+      fetch: async () => new Response('{"id":"resp_large"}\n', {
+        status: 200,
+        headers: { "Content-Type": "application/json" },
+      }),
+    }),
+    async (origin) => {
+      const response = await fetch(`${origin}/v1/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token()}`,
+          "Content-Type": "application/json",
+        },
+        body,
+      });
+      assert.equal(response.status, 200);
+      await response.text();
+    },
+  );
+  assert.equal(logs.some((entry) => entry.event === "model_proxy_body_warning"), true);
+  assert.equal(logs.some((entry) => entry.event === "model_proxy_request" && entry.status === 200), true);
+  assert.equal(JSON.stringify(logs).includes("xxxxxxxx"), false);
+});
+
+test("rejects a request above the 20 MiB stop-loss before OpenAI", async () => {
+  const logs = [];
+  let upstreamCalls = 0;
+  await withProxy(
+    createModelProxyRequestListener({
+      openAiApiKey: "test-openai-key-never-exposed",
+      signingKey,
+      now: () => now,
+      log: (entry) => logs.push(entry),
+      fetch: async () => {
+        upstreamCalls += 1;
+        throw new Error("must not contact OpenAI");
+      },
+    }),
+    async (origin) => {
+      const response = await fetch(`${origin}/v1/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token()}`,
+          "Content-Type": "application/json",
+        },
+        body: Buffer.alloc(20 * 1024 * 1024 + 1, 0x20),
+      });
+      assert.equal(response.status, 413);
+    },
+  );
+  assert.equal(upstreamCalls, 0);
+  assert.equal(logs.some((entry) => entry.event === "model_proxy_request" && entry.status === 413), true);
+});
+
+test("uses a high per-token concurrency stop-loss and releases capacity", async () => {
+  const releases = [];
+  const logs = [];
+  let upstreamCalls = 0;
+  await withProxy(
+    createModelProxyRequestListener({
+      openAiApiKey: "test-openai-key-never-exposed",
+      signingKey,
+      now: () => now,
+      log: (entry) => logs.push(entry),
+      fetch: async () => {
+        upstreamCalls += 1;
+        await new Promise((resolve) => releases.push(resolve));
+        return new Response('{"id":"resp_concurrent"}\n', {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    }),
+    async (origin) => {
+      const request = () => fetch(`${origin}/v1/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token()}`,
+          "Content-Type": "application/json",
+        },
+        body: '{"input":"concurrent"}',
+      });
+      const active = Array.from({ length: 8 }, () => request());
+      while (upstreamCalls < 8) await new Promise((resolve) => setTimeout(resolve, 5));
+      const rejected = await request();
+      assert.equal(rejected.status, 429);
+      assert.equal(rejected.headers.get("retry-after"), "5");
+      for (const release of releases) release();
+      const completed = await Promise.all(active);
+      assert.deepEqual(completed.map((response) => response.status), Array(8).fill(200));
+      for (const response of completed) await response.text();
+      const afterRelease = request();
+      while (upstreamCalls < 9) await new Promise((resolve) => setTimeout(resolve, 5));
+      releases.at(-1)();
+      assert.equal((await afterRelease).status, 200);
+    },
+  );
+  assert.equal(logs.some((entry) => entry.event === "model_proxy_limit_warning"), true);
+  assert.equal(logs.some((entry) => entry.event === "model_proxy_stop_loss"), true);
+});

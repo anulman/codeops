@@ -382,6 +382,8 @@ export function buildRunResources(
                     value: JSON.stringify({
                       model: "gpt-5.6-sol",
                       model_reasoning_effort: "high",
+                      approvals_reviewer: "auto_review",
+                      web_search: "cached",
                       model_provider: "codeops_proxy",
                       model_providers: {
                         codeops_proxy: {

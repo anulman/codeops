@@ -157,7 +157,7 @@ spec:
             - name: DEFAULT_AUTH_REQUEST
               value: '{"methodId":"api-key"}'
             - name: CODEX_CONFIG
-              value: '{"model":"gpt-5.6-sol","model_reasoning_effort":"high","model_provider":"codeops_proxy","model_providers":{"codeops_proxy":{"name":"CodeOps model proxy","base_url":"http://codeops-model-proxy:8080/v1","env_key":"CODEX_API_KEY","wire_api":"responses"}}}'
+              value: '{"model":"gpt-5.6-sol","model_reasoning_effort":"high","approvals_reviewer":"auto_review","web_search":"cached","model_provider":"codeops_proxy","model_providers":{"codeops_proxy":{"name":"CodeOps model proxy","base_url":"http://codeops-model-proxy:8080/v1","env_key":"CODEX_API_KEY","wire_api":"responses"}}}'
             - name: CODEOPS_ACP_SOCKET
               value: /run/codeops/agent.sock
           resources:

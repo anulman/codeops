@@ -56,6 +56,11 @@ test("keeps ACP pod-local and exposes no Service or Ingress", () => {
     "/run/codeops/agent.sock",
   );
   assert.equal(pod.containers[1].args, undefined);
+  const codexConfig = JSON.parse(
+    pod.containers[1].env.find((entry) => entry.name === "CODEX_CONFIG").value,
+  );
+  assert.equal(codexConfig.approvals_reviewer, "auto_review");
+  assert.equal(codexConfig.web_search, "cached");
   assert.equal(
     manifests.some((resource) => ["Service", "Ingress"].includes(resource.kind)),
     false,

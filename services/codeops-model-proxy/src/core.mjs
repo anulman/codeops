@@ -3,13 +3,25 @@ import { Readable } from "node:stream";
 
 const MAX_BODY_BYTES = 20 * 1024 * 1024;
 const MAX_TOKEN_TTL_SECONDS = 75 * 60;
+const WARN_BODY_BYTES = 4 * 1024 * 1024;
+const WARN_CONCURRENCY_PER_TOKEN = 4;
+const MAX_CONCURRENCY_PER_TOKEN = 8;
+const WARN_GLOBAL_CONCURRENCY = 8;
+const MAX_GLOBAL_CONCURRENCY = 16;
 
-function unauthorized(response) {
-  response.writeHead(401, {
+class RequestBodyLimitError extends Error {}
+
+function json(response, status, body, headers = {}) {
+  response.writeHead(status, {
     "Cache-Control": "no-store",
     "Content-Type": "application/json",
+    ...headers,
   });
-  response.end('{"error":"unauthorized"}\n');
+  response.end(`${JSON.stringify(body)}\n`);
+}
+
+function unauthorized(response) {
+  json(response, 401, { error: "unauthorized" });
 }
 
 export function validateModelProxyToken(input) {
@@ -62,11 +74,13 @@ async function readBody(request) {
   for await (const chunk of request) {
     const buffer = Buffer.from(chunk);
     bytes += buffer.length;
-    if (bytes > MAX_BODY_BYTES) throw new Error("request body exceeds 20 MiB");
+    if (bytes > MAX_BODY_BYTES) {
+      throw new RequestBodyLimitError("request body exceeds 20 MiB");
+    }
     chunks.push(buffer);
   }
   if (bytes === 0) throw new Error("request body is empty");
-  return Buffer.concat(chunks);
+  return { body: Buffer.concat(chunks), bytes };
 }
 
 export function createModelProxyRequestListener(input) {
@@ -77,6 +91,48 @@ export function createModelProxyRequestListener(input) {
   ) {
     throw new Error("OpenAI API key is invalid");
   }
+  const inFlightByRun = new Map();
+  let globalInFlight = 0;
+  const log = input.log ?? ((entry) => console.log(JSON.stringify(entry)));
+  const acquire = (runId) => {
+    const tokenInFlight = inFlightByRun.get(runId) ?? 0;
+    if (
+      tokenInFlight >= MAX_CONCURRENCY_PER_TOKEN ||
+      globalInFlight >= MAX_GLOBAL_CONCURRENCY
+    ) {
+      log({
+        event: "model_proxy_stop_loss",
+        subject: runId,
+        tokenConcurrency: tokenInFlight,
+        globalConcurrency: globalInFlight,
+      });
+      return null;
+    }
+    const nextTokenInFlight = tokenInFlight + 1;
+    const nextGlobalInFlight = globalInFlight + 1;
+    inFlightByRun.set(runId, nextTokenInFlight);
+    globalInFlight = nextGlobalInFlight;
+    if (
+      nextTokenInFlight >= WARN_CONCURRENCY_PER_TOKEN ||
+      nextGlobalInFlight >= WARN_GLOBAL_CONCURRENCY
+    ) {
+      log({
+        event: "model_proxy_limit_warning",
+        subject: runId,
+        tokenConcurrency: nextTokenInFlight,
+        globalConcurrency: nextGlobalInFlight,
+      });
+    }
+    let released = false;
+    return () => {
+      if (released) return;
+      released = true;
+      const remaining = (inFlightByRun.get(runId) ?? 1) - 1;
+      if (remaining === 0) inFlightByRun.delete(runId);
+      else inFlightByRun.set(runId, remaining);
+      globalInFlight -= 1;
+    };
+  };
   return (request, response) => {
     void (async () => {
       if (request.method === "GET" && request.url === "/healthz") {
@@ -108,56 +164,94 @@ export function createModelProxyRequestListener(input) {
         url.search !== "" ||
         request.headers["content-type"]?.split(";", 1)[0] !== "application/json"
       ) {
-        response.writeHead(404, {
-          "Cache-Control": "no-store",
+        json(response, 404, { error: "unsupported model operation" });
+        return;
+      }
+      const release = acquire(authority.runId);
+      if (release === null) {
+        json(
+          response,
+          429,
+          { error: "model proxy concurrency stop-loss reached" },
+          { "Retry-After": "5" },
+        );
+        return;
+      }
+      const startedAt = Date.now();
+      let status = 502;
+      let requestBytes = 0;
+      try {
+        const bodyResult = await readBody(request);
+        requestBytes = bodyResult.bytes;
+        if (requestBytes >= WARN_BODY_BYTES) {
+          log({
+            event: "model_proxy_body_warning",
+            subject: authority.runId,
+            requestBytes,
+            maximumBytes: MAX_BODY_BYTES,
+          });
+        }
+        const headers = new Headers({
+          Accept: typeof request.headers.accept === "string" ? request.headers.accept : "application/json",
+          Authorization: `Bearer ${input.openAiApiKey}`,
           "Content-Type": "application/json",
+          "User-Agent": "renoconcierge-codeops-model-proxy/0.1",
         });
-        response.end('{"error":"unsupported model operation"}\n');
-        return;
+        for (const name of ["openai-beta", "idempotency-key", "x-client-request-id"]) {
+          const value = request.headers[name];
+          if (typeof value === "string" && value.length <= 1_024) headers.set(name, value);
+        }
+        const upstream = await (input.fetch ?? fetch)(
+          "https://api.openai.com/v1/responses",
+          {
+            method: "POST",
+            redirect: "error",
+            headers,
+            body: bodyResult.body,
+            signal: AbortSignal.timeout(10 * 60 * 1_000),
+          },
+        );
+        status = upstream.status;
+        const responseHeaders = {
+          "Cache-Control": "no-store",
+          "Content-Type": upstream.headers.get("content-type") ?? "application/json",
+        };
+        for (const name of ["request-id", "x-request-id", "openai-processing-ms"]) {
+          const value = upstream.headers.get(name);
+          if (value !== null) responseHeaders[name] = value;
+        }
+        response.writeHead(upstream.status, responseHeaders);
+        if (upstream.body === null) {
+          response.end();
+          return;
+        }
+        await new Promise((resolve, reject) => {
+          Readable.fromWeb(upstream.body).once("error", reject).pipe(response).once("finish", resolve).once("error", reject);
+        });
+      } catch (error) {
+        if (error instanceof RequestBodyLimitError) status = 413;
+        throw error;
+      } finally {
+        release();
+        log({
+          event: "model_proxy_request",
+          subject: authority.runId,
+          status,
+          latencyMs: Date.now() - startedAt,
+          requestBytes,
+        });
       }
-      const body = await readBody(request);
-      const headers = new Headers({
-        Accept: typeof request.headers.accept === "string" ? request.headers.accept : "application/json",
-        Authorization: `Bearer ${input.openAiApiKey}`,
-        "Content-Type": "application/json",
-        "User-Agent": "renoconcierge-codeops-model-proxy/0.1",
-      });
-      for (const name of ["openai-beta", "idempotency-key", "x-client-request-id"]) {
-        const value = request.headers[name];
-        if (typeof value === "string" && value.length <= 1_024) headers.set(name, value);
-      }
-      const upstream = await (input.fetch ?? fetch)(
-        "https://api.openai.com/v1/responses",
-        {
-          method: "POST",
-          redirect: "error",
-          headers,
-          body,
-          signal: AbortSignal.timeout(10 * 60 * 1_000),
-        },
-      );
-      const responseHeaders = {
-        "Cache-Control": "no-store",
-        "Content-Type": upstream.headers.get("content-type") ?? "application/json",
-      };
-      for (const name of ["request-id", "x-request-id", "openai-processing-ms"]) {
-        const value = upstream.headers.get(name);
-        if (value !== null) responseHeaders[name] = value;
-      }
-      response.writeHead(upstream.status, responseHeaders);
-      if (upstream.body === null) {
-        response.end();
-        return;
-      }
-      Readable.fromWeb(upstream.body).pipe(response);
-    })().catch(() => {
+    })().catch((error) => {
       if (!response.headersSent) {
-        response.writeHead(502, {
-          "Cache-Control": "no-store",
-          "Content-Type": "application/json",
+        const status = error instanceof RequestBodyLimitError ? 413 : 502;
+        json(response, status, {
+          error: status === 413
+            ? "model proxy request exceeds the stop-loss limit"
+            : "model proxy request failed",
         });
+        return;
       }
-      response.end('{"error":"model proxy request failed"}\n');
+      response.end();
     });
   };
 }

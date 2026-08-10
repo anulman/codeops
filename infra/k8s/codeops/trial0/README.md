@@ -148,6 +148,15 @@ resources plus read the terminal pod and session-gateway log. The trusted
 renderer requires the exact Kubernetes API Service address as a `/32`; no
 broad private-network egress is accepted.
 
+Codex keeps command execution in the workspace sandbox. Cached web search is
+available for normal research without a network approval. An automatic
+security reviewer handles exceptional command-level network requests. The
+durable ACP timeline records tool and approval decisions. Kubernetes still
+denies private, link-local, loopback, and carrier-grade NAT destinations. This
+reduces prompt-driven exfiltration risk without adding a service mesh or a
+human approval to each research request. It does not make an approved public
+HTTPS destination trustworthy.
+
 ```bash
 CODEOPS_CONTROL_GATEWAY_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_MODEL_PROXY_DIGEST=sha256:<64-lowercase-hex> \

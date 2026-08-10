@@ -1138,6 +1138,8 @@ test("builds only the fixed tokenless run resources", () => {
     codingAgent.env.find((entry) => entry.name === "CODEX_CONFIG").value,
   );
   assert.equal(codexConfig.model_provider, "codeops_proxy");
+  assert.equal(codexConfig.approvals_reviewer, "auto_review");
+  assert.equal(codexConfig.web_search, "cached");
   assert.equal(
     codexConfig.model_providers.codeops_proxy.base_url,
     "http://codeops-model-proxy:8080/v1",
