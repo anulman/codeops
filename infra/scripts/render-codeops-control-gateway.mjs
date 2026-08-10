@@ -12,6 +12,7 @@ const template = await readFile(
 process.stdout.write(
   renderControlGatewayManifest(template, {
     controlGatewayDigest: process.env.CODEOPS_CONTROL_GATEWAY_DIGEST ?? "",
+    modelProxyDigest: process.env.CODEOPS_MODEL_PROXY_DIGEST ?? "",
     agentDigest: process.env.CODEOPS_AGENT_DIGEST ?? "",
     sessionGatewayDigest: process.env.CODEOPS_SESSION_GATEWAY_DIGEST ?? "",
     kubernetesApiCidr: process.env.CODEOPS_KUBERNETES_API_CIDR ?? "",

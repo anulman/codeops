@@ -228,6 +228,72 @@ export function createGitHubHeadQualifier(input: {
   };
 }
 
+export interface GitHubCurrentPullRequest {
+  readonly repository: string;
+  readonly number: number;
+  readonly state: "open" | "closed";
+  readonly headSha: string;
+  readonly headRef: string;
+  readonly baseRef: string;
+}
+
+export function createGitHubCurrentPullRequestResolver(input: {
+  origin: string;
+  token: string;
+  fetch?: typeof fetch;
+}): (input: {
+  repository: string;
+  number: number;
+}) => Promise<GitHubCurrentPullRequest> {
+  const origin = internalControlGatewayOrigin(
+    input.origin,
+    "GitHub current pull-request",
+  );
+  const token = internalCapabilityToken(
+    input.token,
+    "GitHub current pull-request",
+  );
+  return async (value) => {
+    const repository = z
+      .string()
+      .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)
+      .parse(value.repository);
+    const number = z.number().int().positive().max(10_000_000).parse(value.number);
+    const response = await (input.fetch ?? fetch)(
+      new URL(`/v1/pull-requests/${number}/current-head`, origin),
+      {
+        redirect: "error",
+        headers: {
+          Accept: "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `GitHub current pull-request resolution failed with ${response.status}`,
+      );
+    }
+    const result = z
+      .object({
+        version: z.literal("codeops.github-current-pull-request/v1"),
+        repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+        number: z.number().int().positive().max(10_000_000),
+        state: z.enum(["open", "closed"]),
+        headSha: z.string().regex(/^[0-9a-f]{40}$/),
+        headRef: z.string().min(1).max(200),
+        baseRef: z.string().min(1).max(200),
+      })
+      .strict()
+      .parse(await response.json());
+    if (result.repository !== repository || result.number !== number) {
+      throw new Error("GitHub current pull-request identity mismatch");
+    }
+    return result;
+  };
+}
+
 function internalControlGatewayOrigin(value: string, capability: string): URL {
   const origin = new URL(value);
   if (

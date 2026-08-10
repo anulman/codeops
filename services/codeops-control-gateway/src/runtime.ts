@@ -24,9 +24,11 @@ interface RuntimeConfig {
   readonly agentImage: string;
   readonly sessionGatewayImage: string;
   readonly repositoryReadToken: string;
-  readonly modelAuth:
-    | { readonly mode: "api-key"; readonly apiKey: string }
-    | { readonly mode: "chatgpt"; readonly claimName: string };
+  readonly modelAuth: {
+    readonly mode: "proxy";
+    readonly origin: string;
+    readonly signingKey: string;
+  };
   readonly evidenceRoot: string;
   readonly pollIntervalMs?: number;
   readonly timeoutMs?: number;

@@ -116,6 +116,7 @@ export {
   createGitHubStackLinker,
   createGitHubStackLoader,
   createGitHubSessionSteeringClient,
+  createGitHubCurrentPullRequestResolver,
   createRepositoryHeadResolver,
   createTemporalCodingCanceller,
   createTemporalCodingEnqueuer,

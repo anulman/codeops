@@ -148,11 +148,16 @@ spec:
             - name: CODEOPS_REPOSITORY
               value: __CODEOPS_REPOSITORY_URL__
             - name: CODEX_HOME
-              value: /var/lib/codeops-codex
+              value: /tmp/codex-home
+            - name: CODEX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codeops-run-__CODEOPS_RUN_SUFFIX__
+                  key: model-proxy-token
             - name: DEFAULT_AUTH_REQUEST
-              value: '{"methodId":"chat-gpt"}'
+              value: '{"methodId":"api-key"}'
             - name: CODEX_CONFIG
-              value: '{"model":"gpt-5.6-sol","model_reasoning_effort":"high"}'
+              value: '{"model":"gpt-5.6-sol","model_reasoning_effort":"high","model_provider":"codeops_proxy","model_providers":{"codeops_proxy":{"name":"CodeOps model proxy","base_url":"http://codeops-model-proxy:8080/v1","env_key":"CODEX_API_KEY","wire_api":"responses"}}}'
             - name: CODEOPS_ACP_SOCKET
               value: /run/codeops/agent.sock
           resources:
@@ -177,8 +182,6 @@ spec:
               mountPath: /checkpoint
             - name: temp
               mountPath: /tmp
-            - name: codex-auth
-              mountPath: /var/lib/codeops-codex
       volumes:
         - name: workspace
           emptyDir: {}
@@ -198,9 +201,6 @@ spec:
             items:
               - key: agent-prompt
                 path: agent-prompt.txt
-        - name: codex-auth
-          persistentVolumeClaim:
-            claimName: codeops-codex-auth
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -216,6 +216,12 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress: []
   egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-model-proxy
+      ports:
+        - { protocol: TCP, port: 8080 }
     - to:
         - namespaceSelector:
             matchLabels:

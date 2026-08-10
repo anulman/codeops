@@ -22,7 +22,7 @@ function resources(rendered = renderAgentJobManifest(template, input)) {
   return parseAllDocuments(rendered).map((document) => document.toJS());
 }
 
-test("renders one tokenless, bounded Agent Job with only the auth claim persisted", () => {
+test("renders one tokenless, bounded Agent Job without reusable model credentials", () => {
   const rendered = renderAgentJobManifest(template, input);
   const manifests = resources(rendered);
   assert.deepEqual(
@@ -38,15 +38,7 @@ test("renders one tokenless, bounded Agent Job with only the auth claim persiste
   assert.equal(pod.enableServiceLinks, false);
   assert.deepEqual(pod.imagePullSecrets, [{ name: "ghcr-renoconcierge" }]);
   assert.deepEqual(pod.nodeSelector, { "renoconcierge.ca/codeops": "true" });
-  assert.equal(
-    pod.volumes.filter((volume) => volume.persistentVolumeClaim).length,
-    1,
-  );
-  assert.equal(
-    pod.volumes.find((volume) => volume.name === "codex-auth")
-      .persistentVolumeClaim.claimName,
-    "codeops-codex-auth",
-  );
+  assert.equal(pod.volumes.some((volume) => volume.persistentVolumeClaim), false);
   assert.equal(rendered.includes("hostPath"), false);
   assert.equal(rendered.includes("PersistentVolumeClaim"), false);
 });
@@ -165,8 +157,9 @@ test("scopes repository-read and model secrets to separate containers", () => {
     (container) => container.name === "session-gateway",
   );
   assert.equal(
-    agent.env.some((entry) => entry.name === "CODEX_API_KEY"),
-    false,
+    agent.env.find((entry) => entry.name === "CODEX_API_KEY").valueFrom
+      .secretKeyRef.key,
+    "model-proxy-token",
   );
   assert.deepEqual(
     builder.env.find(
@@ -187,11 +180,11 @@ test("scopes repository-read and model secrets to separate containers", () => {
   );
   assert.equal(
     agent.env.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST").value,
-    '{"methodId":"chat-gpt"}',
+    '{"methodId":"api-key"}',
   );
   assert.equal(
     agent.env.find((entry) => entry.name === "CODEX_HOME").value,
-    "/var/lib/codeops-codex",
+    "/tmp/codex-home",
   );
   assert.equal(JSON.stringify(job).includes("value: sk-"), false);
 });

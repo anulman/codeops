@@ -8,6 +8,12 @@ import { createProjectContext } from "@renoconcierge/codeops-contracts";
 import { createRunIdentity } from "../dist/core.js";
 import { createAgentJobRunner } from "../dist/runtime.js";
 
+const modelAuth = {
+  mode: "proxy",
+  origin: "http://codeops-model-proxy:8080",
+  signingKey: "m".repeat(64),
+};
+
 const projectContext = createProjectContext({
   version: "codeops.project-context/v1",
   repository: { owner: "anulman", name: "renoconcierge" },
@@ -149,7 +155,7 @@ test("creates, retains, cleans, and then returns the durable result idempotently
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
       repositoryReadToken: "repo-token",
-      modelAuth: { mode: "api-key", apiKey: "model-key" },
+      modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 1,
       timeoutMs: 100,
@@ -192,7 +198,7 @@ test("retains terminal validation failure and removes credentials/resources", as
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
       repositoryReadToken: "repo-token",
-      modelAuth: { mode: "api-key", apiKey: "model-key" },
+      modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 1,
       timeoutMs: 100,
@@ -237,7 +243,7 @@ test("removes credentials/resources when an init failure prevents log retrieval"
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
       repositoryReadToken: "repo-token",
-      modelAuth: { mode: "api-key", apiKey: "model-key" },
+      modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 1,
       timeoutMs: 100,
@@ -282,7 +288,7 @@ test("cancellation aborts reconciliation and removes every exact run resource", 
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
       repositoryReadToken: "repo-token",
-      modelAuth: { mode: "api-key", apiKey: "model-key" },
+      modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 100,
       timeoutMs: 1_000,

@@ -10,6 +10,7 @@ on:
       - "services/codeops-session-gateway/**"
       - "services/codeops-plane-controller/**"
       - "services/codeops-control-gateway/**"
+      - "services/codeops-model-proxy/**"
       - "services/codeops-agent/**"
       - "AGENTS.md"
       - "docs/agent-context/**"
@@ -58,6 +59,7 @@ on:
       - "services/codeops-session-gateway/**"
       - "services/codeops-plane-controller/**"
       - "services/codeops-control-gateway/**"
+      - "services/codeops-model-proxy/**"
       - "services/codeops-agent/**"
       - "AGENTS.md"
       - "docs/agent-context/**"
@@ -162,6 +164,12 @@ jobs:
           npm test --prefix services/codeops-control-gateway
           npm run typecheck --prefix services/codeops-control-gateway
 
+      - name: Test and audit trusted model proxy
+        run: |
+          npm ci --ignore-scripts --prefix services/codeops-model-proxy
+          npm audit --omit=dev --audit-level=high --prefix services/codeops-model-proxy
+          npm test --prefix services/codeops-model-proxy
+
       - name: Verify pinned ACP agent adapter
         run: |
           npm ci --workspaces=false --prefix services/codeops-agent
@@ -190,6 +198,13 @@ jobs:
           docker build \
             --file infra/docker/codeops-control-gateway.Dockerfile \
             --tag codeops-control-gateway:ci \
+            .
+
+      - name: Build trusted model proxy image
+        run: |
+          docker build \
+            --file infra/docker/codeops-model-proxy.Dockerfile \
+            --tag codeops-model-proxy:ci \
             .
 
       - name: Verify trusted release image plan
@@ -249,6 +264,7 @@ jobs:
       - name: Test and render the trusted control gateway
         env:
           CODEOPS_CONTROL_GATEWAY_DIGEST: sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee
+          CODEOPS_MODEL_PROXY_DIGEST: sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff
           CODEOPS_AGENT_DIGEST: sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb
           CODEOPS_SESSION_GATEWAY_DIGEST: sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc
           CODEOPS_KUBERNETES_API_CIDR: 10.3.0.1/32

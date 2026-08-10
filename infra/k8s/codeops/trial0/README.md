@@ -127,19 +127,19 @@ merge are projected to their tickets idempotently. None of these routes can
 merge a pull request or deploy a candidate.
 
 The gateway mounts only the repository token from the externally created
-`codeops-agent-source-credentials` Secret. ChatGPT subscription authentication
-lives on the separate `codeops-codex-auth` RWO claim, which the gateway itself
-never mounts. A one-shot, tokenless login Job has no repository, Plane, GitHub,
-Kubernetes, model API, or run credential; it writes the device-auth session to
-that claim. A separate credential-only smoke Job runs `codex login status`
-without inspecting or printing `auth.json`.
+`codeops-agent-source-credentials` Secret. The real OpenAI API key exists only
+in the trusted `codeops-model-proxy` Deployment. Varlock validates the proxy
+environment, redacts sensitive values, and prevents accidental process leaks.
+The proxy accepts only the Responses API and replaces a valid run token with
+the real key before it calls OpenAI.
 
-Each serialized Agent Job mounts the existing auth claim only into the Codex
-container, never the workspace builder or session gateway. It receives no
-`CODEX_API_KEY`, selects the ACP `chat-gpt` method, and keeps the auth path
-outside the checked-out workspace. The live acceptance gate must additionally
-prove that a Codex tool subprocess cannot read the cached credential through
-the sandbox before the preserved Plane research trigger is replayed.
+Each serialized Agent Job receives a signed, run-bound model proxy token with
+a maximum lifetime of 75 minutes. The coding-agent container uses an isolated
+temporary Codex home and never mounts a reusable model credential. Network
+policy admits the proxy only from Agent Pods. The proxy has no Kubernetes
+ServiceAccount token and is not exposed outside the cluster. Create the
+`codeops-model-proxy-credentials` Secret separately with `openai-api-key` and
+`signing-key` keys. Use the same signing key in the trusted gateway and proxy.
 
 The gateway may create/delete, but never read or list, one immutable
 request-digest-derived repository Secret. Its namespace Role may
@@ -149,14 +149,8 @@ renderer requires the exact Kubernetes API Service address as a `/32`; no
 broad private-network egress is accepted.
 
 ```bash
-CODEOPS_AGENT_DIGEST=sha256:<64-lowercase-hex> \
-CODEOPS_AUTH_ACTION=login \
-  node infra/scripts/render-codeops-codex-auth.mjs \
-  > "$CODEOPS_CODEX_AUTH_MANIFEST"
-```
-
-```bash
 CODEOPS_CONTROL_GATEWAY_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_MODEL_PROXY_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_AGENT_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_SESSION_GATEWAY_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_KUBERNETES_API_CIDR=<api-service-ip>/32 \

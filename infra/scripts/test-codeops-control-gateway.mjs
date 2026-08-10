@@ -13,6 +13,7 @@ const template = await readFile(
 );
 const input = {
   controlGatewayDigest: `sha256:${"a".repeat(64)}`,
+  modelProxyDigest: `sha256:${"d".repeat(64)}`,
   agentDigest: `sha256:${"b".repeat(64)}`,
   sessionGatewayDigest: `sha256:${"c".repeat(64)}`,
   kubernetesApiCidr: "10.3.0.1/32",
@@ -26,7 +27,11 @@ function resources() {
 
 test("renders one namespace-scoped authenticated gateway", () => {
   const values = resources();
-  const deployment = values.find((resource) => resource.kind === "Deployment");
+  const deployment = values.find(
+    (resource) =>
+      resource.kind === "Deployment" &&
+      resource.metadata.name === "codeops-control-gateway",
+  );
   assert.equal(deployment.spec.replicas, 1);
   assert.equal(deployment.spec.strategy.type, "Recreate");
   assert.equal(
@@ -59,9 +64,25 @@ test("renders one namespace-scoped authenticated gateway", () => {
   );
   assert.equal(
     deployment.spec.template.spec.containers[0].env.find(
-      (entry) => entry.name === "CODEOPS_MODEL_AUTH_MODE",
+      (entry) => entry.name === "CODEOPS_MODEL_PROXY_ORIGIN",
     ).value,
-    "chatgpt",
+    "http://codeops-model-proxy:8080",
+  );
+  const proxy = values.find(
+    (resource) =>
+      resource.kind === "Deployment" &&
+      resource.metadata.name === "codeops-model-proxy",
+  );
+  assert.equal(
+    proxy.spec.template.spec.containers[0].image,
+    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-model-proxy@${input.modelProxyDigest}`,
+  );
+  assert.equal(proxy.spec.template.spec.automountServiceAccountToken, false);
+  assert.equal(
+    proxy.spec.template.spec.containers[0].env.find(
+      (entry) => entry.name === "OPENAI_API_KEY",
+    ).valueFrom.secretKeyRef.name,
+    "codeops-model-proxy-credentials",
   );
 });
 
@@ -83,7 +104,9 @@ test("grants only fixed run-resource and log operations", () => {
 
 test("admits only the orchestrator/controller and exact API /32", () => {
   const policy = resources().find(
-    (resource) => resource.kind === "NetworkPolicy",
+    (resource) =>
+      resource.kind === "NetworkPolicy" &&
+      resource.metadata.name === "codeops-control-gateway",
   );
   assert.equal(
     policy.spec.ingress[0].from[0].podSelector.matchLabels[
@@ -107,6 +130,7 @@ test("admits only the orchestrator/controller and exact API /32", () => {
 test("fails closed on mutable images, broad API CIDRs, or template drift", () => {
   for (const patch of [
     { controlGatewayDigest: "latest" },
+    { modelProxyDigest: "latest" },
     { agentDigest: `sha256:${"B".repeat(64)}` },
     { kubernetesApiCidr: "10.3.0.0/24" },
   ]) {

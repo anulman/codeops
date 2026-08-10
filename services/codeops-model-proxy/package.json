@@ -1,0 +1,16 @@
+{
+  "name": "@renoconcierge/codeops-model-proxy",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node --import varlock/auto-load src/runtime-main.mjs",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "varlock": "1.16.1"
+  },
+  "engines": {
+    "node": "24.x"
+  }
+}

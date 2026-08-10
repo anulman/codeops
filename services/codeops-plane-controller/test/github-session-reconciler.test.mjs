@@ -24,6 +24,18 @@ const binding = {
   updatedAt: "2026-08-09T17:00:00.000Z",
 };
 
+function currentPullRequest(overrides = {}) {
+  return {
+    repository: binding.repository,
+    number: binding.number,
+    state: "open",
+    headSha: binding.headSha,
+    headRef: binding.headRef,
+    baseRef: binding.baseRef,
+    ...overrides,
+  };
+}
+
 function comment(overrides = {}) {
   return {
     kind: "issue_comment",
@@ -63,6 +75,9 @@ test("steers one allowlisted bound PR comment with deterministic identity", asyn
       bindings: {
         async getByPullRequest() { return binding; },
       },
+      async resolveCurrentPullRequest() {
+        return currentPullRequest();
+      },
       ledger,
       async steer(request) {
         calls.push(request);
@@ -79,6 +94,9 @@ test("steers one allowlisted bound PR comment with deterministic identity", asyn
     assert.equal(calls[0].prompt, comment().body);
     assert.equal(calls[0].principalId, "github:6723643628");
     assert.match(calls[0].idempotencyKey, /^[0-9a-f-]{36}$/);
+    assert.equal(calls[0].event.currentHeadSha, binding.headSha);
+    assert.equal(calls[0].event.headRef, binding.headRef);
+    assert.equal(calls[0].event.baseRef, binding.baseRef);
 
     const duplicate = await reconcileGitHubSessionEvent(input);
     assert.equal(duplicate.duplicate, true);
@@ -118,6 +136,7 @@ test("rejects stale inline comments and unauthorized actors before steering", as
       allowedActorIds: new Set([6723643628]),
       bindings,
       ledger,
+      resolveCurrentPullRequest: async () => { throw new Error("must not resolve"); },
       steer: async () => { throw new Error("must not steer"); },
     });
     assert.equal(stale.status, "ignored");
@@ -128,6 +147,7 @@ test("rejects stale inline comments and unauthorized actors before steering", as
       allowedActorIds: new Set([6723643628]),
       bindings: { async getByPullRequest() { throw new Error("must not load"); } },
       ledger,
+      resolveCurrentPullRequest: async () => { throw new Error("must not resolve"); },
       steer: async () => { throw new Error("must not steer"); },
     });
     assert.deepEqual(unauthorized, { status: "ignored", reason: "actor-is-not-allowlisted" });
@@ -143,6 +163,7 @@ test("never turns bot activity into a live session prompt", async () => {
       allowedActorIds: new Set([6723643628]),
       bindings: { async getByPullRequest() { return binding; } },
       ledger,
+      resolveCurrentPullRequest: async () => { throw new Error("must not resolve"); },
       steer: async () => {
         calls += 1;
         return { sessionId: "must-not-run" };
@@ -153,5 +174,49 @@ test("never turns bot activity into a live session prompt", async () => {
       reason: "actor-is-not-allowlisted",
     });
     assert.equal(calls, 0);
+  });
+});
+
+test("rejects a SHA-less comment when the live pull-request head moved", async () => {
+  await withLedger(async (ledger) => {
+    let steers = 0;
+    const result = await reconcileGitHubSessionEvent({
+      event: comment({ commentId: 7004 }),
+      receivedAt: "2026-08-09T17:13:00.000Z",
+      allowedActorIds: new Set([6723643628]),
+      bindings: { async getByPullRequest() { return binding; } },
+      ledger,
+      async resolveCurrentPullRequest() {
+        return currentPullRequest({ headSha: "c".repeat(40) });
+      },
+      async steer() {
+        steers += 1;
+        return { sessionId: "must-not-run" };
+      },
+    });
+    assert.deepEqual(result, {
+      status: "ignored",
+      reason: "event-does-not-match-bound-current-head",
+    });
+    assert.equal(steers, 0);
+  });
+});
+
+test("rejects a current-head response for a different pull request", async () => {
+  await withLedger(async (ledger) => {
+    await assert.rejects(
+      reconcileGitHubSessionEvent({
+        event: comment({ commentId: 7005 }),
+        receivedAt: "2026-08-09T17:14:00.000Z",
+        allowedActorIds: new Set([6723643628]),
+        bindings: { async getByPullRequest() { return binding; } },
+        ledger,
+        async resolveCurrentPullRequest() {
+          return currentPullRequest({ number: binding.number + 1 });
+        },
+        steer: async () => { throw new Error("must not steer"); },
+      }),
+      /different identity/,
+    );
   });
 });

@@ -167,6 +167,15 @@ export async function resolveGitHubBranchHead(input: {
   return body.object.sha;
 }
 
+export interface GitHubPullRequestHead {
+  readonly repository: string;
+  readonly number: number;
+  readonly state: "open" | "closed";
+  readonly headSha: string;
+  readonly headRef: string;
+  readonly baseRef: string;
+}
+
 function parseGitHubRepositoryUrl(value: string): {
   owner: string;
   name: string;
@@ -187,6 +196,67 @@ function parseGitHubRepositoryUrl(value: string): {
     throw new Error("GitHub operation requires an exact HTTPS repository");
   }
   return { owner: match[1]!, name: match[2]! };
+}
+
+export async function resolveGitHubPullRequestHead(input: {
+  repositoryUrl: string;
+  repositoryReadToken: string;
+  pullRequestNumber: number;
+  fetch?: typeof fetch;
+}): Promise<GitHubPullRequestHead> {
+  const { owner, name } = parseGitHubRepositoryUrl(input.repositoryUrl);
+  const pullRequestNumber = z
+    .number()
+    .int()
+    .positive()
+    .max(10_000_000)
+    .parse(input.pullRequestNumber);
+  if (
+    input.repositoryReadToken.length < 16 ||
+    /\s/.test(input.repositoryReadToken)
+  ) {
+    throw new Error("pull-request head resolver token is invalid");
+  }
+  const response = await (input.fetch ?? fetch)(
+    `https://api.github.com/repos/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/pulls/${pullRequestNumber}`,
+    {
+      redirect: "error",
+      headers: {
+        Accept: "application/vnd.github+json",
+        Authorization: `Bearer ${input.repositoryReadToken}`,
+        "User-Agent": "renoconcierge-codeops-control-gateway",
+        "X-GitHub-Api-Version": "2022-11-28",
+      },
+      signal: AbortSignal.timeout(30_000),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`GitHub pull-request head resolution failed with ${response.status}`);
+  }
+  const pullRequest = z
+    .object({
+      number: z.literal(pullRequestNumber),
+      state: z.enum(["open", "closed"]),
+      head: z
+        .object({
+          sha: z.string().regex(/^[0-9a-f]{40}$/),
+          ref: z.string().min(1).max(200),
+        })
+        .passthrough(),
+      base: z
+        .object({ ref: z.string().min(1).max(200) })
+        .passthrough(),
+    })
+    .passthrough()
+    .parse(await response.json());
+  return {
+    repository: `${owner}/${name}`,
+    number: pullRequest.number,
+    state: pullRequest.state,
+    headSha: pullRequest.head.sha,
+    headRef: pullRequest.head.ref,
+    baseRef: pullRequest.base.ref,
+  };
 }
 
 export async function loadGitHubReviewComments(input: {

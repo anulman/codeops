@@ -4,6 +4,7 @@ import {
   authenticateBearer,
   loadGitHubReviewComments,
   qualifyGitHubHead,
+  resolveGitHubPullRequestHead,
   parseDispatchRequest,
   resolveGitHubBranchHead,
 } from "./core.js";
@@ -80,23 +81,11 @@ if (repositoryHeadToken.length < 32 || repositoryHeadToken.length > 4_096) {
   throw new Error("repository head token length is invalid");
 }
 const kubernetes = await loadInClusterKubernetesClient(namespace);
-const modelAuthMode = required("CODEOPS_MODEL_AUTH_MODE");
-const modelAuth =
-  modelAuthMode === "chatgpt"
-    ? {
-        mode: "chatgpt" as const,
-        claimName: required("CODEOPS_CODEX_AUTH_CLAIM"),
-      }
-    : modelAuthMode === "api-key"
-      ? {
-          mode: "api-key" as const,
-          apiKey: await secretFile("CODEOPS_MODEL_API_KEY_FILE"),
-        }
-      : (() => {
-          throw new Error(
-            "CODEOPS_MODEL_AUTH_MODE must be api-key or chatgpt",
-          );
-        })();
+const modelAuth = {
+  mode: "proxy" as const,
+  origin: required("CODEOPS_MODEL_PROXY_ORIGIN"),
+  signingKey: await secretFile("CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE"),
+};
 const repositoryUrl = required("CODEOPS_REPOSITORY_URL");
 const repositoryReadToken = await secretFile(
   "CODEOPS_REPOSITORY_READ_TOKEN_FILE",
@@ -229,6 +218,39 @@ const server = createServer((request, response) => {
             headSha,
             requiredCheckNames: requiredReviewCheckNames,
           }),
+        });
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+    const currentPullRequestMatch =
+      request.method === "GET"
+        ? request.url?.match(
+            /^\/v1\/pull-requests\/([1-9][0-9]{0,7})\/current-head$/,
+          )
+        : null;
+    if (currentPullRequestMatch) {
+      if (
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          repositoryHeadToken,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      try {
+        const pullRequest = await resolveGitHubPullRequestHead({
+          repositoryUrl,
+          repositoryReadToken,
+          pullRequestNumber: Number(currentPullRequestMatch[1]),
+        });
+        json(response, 200, {
+          version: "codeops.github-current-pull-request/v1",
+          ...pullRequest,
         });
       } catch {
         json(response, 503, { status: "unavailable" });

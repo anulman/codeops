@@ -2,6 +2,7 @@ import type {
   AgentJobDispatchRequest,
   CandidateCheckpoint,
 } from "@renoconcierge/codeops-contracts";
+import { createHmac } from "node:crypto";
 import { buildAgentPrompt } from "./core.js";
 
 interface ResourceConfig {
@@ -12,10 +13,37 @@ interface ResourceConfig {
   readonly agentImage: string;
   readonly sessionGatewayImage: string;
   readonly repositoryReadToken: string;
-  readonly modelAuth:
-    | { readonly mode: "api-key"; readonly apiKey: string }
-    | { readonly mode: "chatgpt"; readonly claimName: string };
+  readonly modelAuth: {
+    readonly mode: "proxy";
+    readonly origin: string;
+    readonly signingKey: string;
+    readonly issuedAt?: Date;
+  };
   readonly candidate?: CandidateCheckpoint;
+}
+
+function createModelProxyToken(input: {
+  runId: string;
+  signingKey: string;
+  issuedAt?: Date;
+}): string {
+  if (input.signingKey.length < 32 || input.signingKey.length > 4_096) {
+    throw new Error("model proxy signing key length is invalid");
+  }
+  const issuedAt = Math.floor((input.issuedAt ?? new Date()).getTime() / 1_000);
+  if (!Number.isSafeInteger(issuedAt)) {
+    throw new Error("model proxy token issue time is invalid");
+  }
+  const payload = Buffer.from(JSON.stringify({
+    aud: "codeops-model-proxy",
+    sub: input.runId,
+    iat: issuedAt,
+    exp: issuedAt + 75 * 60,
+  })).toString("base64url");
+  const signature = createHmac("sha256", input.signingKey)
+    .update(`v1.${payload}`)
+    .digest("base64url");
+  return `v1.${payload}.${signature}`;
 }
 
 function labels(input: ResourceConfig, request: AgentJobDispatchRequest) {
@@ -53,6 +81,24 @@ export function buildRunResources(
   };
   const name = `codeops-agent-${input.runId}`;
   const secretName = `codeops-run-${input.runId}`;
+  const modelProxyOrigin = new URL(input.modelAuth.origin);
+  if (
+    modelProxyOrigin.protocol !== "http:" ||
+    modelProxyOrigin.hostname !== "codeops-model-proxy" ||
+    modelProxyOrigin.port !== "8080" ||
+    modelProxyOrigin.pathname !== "/" ||
+    modelProxyOrigin.username !== "" ||
+    modelProxyOrigin.password !== "" ||
+    modelProxyOrigin.search !== "" ||
+    modelProxyOrigin.hash !== ""
+  ) {
+    throw new Error("model proxy origin must be the internal service");
+  }
+  const modelProxyToken = createModelProxyToken({
+    runId: input.runId,
+    signingKey: input.modelAuth.signingKey,
+    issuedAt: input.modelAuth.issuedAt,
+  });
   const prompt = buildAgentPrompt(request);
   const workspaceReadOnly = request.role === "qa-contract-researcher";
   const projectContext =
@@ -134,13 +180,7 @@ export function buildRunResources(
                 JSON.stringify(researchDispatch),
               ).toString("base64"),
             }),
-        ...(input.modelAuth.mode === "api-key"
-          ? {
-              "model-api-key": Buffer.from(
-                input.modelAuth.apiKey,
-              ).toString("base64"),
-            }
-          : {}),
+        "model-proxy-token": Buffer.from(modelProxyToken).toString("base64"),
       },
     },
     {
@@ -320,37 +360,38 @@ export function buildRunResources(
                 env: [
                   ...commonIdentity,
                   { name: "CODEOPS_REPOSITORY", value: input.repositoryUrl },
-                  ...(input.modelAuth.mode === "api-key"
-                    ? [
-                        {
-                          name: "CODEX_API_KEY",
-                          valueFrom: {
-                            secretKeyRef: {
-                              name: secretName,
-                              key: "model-api-key",
-                            },
-                          },
-                        },
-                      ]
-                    : []),
+                  {
+                    name: "CODEX_API_KEY",
+                    valueFrom: {
+                      secretKeyRef: {
+                        name: secretName,
+                        key: "model-proxy-token",
+                      },
+                    },
+                  },
                   {
                     name: "CODEX_HOME",
-                    value:
-                      input.modelAuth.mode === "chatgpt"
-                        ? "/var/lib/codeops-codex"
-                        : "/tmp/codex-home",
+                    value: "/tmp/codex-home",
                   },
                   {
                     name: "DEFAULT_AUTH_REQUEST",
-                    value:
-                      input.modelAuth.mode === "chatgpt"
-                        ? '{"methodId":"chat-gpt"}'
-                        : '{"methodId":"api-key"}',
+                    value: '{"methodId":"api-key"}',
                   },
                   {
                     name: "CODEX_CONFIG",
-                    value:
-                      '{"model":"gpt-5.6-sol","model_reasoning_effort":"high"}',
+                    value: JSON.stringify({
+                      model: "gpt-5.6-sol",
+                      model_reasoning_effort: "high",
+                      model_provider: "codeops_proxy",
+                      model_providers: {
+                        codeops_proxy: {
+                          name: "CodeOps model proxy",
+                          base_url: new URL("/v1", modelProxyOrigin).toString(),
+                          env_key: "CODEX_API_KEY",
+                          wire_api: "responses",
+                        },
+                      },
+                    }),
                   },
                   { name: "CODEOPS_ACP_SOCKET", value: "/run/codeops/agent.sock" },
                 ],
@@ -373,14 +414,6 @@ export function buildRunResources(
                     mountPath: "/context",
                     readOnly: true,
                   },
-                  ...(input.modelAuth.mode === "chatgpt"
-                    ? [
-                        {
-                          name: "codex-auth",
-                          mountPath: "/var/lib/codeops-codex",
-                        },
-                      ]
-                    : []),
                 ],
               },
             ],
@@ -441,16 +474,6 @@ export function buildRunResources(
                     },
                   ]
                 : []),
-              ...(input.modelAuth.mode === "chatgpt"
-                ? [
-                    {
-                      name: "codex-auth",
-                      persistentVolumeClaim: {
-                        claimName: input.modelAuth.claimName,
-                      },
-                    },
-                  ]
-                : []),
             ],
           },
         },
@@ -469,6 +492,18 @@ export function buildRunResources(
         policyTypes: ["Ingress", "Egress"],
         ingress: [],
         egress: [
+          {
+            to: [
+              {
+                podSelector: {
+                  matchLabels: {
+                    "app.kubernetes.io/name": "codeops-model-proxy",
+                  },
+                },
+              },
+            ],
+            ports: [{ protocol: "TCP", port: 8080 }],
+          },
           {
             to: [
               {
@@ -530,9 +565,9 @@ export function assertRunResources(
   const claimReferences = [
     ...serialized.matchAll(/"persistentVolumeClaim"/g),
   ].length;
-  if (claimReferences > 2) {
+  if (claimReferences > 1) {
     throw new Error(
-      "Agent Job may mount only the exact auth and candidate-evidence claims",
+      "Agent Job may mount only the exact candidate-evidence claim",
     );
   }
   const job = resources.find((resource) => resource.kind === "Job") as {
@@ -573,26 +608,19 @@ export function assertRunResources(
   const agent = pod.containers?.find(
     (container) => container.name === "coding-agent",
   );
-  const authVolume = pod.volumes?.find((volume) => volume.name === "codex-auth");
   const candidateVolume = pod.volumes?.find(
     (volume) => volume.name === "candidate",
   );
-  if (authVolume) {
-    if (
-      authVolume?.persistentVolumeClaim?.claimName !== "codeops-codex-auth" ||
-      agent?.env?.find((entry) => entry.name === "CODEX_HOME")?.value !==
-        "/var/lib/codeops-codex" ||
-      agent.env?.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST")
-        ?.value !== '{"methodId":"chat-gpt"}' ||
-      agent.env?.some((entry) => entry.name === "CODEX_API_KEY") ||
-      pod.containers?.some(
-        (container) =>
-          container.name !== "coding-agent" &&
-          container.volumeMounts?.some((mount) => mount.name === "codex-auth"),
-      )
-    ) {
-      throw new Error("ChatGPT auth claim boundary drifted");
-    }
+  if (
+    agent?.env?.find((entry) => entry.name === "CODEX_HOME")?.value !==
+      "/tmp/codex-home" ||
+    agent.env?.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST")?.value !==
+      '{"methodId":"api-key"}' ||
+    !agent.env?.some((entry) => entry.name === "CODEX_API_KEY") ||
+    serialized.includes("model-api-key") ||
+    serialized.includes("codex-auth")
+  ) {
+    throw new Error("model proxy credential boundary drifted");
   }
   if (candidateVolume) {
     const builder = pod.initContainers?.find(
@@ -621,7 +649,7 @@ export function assertRunResources(
   }
   if (
     claimReferences !==
-    Number(authVolume !== undefined) + Number(candidateVolume !== undefined)
+    Number(candidateVolume !== undefined)
   ) {
     throw new Error("unexpected Agent Job persistent claim");
   }

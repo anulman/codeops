@@ -4,17 +4,12 @@ set -eu
 socket_path="${CODEOPS_ACP_SOCKET:-/run/codeops/agent.sock}"
 done_path="$(dirname "$socket_path")/done"
 codex_home="${CODEX_HOME:-/tmp/codex-home}"
-mkdir -p "$codex_home"
-if [ "$codex_home" = "/tmp/codex-home" ]; then
-  chmod 700 "$codex_home"
-else
-  # A persistent Kubernetes volume root is managed by the CSI driver and may
-  # reject chmod even though fsGroup grants this container the required access.
-  # Validate only the narrow access the ACP adapter needs; never inspect or
-  # copy the password-equivalent credential.
-  test -r "$codex_home/auth.json"
-  test -w "$codex_home"
+if [ "$codex_home" != "/tmp/codex-home" ]; then
+  echo "CODEX_HOME must use the isolated temporary agent home" >&2
+  exit 1
 fi
+mkdir -p "$codex_home"
+chmod 700 "$codex_home"
 export CODEX_HOME="$codex_home"
 rm -f "$socket_path" "$done_path"
 

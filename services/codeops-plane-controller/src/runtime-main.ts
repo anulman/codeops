@@ -11,6 +11,7 @@ import {
   createGitHubReviewCommentsLoader,
   createGitHubStackLoader,
   createGitHubSessionSteeringClient,
+  createGitHubCurrentPullRequestResolver,
   createPlaneLifecycleClient,
   createTemporalCodingCanceller,
   createFileResearchPacketStore,
@@ -96,6 +97,10 @@ const qualifyGitHubHead = createGitHubHeadQualifier({
   token: repositoryHeadToken,
 });
 const loadGitHubStack = createGitHubStackLoader({
+  origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
+  token: repositoryHeadToken,
+});
+const resolveCurrentPullRequest = createGitHubCurrentPullRequestResolver({
   origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
   token: repositoryHeadToken,
 });
@@ -481,6 +486,7 @@ const listener = createPlaneWebhookRequestListener({
           allowedActorIds: allowedGitHubReviewerIds,
           bindings: pullRequestBindings,
           ledger,
+          resolveCurrentPullRequest,
           steer: steerGitHubSession,
         });
         return;
@@ -492,6 +498,7 @@ const listener = createPlaneWebhookRequestListener({
           allowedActorIds: allowedGitHubReviewerIds,
           bindings: pullRequestBindings,
           ledger,
+          resolveCurrentPullRequest,
           steer: steerGitHubSession,
         });
       }

@@ -100,12 +100,12 @@ export function renderAgentJobManifest(template, input) {
   if (JSON.stringify(resources).includes("hostPath")) {
     throw new Error("agent run must not mount host paths");
   }
-  const authVolume = pod.volumes.find((volume) => volume.name === "codex-auth");
   if (
-    authVolume?.persistentVolumeClaim?.claimName !== "codeops-codex-auth" ||
-    pod.volumes.filter((volume) => volume.persistentVolumeClaim).length !== 1
+    pod.volumes.some((volume) => volume.persistentVolumeClaim) ||
+    JSON.stringify(pod).includes("codex-auth") ||
+    JSON.stringify(pod).includes("model-api-key")
   ) {
-    throw new Error("agent run must mount only the exact existing Codex auth claim");
+    throw new Error("agent run must not mount a reusable model credential");
   }
   for (const resource of [account, job, job.spec.template, networkPolicy]) {
     if (
@@ -137,6 +137,15 @@ export function renderAgentJobManifest(template, input) {
     ) {
       throw new Error("workspace mutability does not match the agent role");
     }
+  }
+  const agent = runtimeContainers.find((container) => container.name === "coding-agent");
+  if (
+    agent.env?.find((entry) => entry.name === "CODEX_API_KEY")?.valueFrom
+      ?.secretKeyRef?.key !== "model-proxy-token" ||
+    agent.env?.find((entry) => entry.name === "CODEX_HOME")?.value !==
+      "/tmp/codex-home"
+  ) {
+    throw new Error("agent run model proxy binding drifted");
   }
   return rendered;
 }

@@ -15,9 +15,17 @@ import {
   readCandidatePatch,
   readRetainedResult,
   resolveGitHubBranchHead,
+  resolveGitHubPullRequestHead,
   retainCheckpoint,
 } from "../dist/core.js";
 import { assertRunResources, buildRunResources } from "../dist/resources.js";
+
+const modelAuth = {
+  mode: "proxy",
+  origin: "http://codeops-model-proxy:8080",
+  signingKey: "m".repeat(64),
+  issuedAt: new Date("2026-08-09T17:00:00.000Z"),
+};
 
 const projectContext = createProjectContext({
   version: "codeops.project-context/v1",
@@ -363,6 +371,52 @@ test("resolves only the exact GitHub main ref through the read-only boundary", a
   );
 });
 
+test("resolves one exact current pull-request head through the read-only boundary", async () => {
+  const calls = [];
+  const headSha = "d".repeat(40);
+  const result = await resolveGitHubPullRequestHead({
+    repositoryUrl: "https://github.com/anulman/renoconcierge",
+    repositoryReadToken: "r".repeat(32),
+    pullRequestNumber: 159,
+    fetch: async (url, init) => {
+      calls.push({ url, init });
+      return Response.json({
+        number: 159,
+        state: "open",
+        head: { sha: headSha, ref: "feat/agents-ui" },
+        base: { ref: "feat/codeops-contracts-ci" },
+      });
+    },
+  });
+  assert.deepEqual(result, {
+    repository: "anulman/renoconcierge",
+    number: 159,
+    state: "open",
+    headSha,
+    headRef: "feat/agents-ui",
+    baseRef: "feat/codeops-contracts-ci",
+  });
+  assert.equal(
+    calls[0].url,
+    "https://api.github.com/repos/anulman/renoconcierge/pulls/159",
+  );
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(32)}`);
+
+  await assert.rejects(
+    resolveGitHubPullRequestHead({
+      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryReadToken: "r".repeat(32),
+      pullRequestNumber: 159,
+      fetch: async () => Response.json({
+        number: 160,
+        state: "open",
+        head: { sha: headSha, ref: "feat/agents-ui" },
+        base: { ref: "feat/codeops-contracts-ci" },
+      }),
+    }),
+  );
+});
+
 function checkpointLogs(runId, overrides = {}) {
   const report = {
     version: "codeops.research-persona-report/v2",
@@ -488,7 +542,7 @@ test("delivers immutable ticket and sibling decision context to coding jobs", ()
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
       repositoryReadToken: "repo-token",
-      modelAuth: { mode: "api-key", apiKey: "model-key" },
+      modelAuth,
     },
     codingDispatch,
   );
@@ -590,7 +644,7 @@ test("retains passing coding evidence and mounts the exact cumulative patch for 
         agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
         sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
         repositoryReadToken: "repo-token",
-        modelAuth: { mode: "api-key", apiKey: "model-key" },
+        modelAuth,
         candidate,
       },
       critic,
@@ -998,10 +1052,7 @@ test("builds only the fixed tokenless run resources", () => {
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
       repositoryReadToken: "repo-token",
-      modelAuth: {
-        mode: "chatgpt",
-        claimName: "codeops-codex-auth",
-      },
+      modelAuth,
     },
     request,
   );
@@ -1066,25 +1117,33 @@ test("builds only the fixed tokenless run resources", () => {
   );
   assert.equal(
     codingAgent.env.find((entry) => entry.name === "CODEX_HOME").value,
-    "/var/lib/codeops-codex",
+    "/tmp/codex-home",
   );
   assert.equal(
     codingAgent.env.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST").value,
-    '{"methodId":"chat-gpt"}',
+    '{"methodId":"api-key"}',
   );
   assert.equal(
-    codingAgent.env.some((entry) => entry.name === "CODEX_API_KEY"),
+    codingAgent.env.find((entry) => entry.name === "CODEX_API_KEY").valueFrom
+      .secretKeyRef.key,
+    "model-proxy-token",
+  );
+  assert.equal(
+    resources[2].spec.template.spec.volumes.some(
+      (volume) => volume.name === "codex-auth",
+    ),
     false,
   );
-  assert.deepEqual(
-    resources[2].spec.template.spec.volumes.find(
-      (volume) => volume.name === "codex-auth",
-    ).persistentVolumeClaim,
-    { claimName: "codeops-codex-auth" },
-  );
-  assert.equal(
+  const codexConfig = JSON.parse(
     codingAgent.env.find((entry) => entry.name === "CODEX_CONFIG").value,
-    '{"model":"gpt-5.6-sol","model_reasoning_effort":"high"}',
   );
+  assert.equal(codexConfig.model_provider, "codeops_proxy");
+  assert.equal(
+    codexConfig.model_providers.codeops_proxy.base_url,
+    "http://codeops-model-proxy:8080/v1",
+  );
+  assert.equal(codexConfig.model_providers.codeops_proxy.env_key, "CODEX_API_KEY");
+  assert.equal(JSON.stringify(resources).includes("model-api-key"), false);
+  assert.equal(JSON.stringify(resources).includes("codeops-codex-auth"), false);
   assert.equal(JSON.stringify(resources).includes("automountServiceAccountToken\":true"), false);
 });

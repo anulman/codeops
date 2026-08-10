@@ -28,7 +28,13 @@ export type GitHubSessionReconciliationResult =
 
 export interface GitHubSessionSteeringRequest {
   readonly binding: StoredPullRequestBinding;
-  readonly event: GitHubSessionEvent;
+  readonly event:
+    | Exclude<GitHubSessionEvent, GitHubIssueCommentEvent>
+    | (GitHubIssueCommentEvent & {
+        readonly currentHeadSha: string;
+        readonly headRef: string;
+        readonly baseRef: string;
+      });
   readonly prompt: string;
   readonly idempotencyKey: string;
   readonly principalId: string;
@@ -78,6 +84,12 @@ function eventActor(event: GitHubSessionEvent): {
 function matchesBinding(
   event: GitHubSessionEvent,
   binding: StoredPullRequestBinding,
+  currentPullRequest?: Readonly<{
+    state: "open" | "closed";
+    headSha: string;
+    headRef: string;
+    baseRef: string;
+  }>,
 ): boolean {
   if (
     binding.repository !== event.repository ||
@@ -87,7 +99,13 @@ function matchesBinding(
     return false;
   }
   if (event.kind === "issue_comment") {
-    return event.pullRequestState === "open";
+    return (
+      event.pullRequestState === "open" &&
+      currentPullRequest?.state === "open" &&
+      binding.headSha === currentPullRequest.headSha &&
+      binding.headRef === currentPullRequest.headRef &&
+      binding.baseRef === currentPullRequest.baseRef
+    );
   }
   if (event.kind === "pull_request_review_comment") {
     return (
@@ -112,6 +130,17 @@ export async function reconcileGitHubSessionEvent(input: {
   allowedActorIds: ReadonlySet<number>;
   bindings: PullRequestBindingStore;
   ledger: ResearchDedupLedger;
+  resolveCurrentPullRequest: (input: {
+    repository: string;
+    number: number;
+  }) => Promise<Readonly<{
+    repository: string;
+    number: number;
+    state: "open" | "closed";
+    headSha: string;
+    headRef: string;
+    baseRef: string;
+  }>>;
   steer: (request: GitHubSessionSteeringRequest) => Promise<{ sessionId: string }>;
 }): Promise<GitHubSessionReconciliationResult> {
   const receivedAt = z.string().datetime({ offset: true }).parse(input.receivedAt);
@@ -126,7 +155,21 @@ export async function reconcileGitHubSessionEvent(input: {
   if (binding === null) {
     return { status: "ignored", reason: "pull-request-is-not-bound" };
   }
-  if (!matchesBinding(input.event, binding)) {
+  const currentPullRequest =
+    input.event.kind === "issue_comment"
+      ? await input.resolveCurrentPullRequest({
+          repository: input.event.repository,
+          number: input.event.number,
+        })
+      : undefined;
+  if (
+    currentPullRequest !== undefined &&
+    (currentPullRequest.repository !== input.event.repository ||
+      currentPullRequest.number !== input.event.number)
+  ) {
+    throw new Error("current pull-request resolution returned a different identity");
+  }
+  if (!matchesBinding(input.event, binding, currentPullRequest)) {
     return { status: "ignored", reason: "event-does-not-match-bound-current-head" };
   }
   const stableId = stableEventId(input.event);
@@ -156,7 +199,15 @@ export async function reconcileGitHubSessionEvent(input: {
   try {
     const result = await input.steer({
       binding,
-      event: input.event,
+      event:
+        input.event.kind === "issue_comment"
+          ? {
+              ...input.event,
+              currentHeadSha: currentPullRequest!.headSha,
+              headRef: currentPullRequest!.headRef,
+              baseRef: currentPullRequest!.baseRef,
+            }
+          : input.event,
       prompt: eventPrompt(input.event),
       idempotencyKey: deterministicUuid(stableId),
       principalId: `github:${actor.id}`,

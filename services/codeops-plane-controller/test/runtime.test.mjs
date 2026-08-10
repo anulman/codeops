@@ -7,6 +7,7 @@ import { WorkflowExecutionAlreadyStartedError } from "@temporalio/client";
 import {
   createPlaneWebhookRequestListener,
   createGitHubHeadQualifier,
+  createGitHubCurrentPullRequestResolver,
   createGitHubReviewCommentsLoader,
   createGitHubSessionSteeringClient,
   createGitHubStackLinker,
@@ -14,6 +15,54 @@ import {
   createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "../dist/index.js";
+
+test("resolves the current pull-request head only through the bounded reader", async () => {
+  const calls = [];
+  const resolveCurrentPullRequest = createGitHubCurrentPullRequestResolver({
+    origin: "http://codeops-control-gateway:8080",
+    token: "r".repeat(64),
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return Response.json({
+        version: "codeops.github-current-pull-request/v1",
+        repository: "anulman/renoconcierge",
+        number: 159,
+        state: "open",
+        headSha: "b".repeat(40),
+        headRef: "feat/agents-ui",
+        baseRef: "feat/codeops-contracts-ci",
+      });
+    },
+  });
+  const result = await resolveCurrentPullRequest({
+    repository: "anulman/renoconcierge",
+    number: 159,
+  });
+  assert.equal(result.headSha, "b".repeat(40));
+  assert.equal(
+    calls[0].url,
+    "http://codeops-control-gateway:8080/v1/pull-requests/159/current-head",
+  );
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
+
+  const mismatched = createGitHubCurrentPullRequestResolver({
+    origin: "http://codeops-control-gateway:8080",
+    token: "r".repeat(64),
+    fetch: async () => Response.json({
+      version: "codeops.github-current-pull-request/v1",
+      repository: "anulman/renoconcierge",
+      number: 160,
+      state: "open",
+      headSha: "b".repeat(40),
+      headRef: "feat/agents-ui",
+      baseRef: "feat/codeops-contracts-ci",
+    }),
+  });
+  await assert.rejects(
+    mismatched({ repository: "anulman/renoconcierge", number: 159 }),
+    /identity mismatch/,
+  );
+});
 
 test("projects one normalized GitHub event only through the internal session gateway", async () => {
   const seen = [];

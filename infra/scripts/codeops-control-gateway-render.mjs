@@ -6,6 +6,7 @@ const CIDR = /^(?:\d{1,3}\.){3}\d{1,3}\/32$/;
 export function renderControlGatewayManifest(template, input) {
   for (const key of [
     "controlGatewayDigest",
+    "modelProxyDigest",
     "agentDigest",
     "sessionGatewayDigest",
   ]) {
@@ -18,6 +19,7 @@ export function renderControlGatewayManifest(template, input) {
   }
   const replacements = {
     __CODEOPS_CONTROL_GATEWAY_DIGEST__: input.controlGatewayDigest,
+    __CODEOPS_MODEL_PROXY_DIGEST__: input.modelProxyDigest,
     __CODEOPS_AGENT_DIGEST__: input.agentDigest,
     __CODEOPS_SESSION_GATEWAY_DIGEST__: input.sessionGatewayDigest,
     __CODEOPS_KUBERNETES_API_CIDR__: input.kubernetesApiCidr,
@@ -40,12 +42,16 @@ export function renderControlGatewayManifest(template, input) {
     .sort();
   const expected = [
     "Deployment/codeops-control-gateway",
+    "Deployment/codeops-model-proxy",
     "NetworkPolicy/codeops-control-gateway",
+    "NetworkPolicy/codeops-model-proxy",
     "PersistentVolumeClaim/codeops-control-gateway-evidence",
     "Role/codeops-control-gateway",
     "RoleBinding/codeops-control-gateway",
     "Service/codeops-control-gateway",
+    "Service/codeops-model-proxy",
     "ServiceAccount/codeops-control-gateway",
+    "ServiceAccount/codeops-model-proxy",
   ].sort();
   if (JSON.stringify(identities) !== JSON.stringify(expected)) {
     throw new Error("control-gateway resource set drifted");
@@ -89,13 +95,29 @@ export function renderControlGatewayManifest(template, input) {
   }
   const env = deployment.spec.template.spec.containers[0].env;
   if (
-    env.find((item) => item.name === "CODEOPS_MODEL_AUTH_MODE")?.value !==
-      "chatgpt" ||
-    env.find((item) => item.name === "CODEOPS_CODEX_AUTH_CLAIM")?.value !==
-      "codeops-codex-auth" ||
-    env.some((item) => item.name === "CODEOPS_MODEL_API_KEY_FILE")
+    env.find((item) => item.name === "CODEOPS_MODEL_PROXY_ORIGIN")?.value !==
+      "http://codeops-model-proxy:8080" ||
+    env.find((item) => item.name === "CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE")
+      ?.value !== "/var/run/secrets/codeops-model-proxy/signing-key" ||
+    env.some((item) =>
+      ["CODEOPS_MODEL_API_KEY_FILE", "CODEOPS_MODEL_AUTH_MODE", "CODEOPS_CODEX_AUTH_CLAIM"].includes(item.name),
+    )
   ) {
-    throw new Error("control gateway ChatGPT auth binding drifted");
+    throw new Error("control gateway model proxy binding drifted");
+  }
+  const modelProxy = resources.find(
+    (resource) =>
+      resource.kind === "Deployment" &&
+      resource.metadata.name === "codeops-model-proxy",
+  );
+  const proxyContainer = modelProxy.spec.template.spec.containers[0];
+  if (
+    !/@sha256:[0-9a-f]{64}$/.test(proxyContainer.image) ||
+    proxyContainer.env.find((item) => item.name === "OPENAI_API_KEY")?.valueFrom
+      ?.secretKeyRef?.name !== "codeops-model-proxy-credentials" ||
+    modelProxy.spec.template.spec.automountServiceAccountToken !== false
+  ) {
+    throw new Error("model proxy credential boundary drifted");
   }
   const serialized = JSON.stringify(resources);
   if (serialized.includes("ClusterRole") || serialized.includes("hostPath")) {
