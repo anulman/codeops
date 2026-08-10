@@ -19,7 +19,7 @@ const promptResult = {
 function capabilities() {
   return [
     "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
-    "resume", "fork", "archive", "delete",
+    "resume", "fork", "archive",
   ].map((action) => action === "prompt"
     ? { action, availability: "enabled" }
     : { action, availability: "disabled", reason: "Unavailable." });

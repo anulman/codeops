@@ -98,7 +98,7 @@ test("falls back to a new ACP session only when session/fork is unsupported", as
 function capabilities(enabled, hasCheckpoint = false) {
   return [
     "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
-    "resume", "fork", "archive", "delete",
+    "resume", "fork", "archive",
   ].map((action) => enabled.includes(action)
     ? { action, availability: "enabled" }
     : {

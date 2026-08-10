@@ -52,7 +52,7 @@ function dispatch() {
       eventCursor: 184,
       capabilities: [
         { action: "prompt", availability: "enabled" },
-        ...["respond_permission", "cancel", "checkpoint", "hibernate", "resume", "fork", "archive", "delete"]
+        ...["respond_permission", "cancel", "checkpoint", "hibernate", "resume", "fork", "archive"]
           .map((action) => ({ action, availability: "disabled", reason: "Unavailable." })),
       ],
       updatedAt: "2026-08-04T20:00:00.000Z",

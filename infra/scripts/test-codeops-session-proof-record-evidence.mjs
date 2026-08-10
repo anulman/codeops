@@ -112,7 +112,7 @@ function build(overrides = {}) {
 test("binds the reviewed capture inventory and complete operation coverage to runtime readiness", () => {
   const evidence = build();
   assert.equal(evidence.capture.sourceSha, "1".repeat(40));
-  assert.equal(evidence.capture.operations.length, 12);
+  assert.equal(evidence.capture.operations.length, 11);
   assert.equal(evidence.capture.artifacts.length, 4);
   assert.equal(evidence.capture.artifacts[0].sha256, digest(artifacts["browser/video/raw.webm"]));
 });

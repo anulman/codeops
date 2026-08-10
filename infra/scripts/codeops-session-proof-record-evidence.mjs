@@ -9,7 +9,7 @@ const MAX_SOURCE_BYTES = 64 * 1024;
 const OPERATIONS = [
   "job-initialization", "live-observation", "prompt", "permission-deny",
   "permission-approve", "checkpoint", "hibernate", "resume", "fork",
-  "cancel", "archive", "delete",
+  "cancel", "archive",
 ];
 const DURABILITY_CHECKS = ["browser-reconnect", "duplicate-command-replay"];
 const ARTIFACTS = [
