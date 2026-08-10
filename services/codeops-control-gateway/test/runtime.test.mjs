@@ -4,9 +4,22 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createProjectContext } from "@renoconcierge/codeops-contracts";
+import {
+  agentJobDispatchRequestSchema,
+  createProjectContext,
+} from "@renoconcierge/codeops-contracts";
 import { createRunIdentity } from "../dist/core.js";
 import { createAgentJobRunner } from "../dist/runtime.js";
+import { createRepositoryRegistry } from "../dist/repository-registry.js";
+
+const repositoryRegistry = createRepositoryRegistry([
+  {
+    repository: "anulman/renoconcierge",
+    repositoryUrl: "https://github.com/anulman/renoconcierge",
+    readToken: "r".repeat(32),
+    writeToken: "w".repeat(32),
+  },
+]);
 
 const modelAuth = {
   mode: "proxy",
@@ -78,7 +91,7 @@ const request = {
   },
 };
 
-function logs(runId) {
+function logs(runId, projectContextDigest = projectContext.digest) {
   const report = {
     version: "codeops.research-persona-report/v2",
     requestId: "research-request-1",
@@ -94,7 +107,7 @@ function logs(runId) {
     runId,
     agentRole: "qa-contract-researcher",
     baseSha: "a".repeat(40),
-    projectContextDigest: projectContext.digest,
+    projectContextDigest,
     model: "gpt-5.6-sol",
     reasoningEffort: "high",
     response: JSON.stringify(report),
@@ -151,10 +164,9 @@ test("creates, retains, cleans, and then returns the durable result idempotently
     kubernetes,
     config: {
       namespace: "codeops",
-      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryRegistry,
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
-      repositoryReadToken: "repo-token",
       modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 1,
@@ -167,6 +179,90 @@ test("creates, retains, cleans, and then returns the durable result idempotently
     assert.deepEqual(second, first);
     assert.equal(ensured.length, 4);
     assert.equal(deleted.length, 8);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("binds each admitted dispatch to only its repository-scoped runtime credential", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-registry-"));
+  const registry = createRepositoryRegistry([
+    {
+      repository: "anulman/renoconcierge",
+      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      readToken: "a".repeat(32),
+      writeToken: "b".repeat(32),
+    },
+    {
+      repository: "anulman/codeops",
+      repositoryUrl: "https://github.com/anulman/codeops",
+      readToken: "c".repeat(32),
+      writeToken: "d".repeat(32),
+    },
+  ]);
+  const ensured = [];
+  const kubernetes = {
+    async ensure(resource) {
+      ensured.push(resource);
+    },
+    async getJob() {
+      return { status: { succeeded: 1 } };
+    },
+    async listRunPods() {
+      return [{ metadata: { name: "agent-pod" } }];
+    },
+    async getPodLogs() {
+      return logs(this.runId, this.projectContextDigest);
+    },
+    async delete() {},
+    runId: "",
+    projectContextDigest: "",
+  };
+  const run = createAgentJobRunner({
+    kubernetes,
+    config: {
+      namespace: "codeops",
+      repositoryRegistry: registry,
+      agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+      sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      modelAuth,
+      evidenceRoot: root,
+      pollIntervalMs: 1,
+      timeoutMs: 100,
+    },
+  });
+  function requestForRepository(name) {
+    const value = structuredClone(request);
+    const { digest: _digest, ...contextIdentity } = projectContext;
+    const repository = { owner: "anulman", name };
+    value.researchRequest.repository = repository;
+    value.researchRequest.projectContext = createProjectContext({
+      ...contextIdentity,
+      repository,
+    });
+    return value;
+  }
+  const codeopsRequest = requestForRepository("codeops");
+  const unknownRequest = requestForRepository("not-admitted");
+  agentJobDispatchRequestSchema.parse(codeopsRequest);
+  agentJobDispatchRequestSchema.parse(unknownRequest);
+  try {
+    kubernetes.runId = createRunIdentity(request).runId;
+    kubernetes.projectContextDigest = request.researchRequest.projectContext.digest;
+    await run(request);
+    kubernetes.runId = createRunIdentity(codeopsRequest).runId;
+    kubernetes.projectContextDigest =
+      codeopsRequest.researchRequest.projectContext.digest;
+    await run(codeopsRequest);
+    const repositorySecrets = ensured
+      .filter((resource) => resource.kind === "Secret")
+      .map((resource) =>
+        Buffer.from(resource.data["repository-read-token"], "base64").toString(),
+      );
+    assert.deepEqual(repositorySecrets, ["a".repeat(32), "c".repeat(32)]);
+    const effectCount = ensured.length;
+    await assert.rejects(run(unknownRequest), /not admitted/);
+    assert.equal(ensured.length, effectCount);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -194,10 +290,9 @@ test("retains terminal validation failure and removes credentials/resources", as
     kubernetes,
     config: {
       namespace: "codeops",
-      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryRegistry,
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
-      repositoryReadToken: "repo-token",
       modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 1,
@@ -239,10 +334,9 @@ test("removes credentials/resources when an init failure prevents log retrieval"
     kubernetes,
     config: {
       namespace: "codeops",
-      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryRegistry,
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
-      repositoryReadToken: "repo-token",
       modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 1,
@@ -284,10 +378,9 @@ test("cancellation aborts reconciliation and removes every exact run resource", 
     kubernetes,
     config: {
       namespace: "codeops",
-      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryRegistry,
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
-      repositoryReadToken: "repo-token",
       modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 100,

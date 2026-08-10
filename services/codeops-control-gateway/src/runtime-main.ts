@@ -20,6 +20,7 @@ import {
 import { loadInClusterKubernetesClient } from "./kubernetes.js";
 import { publishCandidateRevision } from "./publication.js";
 import { createAgentJobRunner } from "./runtime.js";
+import { createRepositoryRegistry } from "./repository-registry.js";
 import { createModelProxyToken } from "./model-proxy-token.js";
 import { migrateSessionBroker } from "./session-broker-migration.js";
 import {
@@ -197,6 +198,17 @@ if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(sessionRuntimeWorkerId)) {
 const repositoryWriteToken = await secretFile(
   "CODEOPS_REPOSITORY_WRITE_TOKEN_FILE",
 );
+const repositoryIdentity = new URL(repositoryUrl).pathname
+  .replace(/^\//, "")
+  .replace(/\.git$/, "");
+const repositoryRegistry = createRepositoryRegistry([
+  {
+    repository: repositoryIdentity,
+    repositoryUrl,
+    readToken: repositoryReadToken,
+    writeToken: repositoryWriteToken,
+  },
+]);
 const database = new Pool({
   connectionString: await secretFile("CODEOPS_DATABASE_URL_FILE"),
   max: 4,
@@ -211,10 +223,9 @@ const run = createAgentJobRunner({
   kubernetes,
   config: {
     namespace,
-    repositoryUrl,
+    repositoryRegistry,
     agentImage: requireDigestImage("CODEOPS_AGENT_IMAGE"),
     sessionGatewayImage: requireDigestImage("CODEOPS_SESSION_GATEWAY_IMAGE"),
-    repositoryReadToken,
     modelAuth,
     evidenceRoot: required("CODEOPS_EVIDENCE_ROOT"),
   },

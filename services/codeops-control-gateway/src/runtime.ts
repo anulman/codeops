@@ -17,13 +17,16 @@ import {
   assertRunResources,
   buildRunResources,
 } from "./resources.js";
+import {
+  dispatchRepositoryIdentity,
+  type RepositoryRegistry,
+} from "./repository-registry.js";
 
 interface RuntimeConfig {
   readonly namespace: string;
-  readonly repositoryUrl: string;
+  readonly repositoryRegistry: RepositoryRegistry;
   readonly agentImage: string;
   readonly sessionGatewayImage: string;
-  readonly repositoryReadToken: string;
   readonly modelAuth: {
     readonly mode: "proxy";
     readonly origin: string;
@@ -72,6 +75,9 @@ export function createAgentJobRunner(input: {
 ) => Promise<AgentJobDispatchResult> {
   return async (request, signal) => {
     signal?.throwIfAborted();
+    const repository = input.config.repositoryRegistry.resolve(
+      dispatchRepositoryIdentity(request),
+    );
     const identity = createRunIdentity(request);
     const retainedCandidate = await readCandidatePatch({
       rootDirectory: input.config.evidenceRoot,
@@ -81,10 +87,10 @@ export function createAgentJobRunner(input: {
       {
         namespace: input.config.namespace,
         ...identity,
-        repositoryUrl: input.config.repositoryUrl,
+        repositoryUrl: repository.repositoryUrl,
         agentImage: input.config.agentImage,
         sessionGatewayImage: input.config.sessionGatewayImage,
-        repositoryReadToken: input.config.repositoryReadToken,
+        repositoryReadToken: repository.readToken,
         modelAuth: input.config.modelAuth,
         candidate: retainedCandidate?.candidate,
       },

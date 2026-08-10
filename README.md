@@ -33,3 +33,12 @@ Repository-controlled runtime containers do not receive reusable OpenAI or
 GitHub credentials. The trusted control plane binds every runtime action to an
 exact repository, base commit, session, generation, and lease. Keep these
 properties fail closed when you change the package or chart.
+
+The control gateway resolves Agent Job dispatches through a repository
+registry before it reads retained evidence or creates Kubernetes resources.
+Each admitted repository has a distinct read and write authority. An unknown
+repository, a duplicate identity, an identity/URL mismatch, or credential
+reuse fails closed. The current process entrypoint seeds this registry from
+the legacy single-repository environment variables. File-backed
+multi-repository configuration and repository-aware GitHub routes remain part
+of the extraction work.
