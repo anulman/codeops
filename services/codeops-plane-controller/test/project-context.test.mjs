@@ -12,7 +12,8 @@ import {
 
 test("loads the complete bounded context pack and compiles one digest", async () => {
   const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
-  const documents = await loadProjectContextDocuments(repositoryRoot);
+  const contextRoot = path.join(repositoryRoot, "config/project-context");
+  const documents = await loadProjectContextDocuments(contextRoot);
   assert.deepEqual(
     documents.map((document) => document.path),
     projectContextDocumentPaths,
@@ -26,11 +27,11 @@ test("loads the complete bounded context pack and compiles one digest", async ()
   assert.ok(soul);
   assert.equal(
     soul.content,
-    await readFile(path.join(repositoryRoot, "SOUL.md"), "utf8"),
+    await readFile(path.join(contextRoot, "SOUL.md"), "utf8"),
   );
   assert.match(soul.content, /ASD-STE100/);
   const context = compileProjectContext({
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example", name: "managed-repository" },
     controlPlaneSha: "b".repeat(40),
     baseSha: "a".repeat(40),
     workspaceId: "11111111-1111-4111-8111-111111111111",

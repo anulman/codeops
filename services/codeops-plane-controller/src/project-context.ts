@@ -22,7 +22,7 @@ const requiredDocuments = Object.freeze([
   },
   {
     path: "docs/agent-context/DOMAIN.md",
-    purpose: "Canonical RenoConcierge entities, authority, and relationships",
+    purpose: "Canonical repository entities, authority, and relationships",
   },
   {
     path: "docs/agent-context/PRODUCT.md",

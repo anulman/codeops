@@ -16,7 +16,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@renoconcierge/codeops-contracts": "file:../../packages/codeops-contracts",
+    "@renoconcierge/codeops-contracts": "workspace:*",
     "@temporalio/client": "1.21.1",
     "zod": "3.25.76"
   },

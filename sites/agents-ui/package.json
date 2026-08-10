@@ -16,23 +16,23 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@renoconcierge/codeops-contracts": "file:../../packages/codeops-contracts",
-    "@tanstack/react-router": "^1.169.2",
-    "@tanstack/react-start": "^1.167.65",
-    "@vitejs/plugin-react": "^6.0.1",
-    "jose": "^6.2.3",
+    "@renoconcierge/codeops-contracts": "workspace:*",
+    "@tanstack/react-router": "1.169.2",
+    "@tanstack/react-start": "1.167.65",
+    "@vitejs/plugin-react": "6.0.1",
+    "jose": "6.2.3",
     "nitro": "^3.0.260429-beta",
-    "react": "^19.2.6",
-    "react-dom": "^19.2.6",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.12",
-    "zod": "^3.25.76"
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "typescript": "6.0.3",
+    "vite": "8.0.12",
+    "zod": "3.25.76"
   },
   "devDependencies": {
-    "@tailwindcss/vite": "^4.3.0",
-    "@types/node": "^25.7.0",
-    "@types/react": "^19.2.14",
-    "@types/react-dom": "^19.2.3",
-    "tailwindcss": "^4.3.0"
+    "@tailwindcss/vite": "4.3.0",
+    "@types/node": "25.7.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "tailwindcss": "4.3.0"
   }
 }

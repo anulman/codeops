@@ -24,9 +24,7 @@ RUN services/codeops-plane-controller/node_modules/.bin/tsc -p packages/codeops-
 FROM node:24-bookworm-slim
 WORKDIR /app
 COPY --from=build --chown=node:node /repo/services/codeops-plane-controller ./services/codeops-plane-controller
-COPY --chown=node:node AGENTS.md ./project-context/AGENTS.md
-COPY --chown=node:node SOUL.md ./project-context/SOUL.md
-COPY --chown=node:node docs/agent-context ./project-context/docs/agent-context
+COPY --chown=node:node config/project-context ./project-context
 ENV NODE_ENV=production
 USER node
 EXPOSE 8080
