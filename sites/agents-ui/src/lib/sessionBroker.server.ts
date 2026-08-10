@@ -13,7 +13,6 @@ import { z } from "zod";
 
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 5_000;
-const AGENTS_UI_ORIGIN = "https://agents.renoconcierge.ca";
 const identifier = z
   .string()
   .min(1)
@@ -26,8 +25,27 @@ export function commandOriginIsAllowed(
   origin: string | undefined,
   enforced = process.env.NODE_ENV === "production" ||
     process.env.AGENTS_UI_ACCESS_REQUIRED === "true",
+  allowedOrigin = process.env.AGENTS_UI_ORIGIN,
 ): boolean {
-  return !enforced || origin === AGENTS_UI_ORIGIN;
+  if (!enforced) return true;
+  if (allowedOrigin === undefined) return false;
+  try {
+    const parsed = new URL(allowedOrigin);
+    if (
+      parsed.protocol !== "https:" ||
+      parsed.username !== "" ||
+      parsed.password !== "" ||
+      parsed.pathname !== "/" ||
+      parsed.search !== "" ||
+      parsed.hash !== "" ||
+      parsed.origin !== allowedOrigin
+    ) {
+      return false;
+    }
+  } catch {
+    return false;
+  }
+  return origin === allowedOrigin;
 }
 
 const fleetResponseSchema = z

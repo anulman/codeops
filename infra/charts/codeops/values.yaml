@@ -1,19 +1,18 @@
-nameOverride: agents-system
+nameOverride: ""
+fullnameOverride: ""
 
-imagePullSecrets:
-  - name: ghcr-renoconcierge
+imagePullSecrets: []
 
-nodeSelector:
-  renoconcierge.ca/codeops: "true"
+nodeSelector: {}
 
 agentsUi:
   replicas: 1
   image:
-    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agents-ui
+    repository: ghcr.io/anulman/codeops/agents-ui
     digest: ""
   access:
     issuer: ""
-    secretName: agents-system-access
+    secretName: codeops-access
     audienceKey: audience
     allowedEmailsKey: allowed-emails
   resources:
@@ -23,10 +22,10 @@ agentsUi:
 gateway:
   replicas: 1
   image:
-    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-control-gateway
+    repository: ghcr.io/anulman/codeops/session-control-gateway
     digest: ""
-  secretName: agents-system-session-secrets
-  workerId: agents-system:runtime-worker
+  secretName: codeops-session-secrets
+  workerId: codeops:runtime-worker
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: "1", memory: 512Mi }
@@ -34,9 +33,9 @@ gateway:
 modelProxy:
   replicas: 1
   image:
-    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-model-proxy
+    repository: ghcr.io/anulman/codeops/model-proxy
     digest: ""
-  secretName: agents-system-model-proxy-credentials
+  secretName: codeops-model-proxy-credentials
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
@@ -47,11 +46,11 @@ migration:
 githubController:
   replicas: 1
   image:
-    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-plane-controller
+    repository: ghcr.io/anulman/codeops/plane-controller
     digest: ""
   controlPlaneSha: ""
-  configSecretName: agents-system-controller-config
-  secretName: agents-system-controller-secrets
+  configSecretName: codeops-controller-config
+  secretName: codeops-controller-secrets
   storageClassName: ""
   storage: 2Gi
   resources:
@@ -60,9 +59,9 @@ githubController:
 
 postgresql:
   image:
-    repository: ghcr.io/anulman/renoconcierge/renoconcierge-postgres
+    repository: postgres
     digest: ""
-  secretName: agents-system-postgres
+  secretName: codeops-postgres
   storageClassName: ""
   storage: 20Gi
   resources:
@@ -71,16 +70,16 @@ postgresql:
 
 runtime:
   workerImage:
-    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-runtime-worker
+    repository: ghcr.io/anulman/codeops/session-runtime-worker
     digest: ""
   agentImage:
-    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent
+    repository: ghcr.io/anulman/codeops/agent
     digest: ""
 
 ingress:
   className: nginx
-  host: agents.renoconcierge.ca
-  tlsSecretName: agents-renoconcierge-ca-tls
+  host: codeops.example.com
+  tlsSecretName: codeops-tls
   annotations:
     cert-manager.io/cluster-issuer: letsencrypt-prod-dns
     nginx.ingress.kubernetes.io/proxy-body-size: 2m

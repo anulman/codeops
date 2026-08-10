@@ -18,7 +18,7 @@ multi-repository acceptance suites pass.
 - `services/codeops-agent`: isolated coding-agent image
 - `services/codeops-model-proxy`: trusted OpenAI credential boundary
 - `services/codeops-orchestrator`: Temporal workflow worker
-- `infra/charts/agents-system`: current extraction-source Helm chart
+- `infra/charts/codeops`: CodeOps Helm chart
 
 ## Local validation
 

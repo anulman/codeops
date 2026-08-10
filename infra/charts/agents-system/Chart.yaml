@@ -1,6 +1,0 @@
-apiVersion: v2
-name: agents-system
-description: Independent Agents control plane for durable Agent Sessions
-type: application
-version: 0.1.0
-appVersion: "0.1.0"

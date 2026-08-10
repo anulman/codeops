@@ -71,18 +71,30 @@ function json(body, status = 200) {
   });
 }
 
-test("allows writes only from the exact production Agents origin", () => {
-  assert.equal(commandOriginIsAllowed("https://agents.renoconcierge.ca", true), true);
+test("allows writes only from the configured exact HTTPS origin", () => {
+  const allowedOrigin = "https://codeops.example.com";
+  assert.equal(commandOriginIsAllowed(allowedOrigin, true, allowedOrigin), true);
   for (const origin of [
     undefined,
     "null",
-    "https://agents.renoconcierge.ca.evil.example",
-    "https://agents.renoconcierge.ca/",
-    "http://agents.renoconcierge.ca",
+    "https://codeops.example.com.evil.example",
+    "https://codeops.example.com/",
+    "http://codeops.example.com",
   ]) {
-    assert.equal(commandOriginIsAllowed(origin, true), false);
+    assert.equal(commandOriginIsAllowed(origin, true, allowedOrigin), false);
   }
-  assert.equal(commandOriginIsAllowed(undefined, false), true);
+  for (const invalidAllowedOrigin of [
+    undefined,
+    "http://codeops.example.com",
+    "https://codeops.example.com/",
+    "https://user@codeops.example.com",
+  ]) {
+    assert.equal(
+      commandOriginIsAllowed(allowedOrigin, true, invalidAllowedOrigin),
+      false,
+    );
+  }
+  assert.equal(commandOriginIsAllowed(undefined, false, undefined), true);
 });
 
 test("keeps the read token server-side and validates all fleet snapshots", async () => {

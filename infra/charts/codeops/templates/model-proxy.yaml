@@ -1,23 +1,23 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: agents-system-model-proxy
+  name: {{ include "codeops.fullname" . }}-model-proxy
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "agents-system.labels" . | nindent 4 }}
+    {{- include "codeops.labels" . | nindent 4 }}
     app.kubernetes.io/component: model-proxy
 spec:
   replicas: {{ .Values.modelProxy.replicas }}
   selector:
-    matchLabels: { app.kubernetes.io/name: agents-system-model-proxy }
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-model-proxy }
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: agents-system-model-proxy
+        app.kubernetes.io/name: {{ include "codeops.fullname" . }}-model-proxy
         app.kubernetes.io/component: model-proxy
-        app.kubernetes.io/part-of: agents-system
+        app.kubernetes.io/part-of: codeops
     spec:
-      serviceAccountName: agents-system-model-proxy
+      serviceAccountName: {{ include "codeops.fullname" . }}-model-proxy
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
@@ -31,7 +31,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: model-proxy
-          image: {{ include "agents-system.image" .Values.modelProxy.image | quote }}
+          image: {{ include "codeops.image" .Values.modelProxy.image | quote }}
           imagePullPolicy: IfNotPresent
           env:
             - name: OPENAI_API_KEY
@@ -56,11 +56,11 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: agents-system-model-proxy
+  name: {{ include "codeops.fullname" . }}-model-proxy
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "agents-system.labels" . | nindent 4 }}
+    {{- include "codeops.labels" . | nindent 4 }}
     app.kubernetes.io/component: model-proxy
 spec:
-  selector: { app.kubernetes.io/name: agents-system-model-proxy }
+  selector: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-model-proxy }
   ports: [{ name: http, protocol: TCP, port: 8080, targetPort: http }]

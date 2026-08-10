@@ -2,10 +2,10 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: agents-system-session-migrate
+  name: {{ include "codeops.fullname" . }}-session-migrate
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "agents-system.labels" . | nindent 4 }}
+    {{- include "codeops.labels" . | nindent 4 }}
     app.kubernetes.io/component: session-migration
   annotations:
     helm.sh/hook: pre-upgrade
@@ -17,12 +17,12 @@ spec:
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: agents-system-session-migrate
+        app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-migrate
         app.kubernetes.io/component: session-migration
-        app.kubernetes.io/part-of: agents-system
+        app.kubernetes.io/part-of: codeops
     spec:
       restartPolicy: Never
-      serviceAccountName: agents-system-session-gateway
+      serviceAccountName: {{ include "codeops.fullname" . }}-session-gateway
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
@@ -38,13 +38,13 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: migrate
-          image: {{ include "agents-system.image" .Values.gateway.image | quote }}
+          image: {{ include "codeops.image" .Values.gateway.image | quote }}
           imagePullPolicy: IfNotPresent
           command: [node, services/codeops-control-gateway/dist/session-migrate-main.js]
           env:
-            - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/agents-system/database-url }
-            - { name: CODEOPS_RUNTIME_DATABASE_URL_FILE, value: /var/run/secrets/agents-system/runtime-database-url }
-            - { name: CODEOPS_RUNTIME_DATABASE_ROLE_FILE, value: /var/run/secrets/agents-system/runtime-database-role }
+            - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/codeops/database-url }
+            - { name: CODEOPS_RUNTIME_DATABASE_URL_FILE, value: /var/run/secrets/codeops/runtime-database-url }
+            - { name: CODEOPS_RUNTIME_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops/runtime-database-role }
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { cpu: 250m, memory: 256Mi }
@@ -53,7 +53,7 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: [ALL] }
           volumeMounts:
-            - { name: secrets, mountPath: /var/run/secrets/agents-system, readOnly: true }
+            - { name: secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
             - { name: temp, mountPath: /tmp }
       volumes:
         - name: secrets

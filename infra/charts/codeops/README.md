@@ -1,8 +1,8 @@
-# Agents control plane `agents-system` package
+# CodeOps Helm chart
 
-This chart packages the independent internal Agent Sessions control plane. It
-installs only into the `agents-system` namespace and exposes only
-`agents.renoconcierge.ca`.
+This chart packages the CodeOps control plane. The release name, namespace,
+host, ingress class, node selector, storage class, image registry, and Secret
+names are configurable. All CodeOps images must use exact SHA-256 digests.
 
 The chart contains:
 
@@ -18,31 +18,31 @@ The chart contains:
 The chart does not create credentials. Before installation, the internal
 release boundary must create these Secrets:
 
-- `agents-system-postgres`: `password`;
-- `agents-system-session-secrets`: `database-url`, `read-token`, `write-token`,
+- `codeops-postgres`: `password`;
+- `codeops-session-secrets`: `database-url`, `read-token`, `write-token`,
   `runtime-worker-token`, `initialization-token`, `github-steering-token`,
   `runtime-database-url`, `runtime-database-role`. The runtime URL uses the
   named receipt-only role, a 32–256 character URL-safe password, the in-cluster
   PostgreSQL service, and database `agents`; it must not use the gateway
   database role;
-- `agents-system-model-proxy-credentials`: `openai-api-key`, `signing-key`;
-- `agents-system-access`: `audience`, `allowed-emails`.
-- `agents-system-controller-secrets`: `plane-api-key`, `plane-webhook-secret`,
+- `codeops-model-proxy-credentials`: `openai-api-key`, `signing-key`;
+- `codeops-access`: `audience`, `allowed-emails`.
+- `codeops-controller-secrets`: `plane-api-key`, `plane-webhook-secret`,
   `research-projection-token`, `repository-head-token`,
   `github-webhook-secret`, `github-steering-token`.
-- `agents-system-controller-config`: the controller's non-file runtime
+- `codeops-controller-config`: the controller's non-file runtime
   configuration, including Temporal, Plane, repository, actor, persona, and
   lifecycle state identities.
-- `agents-system-runtime-source`: `repository-read-token`. Only the trusted
+- `codeops-runtime-source`: `repository-read-token`. Only the trusted
   root-session Job uses this read-only source credential.
 
 The GitHub webhook controller is a separate HMAC-authenticated process. It uses
 the gateway's dedicated steering token and has no browser, merge, release, or
 Kubernetes authority. Per-session runtime Jobs consume the immutable worker
-and coding-agent image references from `agents-system-runtime-images`; the
+and coding-agent image references from `codeops-runtime-images`; the
 runtime ServiceAccount does not receive a Kubernetes API token or RBAC grant.
 The gateway and model proxy mount the same `signing-key` from
-`agents-system-model-proxy-credentials`. No copied key or equality check is
+`codeops-model-proxy-credentials`. No copied key or equality check is
 required. The coding-agent container receives only a 75-minute session-bound
 proxy token. It never mounts the reusable OpenAI credential or reusable Codex
 state.
@@ -86,7 +86,7 @@ CODEOPS_RUN_ID=<dns-safe-run> \
 CODEOPS_SESSION_ID=<session-id> \
 CODEOPS_SESSION_SUFFIX=<dns-safe-suffix> \
 CODEOPS_WORKFLOW_ID=<dns-safe-workflow> \
-  node infra/scripts/render-agents-system-root-session.mjs > /tmp/root-session.yaml
+  node infra/scripts/render-codeops-root-session.mjs > /tmp/root-session.yaml
 ```
 
 Review the manifest, then apply it through the trusted Kubernetes operator.
@@ -97,8 +97,8 @@ Agents UI does not receive the initialization token or Kubernetes authority.
 Render with exact digests and the Access team domain:
 
 ```sh
-helm template agents-system infra/charts/agents-system \
-  --namespace agents-system \
+helm template codeops infra/charts/codeops \
+  --namespace codeops \
   --set agentsUi.image.digest=sha256:<digest> \
   --set gateway.image.digest=sha256:<digest> \
   --set githubController.image.digest=sha256:<digest> \
@@ -113,7 +113,7 @@ helm template agents-system infra/charts/agents-system \
 Run the chart contract with:
 
 ```sh
-node --test infra/scripts/test-agents-system-chart.mjs
-node --test infra/scripts/test-agents-system-root-session.mjs
-node --test infra/scripts/test-agents-system-release-images.mjs
+node --test infra/scripts/test-codeops-chart.mjs
+node --test infra/scripts/test-codeops-root-session.mjs
+node --test infra/scripts/test-codeops-release-images.mjs
 ```

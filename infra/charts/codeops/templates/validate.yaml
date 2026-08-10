@@ -1,8 +1,5 @@
-{{- if ne .Release.Namespace "agents-system" -}}
-{{- fail "agents-system must be installed in the agents-system namespace" -}}
-{{- end -}}
-{{- if ne .Values.ingress.host "agents.renoconcierge.ca" -}}
-{{- fail "The Agents control plane has one fixed public host: agents.renoconcierge.ca" -}}
+{{- if not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" .Values.ingress.host) -}}
+{{- fail "ingress.host must be one lowercase DNS host" -}}
 {{- end -}}
 {{- if not (regexMatch "^https://[a-z0-9-]+\\.cloudflareaccess\\.com/?$" .Values.agentsUi.access.issuer) -}}
 {{- fail "agentsUi.access.issuer must be one Cloudflare Access team-domain origin" -}}

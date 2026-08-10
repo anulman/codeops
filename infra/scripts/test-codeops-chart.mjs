@@ -3,7 +3,7 @@ import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { parseAllDocuments } from "yaml";
 
-const chart = "infra/charts/agents-system";
+const chart = "infra/charts/codeops";
 const digestSets = [
   "agentsUi.image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "gateway.image.digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
@@ -13,7 +13,14 @@ const digestSets = [
   "runtime.workerImage.digest=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "runtime.agentImage.digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
   "modelProxy.image.digest=sha256:9999999999999999999999999999999999999999999999999999999999999999",
-  "agentsUi.access.issuer=https://renoconcierge.cloudflareaccess.com",
+  "agentsUi.access.issuer=https://example.cloudflareaccess.com",
+  "ingress.host=codeops.example.net",
+  "agentsUi.access.secretName=team-a-codeops-access",
+  "gateway.secretName=team-a-codeops-session-secrets",
+  "modelProxy.secretName=team-a-codeops-model-proxy-credentials",
+  "githubController.configSecretName=team-a-codeops-controller-config",
+  "githubController.secretName=team-a-codeops-controller-secrets",
+  "postgresql.secretName=team-a-codeops-postgres",
 ];
 
 function helm(args) {
@@ -27,8 +34,8 @@ function helm(args) {
 
 function render() {
   const output = helm([
-    "template", "agents-system", chart,
-    "--namespace", "agents-system",
+    "template", "team-a", chart,
+    "--namespace", "engineering",
     ...digestSets.flatMap((value) => ["--set", value]),
   ]);
   return parseAllDocuments(output)
@@ -44,11 +51,11 @@ function resource(resources, kind, name) {
   return match;
 }
 
-test("renders one independent agents-system package with immutable images", () => {
+test("renders one portable CodeOps package with immutable images", () => {
   const resources = render();
   assert.ok(resources.length >= 21);
   for (const candidate of resources) {
-    assert.equal(candidate.metadata?.namespace, "agents-system");
+    assert.equal(candidate.metadata?.namespace, "engineering");
     assert.notEqual(candidate.kind, "Secret");
   }
 
@@ -59,16 +66,16 @@ test("renders one independent agents-system package with immutable images", () =
   assert.equal(images.length, 6);
   assert.ok(images.every((image) => /@sha256:[0-9a-f]{64}$/.test(image)));
 
-  resource(resources, "StatefulSet", "agents-system-postgresql");
-  resource(resources, "Deployment", "agents-system-session-gateway");
-  resource(resources, "Deployment", "agents-system-github-controller");
-  resource(resources, "Deployment", "agents-system-agents-ui");
-  const modelProxy = resource(resources, "Deployment", "agents-system-model-proxy");
+  resource(resources, "StatefulSet", "team-a-codeops-postgresql");
+  resource(resources, "Deployment", "team-a-codeops-session-gateway");
+  resource(resources, "Deployment", "team-a-codeops-github-controller");
+  resource(resources, "Deployment", "team-a-codeops-agents-ui");
+  const modelProxy = resource(resources, "Deployment", "team-a-codeops-model-proxy");
   const proxySource = JSON.stringify(modelProxy);
-  assert.match(proxySource, /agents-system-model-proxy-credentials/);
+  assert.match(proxySource, /team-a-codeops-model-proxy-credentials/);
   assert.match(proxySource, /openai-api-key/);
   assert.match(proxySource, /signing-key/);
-  const migration = resource(resources, "Job", "agents-system-session-migrate");
+  const migration = resource(resources, "Job", "team-a-codeops-session-migrate");
   assert.equal(migration.metadata.annotations["helm.sh/hook"], "pre-upgrade");
   assert.equal(migration.metadata.annotations["helm.sh/hook-delete-policy"], "before-hook-creation");
   assert.equal(migration.spec.backoffLimit, 0);
@@ -81,11 +88,11 @@ test("renders one independent agents-system package with immutable images", () =
     migration.spec.template.spec.volumes.find(({ name }) => name === "secrets").secret.items.map(({ key }) => key).sort(),
     ["database-url", "runtime-database-role", "runtime-database-url"],
   );
-  assert.equal(resources.some(({ metadata }) => metadata?.name === "agents-system-codex-auth"), false);
-  resource(resources, "PersistentVolumeClaim", "agents-system-controller-state");
-  resource(resources, "ConfigMap", "agents-system-runtime-images");
+  assert.equal(resources.some(({ metadata }) => metadata?.name === "team-a-codeops-codex-auth"), false);
+  resource(resources, "PersistentVolumeClaim", "team-a-codeops-controller-state");
+  resource(resources, "ConfigMap", "team-a-codeops-runtime-images");
   for (const name of ["agents-ui", "session-gateway", "github-controller", "runtime", "model-proxy"]) {
-    const account = resource(resources, "ServiceAccount", `agents-system-${name}`);
+    const account = resource(resources, "ServiceAccount", `team-a-codeops-${name}`);
     assert.equal(account.automountServiceAccountToken, false);
   }
 });
@@ -95,7 +102,7 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
   const ingresses = resources.filter(({ kind }) => kind === "Ingress");
   assert.equal(ingresses.length, 1);
   assert.deepEqual(ingresses[0].spec.rules.map(({ host }) => host), [
-    "agents.renoconcierge.ca",
+    "codeops.example.net",
   ]);
   assert.deepEqual(ingresses[0].spec.rules[0].http.paths.map(({ path }) => path), [
     "/webhooks/github",
@@ -106,7 +113,7 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
   const deployment = resource(
     resources,
     "Deployment",
-    "agents-system-agents-ui",
+    "team-a-codeops-agents-ui",
   );
   const env = new Map(
     deployment.spec.template.spec.containers[0].env.map((entry) => [entry.name, entry]),
@@ -114,22 +121,23 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
   assert.equal(env.get("AGENTS_UI_ACCESS_REQUIRED").value, "true");
   assert.equal(
     env.get("AGENTS_UI_ACCESS_ISSUER").value,
-    "https://renoconcierge.cloudflareaccess.com",
+    "https://example.cloudflareaccess.com",
   );
+  assert.equal(env.get("AGENTS_UI_ORIGIN").value, "https://codeops.example.net");
   assert.equal(
     env.get("AGENTS_UI_ACCESS_AUDIENCE").valueFrom.secretKeyRef.name,
-    "agents-system-access",
+    "team-a-codeops-access",
   );
   assert.equal(
     env.get("AGENTS_UI_ACCESS_ALLOWED_EMAILS_FILE").value,
-    "/var/run/secrets/agents-system-access/allowed-emails",
+    "/var/run/secrets/team-a-codeops-access/allowed-emails",
   );
   assert.equal(JSON.stringify(deployment).includes("cf-access-authenticated-user-email"), false);
 
-  const gateway = resource(resources, "Deployment", "agents-system-session-gateway");
+  const gateway = resource(resources, "Deployment", "team-a-codeops-session-gateway");
   const gatewaySource = JSON.stringify(gateway);
   assert.match(gatewaySource, /initialization-token/);
-  assert.match(gatewaySource, /agents-system-model-proxy-credentials/);
+  assert.match(gatewaySource, /team-a-codeops-model-proxy-credentials/);
   assert.match(gatewaySource, /signing-key/);
   assert.doesNotMatch(gatewaySource, /model-proxy-signing-key/);
   assert.equal(JSON.stringify(deployment).includes("initialization-token"), false);
@@ -137,18 +145,18 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
   const controller = resource(
     resources,
     "Deployment",
-    "agents-system-github-controller",
+    "team-a-codeops-github-controller",
   );
   const controllerEnv = new Map(
     controller.spec.template.spec.containers[0].env.map((entry) => [entry.name, entry]),
   );
   assert.equal(
     controllerEnv.get("CODEOPS_GITHUB_SESSION_STEERING_ORIGIN").value,
-    "http://agents-session-control-gateway:8080",
+    "http://team-a-codeops-session-control-gateway:8080",
   );
   assert.equal(
     controllerEnv.get("CODEOPS_GITHUB_WEBHOOK_SECRET_FILE").value,
-    "/var/run/secrets/agents-system-controller/github-webhook-secret",
+    "/var/run/secrets/team-a-codeops-controller/github-webhook-secret",
   );
 });
 
@@ -156,24 +164,24 @@ test("defaults to deny and opens only explicit component paths", () => {
   const resources = render();
   const policies = resources.filter(({ kind }) => kind === "NetworkPolicy");
   assert.equal(policies.length, 8);
-  const deny = resource(resources, "NetworkPolicy", "agents-system-default-deny");
+  const deny = resource(resources, "NetworkPolicy", "team-a-codeops-default-deny");
   assert.deepEqual(deny.spec.podSelector, {});
   assert.deepEqual(deny.spec.policyTypes, ["Ingress", "Egress"]);
 
-  const postgresql = resource(resources, "NetworkPolicy", "agents-system-postgresql");
+  const postgresql = resource(resources, "NetworkPolicy", "team-a-codeops-postgresql");
   assert.deepEqual(postgresql.spec.egress, []);
-  const gateway = resource(resources, "NetworkPolicy", "agents-system-session-gateway");
+  const gateway = resource(resources, "NetworkPolicy", "team-a-codeops-session-gateway");
   assert.ok(JSON.stringify(gateway).includes("github-controller"));
-  assert.ok(JSON.stringify(gateway).includes("agents-system-postgresql"));
-  const controller = resource(resources, "NetworkPolicy", "agents-system-github-controller");
-  assert.ok(JSON.stringify(controller).includes("agents-system-session-gateway"));
-  const migration = resource(resources, "NetworkPolicy", "agents-system-session-migration");
-  assert.ok(JSON.stringify(migration).includes("agents-system-postgresql"));
+  assert.ok(JSON.stringify(gateway).includes("team-a-codeops-postgresql"));
+  const controller = resource(resources, "NetworkPolicy", "team-a-codeops-github-controller");
+  assert.ok(JSON.stringify(controller).includes("team-a-codeops-session-gateway"));
+  const migration = resource(resources, "NetworkPolicy", "team-a-codeops-session-migration");
+  assert.ok(JSON.stringify(migration).includes("team-a-codeops-postgresql"));
   assert.deepEqual(
     migration.spec.egress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)).sort(),
     ["TCP:53", "TCP:5432", "UDP:53"],
   );
-  const modelProxy = resource(resources, "NetworkPolicy", "agents-system-model-proxy");
+  const modelProxy = resource(resources, "NetworkPolicy", "team-a-codeops-model-proxy");
   assert.ok(JSON.stringify(modelProxy.spec.ingress).includes("runtime"));
   assert.deepEqual(
     modelProxy.spec.ingress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)),
@@ -181,16 +189,21 @@ test("defaults to deny and opens only explicit component paths", () => {
   );
 });
 
-test("fails closed on the wrong namespace, host, issuer, or mutable image", () => {
+test("accepts arbitrary namespaces and fails closed on invalid configuration", () => {
+  assert.doesNotThrow(() => helm([
+    "template", "team-a", chart,
+    "--namespace", "another-namespace",
+    ...digestSets.flatMap((value) => ["--set", value]),
+  ]));
   const cases = [
-    ["--namespace", "renoconcierge"],
-    ["--namespace", "agents-system", "--set", "ingress.host=other.example.com"],
-    ["--namespace", "agents-system", "--set", "agentsUi.access.issuer=https://example.com"],
-    ["--namespace", "agents-system", "--set", "gateway.image.digest=latest"],
+    ["--namespace", "engineering", "--set", "ingress.host=UPPER.example.com"],
+    ["--namespace", "engineering", "--set", "agentsUi.access.issuer=https://example.com"],
+    ["--namespace", "engineering", "--set", "gateway.image.digest=latest"],
+    ["--namespace", "engineering", "--set", "githubController.controlPlaneSha=main"],
   ];
   for (const extra of cases) {
     assert.throws(() => helm([
-      "template", "agents-system", chart,
+      "template", "team-a", chart,
       ...digestSets.flatMap((value) => ["--set", value]),
       ...extra,
     ]));

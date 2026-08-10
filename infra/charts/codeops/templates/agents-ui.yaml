@@ -1,24 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: agents-system-agents-ui
+  name: {{ include "codeops.fullname" . }}-agents-ui
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "agents-system.labels" . | nindent 4 }}
+    {{- include "codeops.labels" . | nindent 4 }}
     app.kubernetes.io/component: agents-ui
 spec:
   replicas: {{ .Values.agentsUi.replicas }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: agents-system-agents-ui
+      app.kubernetes.io/name: {{ include "codeops.fullname" . }}-agents-ui
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: agents-system-agents-ui
+        app.kubernetes.io/name: {{ include "codeops.fullname" . }}-agents-ui
         app.kubernetes.io/component: agents-ui
-        app.kubernetes.io/part-of: agents-system
+        app.kubernetes.io/part-of: codeops
     spec:
-      serviceAccountName: agents-system-agents-ui
+      serviceAccountName: {{ include "codeops.fullname" . }}-agents-ui
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
@@ -34,7 +34,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: agents-ui
-          image: {{ include "agents-system.image" .Values.agentsUi.image | quote }}
+          image: {{ include "codeops.image" .Values.agentsUi.image | quote }}
           imagePullPolicy: IfNotPresent
           env:
             - { name: HOST, value: 0.0.0.0 }
@@ -42,13 +42,14 @@ spec:
             - { name: NODE_ENV, value: production }
             - { name: AGENTS_UI_ACCESS_REQUIRED, value: "true" }
             - { name: AGENTS_UI_ACCESS_ISSUER, value: {{ .Values.agentsUi.access.issuer | trimSuffix "/" | quote }} }
+            - { name: AGENTS_UI_ORIGIN, value: {{ printf "https://%s" .Values.ingress.host | quote }} }
             - name: AGENTS_UI_ACCESS_AUDIENCE
               valueFrom:
                 secretKeyRef: { name: {{ .Values.agentsUi.access.secretName }}, key: {{ .Values.agentsUi.access.audienceKey }} }
-            - { name: AGENTS_UI_ACCESS_ALLOWED_EMAILS_FILE, value: /var/run/secrets/agents-system-access/allowed-emails }
-            - { name: CODEOPS_SESSION_BROKER_URL, value: http://agents-session-control-gateway:8080 }
-            - { name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE, value: /var/run/secrets/agents-system/read-token }
-            - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/agents-system/write-token }
+            - { name: AGENTS_UI_ACCESS_ALLOWED_EMAILS_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-access/allowed-emails }
+            - { name: CODEOPS_SESSION_BROKER_URL, value: http://{{ include "codeops.fullname" . }}-session-control-gateway:8080 }
+            - { name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE, value: /var/run/secrets/codeops/read-token }
+            - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/codeops/write-token }
           ports:
             - { name: http, containerPort: 3000 }
           startupProbe:
@@ -69,8 +70,8 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: [ALL] }
           volumeMounts:
-            - { name: session-secrets, mountPath: /var/run/secrets/agents-system, readOnly: true }
-            - { name: access-identity, mountPath: /var/run/secrets/agents-system-access, readOnly: true }
+            - { name: session-secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
+            - { name: access-identity, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-access, readOnly: true }
             - { name: temp, mountPath: /tmp }
       volumes:
         - name: session-secrets
@@ -92,24 +93,24 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: agents-system-agents-ui
+  name: {{ include "codeops.fullname" . }}-agents-ui
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "agents-system.labels" . | nindent 4 }}
+    {{- include "codeops.labels" . | nindent 4 }}
     app.kubernetes.io/component: agents-ui
 spec:
   selector:
-    app.kubernetes.io/name: agents-system-agents-ui
+    app.kubernetes.io/name: {{ include "codeops.fullname" . }}-agents-ui
   ports:
     - { name: http, protocol: TCP, port: 3000, targetPort: http }
 ---
 apiVersion: networking.k8s.io/v1
 kind: Ingress
 metadata:
-  name: agents-system-agents-ui
+  name: {{ include "codeops.fullname" . }}-agents-ui
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "agents-system.labels" . | nindent 4 }}
+    {{- include "codeops.labels" . | nindent 4 }}
     app.kubernetes.io/component: agents-ui
   annotations:
     {{- toYaml .Values.ingress.annotations | nindent 4 }}
@@ -126,17 +127,17 @@ spec:
             pathType: Exact
             backend:
               service:
-                name: agents-system-github-controller
+                name: {{ include "codeops.fullname" . }}-github-controller
                 port: { name: http }
           - path: /webhooks/plane
             pathType: Exact
             backend:
               service:
-                name: agents-system-github-controller
+                name: {{ include "codeops.fullname" . }}-github-controller
                 port: { name: http }
           - path: /
             pathType: Prefix
             backend:
               service:
-                name: agents-system-agents-ui
+                name: {{ include "codeops.fullname" . }}-agents-ui
                 port: { name: http }

@@ -1,24 +1,24 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: agents-system-session-gateway
+  name: {{ include "codeops.fullname" . }}-session-gateway
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "agents-system.labels" . | nindent 4 }}
+    {{- include "codeops.labels" . | nindent 4 }}
     app.kubernetes.io/component: session-gateway
 spec:
   replicas: {{ .Values.gateway.replicas }}
   selector:
     matchLabels:
-      app.kubernetes.io/name: agents-system-session-gateway
+      app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway
   template:
     metadata:
       labels:
-        app.kubernetes.io/name: agents-system-session-gateway
+        app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway
         app.kubernetes.io/component: session-gateway
-        app.kubernetes.io/part-of: agents-system
+        app.kubernetes.io/part-of: codeops
     spec:
-      serviceAccountName: agents-system-session-gateway
+      serviceAccountName: {{ include "codeops.fullname" . }}-session-gateway
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
@@ -34,19 +34,19 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: session-gateway
-          image: {{ include "agents-system.image" .Values.gateway.image | quote }}
+          image: {{ include "codeops.image" .Values.gateway.image | quote }}
           imagePullPolicy: IfNotPresent
           env:
             - { name: CODEOPS_HTTP_HOST, value: 0.0.0.0 }
             - { name: CODEOPS_HTTP_PORT, value: "8080" }
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_ID, value: {{ .Values.gateway.workerId | quote }} }
-            - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/agents-system/database-url }
-            - { name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE, value: /var/run/secrets/agents-system/read-token }
-            - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/agents-system/write-token }
-            - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/agents-system/runtime-worker-token }
-            - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/agents-system/initialization-token }
-            - { name: CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE, value: /var/run/secrets/agents-system/github-steering-token }
-            - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/agents-system-model-proxy/signing-key }
+            - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/codeops/database-url }
+            - { name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE, value: /var/run/secrets/codeops/read-token }
+            - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/codeops/write-token }
+            - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/codeops/runtime-worker-token }
+            - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/codeops/initialization-token }
+            - { name: CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE, value: /var/run/secrets/codeops/github-steering-token }
+            - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy/signing-key }
           ports:
             - { name: http, containerPort: 8080 }
           startupProbe:
@@ -67,8 +67,8 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: [ALL] }
           volumeMounts:
-            - { name: secrets, mountPath: /var/run/secrets/agents-system, readOnly: true }
-            - { name: model-proxy-auth, mountPath: /var/run/secrets/agents-system-model-proxy, readOnly: true }
+            - { name: secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
+            - { name: model-proxy-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy, readOnly: true }
             - { name: temp, mountPath: /tmp }
       volumes:
         - name: secrets
@@ -94,13 +94,13 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: agents-session-control-gateway
+  name: {{ include "codeops.fullname" . }}-session-control-gateway
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "agents-system.labels" . | nindent 4 }}
+    {{- include "codeops.labels" . | nindent 4 }}
     app.kubernetes.io/component: session-gateway
 spec:
   selector:
-    app.kubernetes.io/name: agents-system-session-gateway
+    app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway
   ports:
     - { name: http, protocol: TCP, port: 8080, targetPort: http }

@@ -1,10 +1,10 @@
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: agents-system-default-deny
+  name: {{ include "codeops.fullname" . }}-default-deny
   namespace: {{ .Release.Namespace }}
   labels:
-    {{- include "agents-system.labels" . | nindent 4 }}
+    {{- include "codeops.labels" . | nindent 4 }}
 spec:
   podSelector: {}
   policyTypes: [Ingress, Egress]
@@ -12,11 +12,11 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: agents-system-agents-ui
+  name: {{ include "codeops.fullname" . }}-agents-ui
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
-    matchLabels: { app.kubernetes.io/name: agents-system-agents-ui }
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-agents-ui }
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -26,7 +26,7 @@ spec:
   egress:
     - to:
         - podSelector:
-            matchLabels: { app.kubernetes.io/name: agents-system-session-gateway }
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway }
       ports: [{ protocol: TCP, port: 8080 }]
     - to:
         - namespaceSelector:
@@ -43,11 +43,11 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: agents-system-session-gateway
+  name: {{ include "codeops.fullname" . }}-session-gateway
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
-    matchLabels: { app.kubernetes.io/name: agents-system-session-gateway }
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway }
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -60,7 +60,7 @@ spec:
   egress:
     - to:
         - podSelector:
-            matchLabels: { app.kubernetes.io/name: agents-system-postgresql }
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-postgresql }
       ports: [{ protocol: TCP, port: 5432 }]
     - to:
         - namespaceSelector:
@@ -72,7 +72,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: agents-system-session-migration
+  name: {{ include "codeops.fullname" . }}-session-migration
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
@@ -82,7 +82,7 @@ spec:
   egress:
     - to:
         - podSelector:
-            matchLabels: { app.kubernetes.io/name: agents-system-postgresql }
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-postgresql }
       ports: [{ protocol: TCP, port: 5432 }]
     - to:
         - namespaceSelector:
@@ -94,11 +94,11 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: agents-system-github-controller
+  name: {{ include "codeops.fullname" . }}-github-controller
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
-    matchLabels: { app.kubernetes.io/name: agents-system-github-controller }
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-github-controller }
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -108,7 +108,7 @@ spec:
   egress:
     - to:
         - podSelector:
-            matchLabels: { app.kubernetes.io/name: agents-system-session-gateway }
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway }
       ports: [{ protocol: TCP, port: 8080 }]
     - to:
         - namespaceSelector: {}
@@ -128,11 +128,11 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: agents-system-model-proxy
+  name: {{ include "codeops.fullname" . }}-model-proxy
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
-    matchLabels: { app.kubernetes.io/name: agents-system-model-proxy }
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-model-proxy }
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -155,11 +155,11 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: agents-system-postgresql
+  name: {{ include "codeops.fullname" . }}-postgresql
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
-    matchLabels: { app.kubernetes.io/name: agents-system-postgresql }
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-postgresql }
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -174,7 +174,7 @@ spec:
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: agents-system-runtime
+  name: {{ include "codeops.fullname" . }}-runtime
   namespace: {{ .Release.Namespace }}
 spec:
   podSelector:
@@ -184,15 +184,15 @@ spec:
   egress:
     - to:
         - podSelector:
-            matchLabels: { app.kubernetes.io/name: agents-system-session-gateway }
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway }
       ports: [{ protocol: TCP, port: 8080 }]
     - to:
         - podSelector:
-            matchLabels: { app.kubernetes.io/name: agents-system-postgresql }
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-postgresql }
       ports: [{ protocol: TCP, port: 5432 }]
     - to:
         - podSelector:
-            matchLabels: { app.kubernetes.io/name: agents-system-model-proxy }
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-model-proxy }
       ports: [{ protocol: TCP, port: 8080 }]
     - to:
         - namespaceSelector:
