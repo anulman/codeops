@@ -35,10 +35,11 @@ nub run verify
 
 ## Release boundary
 
-`.github/workflows/release.yml` is the only package publication boundary. It
-is manual and defaults to validation-only mode. An operator must select `main`,
-enter one exact SemVer version, and set `publish=true` before it writes to
-GHCR. A publishing run builds all nine images from one source SHA, resolves
+`.github/workflows/release.yml` is the only package publication boundary.
+Release-contract changes run it in validation-only mode. An operator must use
+manual dispatch, select `main`, enter one exact SemVer version, and set
+`publish=true` before it writes to GHCR. A publishing run builds all nine
+images from one source SHA, resolves
 their registry digests, publishes the Helm chart to
 `oci://ghcr.io/anulman/codeops/charts/codeops`, and retains the exact image,
 chart, source, and release-values evidence. Ordinary pushes and CI runs do not
