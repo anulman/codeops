@@ -1,5 +1,8 @@
 **
 !tsconfig.json
+!infra/
+!infra/scripts/
+!infra/scripts/rewrite-workspace-dependency-for-npm.mjs
 !packages/
 !packages/codeops-contracts/
 !packages/codeops-contracts/package.json

@@ -42,10 +42,19 @@ test("rewrites only the exact workspace contract for isolated npm image installs
 test("rewrites every isolated npm service manifest before npm ci", async () => {
   for (const filename of dockerfiles) {
     const source = await readFile(new URL(`../docker/${filename}`, import.meta.url), "utf8");
+    const dockerignore = await readFile(
+      new URL(`../docker/${filename}.dockerignore`, import.meta.url),
+      "utf8",
+    );
     const rewrite = source.indexOf("rewrite-workspace-dependency-for-npm.mjs services/");
     const install = source.indexOf("npm ci --ignore-scripts --prefix services/");
     assert.notEqual(rewrite, -1, `${filename} must rewrite the workspace dependency`);
     assert.notEqual(install, -1, `${filename} must install the isolated service`);
     assert.ok(rewrite < install, `${filename} must rewrite before npm ci`);
+    assert.match(
+      dockerignore,
+      /^!infra\/scripts\/rewrite-workspace-dependency-for-npm\.mjs$/m,
+      `${filename} must include the rewrite helper in its build context`,
+    );
   }
 });
