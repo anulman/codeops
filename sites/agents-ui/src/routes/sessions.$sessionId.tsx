@@ -24,7 +24,7 @@ function SessionCockpit() {
   } | null>(null);
   const optimisticPromptRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (!session || session.state === "deleted") return;
+    if (!session) return;
     let invalidating = false;
     const timer = window.setInterval(() => {
       if (invalidating) return;
@@ -157,7 +157,6 @@ const actionCopy: Record<Exclude<SessionActionType, "prompt" | "respond_permissi
   resume: "Resumed the session",
   fork: "Forked the session",
   archive: "Archived the session",
-  delete: "Deleted the session",
 };
 
 function ActionRow({ event, action }: Readonly<{ event: SessionEvent; action: SessionUserAction }>) {
@@ -366,22 +365,22 @@ function SessionComposer({ session, onSubmissionFailed, onSubmissionStarted }: R
   );
 }
 
-const actionLabels: Record<SessionActionType, string> = { prompt: "Prompt", respond_permission: "Approve / deny", cancel: "Cancel", checkpoint: "Checkpoint", hibernate: "Hibernate", resume: "Resume", fork: "Fork", archive: "Archive", delete: "Delete" };
+const actionLabels: Record<SessionActionType, string> = { prompt: "Prompt", respond_permission: "Approve / deny", cancel: "Cancel", checkpoint: "Checkpoint", hibernate: "Hibernate", resume: "Resume", fork: "Fork", archive: "Archive" };
 
 interface SteeringInput {
   readonly reason?: string;
   readonly title?: string;
 }
 
-const sheetActions = new Set<SessionActionType>(["cancel", "hibernate", "fork", "archive", "delete"]);
+const sheetActions = new Set<SessionActionType>(["cancel", "hibernate", "fork", "archive"]);
 
 function commandForAction(session: SessionSnapshot, action: SessionActionType, input: SteeringInput = {}): SessionCommand | null {
   if (!session.lease) throw new Error("This session no longer has a durable lease identity.");
   const base = { version: "codeops.session-command/v1" as const, sessionId: session.sessionId, generation: session.generation, leaseId: session.lease.leaseId, idempotencyKey: crypto.randomUUID() };
   if (action === "prompt" || action === "respond_permission") return null;
-  if (action === "cancel" || action === "archive" || action === "delete") {
+  if (action === "cancel" || action === "archive") {
     const reason = input.reason?.trim(); if (!reason) return null;
-    return action === "delete" ? { ...base, type: action, reason, destructiveAuthorizationId: crypto.randomUUID() } : { ...base, type: action, reason };
+    return { ...base, type: action, reason };
   }
   if (action === "checkpoint") return { ...base, type: action };
   if (action === "hibernate") { const reason = input.reason?.trim(); return { ...base, type: action, ...(reason ? { reason } : {}) }; }
@@ -393,7 +392,7 @@ function commandForAction(session: SessionSnapshot, action: SessionActionType, i
 
 function ActionButton({ capability, session }: Readonly<{ capability: SessionCapability; session: SessionSnapshot }>) {
   const router = useRouter(); const [pending, setPending] = useState(false); const [error, setError] = useState<string | null>(null); const [sheetOpen, setSheetOpen] = useState(false);
-  const disabled = capability.availability === "disabled" || pending; const danger = capability.action === "cancel" || capability.action === "delete"; const label = actionLabels[capability.action]; const unavailableReason = capability.availability === "disabled" ? capability.reason : undefined;
+  const disabled = capability.availability === "disabled" || pending; const danger = capability.action === "cancel"; const label = actionLabels[capability.action]; const unavailableReason = capability.availability === "disabled" ? capability.reason : undefined;
   const run = async (input: SteeringInput = {}) => { setError(null); try { const command = commandForAction(session, capability.action, input); if (!command) return; setPending(true); await executeSessionCommand({ data: command }); setSheetOpen(false); await router.invalidate(); } catch (cause) { setError(cause instanceof Error ? cause.message : "Session command failed."); } finally { setPending(false); } };
   const invoke = () => { if (sheetActions.has(capability.action)) setSheetOpen(true); else void run(); };
   const style = disabled ? "cursor-not-allowed border-white/[0.05] text-white/18" : danger ? "border-[#ff747b]/13 text-[#ff989d]/70 hover:bg-[#ff747b]/8 hover:text-[#ff989d]" : "border-white/[0.065] bg-white/[0.025] text-white/48 hover:bg-white/[0.055] hover:text-white/78";
@@ -402,19 +401,17 @@ function ActionButton({ capability, session }: Readonly<{ capability: SessionCap
 
 function SteeringSheet({ action, pending, error, onClose, onSubmit }: Readonly<{ action: SessionActionType; pending: boolean; error: string | null; onClose: () => void; onSubmit: (input: SteeringInput) => Promise<void> }>) {
   const [value, setValue] = useState("");
-  const [confirmed, setConfirmed] = useState(false);
   const isFork = action === "fork";
-  const isDelete = action === "delete";
   const isOptional = action === "hibernate";
-  const valid = (isOptional || value.trim().length > 0) && (!isDelete || confirmed);
+  const valid = isOptional || value.trim().length > 0;
   const title = isFork ? "Fork this session" : `${actionLabels[action]} this session`;
-  const description = isFork ? "Create a child from the exact committed checkpoint and event cursor." : isDelete ? "Permanently remove the archived session and its checkpoint material." : action === "hibernate" ? "Commit a checkpoint and release the live worker until this session resumes." : `Record why this session should ${action}.`;
+  const description = isFork ? "Create a child from the exact committed checkpoint and event cursor." : action === "hibernate" ? "Commit a checkpoint and release the live worker until this session resumes." : `Record why this session should ${action}.`;
   useEffect(() => {
     const closeOnEscape = (event: KeyboardEvent) => { if (event.key === "Escape" && !pending) onClose(); };
     window.addEventListener("keydown", closeOnEscape);
     return () => window.removeEventListener("keydown", closeOnEscape);
   }, [onClose, pending]);
-  return <div className="fixed inset-0 z-50 grid items-end bg-black/55 p-0 backdrop-blur-[2px] sm:place-items-center sm:p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !pending) onClose(); }}><section role="dialog" aria-modal="true" aria-labelledby={`steering-${action}-title`} className="w-full rounded-t-2xl border border-white/[0.09] bg-[#1a1a1d] p-4 shadow-[0_-20px_70px_rgba(0,0,0,.45)] sm:max-w-md sm:rounded-2xl sm:p-5"><div className="flex items-start gap-4"><div className="min-w-0 flex-1"><h2 id={`steering-${action}-title`} className="text-sm font-semibold text-white/86">{title}</h2><p className="mt-1.5 text-xs leading-5 text-white/38">{description}</p></div><button type="button" disabled={pending} onClick={onClose} aria-label="Close" className="grid size-10 place-items-center rounded-lg text-white/28 transition hover:bg-white/[0.05] hover:text-white/65 sm:size-7">×</button></div><label className="mt-5 block"><span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.12em] text-white/28">{isFork ? "Child title" : isOptional ? "Note (optional)" : "Reason"}</span>{isFork ? <input autoFocus value={value} onChange={(event) => setValue(event.target.value)} maxLength={500} placeholder="What should the child session do?" className="h-10 w-full rounded-xl border border-white/[0.08] bg-black/15 px-3 text-sm text-white/80 outline-none placeholder:text-white/22 focus:border-[#7774ff]/45 focus:ring-2 focus:ring-[#7774ff]/10" /> : <textarea autoFocus rows={3} value={value} onChange={(event) => setValue(event.target.value)} maxLength={2000} placeholder={isOptional ? "Why pause here?" : `Why ${action} this session?`} className="w-full resize-none rounded-xl border border-white/[0.08] bg-black/15 px-3 py-2.5 text-sm leading-5 text-white/80 outline-none placeholder:text-white/22 focus:border-[#7774ff]/45 focus:ring-2 focus:ring-[#7774ff]/10" />}</label>{isDelete ? <label className="mt-4 flex cursor-pointer items-start gap-2.5 text-xs leading-5 text-white/45"><input type="checkbox" checked={confirmed} onChange={(event) => setConfirmed(event.target.checked)} className="mt-1 accent-[#ff747b]" /><span>I understand that this permanently deletes the archived session and checkpoint material.</span></label> : null}{error ? <p role="alert" className="mt-3 text-[11px] leading-4 text-[#ff989d]">{error}</p> : null}<div className="mt-5 flex justify-end gap-2"><button type="button" disabled={pending} onClick={onClose} className="h-11 rounded-lg px-4 text-xs font-medium text-white/40 transition hover:bg-white/[0.04] hover:text-white/68 sm:h-9 sm:px-3">Keep session</button><button type="button" disabled={!valid || pending} onClick={() => void onSubmit(isFork ? { title: value } : { reason: value })} className={`h-11 rounded-lg px-4 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-35 sm:h-9 sm:px-3 ${isDelete || action === "cancel" ? "bg-[#ff747b]/14 text-[#ff9ca1] hover:bg-[#ff747b]/20" : "bg-[#6d6af7] text-white hover:bg-[#7c79ff]"}`}>{pending ? "Working…" : actionLabels[action]}</button></div></section></div>;
+  return <div className="fixed inset-0 z-50 grid items-end bg-black/55 p-0 backdrop-blur-[2px] sm:place-items-center sm:p-5" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !pending) onClose(); }}><section role="dialog" aria-modal="true" aria-labelledby={`steering-${action}-title`} className="w-full rounded-t-2xl border border-white/[0.09] bg-[#1a1a1d] p-4 shadow-[0_-20px_70px_rgba(0,0,0,.45)] sm:max-w-md sm:rounded-2xl sm:p-5"><div className="flex items-start gap-4"><div className="min-w-0 flex-1"><h2 id={`steering-${action}-title`} className="text-sm font-semibold text-white/86">{title}</h2><p className="mt-1.5 text-xs leading-5 text-white/38">{description}</p></div><button type="button" disabled={pending} onClick={onClose} aria-label="Close" className="grid size-10 place-items-center rounded-lg text-white/28 transition hover:bg-white/[0.05] hover:text-white/65 sm:size-7">×</button></div><label className="mt-5 block"><span className="mb-2 block text-[10px] font-semibold uppercase tracking-[0.12em] text-white/28">{isFork ? "Child title" : isOptional ? "Note (optional)" : "Reason"}</span>{isFork ? <input autoFocus value={value} onChange={(event) => setValue(event.target.value)} maxLength={500} placeholder="What should the child session do?" className="h-10 w-full rounded-xl border border-white/[0.08] bg-black/15 px-3 text-sm text-white/80 outline-none placeholder:text-white/22 focus:border-[#7774ff]/45 focus:ring-2 focus:ring-[#7774ff]/10" /> : <textarea autoFocus rows={3} value={value} onChange={(event) => setValue(event.target.value)} maxLength={2000} placeholder={isOptional ? "Why pause here?" : `Why ${action} this session?`} className="w-full resize-none rounded-xl border border-white/[0.08] bg-black/15 px-3 py-2.5 text-sm leading-5 text-white/80 outline-none placeholder:text-white/22 focus:border-[#7774ff]/45 focus:ring-2 focus:ring-[#7774ff]/10" />}</label>{error ? <p role="alert" className="mt-3 text-[11px] leading-4 text-[#ff989d]">{error}</p> : null}<div className="mt-5 flex justify-end gap-2"><button type="button" disabled={pending} onClick={onClose} className="h-11 rounded-lg px-4 text-xs font-medium text-white/40 transition hover:bg-white/[0.04] hover:text-white/68 sm:h-9 sm:px-3">Keep session</button><button type="button" disabled={!valid || pending} onClick={() => void onSubmit(isFork ? { title: value } : { reason: value })} className={`h-11 rounded-lg px-4 text-xs font-semibold transition disabled:cursor-not-allowed disabled:opacity-35 sm:h-9 sm:px-3 ${action === "cancel" ? "bg-[#ff747b]/14 text-[#ff9ca1] hover:bg-[#ff747b]/20" : "bg-[#6d6af7] text-white hover:bg-[#7c79ff]"}`}>{pending ? "Working…" : actionLabels[action]}</button></div></section></div>;
 }
 
 function Inspector({ session, relatedSessions }: Readonly<{ session: SessionSnapshot; relatedSessions: readonly SessionSnapshot[] }>) {

@@ -17,7 +17,7 @@ import {
 
 type LocalLifecycleCommand = Extract<
   SessionCommand,
-  { readonly type: "cancel" | "archive" | "delete" }
+  { readonly type: "cancel" | "archive" }
 >;
 type PermissionCommand = Extract<
   SessionCommand,
@@ -117,16 +117,14 @@ export function applyLocalSessionTransition(
   const target = {
     cancel: { state: "cancelled", eventType: "state_changed" },
     archive: { state: "archived", eventType: "session_archived" },
-    delete: { state: "deleted", eventType: "session_deleted" },
   } as const;
   const transition = target[command.type];
   const cursor = snapshot.eventCursor + 1;
-  const checkpoint = command.type === "delete" ? null : snapshot.checkpoint;
+  const checkpoint = snapshot.checkpoint;
   const nextSnapshot = sessionSnapshotSchema.parse({
     ...snapshot,
     state: transition.state,
-    lease:
-      command.type === "delete" ? null : releaseLease(snapshot, occurredAt),
+    lease: releaseLease(snapshot, occurredAt),
     checkpoint,
     pendingPermission: null,
     eventCursor: cursor,

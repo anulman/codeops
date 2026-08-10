@@ -15,7 +15,7 @@ const workItemId = "33333333-3333-4333-8333-333333333333";
 const headSha = "a".repeat(40);
 const actions = [
   "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
-  "resume", "fork", "archive", "delete",
+  "resume", "fork", "archive",
 ];
 
 function snapshot(overrides = {}) {

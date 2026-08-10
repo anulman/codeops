@@ -13,7 +13,7 @@ const committedAt = "2026-08-04T05:55:00.000Z";
 
 const allActions = [
   "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
-  "resume", "fork", "archive", "delete",
+  "resume", "fork", "archive",
 ];
 
 function capabilities(enabled = ["prompt", "cancel", "checkpoint", "hibernate"]) {

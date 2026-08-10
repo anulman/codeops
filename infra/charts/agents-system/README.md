@@ -24,8 +24,7 @@ release boundary must create these Secrets:
   `runtime-database-url`, `runtime-database-role`. The runtime URL uses the
   named receipt-only role, a 32–256 character URL-safe password, the in-cluster
   PostgreSQL service, and database `agents`; it must not use the gateway
-  database role. Add `model-proxy-signing-key`; it must equal the model proxy
-  Secret's `signing-key`;
+  database role;
 - `agents-system-model-proxy-credentials`: `openai-api-key`, `signing-key`;
 - `agents-system-access`: `audience`, `allowed-emails`.
 - `agents-system-controller-secrets`: `plane-api-key`, `plane-webhook-secret`,
@@ -42,8 +41,28 @@ the gateway's dedicated steering token and has no browser, merge, release, or
 Kubernetes authority. Per-session runtime Jobs consume the immutable worker
 and coding-agent image references from `agents-system-runtime-images`; the
 runtime ServiceAccount does not receive a Kubernetes API token or RBAC grant.
-The coding-agent container receives only a 75-minute session-bound proxy token.
-It never mounts the reusable OpenAI credential or reusable Codex state.
+The gateway and model proxy mount the same `signing-key` from
+`agents-system-model-proxy-credentials`. No copied key or equality check is
+required. The coding-agent container receives only a 75-minute session-bound
+proxy token. It never mounts the reusable OpenAI credential or reusable Codex
+state.
+
+Coding agents use cached Codex web search for ordinary research. Codex
+auto-review evaluates exceptional command-level network requests without a
+human prompt for each request. Kubernetes NetworkPolicies continue to deny
+private, loopback, and link-local destinations. This design reduces the risk
+of autonomous egress without blocking normal research. It does not prevent a
+compromised repository from sending data to a public destination that the
+automatic reviewer permits. Keep session repositories trusted, review the
+durable ACP timeline, and use a dedicated OpenAI project with server-side
+budget and rate limits.
+
+The model proxy records token subject, status, latency, request size, and
+concurrency. It does not record request bodies. It warns at 4 MiB per request,
+4 concurrent requests per token, or 8 concurrent requests globally. It uses
+high stop-loss limits of 20 MiB per request, 8 concurrent requests per token,
+and 16 concurrent requests globally. These limits are incident controls, not
+normal operating targets.
 
 The main-only `internal` release first installs PostgreSQL with application
 replicas at zero when the Helm release does not exist. The next Helm revision

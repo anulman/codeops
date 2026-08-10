@@ -46,7 +46,7 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/agents-system/runtime-worker-token }
             - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/agents-system/initialization-token }
             - { name: CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE, value: /var/run/secrets/agents-system/github-steering-token }
-            - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/agents-system/model-proxy-signing-key }
+            - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/agents-system-model-proxy/signing-key }
           ports:
             - { name: http, containerPort: 8080 }
           startupProbe:
@@ -68,6 +68,7 @@ spec:
             capabilities: { drop: [ALL] }
           volumeMounts:
             - { name: secrets, mountPath: /var/run/secrets/agents-system, readOnly: true }
+            - { name: model-proxy-auth, mountPath: /var/run/secrets/agents-system-model-proxy, readOnly: true }
             - { name: temp, mountPath: /tmp }
       volumes:
         - name: secrets
@@ -81,7 +82,12 @@ spec:
               - { key: runtime-worker-token, path: runtime-worker-token }
               - { key: initialization-token, path: initialization-token }
               - { key: github-steering-token, path: github-steering-token }
-              - { key: model-proxy-signing-key, path: model-proxy-signing-key }
+        - name: model-proxy-auth
+          secret:
+            secretName: {{ .Values.modelProxy.secretName }}
+            defaultMode: 256
+            items:
+              - { key: signing-key, path: signing-key }
         - name: temp
           emptyDir: { sizeLimit: 64Mi }
 ---

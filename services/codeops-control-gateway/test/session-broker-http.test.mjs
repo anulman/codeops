@@ -11,7 +11,7 @@ const leaseId = "11111111-1111-4111-8111-111111111111";
 function capabilities() {
   return [
     "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
-    "resume", "fork", "archive", "delete",
+    "resume", "fork", "archive",
   ].map((action) => ["prompt", "cancel", "checkpoint", "hibernate"].includes(action)
     ? { action, availability: "enabled" }
     : { action, availability: "disabled", reason: "Unavailable." });

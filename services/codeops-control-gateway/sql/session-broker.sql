@@ -6,7 +6,7 @@ CREATE TABLE codeops.sessions (
   session_id text PRIMARY KEY
     CHECK (session_id ~ '^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$'),
   generation bigint NOT NULL CHECK (generation > 0),
-  lease_id uuid,
+  lease_id uuid NOT NULL,
   snapshot_json jsonb NOT NULL,
   updated_at timestamptz NOT NULL,
   CHECK (snapshot_json ?& ARRAY['version', 'sessionId', 'generation', 'state', 'lease', 'pendingPermission', 'updatedAt']),
@@ -15,17 +15,12 @@ CREATE TABLE codeops.sessions (
   CHECK ((snapshot_json->>'generation')::bigint = generation),
   CHECK (snapshot_json->>'state' IN (
     'queued', 'running', 'waiting_permission', 'checkpointing', 'hibernated',
-    'completed', 'failed', 'cancelled', 'archived', 'deleted'
+    'completed', 'failed', 'cancelled', 'archived'
   )),
   CHECK ((snapshot_json->>'updatedAt')::timestamptz = updated_at),
-  CHECK (
-    CASE
-      WHEN snapshot_json->'lease' = 'null'::jsonb THEN lease_id IS NULL
-      ELSE (snapshot_json#>>'{lease,leaseId}')::uuid = lease_id
-        AND (snapshot_json#>>'{lease,generation}')::bigint = generation
-    END
-  ),
-  CHECK ((snapshot_json->>'state' = 'deleted') = (lease_id IS NULL)),
+  CHECK (snapshot_json->'lease' <> 'null'::jsonb),
+  CHECK ((snapshot_json#>>'{lease,leaseId}')::uuid = lease_id),
+  CHECK ((snapshot_json#>>'{lease,generation}')::bigint = generation),
   CHECK (
     (snapshot_json->>'state' IN ('running', 'waiting_permission', 'checkpointing')) =
     (snapshot_json#>>'{lease,status}' = 'active')
@@ -72,8 +67,7 @@ CREATE TABLE codeops.session_events (
     'command_committed',
     'checkpoint_committed',
     'lease_changed',
-    'session_archived',
-    'session_deleted'
+    'session_archived'
   )),
   event_json jsonb NOT NULL,
   command_id uuid NOT NULL,

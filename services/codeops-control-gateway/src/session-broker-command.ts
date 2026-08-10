@@ -27,7 +27,6 @@ const localCommandTypes = new Set<SessionCommand["type"]>([
   "respond_permission",
   "cancel",
   "archive",
-  "delete",
 ]);
 const principalPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 
@@ -61,7 +60,6 @@ export function applyLocalSessionCommandMutation(
         );
       case "cancel":
       case "archive":
-      case "delete":
         return applyLocalSessionTransition(
           snapshot,
           command,

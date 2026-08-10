@@ -15,7 +15,7 @@ const occurredAt = "2026-08-04T04:45:00.000Z";
 
 const allActions = [
   "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
-  "resume", "fork", "archive", "delete",
+  "resume", "fork", "archive",
 ];
 
 function capabilities(enabled) {
@@ -216,32 +216,9 @@ test("archive remains resumable only when a checkpoint exists", () => {
     const enabled = result.snapshot.capabilities
       .filter(({ availability }) => availability === "enabled")
       .map(({ action }) => action);
-    assert.deepEqual(enabled, checkpoint ? ["resume", "fork", "delete"] : ["delete"]);
+    assert.deepEqual(enabled, checkpoint ? ["resume", "fork"] : []);
     assert.equal(result.event.type, "session_archived");
   }
-});
-
-test("delete creates a durable tombstone without lease or checkpoint material", () => {
-  const current = snapshot({
-    state: "archived",
-    enabled: ["resume", "fork", "delete"],
-  });
-  const result = applyLocalSessionTransition(
-    current,
-    command("delete", {
-      destructiveAuthorizationId: "44444444-4444-4444-8444-444444444444",
-    }),
-    occurredAt,
-  );
-  assert.equal(result.snapshot.state, "deleted");
-  assert.equal(result.snapshot.lease, null);
-  assert.equal(result.snapshot.checkpoint, null);
-  assert.equal(
-    result.snapshot.capabilities.every(({ availability }) => availability === "disabled"),
-    true,
-  );
-  assert.equal(result.event.type, "session_deleted");
-  assert.match(result.event.eventId, /^sha256:[0-9a-f]{64}$/);
 });
 
 test("commits a checkpoint and hibernates with one released lease", () => {

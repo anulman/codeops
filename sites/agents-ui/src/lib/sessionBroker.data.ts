@@ -1,20 +1,19 @@
 import { createServerFn } from "@tanstack/react-start";
-import { setResponseHeader } from "@tanstack/react-start/server";
+import { getRequestHeader, setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { sessionCommandSchema } from "@renoconcierge/codeops-contracts/session-broker";
 import { agentsAuthMiddleware } from "./agentsAuth";
-import { sessionBrokerClient } from "./sessionBroker.server";
+import { commandOriginIsAllowed, sessionBrokerClient } from "./sessionBroker.server";
 
 const sessionIdSchema = z
   .string()
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
-
 function protectResponse(): void {
   setResponseHeader("Cache-Control", "private, no-store");
   setResponseHeader("Referrer-Policy", "no-referrer");
-  setResponseHeader("Vary", "CF-Access-Authenticated-User-Email");
+  setResponseHeader("Vary", "CF-Access-Authenticated-User-Email, Origin");
   setResponseHeader("X-Robots-Tag", "noindex, nofollow");
 }
 
@@ -57,6 +56,9 @@ export const executeSessionCommand = createServerFn({ method: "POST" })
   .inputValidator((value: unknown) => sessionCommandSchema.parse(value))
   .handler(async ({ data, context }) => {
     protectResponse();
+    if (!commandOriginIsAllowed(getRequestHeader("origin")?.trim())) {
+      throw new Response("Forbidden", { status: 403 });
+    }
     const principalId = context.agentsPrincipal ??
       (process.env.NODE_ENV === "production" ? null : "agents-ui-local");
     if (!principalId) throw new Response("Unauthorized", { status: 401 });

@@ -129,7 +129,9 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
   const gateway = resource(resources, "Deployment", "agents-system-session-gateway");
   const gatewaySource = JSON.stringify(gateway);
   assert.match(gatewaySource, /initialization-token/);
-  assert.match(gatewaySource, /model-proxy-signing-key/);
+  assert.match(gatewaySource, /agents-system-model-proxy-credentials/);
+  assert.match(gatewaySource, /signing-key/);
+  assert.doesNotMatch(gatewaySource, /model-proxy-signing-key/);
   assert.equal(JSON.stringify(deployment).includes("initialization-token"), false);
 
   const controller = resource(

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
+  commandOriginIsAllowed,
   createSessionBrokerClient,
   parseSessionBrokerBaseUrl,
 } from "../src/lib/sessionBroker.server.ts";
@@ -13,7 +14,7 @@ const leaseId = "11111111-1111-4111-8111-111111111111";
 function capabilities() {
   return [
     "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
-    "resume", "fork", "archive", "delete",
+    "resume", "fork", "archive",
   ].map((action) => ["prompt", "cancel", "checkpoint", "hibernate"].includes(action)
     ? { action, availability: "enabled" }
     : { action, availability: "disabled", reason: "Unavailable." });
@@ -69,6 +70,20 @@ function json(body, status = 200) {
     headers: { "content-type": "application/json" },
   });
 }
+
+test("allows writes only from the exact production Agents origin", () => {
+  assert.equal(commandOriginIsAllowed("https://agents.renoconcierge.ca", true), true);
+  for (const origin of [
+    undefined,
+    "null",
+    "https://agents.renoconcierge.ca.evil.example",
+    "https://agents.renoconcierge.ca/",
+    "http://agents.renoconcierge.ca",
+  ]) {
+    assert.equal(commandOriginIsAllowed(origin, true), false);
+  }
+  assert.equal(commandOriginIsAllowed(undefined, false), true);
+});
 
 test("keeps the read token server-side and validates all fleet snapshots", async () => {
   const calls = [];
@@ -228,6 +243,9 @@ test("server functions require Access middleware and never read the token in bro
   const dataSource = await readFile(new URL("../src/lib/sessionBroker.data.ts", import.meta.url), "utf8");
   const authSource = await readFile(new URL("../src/lib/agentsAuth.ts", import.meta.url), "utf8");
   assert.equal((dataSource.match(/\.middleware\(\[agentsAuthMiddleware\]\)/g) ?? []).length, 4);
+  assert.match(dataSource, /getRequestHeader\("origin"\)/);
+  assert.match(dataSource, /commandOriginIsAllowed/);
+  assert.match(dataSource, /throw new Response\("Forbidden", \{ status: 403 \}\)/);
   assert.doesNotMatch(dataSource, /TOKEN_FILE|readFile/);
   assert.match(authSource, /NODE_ENV === "production"/);
   assert.match(authSource, /cf-access-jwt-assertion/);

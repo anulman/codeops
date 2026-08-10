@@ -34,7 +34,6 @@ export const sessionActionTypeSchema = z.enum([
   "resume",
   "fork",
   "archive",
-  "delete",
 ]);
 
 export const sessionStateSchema = z.enum([
@@ -47,7 +46,6 @@ export const sessionStateSchema = z.enum([
   "failed",
   "cancelled",
   "archived",
-  "deleted",
 ]);
 
 const sessionStateActionPolicy = {
@@ -64,8 +62,7 @@ const sessionStateActionPolicy = {
   completed: ["fork", "archive"],
   failed: ["fork", "archive"],
   cancelled: ["fork", "archive"],
-  archived: ["resume", "fork", "delete"],
-  deleted: [],
+  archived: ["resume", "fork"],
 } as const satisfies Record<
   z.infer<typeof sessionStateSchema>,
   readonly z.infer<typeof sessionActionTypeSchema>[]
@@ -254,10 +251,10 @@ export const sessionSnapshotSchema = z
   })
   .strict()
   .superRefine((snapshot, context) => {
-    if (snapshot.state !== "deleted" && snapshot.lease === null) {
+    if (snapshot.lease === null) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "non-deleted session must retain a durable lease identity",
+        message: "session must retain a durable lease identity",
         path: ["lease"],
       });
     }
@@ -406,16 +403,13 @@ const permissionCommandSchema = commandBase
   })
   .strict();
 
-const reasonCommand = <Type extends "cancel" | "archive" | "delete">(
+const reasonCommand = <Type extends "cancel" | "archive">(
   type: Type,
 ) =>
   commandBase
     .extend({
       type: z.literal(type),
       reason: safeText(2_000),
-      ...(type === "delete"
-        ? { destructiveAuthorizationId: uuid }
-        : {}),
     })
     .strict();
 
@@ -449,7 +443,6 @@ export const sessionCommandSchema = z.discriminatedUnion("type", [
     })
     .strict(),
   reasonCommand("archive"),
-  reasonCommand("delete"),
 ]);
 
 const commandResultBase = z.object({
@@ -713,7 +706,6 @@ export const sessionEventSchema = z
       "checkpoint_committed",
       "lease_changed",
       "session_archived",
-      "session_deleted",
     ]),
     message: z
       .discriminatedUnion("role", [

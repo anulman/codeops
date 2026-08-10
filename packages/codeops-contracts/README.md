@@ -40,7 +40,7 @@ providers.
   These preview contracts describe execution topology only; they do not replace
   Plane dependency relations or grant merge authority.
 - Agent-session broker snapshots expose one explicit capability decision for
-  every operator action. Each non-deleted session retains a generation-bound
+  every operator action. Each session retains a generation-bound
   durable lease identity, and resume/fork capability requires a committed,
   exact-session checkpoint. Every mutation carries the target generation,
   lease ID, and idempotency key; command results return the committed snapshot

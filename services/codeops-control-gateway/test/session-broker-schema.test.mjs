@@ -18,7 +18,8 @@ test("defines the durable session, command, and ordered event identities", async
   assert.match(sql, /CREATE TABLE codeops\.sessions/);
   assert.match(sql, /session_id text PRIMARY KEY/);
   assert.match(sql, /CHECK \(\(snapshot_json->>'generation'\)::bigint = generation\)/);
-  assert.match(sql, /CHECK \(\(snapshot_json->>'state' = 'deleted'\) = \(lease_id IS NULL\)\)/);
+  assert.match(sql, /lease_id uuid NOT NULL/);
+  assert.doesNotMatch(sql, /snapshot_json->>'state' = 'deleted'/);
   assert.match(sql, /'waiting_permission', 'checkpointing'\)\) =\s*\(snapshot_json#>>'\{lease,status\}' = 'active'\)/);
   assert.match(sql, /\(snapshot_json->>'state' = 'waiting_permission'\) =\s*\(snapshot_json->'pendingPermission' <> 'null'::jsonb\)/);
   assert.match(sql, /CREATE TABLE codeops\.session_commands/);

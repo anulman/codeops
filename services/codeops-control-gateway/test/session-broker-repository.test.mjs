@@ -16,7 +16,7 @@ const dispatchId = "44444444-4444-4444-8444-444444444444";
 function capabilities(enabled = ["prompt", "cancel", "checkpoint", "hibernate"]) {
   return [
     "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
-    "resume", "fork", "archive", "delete",
+    "resume", "fork", "archive",
   ].map((action) => enabled.includes(action)
     ? { action, availability: "enabled" }
     : { action, availability: "disabled", reason: "Unavailable." });

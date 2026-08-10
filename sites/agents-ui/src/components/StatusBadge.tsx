@@ -10,7 +10,6 @@ const styles: Record<SessionState, string> = {
   failed: "border-[#ff747b]/22 bg-[#ff747b]/8 text-[#ff989d]",
   cancelled: "border-white/[0.07] bg-white/[0.035] text-white/48",
   archived: "border-white/[0.07] bg-white/[0.02] text-white/34",
-  deleted: "border-white/[0.05] bg-transparent text-white/22",
 };
 
 export function StatusBadge({ state }: Readonly<{ state: SessionState }>) {

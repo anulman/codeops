@@ -13,6 +13,7 @@ import { z } from "zod";
 
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 5_000;
+const AGENTS_UI_ORIGIN = "https://agents.renoconcierge.ca";
 const identifier = z
   .string()
   .min(1)
@@ -20,6 +21,14 @@ const identifier = z
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const limit = (maximum: number) =>
   z.number().int().min(1).max(maximum);
+
+export function commandOriginIsAllowed(
+  origin: string | undefined,
+  enforced = process.env.NODE_ENV === "production" ||
+    process.env.AGENTS_UI_ACCESS_REQUIRED === "true",
+): boolean {
+  return !enforced || origin === AGENTS_UI_ORIGIN;
+}
 
 const fleetResponseSchema = z
   .object({

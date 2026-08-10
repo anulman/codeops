@@ -49,6 +49,10 @@ test("gives the root Job only source, initialization, worker, and receipt author
   assert.doesNotMatch(source, /codex-auth|chat-gpt|openai-api-key/i);
   assert.match(source, /model-proxy-token/);
   assert.match(source, /agents-system-model-proxy:8080/);
+  assert.match(source, /approvals_reviewer/);
+  assert.match(source, /auto_review/);
+  assert.match(source, /web_search/);
+  assert.match(source, /cached/);
 });
 
 test("rejects mutable images and unsafe root identities", () => {

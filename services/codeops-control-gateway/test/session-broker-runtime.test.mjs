@@ -18,7 +18,7 @@ const promptMaterial = {
 };
 const actions = [
   "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
-  "resume", "fork", "archive", "delete",
+  "resume", "fork", "archive",
 ];
 
 function capabilities(enabled) {

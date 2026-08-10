@@ -221,8 +221,8 @@ test("fails closed on state-incompatible broker capabilities", () => {
     sessionSnapshotSchema.parse({
       ...snapshot(),
       capabilities: capabilities().map((capability) =>
-        capability.action === "delete"
-          ? { action: "delete", availability: "enabled" }
+        capability.action === "archive"
+          ? { action: "archive", availability: "enabled" }
           : capability,
       ),
     }),
@@ -299,12 +299,6 @@ test("every mutation carries exact generation, lease, and idempotency identity",
       title: "Try an alternate fix",
     },
     { ...common, type: "archive", reason: "Review retained." },
-    {
-      ...common,
-      type: "delete",
-      reason: "Retention policy expired.",
-      destructiveAuthorizationId: "44444444-4444-4444-8444-444444444444",
-    },
   ];
   assert.deepEqual(
     commands.map((command) => sessionCommandSchema.parse(command).type),

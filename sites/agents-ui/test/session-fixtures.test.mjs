@@ -12,9 +12,10 @@ test("fleet and cockpit routes use the live broker while retaining the v1 operat
   for (const label of ["Active", "Needs attention", "Archived", "Search sessions"]) {
     assert.match(fleet, new RegExp(label));
   }
-  for (const label of ["Prompt", "Approve / deny", "Cancel", "Checkpoint", "Hibernate", "Resume", "Fork", "Archive", "Delete", "Protocol diagnostics"]) {
+  for (const label of ["Prompt", "Approve / deny", "Cancel", "Checkpoint", "Hibernate", "Resume", "Fork", "Archive", "Protocol diagnostics"]) {
     assert.match(cockpit, new RegExp(label));
   }
+  assert.doesNotMatch(cockpit, /Delete session|Permanently delete|destructiveAuthorization/);
   assert.match(shell, /SessionNavigator/);
   assert.match(shell, /lg:grid-cols-\[304px_minmax\(0,1fr\)\]/);
   assert.match(cockpit, /SessionComposer/);
