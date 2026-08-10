@@ -22,6 +22,10 @@ const digestSets = [
   "githubController.configSecretName=team-a-codeops-controller-config",
   "githubController.secretName=team-a-codeops-controller-secrets",
   "githubController.repositoryAuthoritySecretName=team-a-codeops-repository-controller-authority",
+  "githubController.repositoryContexts[0].directory=renoconcierge",
+  "githubController.repositoryContexts[0].secretName=team-a-renoconcierge-context",
+  "githubController.repositoryContexts[1].directory=codeops",
+  "githubController.repositoryContexts[1].secretName=team-a-codeops-context",
   "postgresql.secretName=team-a-codeops-postgres",
 ];
 
@@ -111,6 +115,12 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
     "/webhooks/plane",
     "/",
   ]);
+  assert.equal(
+    ingresses[0].spec.rules[0].http.paths.find(
+      ({ path }) => path === "/webhooks/plane",
+    ).pathType,
+    "Prefix",
+  );
 
   const deployment = resource(
     resources,
@@ -164,6 +174,8 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
     "/var/run/secrets/team-a-codeops-repositories/registry.json",
   );
   assert.equal(controllerEnv.has("CODEOPS_GITHUB_WEBHOOK_SECRET_FILE"), false);
+  assert.equal(controllerEnv.has("CODEOPS_PLANE_API_KEY_FILE"), false);
+  assert.equal(controllerEnv.has("CODEOPS_PLANE_WEBHOOK_SECRET_FILE"), false);
   const registryVolume = controller.spec.template.spec.volumes.find(
     ({ name }) => name === "repository-registry",
   );
@@ -178,6 +190,32 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
   assert.equal(
     JSON.stringify(controller).includes("github-steering-token"),
     false,
+  );
+  assert.equal(JSON.stringify(controller).includes("plane-api-key"), false);
+  assert.equal(
+    JSON.stringify(controller).includes("plane-webhook-secret"),
+    false,
+  );
+  const contexts = controller.spec.template.spec.volumes.find(
+    ({ name }) => name === "repository-contexts",
+  );
+  assert.deepEqual(
+    contexts.projected.sources.map(({ secret }) => secret.name),
+    ["team-a-renoconcierge-context", "team-a-codeops-context"],
+  );
+  assert.equal(
+    contexts.projected.sources.every(
+      ({ secret }) =>
+        secret.items.length === 7 &&
+        secret.items.every(({ path }) =>
+          path.startsWith(
+            secret.name.includes("renoconcierge")
+              ? "renoconcierge/"
+              : "codeops/",
+          ),
+        ),
+    ),
+    true,
   );
 });
 
@@ -223,6 +261,7 @@ test("accepts arbitrary namespaces and fails closed on invalid configuration", (
     ["--namespace", "engineering", "--set", "githubController.controlPlaneSha=main"],
     ["--namespace", "engineering", "--set", "githubController.repositoryAuthoritySecretName=Invalid_Name"],
     ["--namespace", "engineering", "--set", "gateway.repositorySteeringRegistrySecretName=Invalid_Name"],
+    ["--namespace", "engineering", "--set", "githubController.repositoryContexts[0].directory=../escape"],
   ];
   for (const extra of cases) {
     assert.throws(() => helm([
