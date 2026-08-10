@@ -32,10 +32,19 @@ import { z } from "zod";
 
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 const GIT_SHA = /^[0-9a-f]{40}$/;
+const REPOSITORY_IDENTITY = /^[A-Za-z0-9_.-]{1,100}\/([A-Za-z0-9_.-]{1,100})$/;
+
+function repositoryRoute(repository: string, suffix: string): string {
+  if (!REPOSITORY_IDENTITY.test(repository) || !suffix.startsWith("/")) {
+    throw new Error("GitHub repository route is invalid");
+  }
+  return `/v1/repositories/${repository}${suffix}`;
+}
 
 export function createRepositoryHeadResolver(input: {
   origin: string;
   token: string;
+  repository: string;
   fetch?: typeof fetch;
 }): () => Promise<string> {
   const origin = new URL(input.origin);
@@ -54,9 +63,10 @@ export function createRepositoryHeadResolver(input: {
   if (input.token.length < 32 || input.token.length > 4_096) {
     throw new Error("repository head token is invalid");
   }
+  const repository = z.string().regex(REPOSITORY_IDENTITY).parse(input.repository);
   return async () => {
     const response = await (input.fetch ?? fetch)(
-      new URL("/v1/repository-heads/main", origin),
+      new URL(repositoryRoute(repository, "/heads/main"), origin),
       {
         redirect: "error",
         headers: {
@@ -71,11 +81,13 @@ export function createRepositoryHeadResolver(input: {
     }
     const body = (await response.json()) as {
       version?: unknown;
+      repository?: unknown;
       ref?: unknown;
       sha?: unknown;
     };
     if (
       body.version !== "codeops.repository-head/v1" ||
+      body.repository !== repository ||
       body.ref !== "refs/heads/main" ||
       typeof body.sha !== "string" ||
       !GIT_SHA.test(body.sha)
@@ -133,7 +145,10 @@ export function createGitHubReviewCommentsLoader(input: {
       .parse(review.reviewId);
     const response = await (input.fetch ?? fetch)(
       new URL(
-        `/v1/pull-requests/${number}/reviews/${reviewId}/comments`,
+        repositoryRoute(
+          review.repository,
+          `/pull-requests/${number}/reviews/${reviewId}/comments`,
+        ),
         origin,
       ),
       {
@@ -150,19 +165,25 @@ export function createGitHubReviewCommentsLoader(input: {
         `GitHub review comment resolution failed with ${response.status}`,
       );
     }
-    return z
+    const result = z
       .object({
         version: z.literal("codeops.github-review-comments/v1"),
+        repository: z.string().regex(REPOSITORY_IDENTITY),
         comments: z.array(githubReviewCommentSchema).max(100),
       })
       .strict()
-      .parse(await response.json()).comments;
+      .parse(await response.json());
+    if (result.repository !== review.repository) {
+      throw new Error("GitHub review repository identity mismatch");
+    }
+    return result.comments;
   };
 }
 
 export function createGitHubHeadQualifier(input: {
   origin: string;
   token: string;
+  repository: string;
   fetch?: typeof fetch;
 }): (input: {
   pullRequestNumber: number;
@@ -184,6 +205,7 @@ export function createGitHubHeadQualifier(input: {
   if (input.token.length < 32 || input.token.length > 4_096) {
     throw new Error("GitHub qualification token is invalid");
   }
+  const repository = z.string().regex(REPOSITORY_IDENTITY).parse(input.repository);
   return async (value) => {
     const pullRequestNumber = z
       .number()
@@ -194,7 +216,10 @@ export function createGitHubHeadQualifier(input: {
     const headSha = z.string().regex(/^[0-9a-f]{40}$/).parse(value.headSha);
     const response = await (input.fetch ?? fetch)(
       new URL(
-        `/v1/pull-requests/${pullRequestNumber}/heads/${headSha}/qualification`,
+        repositoryRoute(
+          repository,
+          `/pull-requests/${pullRequestNumber}/heads/${headSha}/qualification`,
+        ),
         origin,
       ),
       {
@@ -212,6 +237,7 @@ export function createGitHubHeadQualifier(input: {
     const result = z
       .object({
         version: z.literal("codeops.github-pull-request-qualification/v1"),
+        repository: z.string().regex(REPOSITORY_IDENTITY),
         pullRequestNumber: z.number().int().positive().max(10_000_000),
         headSha: z.string().regex(/^[0-9a-f]{40}$/),
         qualified: z.boolean(),
@@ -220,7 +246,8 @@ export function createGitHubHeadQualifier(input: {
       .parse(await response.json());
     if (
       result.pullRequestNumber !== pullRequestNumber ||
-      result.headSha !== headSha
+      result.headSha !== headSha ||
+      result.repository !== repository
     ) {
       throw new Error("GitHub qualification identity mismatch");
     }
@@ -260,7 +287,10 @@ export function createGitHubCurrentPullRequestResolver(input: {
       .parse(value.repository);
     const number = z.number().int().positive().max(10_000_000).parse(value.number);
     const response = await (input.fetch ?? fetch)(
-      new URL(`/v1/pull-requests/${number}/current-head`, origin),
+      new URL(
+        repositoryRoute(repository, `/pull-requests/${number}/current-head`),
+        origin,
+      ),
       {
         redirect: "error",
         headers: {
@@ -321,10 +351,12 @@ function internalCapabilityToken(value: string, capability: string): string {
 export function createGitHubStackLoader(input: {
   origin: string;
   token: string;
+  repository: string;
   fetch?: typeof fetch;
 }): (stackNumber: number) => Promise<GitHubPullRequestStackSnapshot> {
   const origin = internalControlGatewayOrigin(input.origin, "GitHub stack");
   const token = internalCapabilityToken(input.token, "GitHub stack");
+  const repository = z.string().regex(REPOSITORY_IDENTITY).parse(input.repository);
   return async (value) => {
     const stackNumber = z
       .number()
@@ -333,7 +365,10 @@ export function createGitHubStackLoader(input: {
       .max(10_000_000)
       .parse(value);
     const response = await (input.fetch ?? fetch)(
-      new URL(`/v1/pull-request-stacks/${stackNumber}`, origin),
+      new URL(
+        repositoryRoute(repository, `/pull-request-stacks/${stackNumber}`),
+        origin,
+      ),
       {
         redirect: "error",
         headers: {
@@ -346,7 +381,13 @@ export function createGitHubStackLoader(input: {
     if (!response.ok) {
       throw new Error(`GitHub stack resolution failed with ${response.status}`);
     }
-    return githubPullRequestStackSnapshotSchema.parse(await response.json());
+    const result = githubPullRequestStackSnapshotSchema.parse(
+      await response.json(),
+    );
+    if (result.repository !== repository) {
+      throw new Error("GitHub stack repository identity mismatch");
+    }
+    return result;
   };
 }
 
@@ -361,8 +402,9 @@ export function createGitHubStackLinker(input: {
   const token = internalCapabilityToken(input.token, "GitHub stack link");
   return async (value) => {
     const link = githubPullRequestStackLinkSchema.parse(value);
+    const repository = `${link.repository.owner}/${link.repository.name}`;
     const response = await (input.fetch ?? fetch)(
-      new URL("/v1/pull-request-stacks", origin),
+      new URL(repositoryRoute(repository, "/pull-request-stacks"), origin),
       {
         method: "POST",
         redirect: "error",
@@ -378,7 +420,13 @@ export function createGitHubStackLinker(input: {
     if (!response.ok) {
       throw new Error(`GitHub stack link failed with ${response.status}`);
     }
-    return githubPullRequestStackSnapshotSchema.parse(await response.json());
+    const result = githubPullRequestStackSnapshotSchema.parse(
+      await response.json(),
+    );
+    if (result.repository !== repository) {
+      throw new Error("GitHub stack link repository identity mismatch");
+    }
+    return result;
   };
 }
 

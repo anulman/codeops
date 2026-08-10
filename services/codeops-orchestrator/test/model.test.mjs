@@ -622,7 +622,10 @@ test("the publication activity uses its separate bearer capability and exact ide
     const chunks = [];
     request.on("data", (chunk) => chunks.push(chunk));
     request.on("end", () => {
-      assert.equal(request.url, "/v1/candidate-publications");
+      assert.equal(
+        request.url,
+        "/v1/repositories/anulman/renoconcierge/candidate-publications",
+      );
       assert.equal(request.headers.authorization, `Bearer ${token}`);
       assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), publication);
       response.writeHead(200, { "Content-Type": "application/json" });

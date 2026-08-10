@@ -242,8 +242,9 @@ export async function publishResearchPacket(
 export async function publishCandidateRevision(
   publication: CandidatePublication,
 ): Promise<CandidatePublicationResult> {
+  const request = candidatePublicationSchema.parse(publication);
   const endpoint = new URL(
-    "/v1/candidate-publications",
+    `/v1/repositories/${request.repository.owner}/${request.repository.name}/candidate-publications`,
     required("CODEOPS_AGENT_DISPATCH_ORIGIN"),
   );
   const token = (
@@ -252,7 +253,6 @@ export async function publishCandidateRevision(
   if (token.length < 32 || token.length > 4_096) {
     throw new Error("CodeOps publication token is invalid");
   }
-  const request = candidatePublicationSchema.parse(publication);
   const response = await postJson(endpoint, token, request, 10 * 60 * 1_000);
   if (response.statusCode < 200 || response.statusCode >= 300) {
     throw new Error(

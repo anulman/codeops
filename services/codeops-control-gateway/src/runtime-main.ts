@@ -23,6 +23,7 @@ import { createAgentJobRunner } from "./runtime.js";
 import {
   createRepositoryRegistry,
   loadRepositoryRegistryFile,
+  resolveRepositoryRoute,
 } from "./repository-registry.js";
 import { createModelProxyToken } from "./model-proxy-token.js";
 import { migrateSessionBroker } from "./session-broker-migration.js";
@@ -435,9 +436,19 @@ const server = createServer((request, response) => {
       });
       return;
     }
+    let repositoryRoute;
+    try {
+      repositoryRoute = resolveRepositoryRoute(
+        repositoryRegistry,
+        request.url,
+      );
+    } catch {
+      json(response, 404, { status: "not-found" });
+      return;
+    }
     if (
       request.method === "GET" &&
-      request.url === "/v1/repository-heads/main"
+      repositoryRoute?.path === "/heads/main"
     ) {
       if (
         !authenticateBearer(
@@ -453,10 +464,11 @@ const server = createServer((request, response) => {
       try {
         json(response, 200, {
           version: "codeops.repository-head/v1",
+          repository: repositoryRoute.authority.repository,
           ref: "refs/heads/main",
           sha: await resolveGitHubBranchHead({
-            repositoryUrl,
-            repositoryReadToken,
+            repositoryUrl: repositoryRoute.authority.repositoryUrl,
+            repositoryReadToken: repositoryRoute.authority.readToken,
             branch: "main",
           }),
         });
@@ -467,11 +479,11 @@ const server = createServer((request, response) => {
     }
     const reviewCommentsMatch =
       request.method === "GET"
-        ? request.url?.match(
-            /^\/v1\/pull-requests\/([1-9][0-9]{0,7})\/reviews\/([1-9][0-9]{0,15})\/comments$/,
+        ? repositoryRoute?.path.match(
+            /^\/pull-requests\/([1-9][0-9]{0,7})\/reviews\/([1-9][0-9]{0,15})\/comments$/,
           )
         : null;
-    if (reviewCommentsMatch) {
+    if (reviewCommentsMatch && repositoryRoute !== null) {
       if (
         !authenticateBearer(
           typeof request.headers.authorization === "string"
@@ -486,9 +498,10 @@ const server = createServer((request, response) => {
       try {
         json(response, 200, {
           version: "codeops.github-review-comments/v1",
+          repository: repositoryRoute.authority.repository,
           comments: await loadGitHubReviewComments({
-            repositoryUrl,
-            repositoryReadToken,
+            repositoryUrl: repositoryRoute.authority.repositoryUrl,
+            repositoryReadToken: repositoryRoute.authority.readToken,
             pullRequestNumber: Number(reviewCommentsMatch[1]),
             reviewId: Number(reviewCommentsMatch[2]),
           }),
@@ -500,11 +513,11 @@ const server = createServer((request, response) => {
     }
     const qualificationMatch =
       request.method === "GET"
-        ? request.url?.match(
-            /^\/v1\/pull-requests\/([1-9][0-9]{0,7})\/heads\/([0-9a-f]{40})\/qualification$/,
+        ? repositoryRoute?.path.match(
+            /^\/pull-requests\/([1-9][0-9]{0,7})\/heads\/([0-9a-f]{40})\/qualification$/,
           )
         : null;
-    if (qualificationMatch) {
+    if (qualificationMatch && repositoryRoute !== null) {
       if (
         !authenticateBearer(
           typeof request.headers.authorization === "string"
@@ -521,11 +534,12 @@ const server = createServer((request, response) => {
         const headSha = qualificationMatch[2]!;
         json(response, 200, {
           version: "codeops.github-pull-request-qualification/v1",
+          repository: repositoryRoute.authority.repository,
           pullRequestNumber,
           headSha,
           qualified: await qualifyGitHubHead({
-            repositoryUrl,
-            repositoryReadToken,
+            repositoryUrl: repositoryRoute.authority.repositoryUrl,
+            repositoryReadToken: repositoryRoute.authority.readToken,
             pullRequestNumber,
             headSha,
             requiredCheckNames: requiredReviewCheckNames,
@@ -538,11 +552,11 @@ const server = createServer((request, response) => {
     }
     const currentPullRequestMatch =
       request.method === "GET"
-        ? request.url?.match(
-            /^\/v1\/pull-requests\/([1-9][0-9]{0,7})\/current-head$/,
+        ? repositoryRoute?.path.match(
+            /^\/pull-requests\/([1-9][0-9]{0,7})\/current-head$/,
           )
         : null;
-    if (currentPullRequestMatch) {
+    if (currentPullRequestMatch && repositoryRoute !== null) {
       if (
         !authenticateBearer(
           typeof request.headers.authorization === "string"
@@ -556,8 +570,8 @@ const server = createServer((request, response) => {
       }
       try {
         const pullRequest = await resolveGitHubPullRequestHead({
-          repositoryUrl,
-          repositoryReadToken,
+          repositoryUrl: repositoryRoute.authority.repositoryUrl,
+          repositoryReadToken: repositoryRoute.authority.readToken,
           pullRequestNumber: Number(currentPullRequestMatch[1]),
         });
         json(response, 200, {
@@ -571,11 +585,11 @@ const server = createServer((request, response) => {
     }
     const stackMatch =
       request.method === "GET"
-        ? request.url?.match(
-            /^\/v1\/pull-request-stacks\/([1-9][0-9]{0,7})$/,
+        ? repositoryRoute?.path.match(
+            /^\/pull-request-stacks\/([1-9][0-9]{0,7})$/,
           )
         : null;
-    if (stackMatch) {
+    if (stackMatch && repositoryRoute !== null) {
       if (
         !authenticateBearer(
           typeof request.headers.authorization === "string"
@@ -592,8 +606,8 @@ const server = createServer((request, response) => {
           response,
           200,
           await loadGitHubPullRequestStack({
-            repositoryUrl,
-            repositoryToken: repositoryReadToken,
+            repositoryUrl: repositoryRoute.authority.repositoryUrl,
+            repositoryToken: repositoryRoute.authority.readToken,
             stackNumber: Number(stackMatch[1]),
           }),
         );
@@ -604,7 +618,7 @@ const server = createServer((request, response) => {
     }
     if (
       request.method === "POST" &&
-      request.url === "/v1/pull-request-stacks"
+      repositoryRoute?.path === "/pull-request-stacks"
     ) {
       if (
         !authenticateBearer(
@@ -628,8 +642,8 @@ const server = createServer((request, response) => {
         const result = serial.then(() =>
           linkGitHubPullRequestStack({
             link,
-            repositoryUrl,
-            repositoryWriteToken,
+            repositoryUrl: repositoryRoute.authority.repositoryUrl,
+            repositoryWriteToken: repositoryRoute.authority.writeToken,
           }),
         );
         serial = result.catch(() => undefined);
@@ -641,7 +655,7 @@ const server = createServer((request, response) => {
     }
     if (
       request.method === "POST" &&
-      request.url === "/v1/candidate-publications"
+      repositoryRoute?.path === "/candidate-publications"
     ) {
       if (
         !authenticateBearer(
@@ -662,11 +676,19 @@ const server = createServer((request, response) => {
         const publication = candidatePublicationSchema.parse(
           await readJson(request),
         );
+        if (
+          `${publication.repository.owner}/${publication.repository.name}` !==
+          repositoryRoute.authority.repository
+        ) {
+          throw new Error(
+            "candidate publication repository does not match its route",
+          );
+        }
         const result = serial.then(() =>
           publishCandidateRevision({
             publication,
             evidenceRoot: required("CODEOPS_EVIDENCE_ROOT"),
-            repositoryWriteToken,
+            repositoryWriteToken: repositoryRoute.authority.writeToken,
           }),
         );
         serial = result.catch(() => undefined);

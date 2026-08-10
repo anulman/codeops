@@ -4,6 +4,7 @@ import {
   createRepositoryRegistry,
   dispatchRepositoryIdentity,
   loadRepositoryRegistryFile,
+  resolveRepositoryRoute,
 } from "../dist/repository-registry.js";
 
 const entries = [
@@ -31,6 +32,36 @@ test("resolves two repositories to distinct credentials and rejects unknown iden
   assert.equal(registry.resolve("anulman/codeops").readToken, "c".repeat(32));
   assert.throws(
     () => registry.resolve("anulman/not-admitted"),
+    /not admitted/,
+  );
+});
+
+test("resolves only exact repository-qualified API routes", () => {
+  const registry = createRepositoryRegistry(entries);
+  const resolved = resolveRepositoryRoute(
+    registry,
+    "/v1/repositories/anulman/codeops/pull-requests/42/current-head",
+  );
+  assert.equal(resolved.authority.repository, "anulman/codeops");
+  assert.equal(resolved.authority.readToken, "c".repeat(32));
+  assert.equal(resolved.path, "/pull-requests/42/current-head");
+  assert.equal(
+    resolveRepositoryRoute(registry, "/v1/pull-requests/42/current-head"),
+    null,
+  );
+  assert.equal(
+    resolveRepositoryRoute(
+      registry,
+      "/v1/repositories/anulman/codeops/pull-requests/42/current-head?repository=anulman/renoconcierge",
+    ),
+    null,
+  );
+  assert.throws(
+    () =>
+      resolveRepositoryRoute(
+        registry,
+        "/v1/repositories/anulman/not-admitted/heads/main",
+      ),
     /not admitted/,
   );
 });

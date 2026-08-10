@@ -51,6 +51,11 @@ export interface RepositoryRegistry {
   resolve(repository: string): RepositoryAuthority;
 }
 
+export interface ResolvedRepositoryRoute {
+  readonly authority: RepositoryAuthority;
+  readonly path: string;
+}
+
 function parseRepositoryUrl(value: string): string {
   const repositoryUrl = new URL(value);
   const match = repositoryUrl.pathname.match(
@@ -190,4 +195,19 @@ export function dispatchRepositoryIdentity(
       ? request.researchRequest.repository
       : request.codingRequest.workItem.repository;
   return `${repository.owner}/${repository.name}`;
+}
+
+export function resolveRepositoryRoute(
+  registry: RepositoryRegistry,
+  requestUrl: string | undefined,
+): ResolvedRepositoryRoute | null {
+  if (requestUrl === undefined) return null;
+  const match = requestUrl.match(
+    /^\/v1\/repositories\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})(\/[^?#]*)$/,
+  );
+  if (match === null) return null;
+  return {
+    authority: registry.resolve(`${match[1]}/${match[2]}`),
+    path: match[3]!,
+  };
 }

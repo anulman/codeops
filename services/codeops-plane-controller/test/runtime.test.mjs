@@ -9,12 +9,50 @@ import {
   createGitHubHeadQualifier,
   createGitHubCurrentPullRequestResolver,
   createGitHubReviewCommentsLoader,
+  createRepositoryHeadResolver,
   createGitHubSessionSteeringClient,
   createGitHubStackLinker,
   createGitHubStackLoader,
   createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "../dist/index.js";
+
+test("resolves one repository head through an exact repository-qualified route", async () => {
+  const calls = [];
+  const resolve = createRepositoryHeadResolver({
+    origin: "http://codeops-control-gateway:8080",
+    token: "r".repeat(64),
+    repository: "anulman/codeops",
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return Response.json({
+        version: "codeops.repository-head/v1",
+        repository: "anulman/codeops",
+        ref: "refs/heads/main",
+        sha: "a".repeat(40),
+      });
+    },
+  });
+  assert.equal(await resolve(), "a".repeat(40));
+  assert.equal(
+    calls[0].url,
+    "http://codeops-control-gateway:8080/v1/repositories/anulman/codeops/heads/main",
+  );
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
+
+  const drifted = createRepositoryHeadResolver({
+    origin: "http://codeops-control-gateway:8080",
+    token: "r".repeat(64),
+    repository: "anulman/codeops",
+    fetch: async () => Response.json({
+      version: "codeops.repository-head/v1",
+      repository: "anulman/renoconcierge",
+      ref: "refs/heads/main",
+      sha: "a".repeat(40),
+    }),
+  });
+  await assert.rejects(drifted(), /response is invalid/);
+});
 
 test("resolves the current pull-request head only through the bounded reader", async () => {
   const calls = [];
@@ -41,7 +79,7 @@ test("resolves the current pull-request head only through the bounded reader", a
   assert.equal(result.headSha, "b".repeat(40));
   assert.equal(
     calls[0].url,
-    "http://codeops-control-gateway:8080/v1/pull-requests/159/current-head",
+    "http://codeops-control-gateway:8080/v1/repositories/anulman/renoconcierge/pull-requests/159/current-head",
   );
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
 
@@ -160,6 +198,7 @@ test("reads and links native stacks only through bounded internal capabilities",
   const load = createGitHubStackLoader({
     origin: "http://codeops-control-gateway:8080",
     token: "r".repeat(64),
+    repository: "anulman/renoconcierge",
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
       return Response.json(stack);
@@ -197,7 +236,11 @@ test("reads and links native stacks only through bounded internal capabilities",
   );
   assert.equal(
     calls[0].url,
-    "http://codeops-control-gateway:8080/v1/pull-request-stacks/42",
+    "http://codeops-control-gateway:8080/v1/repositories/anulman/renoconcierge/pull-request-stacks/42",
+  );
+  assert.equal(
+    calls[1].url,
+    "http://codeops-control-gateway:8080/v1/repositories/anulman/renoconcierge/pull-request-stacks",
   );
   assert.equal(calls[1].init.method, "POST");
   assert.equal(calls[1].init.headers.Authorization, `Bearer ${"p".repeat(64)}`);
@@ -214,6 +257,7 @@ test("loads review comments only through the bounded internal repository reader"
       return new Response(
         JSON.stringify({
           version: "codeops.github-review-comments/v1",
+          repository: "anulman/renoconcierge",
           comments: [
             {
               id: 7001,
@@ -241,7 +285,7 @@ test("loads review comments only through the bounded internal repository reader"
   );
   assert.equal(
     calls[0].url,
-    "http://codeops-control-gateway:8080/v1/pull-requests/158/reviews/9001/comments",
+    "http://codeops-control-gateway:8080/v1/repositories/anulman/renoconcierge/pull-requests/158/reviews/9001/comments",
   );
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
   await assert.rejects(
@@ -259,11 +303,13 @@ test("qualifies one exact pull request and head through the bounded internal rea
   const qualify = createGitHubHeadQualifier({
     origin: "http://codeops-control-gateway:8080",
     token: "r".repeat(64),
+    repository: "anulman/renoconcierge",
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
       return new Response(
         JSON.stringify({
           version: "codeops.github-pull-request-qualification/v1",
+          repository: "anulman/renoconcierge",
           pullRequestNumber: 155,
           headSha: "a".repeat(40),
           qualified: true,
@@ -281,7 +327,7 @@ test("qualifies one exact pull request and head through the bounded internal rea
   );
   assert.equal(
     calls[0].url,
-    `http://codeops-control-gateway:8080/v1/pull-requests/155/heads/${"a".repeat(40)}/qualification`,
+    `http://codeops-control-gateway:8080/v1/repositories/anulman/renoconcierge/pull-requests/155/heads/${"a".repeat(40)}/qualification`,
   );
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
 });

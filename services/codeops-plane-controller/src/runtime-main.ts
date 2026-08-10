@@ -95,10 +95,12 @@ const loadGitHubReviewComments = createGitHubReviewCommentsLoader({
 const qualifyGitHubHead = createGitHubHeadQualifier({
   origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
   token: repositoryHeadToken,
+  repository: repositoryFullName,
 });
 const loadGitHubStack = createGitHubStackLoader({
   origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
   token: repositoryHeadToken,
+  repository: repositoryFullName,
 });
 const resolveCurrentPullRequest = createGitHubCurrentPullRequestResolver({
   origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
@@ -120,6 +122,7 @@ if (
 const resolveTargetBaseSha = createRepositoryHeadResolver({
   origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
   token: repositoryHeadToken,
+  repository: repositoryFullName,
 });
 const allowedHumanActorIds = new Set(
   required("CODEOPS_ALLOWED_HUMAN_ACTOR_IDS")
