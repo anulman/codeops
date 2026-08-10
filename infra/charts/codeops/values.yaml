@@ -25,6 +25,7 @@ gateway:
     repository: ghcr.io/anulman/codeops/session-control-gateway
     digest: ""
   secretName: codeops-session-secrets
+  repositorySteeringRegistrySecretName: codeops-repository-steering
   workerId: codeops:runtime-worker
   resources:
     requests: { cpu: 50m, memory: 128Mi }
@@ -51,7 +52,7 @@ githubController:
   controlPlaneSha: ""
   configSecretName: codeops-controller-config
   secretName: codeops-controller-secrets
-  repositoryWebhookRegistrySecretName: codeops-repository-webhooks
+  repositoryAuthoritySecretName: codeops-repository-controller-authority
   storageClassName: ""
   storage: 2Gi
   resources:

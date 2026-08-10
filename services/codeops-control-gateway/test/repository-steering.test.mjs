@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
-  createGitHubWebhookRegistry,
-  loadGitHubWebhookRegistryFile,
-} from "../dist/repository-webhooks.js";
+  createGitHubSteeringRegistry,
+  loadGitHubSteeringRegistryFile,
+} from "../dist/repository-steering.js";
 
-test("selects a distinct GitHub webhook secret for each admitted repository", async () => {
+test("selects a distinct GitHub steering token for each admitted repository", async () => {
   const files = new Map([
     [
       "/var/run/codeops/repositories.json",
@@ -31,12 +31,10 @@ test("selects a distinct GitHub webhook secret for each admitted repository", as
         ],
       }),
     ],
-    ["/var/run/codeops/renoconcierge-webhook", `${"r".repeat(32)}\n`],
-    ["/var/run/codeops/codeops-webhook", `${"c".repeat(32)}\n`],
-    ["/var/run/codeops/renoconcierge-steering", `${"a".repeat(64)}\n`],
-    ["/var/run/codeops/codeops-steering", `${"b".repeat(64)}\n`],
+    ["/var/run/codeops/renoconcierge-steering", `${"r".repeat(32)}\n`],
+    ["/var/run/codeops/codeops-steering", `${"c".repeat(32)}\n`],
   ]);
-  const registry = await loadGitHubWebhookRegistryFile(
+  const registry = await loadGitHubSteeringRegistryFile(
     "/var/run/codeops/repositories.json",
     async (filePath) => {
       const value = files.get(filePath);
@@ -44,40 +42,22 @@ test("selects a distinct GitHub webhook secret for each admitted repository", as
       return value;
     },
   );
-  assert.deepEqual(registry.repositories, [
-    "anulman/renoconcierge",
-    "anulman/codeops",
-  ]);
-  assert.deepEqual(registry.resolve("anulman/renoconcierge"), {
-    webhookSecret: "r".repeat(32),
-    steeringToken: "a".repeat(64),
-  });
-  assert.deepEqual(registry.resolve("anulman/codeops"), {
-    webhookSecret: "c".repeat(32),
-    steeringToken: "b".repeat(64),
-  });
+  assert.equal(registry.resolve("anulman/renoconcierge"), "r".repeat(32));
+  assert.equal(registry.resolve("anulman/codeops"), "c".repeat(32));
   assert.throws(() => registry.resolve("anulman/unknown"), /not admitted/);
 });
 
-test("rejects reused webhook authority and incomplete registry entries", async () => {
+test("rejects reused steering authority and incomplete registry entries", async () => {
   assert.throws(
     () =>
-      createGitHubWebhookRegistry([
-        {
-          repository: "anulman/renoconcierge",
-          webhookSecret: "s".repeat(32),
-          steeringToken: "a".repeat(64),
-        },
-        {
-          repository: "anulman/codeops",
-          webhookSecret: "s".repeat(32),
-          steeringToken: "b".repeat(64),
-        },
+      createGitHubSteeringRegistry([
+        { repository: "anulman/renoconcierge", token: "s".repeat(32) },
+        { repository: "anulman/codeops", token: "s".repeat(32) },
       ]),
     /repository-scoped/,
   );
   await assert.rejects(
-    loadGitHubWebhookRegistryFile(
+    loadGitHubSteeringRegistryFile(
       "/var/run/codeops/repositories.json",
       async () =>
         JSON.stringify({

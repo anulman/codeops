@@ -20,26 +20,29 @@ release boundary must create these Secrets:
 
 - `codeops-postgres`: `password`;
 - `codeops-session-secrets`: `database-url`, `read-token`, `write-token`,
-  `runtime-worker-token`, `initialization-token`, `github-steering-token`,
-  `runtime-database-url`, `runtime-database-role`. The runtime URL uses the
+  `runtime-worker-token`, `initialization-token`, `runtime-database-url`,
+  `runtime-database-role`. The runtime URL uses the
   named receipt-only role, a 32–256 character URL-safe password, the in-cluster
   PostgreSQL service, and database `agents`; it must not use the gateway
   database role;
 - `codeops-model-proxy-credentials`: `openai-api-key`, `signing-key`;
 - `codeops-access`: `audience`, `allowed-emails`.
 - `codeops-controller-secrets`: `plane-api-key`, `plane-webhook-secret`,
-  `research-projection-token`, `repository-head-token`,
-  `github-steering-token`.
+  `research-projection-token`, `repository-head-token`.
 - `codeops-controller-config`: the controller's non-file runtime
   configuration, including Temporal, Plane, repository, actor, persona, and
   lifecycle state identities.
-- `codeops-repository-webhooks`: `registry.json` plus only the repository-scoped
-  GitHub webhook secret files referenced by that manifest. Use schema
+- `codeops-repository-controller-authority`: `registry.json` plus only the
+  repository-scoped GitHub webhook secret and session steering token files
+  referenced by that manifest. Use schema
   `codeops.repository-registry/v1`. Keep the read-token and write-token file
   references in the manifest, but do not include those credentials in this
   Secret. The webhook controller must not receive repository read or write
-  authority. Do not put credentials inline. Do not reuse a webhook Secret key
-  or credential value across repositories.
+  authority. Do not put credentials inline. Do not reuse a Secret key or
+  credential value across repositories or authority types.
+- `codeops-repository-steering`: `registry.json` plus only the repository-scoped
+  session steering token files referenced by that manifest. It must not include
+  GitHub webhook, repository read, or repository write credentials.
 - `codeops-runtime-source`: `repository-read-token`. Only the trusted
   root-session Job uses this read-only source credential.
 
@@ -47,7 +50,8 @@ The GitHub webhook controller is a separate HMAC-authenticated process. It
 selects the signing key from the untrusted payload's bounded repository
 identity, verifies the exact raw body, and then admits the parsed event. An
 unknown repository or a signature from another repository fails closed. The
-controller uses the gateway's dedicated steering token and has no browser,
+controller and gateway select the same repository-specific steering token and
+reject cross-repository use. The controller has no browser,
 merge, release, or Kubernetes authority. Per-session runtime Jobs consume the immutable worker
 and coding-agent image references from `codeops-runtime-images`; the
 runtime ServiceAccount does not receive a Kubernetes API token or RBAC grant.

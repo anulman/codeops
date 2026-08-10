@@ -4,6 +4,10 @@ import { Pool } from "pg";
 import { validateSessionControlSecrets } from "./session-control-config.js";
 import { createModelProxyToken } from "./model-proxy-token.js";
 import {
+  createGitHubSteeringRegistry,
+  loadGitHubSteeringRegistryFile,
+} from "./repository-steering.js";
+import {
   AmbiguousGitHubSessionTargetError,
   GitHubSessionTargetNotFoundError,
   InvalidGitHubSessionSteeringRequestError,
@@ -98,10 +102,21 @@ const secrets = validateSessionControlSecrets({
   initializationToken: await secretFile(
     "CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE",
   ),
-  githubSteeringToken: await secretFile(
-    "CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE",
-  ),
 });
+const repositorySteeringRegistryFile =
+  process.env.CODEOPS_REPOSITORY_STEERING_REGISTRY_FILE?.trim();
+const repositorySteeringRegistry =
+  repositorySteeringRegistryFile === undefined ||
+  repositorySteeringRegistryFile === ""
+    ? createGitHubSteeringRegistry([
+        {
+          repository: required("CODEOPS_REPOSITORY_IDENTITY"),
+          token: await secretFile(
+            "CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE",
+          ),
+        },
+      ])
+    : await loadGitHubSteeringRegistryFile(repositorySteeringRegistryFile);
 const workerId = required("CODEOPS_SESSION_RUNTIME_WORKER_ID");
 const modelProxySigningKey = await secretFile(
   "CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE",
@@ -131,7 +146,8 @@ const server = createServer((request, response) => {
         method: request.method,
         url: request.url,
         headers: request.headers,
-        token: secrets.githubSteeringToken,
+        resolveToken: (repository) =>
+          repositorySteeringRegistry.resolve(repository),
         readBody: () => readJson(request),
         listSessions: async () => {
           const client = await database.connect();

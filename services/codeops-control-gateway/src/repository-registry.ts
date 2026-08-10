@@ -32,6 +32,7 @@ const repositoryRegistryFileSchema = z
             readTokenFile: secretFilePathSchema,
             writeTokenFile: secretFilePathSchema,
             githubWebhookSecretFile: secretFilePathSchema.optional(),
+            githubSteeringTokenFile: secretFilePathSchema.optional(),
           })
           .strict(),
       )
@@ -46,6 +47,7 @@ export interface RepositoryAuthority {
   readonly readToken: string;
   readonly writeToken: string;
   readonly githubWebhookSecret?: string;
+  readonly githubSteeringToken?: string;
 }
 
 export interface RepositoryRegistry {
@@ -111,28 +113,33 @@ export function createRepositoryRegistry(
             entry.githubWebhookSecret,
             "GitHub webhook secret",
           );
+    const githubSteeringToken =
+      entry.githubSteeringToken === undefined
+        ? undefined
+        : validateCredential(
+            entry.githubSteeringToken,
+            "GitHub steering token",
+          );
+    const repositoryCredentials = [
+      readToken,
+      writeToken,
+      ...(githubWebhookSecret === undefined ? [] : [githubWebhookSecret]),
+      ...(githubSteeringToken === undefined ? [] : [githubSteeringToken]),
+    ];
     if (
-      readToken === writeToken ||
-      credentials.has(readToken) ||
-      credentials.has(writeToken) ||
-      (githubWebhookSecret !== undefined &&
-        (credentials.has(githubWebhookSecret) ||
-          githubWebhookSecret === readToken ||
-          githubWebhookSecret === writeToken))
+      new Set(repositoryCredentials).size !== repositoryCredentials.length ||
+      repositoryCredentials.some((credential) => credentials.has(credential))
     ) {
       throw new Error("repository registry credentials must be repository-scoped");
     }
-    credentials.add(readToken);
-    credentials.add(writeToken);
-    if (githubWebhookSecret !== undefined) {
-      credentials.add(githubWebhookSecret);
-    }
+    for (const credential of repositoryCredentials) credentials.add(credential);
     byRepository.set(entry.repository, {
       repository: entry.repository,
       repositoryUrl: entry.repositoryUrl,
       readToken,
       writeToken,
       ...(githubWebhookSecret === undefined ? {} : { githubWebhookSecret }),
+      ...(githubSteeringToken === undefined ? {} : { githubSteeringToken }),
     });
   }
   return {
@@ -182,6 +189,9 @@ export async function loadRepositoryRegistryFile(
       ...(entry.githubWebhookSecretFile === undefined
         ? []
         : [entry.githubWebhookSecretFile]),
+      ...(entry.githubSteeringTokenFile === undefined
+        ? []
+        : [entry.githubSteeringTokenFile]),
     ];
     if (
       entry.readTokenFile === entry.writeTokenFile ||
@@ -211,6 +221,17 @@ export async function loadRepositoryRegistryFile(
               githubWebhookSecret: (
                 await readBoundedText(
                   entry.githubWebhookSecretFile,
+                  4_098,
+                  readTextFile,
+                )
+              ).trim(),
+            }),
+        ...(entry.githubSteeringTokenFile === undefined
+          ? {}
+          : {
+              githubSteeringToken: (
+                await readBoundedText(
+                  entry.githubSteeringTokenFile,
                   4_098,
                   readTextFile,
                 )

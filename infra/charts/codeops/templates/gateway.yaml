@@ -45,7 +45,7 @@ spec:
             - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/codeops/write-token }
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/codeops/runtime-worker-token }
             - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/codeops/initialization-token }
-            - { name: CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE, value: /var/run/secrets/codeops/github-steering-token }
+            - { name: CODEOPS_REPOSITORY_STEERING_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-steering/registry.json }
             - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy/signing-key }
           ports:
             - { name: http, containerPort: 8080 }
@@ -68,6 +68,7 @@ spec:
             capabilities: { drop: [ALL] }
           volumeMounts:
             - { name: secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
+            - { name: repository-steering, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-steering, readOnly: true }
             - { name: model-proxy-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy, readOnly: true }
             - { name: temp, mountPath: /tmp }
       volumes:
@@ -81,7 +82,10 @@ spec:
               - { key: write-token, path: write-token }
               - { key: runtime-worker-token, path: runtime-worker-token }
               - { key: initialization-token, path: initialization-token }
-              - { key: github-steering-token, path: github-steering-token }
+        - name: repository-steering
+          secret:
+            secretName: {{ .Values.gateway.repositorySteeringRegistrySecretName }}
+            defaultMode: 256
         - name: model-proxy-auth
           secret:
             secretName: {{ .Values.modelProxy.secretName }}

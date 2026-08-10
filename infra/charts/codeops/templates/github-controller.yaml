@@ -65,7 +65,6 @@ spec:
             - { name: CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/research-projection-token }
             - { name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/repository-head-token }
             - { name: CODEOPS_REPOSITORY_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-repositories/registry.json }
-            - { name: CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/github-steering-token }
           ports:
             - { name: http, containerPort: 8080 }
           startupProbe:
@@ -101,10 +100,9 @@ spec:
               - { key: plane-webhook-secret, path: plane-webhook-secret }
               - { key: research-projection-token, path: research-projection-token }
               - { key: repository-head-token, path: repository-head-token }
-              - { key: github-steering-token, path: github-steering-token }
         - name: repository-registry
           secret:
-            secretName: {{ .Values.githubController.repositoryWebhookRegistrySecretName }}
+            secretName: {{ .Values.githubController.repositoryAuthoritySecretName }}
             defaultMode: 256
         - name: temp
           emptyDir: { sizeLimit: 64Mi }

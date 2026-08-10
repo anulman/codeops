@@ -106,7 +106,10 @@ test("projects one normalized GitHub event only through the internal session gat
   const seen = [];
   const steer = createGitHubSessionSteeringClient({
     origin: "http://agents-session-control-gateway:8080",
-    token: "s".repeat(64),
+    resolveToken: (repository) =>
+      repository === "anulman/renoconcierge"
+        ? "s".repeat(64)
+        : "c".repeat(64),
     fetch: async (url, init) => {
       seen.push({ url: String(url), init });
       const body = JSON.parse(init.body);
@@ -115,6 +118,7 @@ test("projects one normalized GitHub event only through the internal session gat
         status: "accepted",
         sessionId: "session-159",
         workItemId: body.binding.workItemId,
+        repository: body.binding.repository,
         idempotencyKey: body.idempotencyKey,
       });
     },
@@ -157,12 +161,26 @@ test("projects one normalized GitHub event only through the internal session gat
     principalId: "github:6723643628",
   });
   assert.deepEqual(result, { sessionId: "session-159" });
-  assert.equal(seen[0].url, "http://agents-session-control-gateway:8080/v1/github-session-events");
+  assert.equal(
+    seen[0].url,
+    "http://agents-session-control-gateway:8080/v1/repositories/anulman/renoconcierge/github-session-events",
+  );
   assert.equal(seen[0].init.headers.Authorization, `Bearer ${"s".repeat(64)}`);
+  await steer({
+    binding: { ...binding, repository: "anulman/codeops" },
+    event: {
+      ...JSON.parse(seen[0].init.body).event,
+      repository: "anulman/codeops",
+    },
+    prompt: "Keep this exact.",
+    idempotencyKey: "22222222-2222-5222-8222-222222222222",
+    principalId: "github:6723643628",
+  });
+  assert.equal(seen[1].init.headers.Authorization, `Bearer ${"c".repeat(64)}`);
   assert.throws(
     () => createGitHubSessionSteeringClient({
       origin: "https://agents.renoconcierge.ca",
-      token: "s".repeat(64),
+      resolveToken: () => "s".repeat(64),
     }),
     /internal session gateway/,
   );

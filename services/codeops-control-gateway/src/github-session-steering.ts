@@ -111,7 +111,7 @@ export async function serveGitHubSessionSteering(input: {
   readonly method: string | undefined;
   readonly url: string | undefined;
   readonly headers: IncomingHttpHeaders;
-  readonly token: string;
+  readonly resolveToken: (repository: string) => string;
   readonly readBody: () => Promise<unknown>;
   readonly listSessions: () => Promise<readonly SessionSnapshot[]>;
   readonly enqueue: (input: {
@@ -123,10 +123,23 @@ export async function serveGitHubSessionSteering(input: {
   readonly status: number;
   readonly body: Readonly<Record<string, unknown>>;
 } | null> {
-  if (input.method !== "POST" || input.url !== "/v1/github-session-events") {
+  const route =
+    input.method === "POST"
+      ? input.url?.match(
+          /^\/v1\/repositories\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})\/github-session-events$/,
+        )
+      : null;
+  if (route === null || route === undefined) {
     return null;
   }
-  if (!authenticateBearer(authorization(input.headers), input.token)) {
+  const repository = `${route[1]}/${route[2]}`;
+  let token: string;
+  try {
+    token = input.resolveToken(repository);
+  } catch {
+    return { status: 401, body: { status: "unauthorized" } };
+  }
+  if (!authenticateBearer(authorization(input.headers), token)) {
     return { status: 401, body: { status: "unauthorized" } };
   }
   const contentType = input.headers["content-type"];
@@ -140,6 +153,12 @@ export async function serveGitHubSessionSteering(input: {
   try {
     request = requestSchema.parse(await input.readBody());
   } catch {
+    throw new InvalidGitHubSessionSteeringRequestError();
+  }
+  if (
+    request.binding.repository !== repository ||
+    request.event.repository !== repository
+  ) {
     throw new InvalidGitHubSessionSteeringRequestError();
   }
   const session = resolveGitHubSessionTarget({
@@ -166,6 +185,7 @@ export async function serveGitHubSessionSteering(input: {
       status: "accepted",
       sessionId: session.sessionId,
       workItemId: request.binding.workItemId,
+      repository,
       idempotencyKey: request.idempotencyKey,
       dispatchId: dispatch.dispatchId,
     },

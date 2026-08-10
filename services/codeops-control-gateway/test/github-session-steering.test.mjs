@@ -92,12 +92,17 @@ function request(overrides = {}) {
     calls,
     promise: serveGitHubSessionSteering({
       method: "POST",
-      url: "/v1/github-session-events",
+      url: "/v1/repositories/anulman/renoconcierge/github-session-events",
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
       },
-      token,
+      resolveToken: (repository) => {
+        if (repository !== "anulman/renoconcierge") {
+          throw new Error("repository not admitted");
+        }
+        return token;
+      },
       readBody: async () => body(),
       listSessions: async () => [snapshot()],
       now: () => new Date("2026-08-09T17:30:00.000Z"),
@@ -165,6 +170,19 @@ test("fails closed on transport, principal, and head drift", async () => {
       InvalidGitHubSessionSteeringRequestError,
     );
   }
+  await assert.rejects(
+    request({
+      url: "/v1/repositories/anulman/codeops/github-session-events",
+      resolveToken: () => token,
+    }).promise,
+    InvalidGitHubSessionSteeringRequestError,
+  );
+  assert.deepEqual(
+    await request({
+      url: "/v1/repositories/anulman/unknown/github-session-events",
+    }).promise,
+    { status: 401, body: { status: "unauthorized" } },
+  );
 });
 
 test("rejects missing, expired, and ambiguous session targets", () => {

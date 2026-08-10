@@ -17,10 +17,11 @@ const digestSets = [
   "ingress.host=codeops.example.net",
   "agentsUi.access.secretName=team-a-codeops-access",
   "gateway.secretName=team-a-codeops-session-secrets",
+  "gateway.repositorySteeringRegistrySecretName=team-a-codeops-repository-steering",
   "modelProxy.secretName=team-a-codeops-model-proxy-credentials",
   "githubController.configSecretName=team-a-codeops-controller-config",
   "githubController.secretName=team-a-codeops-controller-secrets",
-  "githubController.repositoryWebhookRegistrySecretName=team-a-codeops-repository-webhooks",
+  "githubController.repositoryAuthoritySecretName=team-a-codeops-repository-controller-authority",
   "postgresql.secretName=team-a-codeops-postgres",
 ];
 
@@ -141,6 +142,9 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
   assert.match(gatewaySource, /team-a-codeops-model-proxy-credentials/);
   assert.match(gatewaySource, /signing-key/);
   assert.doesNotMatch(gatewaySource, /model-proxy-signing-key/);
+  assert.doesNotMatch(gatewaySource, /github-steering-token/);
+  assert.match(gatewaySource, /team-a-codeops-repository-steering/);
+  assert.match(gatewaySource, /CODEOPS_REPOSITORY_STEERING_REGISTRY_FILE/);
   assert.equal(JSON.stringify(deployment).includes("initialization-token"), false);
 
   const controller = resource(
@@ -165,10 +169,14 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
   );
   assert.equal(
     registryVolume.secret.secretName,
-    "team-a-codeops-repository-webhooks",
+    "team-a-codeops-repository-controller-authority",
   );
   assert.equal(
     JSON.stringify(controller).includes("github-webhook-secret"),
+    false,
+  );
+  assert.equal(
+    JSON.stringify(controller).includes("github-steering-token"),
     false,
   );
 });
@@ -213,7 +221,8 @@ test("accepts arbitrary namespaces and fails closed on invalid configuration", (
     ["--namespace", "engineering", "--set", "agentsUi.access.issuer=https://example.com"],
     ["--namespace", "engineering", "--set", "gateway.image.digest=latest"],
     ["--namespace", "engineering", "--set", "githubController.controlPlaneSha=main"],
-    ["--namespace", "engineering", "--set", "githubController.repositoryWebhookRegistrySecretName=Invalid_Name"],
+    ["--namespace", "engineering", "--set", "githubController.repositoryAuthoritySecretName=Invalid_Name"],
+    ["--namespace", "engineering", "--set", "gateway.repositorySteeringRegistrySecretName=Invalid_Name"],
   ];
   for (const extra of cases) {
     assert.throws(() => helm([

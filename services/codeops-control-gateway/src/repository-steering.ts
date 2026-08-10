@@ -19,7 +19,7 @@ const secretFilePathSchema = z
     "repository registry secret path must be an exact absolute path",
   );
 
-const repositoryWebhookRegistrySchema = z
+const steeringRegistrySchema = z
   .object({
     version: z.literal("codeops.repository-registry/v1"),
     repositories: z
@@ -30,7 +30,7 @@ const repositoryWebhookRegistrySchema = z
             repositoryUrl: z.string().min(1).max(1_024),
             readTokenFile: secretFilePathSchema,
             writeTokenFile: secretFilePathSchema,
-            githubWebhookSecretFile: secretFilePathSchema,
+            githubWebhookSecretFile: secretFilePathSchema.optional(),
             githubSteeringTokenFile: secretFilePathSchema,
           })
           .strict(),
@@ -40,12 +40,9 @@ const repositoryWebhookRegistrySchema = z
   })
   .strict();
 
-export interface GitHubWebhookRegistry {
+export interface GitHubSteeringRegistry {
   readonly repositories: readonly string[];
-  resolve(repository: string): {
-    readonly webhookSecret: string;
-    readonly steeringToken: string;
-  };
+  resolve(repository: string): string;
 }
 
 async function readBoundedText(
@@ -56,18 +53,14 @@ async function readBoundedText(
   const value = await readTextFile(filePath, "utf8");
   const bytes = Buffer.byteLength(value);
   if (bytes === 0 || bytes > maxBytes) {
-    throw new Error("repository webhook registry file size is invalid");
+    throw new Error("repository steering registry file size is invalid");
   }
   return value;
 }
 
-function validateSecret(
-  value: string,
-  authority: string,
-  minimum: number,
-): string {
-  if (value.length < minimum || value.length > 4_096 || /\s/.test(value)) {
-    throw new Error(`repository GitHub ${authority} secret is invalid`);
+function validateToken(value: string): string {
+  if (value.length < 32 || value.length > 4_096 || /\s/.test(value)) {
+    throw new Error("repository GitHub steering token is invalid");
   }
   return value;
 }
@@ -87,69 +80,58 @@ function repositoryFromUrl(value: string): string {
     match === null
   ) {
     throw new Error(
-      "repository webhook registry requires an exact GitHub HTTPS URL",
+      "repository steering registry requires an exact GitHub HTTPS URL",
     );
   }
   return `${match[1]}/${match[2]}`;
 }
 
-export function createGitHubWebhookRegistry(
+export function createGitHubSteeringRegistry(
   entries: readonly {
     readonly repository: string;
-    readonly webhookSecret: string;
-    readonly steeringToken: string;
+    readonly token: string;
   }[],
-): GitHubWebhookRegistry {
+): GitHubSteeringRegistry {
   if (entries.length === 0 || entries.length > 100) {
     throw new Error(
-      "repository webhook registry must contain between 1 and 100 repositories",
+      "repository steering registry must contain between 1 and 100 repositories",
     );
   }
-  const byRepository = new Map<
-    string,
-    { readonly webhookSecret: string; readonly steeringToken: string }
-  >();
-  const secrets = new Set<string>();
+  const byRepository = new Map<string, string>();
+  const tokens = new Set<string>();
   for (const entry of entries) {
     if (!REPOSITORY_IDENTITY.test(entry.repository)) {
-      throw new Error("repository webhook registry identity is invalid");
+      throw new Error("repository steering registry identity is invalid");
     }
-    const webhookSecret = validateSecret(entry.webhookSecret, "webhook", 16);
-    const steeringToken = validateSecret(entry.steeringToken, "steering", 32);
-    if (
-      byRepository.has(entry.repository) ||
-      secrets.has(webhookSecret) ||
-      secrets.has(steeringToken) ||
-      webhookSecret === steeringToken
-    ) {
+    const token = validateToken(entry.token);
+    if (byRepository.has(entry.repository) || tokens.has(token)) {
       throw new Error(
-        "repository GitHub webhook authorities must be repository-scoped",
+        "repository GitHub steering authorities must be repository-scoped",
       );
     }
-    byRepository.set(entry.repository, { webhookSecret, steeringToken });
-    secrets.add(webhookSecret);
-    secrets.add(steeringToken);
+    byRepository.set(entry.repository, token);
+    tokens.add(token);
   }
   return {
     repositories: [...byRepository.keys()],
     resolve(repository) {
-      const authority = byRepository.get(repository);
-      if (authority === undefined) {
+      const token = byRepository.get(repository);
+      if (token === undefined) {
         throw new Error(
-          "repository is not admitted by the GitHub webhook registry",
+          "repository is not admitted by the GitHub steering registry",
         );
       }
-      return authority;
+      return token;
     },
   };
 }
 
-export async function loadGitHubWebhookRegistryFile(
+export async function loadGitHubSteeringRegistryFile(
   filePath: string,
   readTextFile: ReadTextFile = readFile,
-): Promise<GitHubWebhookRegistry> {
+): Promise<GitHubSteeringRegistry> {
   const normalizedPath = secretFilePathSchema.parse(filePath);
-  const manifest = repositoryWebhookRegistrySchema.parse(
+  const manifest = steeringRegistrySchema.parse(
     JSON.parse(
       await readBoundedText(
         normalizedPath,
@@ -162,13 +144,15 @@ export async function loadGitHubWebhookRegistryFile(
   for (const entry of manifest.repositories) {
     if (repositoryFromUrl(entry.repositoryUrl) !== entry.repository) {
       throw new Error(
-        "repository webhook registry URL does not match its identity",
+        "repository steering registry URL does not match its identity",
       );
     }
     for (const secretPath of [
       entry.readTokenFile,
       entry.writeTokenFile,
-      entry.githubWebhookSecretFile,
+      ...(entry.githubWebhookSecretFile === undefined
+        ? []
+        : [entry.githubWebhookSecretFile]),
       entry.githubSteeringTokenFile,
     ]) {
       if (allSecretFiles.has(secretPath)) {
@@ -179,18 +163,11 @@ export async function loadGitHubWebhookRegistryFile(
       allSecretFiles.add(secretPath);
     }
   }
-  return createGitHubWebhookRegistry(
+  return createGitHubSteeringRegistry(
     await Promise.all(
       manifest.repositories.map(async (entry) => ({
         repository: entry.repository,
-        webhookSecret: (
-          await readBoundedText(
-            entry.githubWebhookSecretFile,
-            4_098,
-            readTextFile,
-          )
-        ).trim(),
-        steeringToken: (
+        token: (
           await readBoundedText(
             entry.githubSteeringTokenFile,
             4_098,

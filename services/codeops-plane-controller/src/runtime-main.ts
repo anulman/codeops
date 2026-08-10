@@ -71,20 +71,9 @@ if (projectionToken.length < 32 || projectionToken.length > 4_096) {
 const repositoryHeadToken = await secretFile(
   "CODEOPS_REPOSITORY_HEAD_TOKEN_FILE",
 );
-const githubSessionSteeringOrigin = process.env.CODEOPS_GITHUB_SESSION_STEERING_ORIGIN?.trim();
-const githubSessionSteeringTokenFile = process.env.CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE?.trim();
-if ((githubSessionSteeringOrigin === undefined) !== (githubSessionSteeringTokenFile === undefined)) {
-  throw new Error(
-    "CODEOPS_GITHUB_SESSION_STEERING_ORIGIN and CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE must be configured together",
-  );
-}
-const steerGitHubSession =
-  githubSessionSteeringOrigin === undefined || githubSessionSteeringTokenFile === undefined
-    ? null
-    : createGitHubSessionSteeringClient({
-        origin: githubSessionSteeringOrigin,
-        token: await secretFile("CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE"),
-      });
+const githubSessionSteeringOrigin = required(
+  "CODEOPS_GITHUB_SESSION_STEERING_ORIGIN",
+);
 const repositoryFullName = `${required("CODEOPS_REPOSITORY_OWNER")}/${required("CODEOPS_REPOSITORY_NAME")}`;
 const repositoryRegistryFile =
   process.env.CODEOPS_REPOSITORY_REGISTRY_FILE?.trim();
@@ -93,10 +82,18 @@ const githubWebhookRegistry =
     ? createGitHubWebhookRegistry([
         {
           repository: repositoryFullName,
-          secret: await secretFile("CODEOPS_GITHUB_WEBHOOK_SECRET_FILE"),
+          webhookSecret: await secretFile("CODEOPS_GITHUB_WEBHOOK_SECRET_FILE"),
+          steeringToken: await secretFile(
+            "CODEOPS_GITHUB_SESSION_STEERING_TOKEN_FILE",
+          ),
         },
       ])
     : await loadGitHubWebhookRegistryFile(repositoryRegistryFile);
+const steerGitHubSession = createGitHubSessionSteeringClient({
+  origin: githubSessionSteeringOrigin,
+  resolveToken: (repository) =>
+    githubWebhookRegistry.resolve(repository).steeringToken,
+});
 const loadGitHubReviewComments = createGitHubReviewCommentsLoader({
   origin: required("CODEOPS_REPOSITORY_HEAD_ORIGIN"),
   token: repositoryHeadToken,
@@ -432,7 +429,7 @@ const listener = createPlaneWebhookRequestListener({
   },
   github: {
     resolveSecret: (repository) =>
-      githubWebhookRegistry.resolve(repository),
+      githubWebhookRegistry.resolve(repository).webhookSecret,
     process: async ({ event }) => {
       const receivedAt = new Date().toISOString();
       if (event.kind === "pull_request_review") {

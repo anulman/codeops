@@ -433,7 +433,7 @@ export function createGitHubStackLinker(input: {
 
 export function createGitHubSessionSteeringClient(input: {
   origin: string;
-  token: string;
+  resolveToken(repository: string): string;
   fetch?: typeof fetch;
 }): (request: GitHubSessionSteeringRequest) => Promise<{ sessionId: string }> {
   const origin = new URL(input.origin);
@@ -452,10 +452,19 @@ export function createGitHubSessionSteeringClient(input: {
   ) {
     throw new Error("GitHub session steering origin must be the internal session gateway");
   }
-  const token = internalCapabilityToken(input.token, "GitHub session steering");
   return async (request) => {
+    const token = internalCapabilityToken(
+      input.resolveToken(request.binding.repository),
+      "GitHub session steering",
+    );
     const response = await (input.fetch ?? fetch)(
-      new URL("/v1/github-session-events", origin),
+      new URL(
+        repositoryRoute(
+          request.binding.repository,
+          "/github-session-events",
+        ),
+        origin,
+      ),
       {
         method: "POST",
         redirect: "error",
@@ -484,12 +493,14 @@ export function createGitHubSessionSteeringClient(input: {
         status: z.literal("accepted"),
         sessionId: z.string().min(1).max(128),
         workItemId: z.string().uuid(),
+        repository: z.string().regex(REPOSITORY_IDENTITY),
         idempotencyKey: z.string().uuid(),
       })
       .strict()
       .parse(await response.json());
     if (
       result.workItemId !== request.binding.workItemId ||
+      result.repository !== request.binding.repository ||
       result.idempotencyKey !== request.idempotencyKey
     ) {
       throw new Error("GitHub session steering response identity mismatch");
