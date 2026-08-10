@@ -153,6 +153,7 @@ Run the chart contract with:
 ```sh
 node --test infra/scripts/test-codeops-chart.mjs
 node --test infra/scripts/test-agents-system-root-session.mjs
-node --test infra/scripts/test-agents-system-release-images.mjs
+node --test infra/scripts/test-codeops-release-images.mjs
+node --test infra/scripts/test-codeops-release-workflow.mjs
 node --test infra/scripts/test-standalone-image-packaging.mjs
 ```

@@ -1,0 +1,236 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact SemVer release version without a v prefix
+        required: true
+        type: string
+      publish:
+        description: Publish nine images and the OCI Helm chart
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Validate release identity
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_REF" == "refs/heads/main" ]]
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+
+      - name: Install Nub
+        run: |
+          set -euo pipefail
+          curl -fsSL https://nubjs.com/install.sh | bash -s -- 0.1.11
+          echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
+
+      - name: Install frozen dependencies
+        run: nub install --frozen-lockfile
+
+      - name: Verify exact source tree
+        run: nub run verify
+
+      - uses: docker/setup-buildx-action@v3
+        if: inputs.publish
+
+      - uses: azure/setup-helm@v4
+        if: inputs.publish
+        with:
+          version: v3.19.2
+
+      - name: Authenticate image publication preflight
+        if: inputs.publish
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Authenticate chart publication preflight
+        if: inputs.publish
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Reject artifact identity reuse
+        if: inputs.publish
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          names=(agent agents-ui control-gateway model-proxy orchestrator plane-controller session-control-gateway session-gateway session-runtime-worker)
+          for name in "${names[@]}"; do
+            ref="ghcr.io/anulman/codeops/${name}:sha-${SOURCE_SHA}"
+            if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+              printf 'refusing to overwrite existing image identity %s\n' "$ref" >&2
+              exit 1
+            fi
+          done
+          if helm show chart oci://ghcr.io/anulman/codeops/charts/codeops --version "$RELEASE_VERSION" >/dev/null 2>&1; then
+            printf 'refusing to overwrite existing chart version %s\n' "$RELEASE_VERSION" >&2
+            exit 1
+          fi
+
+  images:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - agent
+          - agents-ui
+          - control-gateway
+          - model-proxy
+          - orchestrator
+          - plane-controller
+          - session-control-gateway
+          - session-gateway
+          - session-runtime-worker
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to GHCR
+        if: inputs.publish
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build exact image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/codeops-${{ matrix.image }}.Dockerfile
+          platforms: linux/amd64
+          push: ${{ inputs.publish }}
+          tags: ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}
+          provenance: mode=max
+          sbom: true
+
+  chart:
+    if: inputs.publish
+    needs: images
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install Nub
+        run: |
+          set -euo pipefail
+          curl -fsSL https://nubjs.com/install.sh | bash -s -- 0.1.11
+          echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
+
+      - name: Install frozen dependencies
+        run: nub install --frozen-lockfile
+
+      - name: Authenticate Helm to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Resolve immutable release image manifest
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          POSTGRES_DIGEST: sha256:9b18b78397054fce88a9552e9d5a3ad5bb7fd258c5b3cc1c5028e46373d6ea8f
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const names = ["agent","agents-ui","control-gateway","model-proxy","orchestrator","plane-controller","session-control-gateway","session-gateway","session-runtime-worker"];
+            const sourceSha = process.env.SOURCE_SHA;
+            const services = names.map((name) => ({ name, repository: `ghcr.io/anulman/codeops/${name}`, sourceRef: `ghcr.io/anulman/codeops/${name}:sha-${sourceSha}` }));
+            writeFileSync("image-plan.json", JSON.stringify({ version: "codeops.image-publication-plan/v1", sourceSha, upstream: { postgresql: { repository: "postgres", digest: process.env.POSTGRES_DIGEST } }, services }, null, 2));
+          '
+          node infra/scripts/codeops-release-images.mjs image-plan.json release-manifest.json values.release.yaml
+
+      - name: Package and publish OCI chart
+        env:
+          RELEASE_VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          helm package infra/charts/codeops --version "$RELEASE_VERSION" --app-version "$SOURCE_SHA" --destination .release
+          push_output=$(helm push ".release/codeops-${RELEASE_VERSION}.tgz" oci://ghcr.io/anulman/codeops/charts 2>&1)
+          printf '%s\n' "$push_output"
+          chart_digest=$(printf '%s\n' "$push_output" | sed -n 's/^Digest: \(sha256:[0-9a-f]\{64\}\)$/\1/p')
+          [[ "$chart_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          CHART_DIGEST="$chart_digest" node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const path = "release-manifest.json";
+            const manifest = JSON.parse(readFileSync(path, "utf8"));
+            manifest.chart = { repository: "oci://ghcr.io/anulman/codeops/charts/codeops", version: process.env.RELEASE_VERSION, digest: process.env.CHART_DIGEST, immutableRef: `oci://ghcr.io/anulman/codeops/charts/codeops@${process.env.CHART_DIGEST}` };
+            writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
+          '
+
+      - name: Attest packaged chart
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: .release/codeops-${{ inputs.version }}.tgz
+
+      - name: Retain exact release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeops-release-${{ inputs.version }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            .release/codeops-${{ inputs.version }}.tgz
+            image-plan.json
+            release-manifest.json
+            values.release.yaml
