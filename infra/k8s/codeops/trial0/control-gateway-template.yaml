@@ -472,8 +472,10 @@ spec:
   ingress:
     - from:
         - podSelector:
-            matchLabels:
-              app.kubernetes.io/name: codeops-agent
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [codeops-agent, codeops-session-runtime-worker]
       ports:
         - { protocol: TCP, port: 8080 }
   egress:

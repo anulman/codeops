@@ -19,6 +19,21 @@ const promptResult = {
   },
 };
 
+const authority = {
+  sessionId: "ses_91a4",
+  generation: 3,
+  leaseId,
+  identity: {
+    repository: "anulman/renoconcierge",
+    branch: "feat/agents-ui",
+    baseSha: "a".repeat(40),
+    workflowId: "workflow-155",
+    runId: "run-155",
+    parentSessionId: null,
+    forkedAtCursor: null,
+  },
+};
+
 function capabilities() {
   return [
     "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
@@ -107,6 +122,7 @@ test("claims and completes one exact dispatch through the worker-only boundary",
   const transport = new SessionRuntimeTransport({
     gatewayOrigin: "http://codeops-control-gateway:8080",
     token,
+    authority,
     fetch: async (url, init) => {
       requests.push({ url, init, body: JSON.parse(init.body) });
       if (url.endsWith("/claims")) {
@@ -146,6 +162,7 @@ test("claims and completes one exact dispatch through the worker-only boundary",
   assert.equal(requests[0].init.headers.authorization, `Bearer ${token}`);
   assert.deepEqual(requests[0].body, {
     version: "codeops.session-runtime-claim-request/v1",
+    ...authority,
     leaseMs: 300_000,
   });
   assert.equal(
@@ -161,6 +178,7 @@ test("returns null without invoking the executor when no dispatch is available",
   const transport = new SessionRuntimeTransport({
     gatewayOrigin: "https://gateway.example.test",
     token,
+    authority,
     fetch: async () => json({
       version: "codeops.session-runtime-claim-response/v1",
       claim: null,
@@ -181,6 +199,7 @@ test("relays permission through a claim-hidden executor callback", async () => {
   const transport = new SessionRuntimeTransport({
     gatewayOrigin: "http://codeops-control-gateway:8080",
     token,
+    authority,
     fetch: async (url, init) => {
       const body = JSON.parse(init.body);
       requests.push({ url, body });
@@ -294,6 +313,7 @@ test("rejects identity drift and expired claims before completion crosses the ne
   const direct = new SessionRuntimeTransport({
     gatewayOrigin: "https://gateway.example.test",
     token,
+    authority,
     fetch: async () => {
       completeCalls += 1;
       return json({});
@@ -314,6 +334,7 @@ test("rejects identity drift and expired claims before completion crosses the ne
   const expired = new SessionRuntimeTransport({
     gatewayOrigin: "https://gateway.example.test",
     token,
+    authority,
     fetch: async () => {
       claimCalls += 1;
       return json({
@@ -341,7 +362,7 @@ test("fails closed on ambiguous origins, credentials, response types, and body b
     "ftp://gateway.test",
   ]) {
     assert.throws(
-      () => new SessionRuntimeTransport({ gatewayOrigin, token }),
+      () => new SessionRuntimeTransport({ gatewayOrigin, token, authority }),
       SessionRuntimeTransportError,
     );
   }
@@ -349,6 +370,7 @@ test("fails closed on ambiguous origins, credentials, response types, and body b
     () => new SessionRuntimeTransport({
       gatewayOrigin: "https://gateway.test",
       token: " short ",
+      authority,
     }),
     SessionRuntimeTransportError,
   );
@@ -356,6 +378,7 @@ test("fails closed on ambiguous origins, credentials, response types, and body b
     () => new SessionRuntimeTransport({
       gatewayOrigin: "https://gateway.test",
       token,
+      authority,
       requestTimeoutMs: 999,
     }),
     SessionRuntimeTransportError,
@@ -373,6 +396,7 @@ test("fails closed on ambiguous origins, credentials, response types, and body b
     const transport = new SessionRuntimeTransport({
       gatewayOrigin: "https://gateway.test",
       token,
+      authority,
       fetch: async () => response,
     });
     await assert.rejects(transport.claim(1_000), SessionRuntimeTransportError);

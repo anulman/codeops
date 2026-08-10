@@ -371,6 +371,7 @@ export const sessionJobInitializationResponseSchema = z
     version: z.literal("codeops.session-job-initialization-result/v1"),
     disposition: z.enum(["created", "duplicate"]),
     snapshot: sessionSnapshotSchema,
+    modelProxyToken: z.string().regex(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/).optional(),
   })
   .strict();
 

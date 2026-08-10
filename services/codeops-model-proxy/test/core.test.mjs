@@ -48,6 +48,17 @@ test("accepts only an exact signed, bounded, unexpired run token", () => {
   );
 });
 
+test("accepts a signed Agent Session identifier as the short-lived subject", () => {
+  assert.equal(
+    validateModelProxyToken({
+      token: token({ sub: "ses_agents_control_plane_1" }),
+      signingKey,
+      now,
+    })?.runId,
+    "ses_agents_control_plane_1",
+  );
+});
+
 async function withProxy(listener, run) {
   const server = createServer(listener);
   server.listen(0, "127.0.0.1");

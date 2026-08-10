@@ -31,6 +31,16 @@ gateway:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: "1", memory: 512Mi }
 
+modelProxy:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-model-proxy
+    digest: ""
+  secretName: agents-system-model-proxy-credentials
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
 migration:
   enabled: true
 
@@ -66,9 +76,6 @@ runtime:
   agentImage:
     repository: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent
     digest: ""
-  codexAuth:
-    storageClassName: ""
-    storage: 1Gi
 
 ingress:
   className: nginx

@@ -84,6 +84,15 @@ test("renders one namespace-scoped authenticated gateway", () => {
     ).valueFrom.secretKeyRef.name,
     "codeops-model-proxy-credentials",
   );
+  const proxyPolicy = values.find(
+    (resource) =>
+      resource.kind === "NetworkPolicy" &&
+      resource.metadata.name === "codeops-model-proxy",
+  );
+  assert.deepEqual(
+    proxyPolicy.spec.ingress[0].from[0].podSelector.matchExpressions[0].values,
+    ["codeops-agent", "codeops-session-runtime-worker"],
+  );
   const databaseVolume = deployment.spec.template.spec.volumes.find(
     (volume) => volume.name === "session-broker-database",
   );

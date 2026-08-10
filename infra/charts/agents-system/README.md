@@ -10,8 +10,8 @@ The chart contains:
 - the authenticated session control gateway;
 - the HMAC-authenticated Plane and GitHub webhook controller;
 - the Agents UI with signed Cloudflare Access JWT verification;
-- scoped ServiceAccounts for the UI, gateway, and per-session runtime;
-- persistent Codex authentication storage and immutable runtime image inputs;
+- scoped ServiceAccounts for the UI, gateway, model proxy, and per-session runtime;
+- a Varlock-backed model proxy and immutable runtime image inputs;
 - a pre-upgrade, non-retrying schema migration Job;
 - a namespace-wide default deny plus explicit component NetworkPolicies.
 
@@ -24,7 +24,9 @@ release boundary must create these Secrets:
   `runtime-database-url`, `runtime-database-role`. The runtime URL uses the
   named receipt-only role, a 32–256 character URL-safe password, the in-cluster
   PostgreSQL service, and database `agents`; it must not use the gateway
-  database role;
+  database role. Add `model-proxy-signing-key`; it must equal the model proxy
+  Secret's `signing-key`;
+- `agents-system-model-proxy-credentials`: `openai-api-key`, `signing-key`;
 - `agents-system-access`: `audience`, `allowed-emails`.
 - `agents-system-controller-secrets`: `plane-api-key`, `plane-webhook-secret`,
   `research-projection-token`, `repository-head-token`,
@@ -40,6 +42,8 @@ the gateway's dedicated steering token and has no browser, merge, release, or
 Kubernetes authority. Per-session runtime Jobs consume the immutable worker
 and coding-agent image references from `agents-system-runtime-images`; the
 runtime ServiceAccount does not receive a Kubernetes API token or RBAC grant.
+The coding-agent container receives only a 75-minute session-bound proxy token.
+It never mounts the reusable OpenAI credential or reusable Codex state.
 
 The main-only `internal` release first installs PostgreSQL with application
 replicas at zero when the Helm release does not exist. The next Helm revision
@@ -83,6 +87,7 @@ helm template agents-system infra/charts/agents-system \
   --set postgresql.image.digest=sha256:<digest> \
   --set runtime.workerImage.digest=sha256:<digest> \
   --set runtime.agentImage.digest=sha256:<digest> \
+  --set modelProxy.image.digest=sha256:<digest> \
   --set agentsUi.access.issuer=https://<team>.cloudflareaccess.com
 ```
 

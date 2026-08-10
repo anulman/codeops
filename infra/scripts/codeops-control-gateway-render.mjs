@@ -265,6 +265,21 @@ export function renderControlGatewayManifest(template, input) {
     throw new Error("control gateway session database egress drifted");
   }
   const serialized = JSON.stringify(resources);
+  const proxyPolicy = resources.find(
+    (resource) =>
+      resource.kind === "NetworkPolicy" &&
+      resource.metadata.name === "codeops-model-proxy",
+  );
+  const proxyCallers = proxyPolicy?.spec?.ingress?.[0]?.from?.[0]
+    ?.podSelector?.matchExpressions?.[0];
+  if (
+    proxyCallers?.key !== "app.kubernetes.io/name" ||
+    proxyCallers?.operator !== "In" ||
+    JSON.stringify(proxyCallers.values) !==
+      JSON.stringify(["codeops-agent", "codeops-session-runtime-worker"])
+  ) {
+    throw new Error("model proxy caller ingress drifted");
+  }
   if (serialized.includes("ClusterRole") || serialized.includes("hostPath")) {
     throw new Error("control gateway must remain namespace scoped");
   }

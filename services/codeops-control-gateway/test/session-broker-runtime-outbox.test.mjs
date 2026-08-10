@@ -16,6 +16,13 @@ const promptMaterial = {
   stopReason: "end_turn",
 };
 
+const claimAuthority = () => ({
+  sessionId: snapshot().sessionId,
+  generation: snapshot().generation,
+  leaseId: snapshot().lease.leaseId,
+  identity: snapshot().identity,
+});
+
 function snapshot(overrides = {}) {
   const enabled = new Set(["prompt", "cancel", "checkpoint", "hibernate"]);
   return {
@@ -185,6 +192,7 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
   });
   const claim = await claimSessionRuntimeDispatch(client, {
     workerId: "acp-worker:7",
+    ...claimAuthority(),
     leaseMs: 5 * 60_000,
     now: () => new Date("2026-08-04T18:00:00.000Z"),
     claimToken: () => claimToken,
@@ -192,15 +200,21 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
   assert.equal(claim.dispatch.dispatchId, dispatchId);
   assert.equal(claim.claimToken, claimToken);
   assert.equal(claim.claimCount, 2);
-  assert.match(client.calls[0].text, /FOR UPDATE SKIP LOCKED/);
+  assert.match(client.calls[0].text, /FOR UPDATE OF outbox SKIP LOCKED/);
   assert.match(client.calls[0].text, /status = 'pending'/);
   assert.match(client.calls[0].text, /claim_expires_at <= \$1/);
   assert.match(client.calls[0].text, /claim_count = outbox\.claim_count \+ 1/);
+  assert.match(client.calls[0].text, /outbox\.session_id = \$5/);
+  assert.match(client.calls[0].text, /session\.snapshot_json->'identity' = \$8::jsonb/);
   assert.deepEqual(client.calls[0].values, [
     "2026-08-04T18:00:00.000Z",
     claimToken,
     "acp-worker:7",
     "2026-08-04T18:05:00.000Z",
+    "ses_91a4",
+    3,
+    leaseId,
+    JSON.stringify(Object.fromEntries(Object.entries(snapshot().identity).sort())),
   ]);
 });
 
@@ -214,6 +228,7 @@ test("preserves millisecond precision when pg returns a Date for the claim expir
   });
   const claim = await claimSessionRuntimeDispatch(client, {
     workerId: "acp-worker:7",
+    ...claimAuthority(),
     leaseMs: 5 * 60_000,
     now: () => new Date("2026-08-04T18:00:00.123Z"),
     claimToken: () => claimToken,
@@ -221,17 +236,42 @@ test("preserves millisecond precision when pg returns a Date for the claim expir
   assert.equal(claim.claimExpiresAt, "2026-08-04T18:05:00.123Z");
 });
 
+test("rejects a claim rebound to another session after persistence", async () => {
+  const dispatch = structuredClone(await enqueue(new EnqueueClient()));
+  dispatch.command.sessionId = "ses_other";
+  dispatch.snapshot.sessionId = "ses_other";
+  const client = new ClaimClient({
+    dispatch_json: dispatch,
+    claim_token: claimToken,
+    claim_expires_at: "2026-08-04T18:05:00.000Z",
+    claim_count: 1,
+  });
+  await assert.rejects(
+    claimSessionRuntimeDispatch(client, {
+      workerId: "acp-worker:7",
+      ...claimAuthority(),
+      leaseMs: 5 * 60_000,
+      now: () => new Date("2026-08-04T18:00:00.000Z"),
+      claimToken: () => claimToken,
+    }),
+    /different session authority/,
+  );
+});
+
 test("returns null when no dispatch is claimable and validates claim bounds", async () => {
   assert.equal(await claimSessionRuntimeDispatch(new ClaimClient(null), {
     workerId: "acp-worker:7",
+    ...claimAuthority(),
     leaseMs: 1_000,
   }), null);
   await assert.rejects(claimSessionRuntimeDispatch(new ClaimClient(null), {
     workerId: "bad worker",
+    ...claimAuthority(),
     leaseMs: 1_000,
   }), /audit identity/);
   await assert.rejects(claimSessionRuntimeDispatch(new ClaimClient(null), {
     workerId: "acp-worker:7",
+    ...claimAuthority(),
     leaseMs: 999,
   }), /between 1 second and 15 minutes/);
 });

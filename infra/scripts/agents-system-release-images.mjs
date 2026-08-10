@@ -10,6 +10,7 @@ const requiredImages = {
   postgresql: "postgres",
   runtime_worker: "codeops-session-runtime-worker",
   runtime_agent: "codeops-agent",
+  model_proxy: "codeops-model-proxy",
 };
 
 export async function resolveAgentsSystemReleaseImages(plan, inspect) {

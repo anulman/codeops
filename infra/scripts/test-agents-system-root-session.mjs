@@ -46,6 +46,9 @@ test("gives the root Job only source, initialization, worker, and receipt author
   assert.match(source, /runtime-database-url/);
   assert.doesNotMatch(source, /key":"database-url"/);
   assert.doesNotMatch(source, /write-token|github-steering-token|plane-api-key|kubeconfig/i);
+  assert.doesNotMatch(source, /codex-auth|chat-gpt|openai-api-key/i);
+  assert.match(source, /model-proxy-token/);
+  assert.match(source, /agents-system-model-proxy:8080/);
 });
 
 test("rejects mutable images and unsafe root identities", () => {

@@ -20,6 +20,7 @@ const requestSchema = z
         state: z.literal("open"),
         headSha: gitSha,
         headRef: z.string().min(1).max(200),
+        baseRef: z.string().min(1).max(200),
       })
       .passthrough(),
     event: z
@@ -34,7 +35,9 @@ const requestSchema = z
         actorId: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
         actorType: z.literal("User"),
         headSha: gitSha.optional(),
-        currentHeadSha: gitSha.optional(),
+        currentHeadSha: gitSha,
+        headRef: z.string().min(1).max(200),
+        baseRef: z.string().min(1).max(200),
       })
       .passthrough(),
     prompt: z.string().min(1).max(65_536),
@@ -53,11 +56,16 @@ const requestSchema = z
         message: "GitHub event, binding, and principal identities must match",
       });
     }
-    const eventHead = request.event.currentHeadSha ?? request.event.headSha;
-    if (eventHead !== undefined && eventHead !== request.binding.headSha) {
+    if (
+      request.event.currentHeadSha !== request.binding.headSha ||
+      request.event.headRef !== request.binding.headRef ||
+      request.event.baseRef !== request.binding.baseRef ||
+      (request.event.headSha !== undefined &&
+        request.event.headSha !== request.event.currentHeadSha)
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "GitHub event must identify the bound current head",
+        message: "GitHub event must identify the exact bound current pull request",
       });
     }
   });

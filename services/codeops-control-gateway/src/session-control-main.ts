@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
 import { validateSessionControlSecrets } from "./session-control-config.js";
+import { createModelProxyToken } from "./model-proxy-token.js";
 import {
   AmbiguousGitHubSessionTargetError,
   GitHubSessionTargetNotFoundError,
@@ -102,6 +103,9 @@ const secrets = validateSessionControlSecrets({
   ),
 });
 const workerId = required("CODEOPS_SESSION_RUNTIME_WORKER_ID");
+const modelProxySigningKey = await secretFile(
+  "CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE",
+);
 if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(workerId)) {
   throw new Error("session runtime worker identity is invalid");
 }
@@ -181,9 +185,16 @@ const server = createServer((request, response) => {
         initialize: async (initializationRequest) => {
           const client = await database.connect();
           try {
-            return await initializeSessionFromJob(client, {
+            const initialized = await initializeSessionFromJob(client, {
               request: initializationRequest,
             });
+            return {
+              ...initialized,
+              modelProxyToken: createModelProxyToken({
+                subject: initialized.snapshot.sessionId,
+                signingKey: modelProxySigningKey,
+              }),
+            };
           } finally {
             client.release();
           }

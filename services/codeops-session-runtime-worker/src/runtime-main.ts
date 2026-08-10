@@ -58,6 +58,10 @@ if (initializationToken === workerToken) {
 const databaseUrl = await secretFile("CODEOPS_DATABASE_URL_FILE", 4_096);
 const socketPath = required("CODEOPS_SESSION_RUNTIME_ACP_SOCKET_PATH");
 const readyPath = path.join(path.dirname(socketPath), "ready");
+const modelProxyTokenPath = path.join(
+  path.dirname(socketPath),
+  "model-proxy-token",
+);
 const workspace = required("CODEOPS_SESSION_RUNTIME_WORKSPACE");
 const statePath = required("CODEOPS_SESSION_RUNTIME_ACP_STATE_PATH");
 const claimLeaseMs = boundedInteger(
@@ -87,11 +91,6 @@ const socketTimeoutMs = boundedInteger(
 
 const database = new Pool({ connectionString: databaseUrl, max: 1 });
 const receipts = new PostgresRuntimeExecutionReceiptStore(database);
-const transport = new SessionRuntimeTransport({
-  gatewayOrigin,
-  token: workerToken,
-  requestTimeoutMs,
-});
 const initializer = new SessionJobInitializer({
   gatewayOrigin,
   token: initializationToken,
@@ -103,8 +102,7 @@ process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);
 
 try {
-  await waitForAcpSocket(socketPath, socketTimeoutMs);
-  await initializer.initialize(sessionJobInitializationRequestSchema.parse({
+  const initialization = await initializer.initialize(sessionJobInitializationRequestSchema.parse({
     version: "codeops.session-job-initialization/v1",
     sessionId: required("CODEOPS_SESSION_ID"),
     identity: {
@@ -119,6 +117,28 @@ try {
     leaseId: required("CODEOPS_SESSION_LEASE_ID"),
     holderId: required("CODEOPS_SESSION_HOLDER_ID"),
   }));
+  if (initialization.snapshot.lease?.status !== "active") {
+    throw new Error("session runtime requires an active server-confirmed lease");
+  }
+  if (initialization.modelProxyToken === undefined) {
+    throw new Error("session runtime requires a short-lived model proxy token");
+  }
+  await writeFile(modelProxyTokenPath, initialization.modelProxyToken, {
+    mode: 0o600,
+    flag: "wx",
+  });
+  const transport = new SessionRuntimeTransport({
+    gatewayOrigin,
+    token: workerToken,
+    requestTimeoutMs,
+    authority: {
+      sessionId: initialization.snapshot.sessionId,
+      generation: initialization.snapshot.generation,
+      leaseId: initialization.snapshot.lease.leaseId,
+      identity: initialization.snapshot.identity,
+    },
+  });
+  await waitForAcpSocket(socketPath, socketTimeoutMs);
   await writeFile(readyPath, "", { mode: 0o600, flag: "wx" });
   await runSessionRuntimeWorker({
     transport,
@@ -150,6 +170,7 @@ try {
   });
 } finally {
   await rm(readyPath, { force: true }).catch(() => {});
+  await rm(modelProxyTokenPath, { force: true }).catch(() => {});
   await writeFile(path.join(path.dirname(socketPath), "done"), "", {
     mode: 0o600,
   }).catch(() => {});

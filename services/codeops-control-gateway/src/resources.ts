@@ -2,8 +2,8 @@ import type {
   AgentJobDispatchRequest,
   CandidateCheckpoint,
 } from "@renoconcierge/codeops-contracts";
-import { createHmac } from "node:crypto";
 import { buildAgentPrompt } from "./core.js";
+import { createModelProxyToken } from "./model-proxy-token.js";
 
 interface ResourceConfig {
   readonly namespace: string;
@@ -20,30 +20,6 @@ interface ResourceConfig {
     readonly issuedAt?: Date;
   };
   readonly candidate?: CandidateCheckpoint;
-}
-
-function createModelProxyToken(input: {
-  runId: string;
-  signingKey: string;
-  issuedAt?: Date;
-}): string {
-  if (input.signingKey.length < 32 || input.signingKey.length > 4_096) {
-    throw new Error("model proxy signing key length is invalid");
-  }
-  const issuedAt = Math.floor((input.issuedAt ?? new Date()).getTime() / 1_000);
-  if (!Number.isSafeInteger(issuedAt)) {
-    throw new Error("model proxy token issue time is invalid");
-  }
-  const payload = Buffer.from(JSON.stringify({
-    aud: "codeops-model-proxy",
-    sub: input.runId,
-    iat: issuedAt,
-    exp: issuedAt + 75 * 60,
-  })).toString("base64url");
-  const signature = createHmac("sha256", input.signingKey)
-    .update(`v1.${payload}`)
-    .digest("base64url");
-  return `v1.${payload}.${signature}`;
 }
 
 function labels(input: ResourceConfig, request: AgentJobDispatchRequest) {
@@ -95,7 +71,7 @@ export function buildRunResources(
     throw new Error("model proxy origin must be the internal service");
   }
   const modelProxyToken = createModelProxyToken({
-    runId: input.runId,
+    subject: input.runId,
     signingKey: input.modelAuth.signingKey,
     issuedAt: input.modelAuth.issuedAt,
   });

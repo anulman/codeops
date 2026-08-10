@@ -58,5 +58,15 @@ export function renderAgentsSystemRootSession(template, input) {
   if (JSON.stringify(job).includes("write-token") || JSON.stringify(job).includes("github-steering-token") || JSON.stringify(job).includes("kind: Secret")) {
     throw new Error("trusted root Job received unrelated authority");
   }
+  const agent = pod.containers.find((container) => container.name === "coding-agent");
+  const source = JSON.stringify(agent);
+  if (
+    source.includes("codex-auth") ||
+    source.includes("chat-gpt") ||
+    !source.includes("/run/codeops/model-proxy-token") ||
+    !source.includes("http://agents-system-model-proxy:8080/v1")
+  ) {
+    throw new Error("trusted root Job model authority drifted");
+  }
   return rendered;
 }

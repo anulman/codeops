@@ -12,6 +12,7 @@ const digestSets = [
   "postgresql.image.digest=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "runtime.workerImage.digest=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "runtime.agentImage.digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "modelProxy.image.digest=sha256:9999999999999999999999999999999999999999999999999999999999999999",
   "agentsUi.access.issuer=https://renoconcierge.cloudflareaccess.com",
 ];
 
@@ -55,13 +56,18 @@ test("renders one independent agents-system package with immutable images", () =
     ...(candidate.spec?.template?.spec?.containers ?? []),
     ...(candidate.spec?.template?.spec?.initContainers ?? []),
   ]).map((container) => container.image).filter(Boolean);
-  assert.equal(images.length, 5);
+  assert.equal(images.length, 6);
   assert.ok(images.every((image) => /@sha256:[0-9a-f]{64}$/.test(image)));
 
   resource(resources, "StatefulSet", "agents-system-postgresql");
   resource(resources, "Deployment", "agents-system-session-gateway");
   resource(resources, "Deployment", "agents-system-github-controller");
   resource(resources, "Deployment", "agents-system-agents-ui");
+  const modelProxy = resource(resources, "Deployment", "agents-system-model-proxy");
+  const proxySource = JSON.stringify(modelProxy);
+  assert.match(proxySource, /agents-system-model-proxy-credentials/);
+  assert.match(proxySource, /openai-api-key/);
+  assert.match(proxySource, /signing-key/);
   const migration = resource(resources, "Job", "agents-system-session-migrate");
   assert.equal(migration.metadata.annotations["helm.sh/hook"], "pre-upgrade");
   assert.equal(migration.metadata.annotations["helm.sh/hook-delete-policy"], "before-hook-creation");
@@ -75,10 +81,10 @@ test("renders one independent agents-system package with immutable images", () =
     migration.spec.template.spec.volumes.find(({ name }) => name === "secrets").secret.items.map(({ key }) => key).sort(),
     ["database-url", "runtime-database-role", "runtime-database-url"],
   );
-  resource(resources, "PersistentVolumeClaim", "agents-system-codex-auth");
+  assert.equal(resources.some(({ metadata }) => metadata?.name === "agents-system-codex-auth"), false);
   resource(resources, "PersistentVolumeClaim", "agents-system-controller-state");
   resource(resources, "ConfigMap", "agents-system-runtime-images");
-  for (const name of ["agents-ui", "session-gateway", "github-controller", "runtime"]) {
+  for (const name of ["agents-ui", "session-gateway", "github-controller", "runtime", "model-proxy"]) {
     const account = resource(resources, "ServiceAccount", `agents-system-${name}`);
     assert.equal(account.automountServiceAccountToken, false);
   }
@@ -123,6 +129,7 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
   const gateway = resource(resources, "Deployment", "agents-system-session-gateway");
   const gatewaySource = JSON.stringify(gateway);
   assert.match(gatewaySource, /initialization-token/);
+  assert.match(gatewaySource, /model-proxy-signing-key/);
   assert.equal(JSON.stringify(deployment).includes("initialization-token"), false);
 
   const controller = resource(
@@ -146,7 +153,7 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
 test("defaults to deny and opens only explicit component paths", () => {
   const resources = render();
   const policies = resources.filter(({ kind }) => kind === "NetworkPolicy");
-  assert.equal(policies.length, 7);
+  assert.equal(policies.length, 8);
   const deny = resource(resources, "NetworkPolicy", "agents-system-default-deny");
   assert.deepEqual(deny.spec.podSelector, {});
   assert.deepEqual(deny.spec.policyTypes, ["Ingress", "Egress"]);
@@ -163,6 +170,12 @@ test("defaults to deny and opens only explicit component paths", () => {
   assert.deepEqual(
     migration.spec.egress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)).sort(),
     ["TCP:53", "TCP:5432", "UDP:53"],
+  );
+  const modelProxy = resource(resources, "NetworkPolicy", "agents-system-model-proxy");
+  assert.ok(JSON.stringify(modelProxy.spec.ingress).includes("runtime"));
+  assert.deepEqual(
+    modelProxy.spec.ingress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)),
+    ["TCP:8080"],
   );
 });
 

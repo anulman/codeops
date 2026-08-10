@@ -56,7 +56,7 @@ export function validateModelProxyToken(input) {
     typeof payload !== "object" ||
     payload.aud !== "codeops-model-proxy" ||
     typeof payload.sub !== "string" ||
-    !/^[a-z0-9-]{1,63}$/.test(payload.sub) ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(payload.sub) ||
     !Number.isSafeInteger(payload.iat) ||
     !Number.isSafeInteger(payload.exp) ||
     payload.iat > now + 60 ||

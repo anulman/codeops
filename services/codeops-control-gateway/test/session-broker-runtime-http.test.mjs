@@ -9,6 +9,20 @@ const token = "r".repeat(32);
 const dispatchId = "44444444-4444-4444-8444-444444444444";
 const claimToken = "55555555-5555-4555-8555-555555555555";
 const requestId = "permission-1";
+const authority = {
+  sessionId: "ses_91a4",
+  generation: 3,
+  leaseId: "11111111-1111-4111-8111-111111111111",
+  identity: {
+    repository: "anulman/renoconcierge",
+    branch: "feat/agents-ui",
+    baseSha: "a".repeat(40),
+    workflowId: "workflow-155",
+    runId: "run-155",
+    parentSessionId: null,
+    forkedAtCursor: null,
+  },
+};
 
 function completion(overrides = {}) {
   return {
@@ -50,6 +64,7 @@ function request(overrides = {}) {
       workerId: "acp-worker:primary",
       readBody: async () => ({
         version: "codeops.session-runtime-claim-request/v1",
+        ...authority,
         leaseMs: 300_000,
       }),
       claim: async (input) => {
@@ -95,7 +110,7 @@ test("authenticates one server-bound worker before claiming", async () => {
     },
   });
   assert.deepEqual(submitted.claims, [
-    { workerId: "acp-worker:primary", leaseMs: 300_000 },
+    { workerId: "acp-worker:primary", ...authority, leaseMs: 300_000 },
   ]);
 
   const unauthorized = request({ headers: {} });
@@ -192,6 +207,7 @@ test("rejects ambiguous or drifting runtime requests before persistence", async 
     request({
       readBody: async () => ({
         version: "codeops.session-runtime-claim-request/v1",
+        ...authority,
         leaseMs: 999,
       }),
     }),

@@ -67,6 +67,7 @@ function body(overrides = {}) {
       state: "open",
       headSha,
       headRef: "feat/agents-ui",
+      baseRef: "feat/codeops-contracts-ci",
     },
     event: {
       kind: "issue_comment",
@@ -74,6 +75,9 @@ function body(overrides = {}) {
       number: 159,
       actorId: 6723643628,
       actorType: "User",
+      currentHeadSha: headSha,
+      headRef: "feat/agents-ui",
+      baseRef: "feat/codeops-contracts-ci",
     },
     prompt: "Please fix the exact permission label.",
     idempotencyKey,
@@ -150,6 +154,17 @@ test("fails closed on transport, principal, and head drift", async () => {
     } }) }).promise,
     InvalidGitHubSessionSteeringRequestError,
   );
+  for (const event of [
+    { ...body().event, currentHeadSha: undefined },
+    { ...body().event, currentHeadSha: "f".repeat(40) },
+    { ...body().event, headRef: "feat/other" },
+    { ...body().event, baseRef: "main" },
+  ]) {
+    await assert.rejects(
+      request({ readBody: async () => body({ event }) }).promise,
+      InvalidGitHubSessionSteeringRequestError,
+    );
+  }
 });
 
 test("rejects missing, expired, and ambiguous session targets", () => {

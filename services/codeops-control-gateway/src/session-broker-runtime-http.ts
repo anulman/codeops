@@ -68,6 +68,10 @@ export async function serveSessionRuntime(input: {
   readonly readBody: () => Promise<unknown>;
   readonly claim: (input: {
     readonly workerId: string;
+    readonly sessionId: string;
+    readonly generation: number;
+    readonly leaseId: string;
+    readonly identity: unknown;
     readonly leaseMs: number;
   }) => Promise<SessionRuntimeDispatchClaim | null>;
   readonly complete: (input: {
@@ -120,6 +124,10 @@ export async function serveSessionRuntime(input: {
     }
     const claim = await input.claim({
       workerId: input.workerId,
+      sessionId: request.data.sessionId,
+      generation: request.data.generation,
+      leaseId: request.data.leaseId,
+      identity: request.data.identity,
       leaseMs: request.data.leaseMs,
     });
     return {

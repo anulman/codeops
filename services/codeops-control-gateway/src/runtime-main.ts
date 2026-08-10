@@ -20,6 +20,7 @@ import {
 import { loadInClusterKubernetesClient } from "./kubernetes.js";
 import { publishCandidateRevision } from "./publication.js";
 import { createAgentJobRunner } from "./runtime.js";
+import { createModelProxyToken } from "./model-proxy-token.js";
 import { migrateSessionBroker } from "./session-broker-migration.js";
 import {
   InvalidSessionCommandRequestError,
@@ -236,9 +237,16 @@ const server = createServer((request, response) => {
         initialize: async (initializationRequest) => {
           const client = await database.connect();
           try {
-            return await initializeSessionFromJob(client, {
+            const initialized = await initializeSessionFromJob(client, {
               request: initializationRequest,
             });
+            return {
+              ...initialized,
+              modelProxyToken: createModelProxyToken({
+                subject: initialized.snapshot.sessionId,
+                signingKey: modelAuth.signingKey,
+              }),
+            };
           } finally {
             client.release();
           }

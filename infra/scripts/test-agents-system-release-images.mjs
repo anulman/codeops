@@ -9,6 +9,7 @@ const names = [
   "postgres",
   "codeops-session-runtime-worker",
   "codeops-agent",
+  "codeops-model-proxy",
 ];
 const plan = {
   services: names.map((name) => ({
@@ -25,8 +26,8 @@ test("resolves every Agents control plane operand to one immutable registry dige
     return { digest: `sha256:${"b".repeat(64)}` };
   });
   assert.equal(result.version, "agents-system-release-images/v1");
-  assert.equal(seen.length, 6);
-  assert.equal(Object.keys(result.images).length, 6);
+  assert.equal(seen.length, 7);
+  assert.equal(Object.keys(result.images).length, 7);
   assert.ok(Object.values(result.images).every(({ immutableRef }) => immutableRef.endsWith(`@sha256:${"b".repeat(64)}`)));
 });
 

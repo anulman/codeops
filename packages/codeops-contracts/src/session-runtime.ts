@@ -3,6 +3,7 @@ import {
   sessionCommandResultSchema,
   sessionCommandSchema,
   sessionPermissionRequestSchema,
+  sessionIdentitySchema,
   sessionSnapshotSchema,
   sessionTimelineUpdateSchema,
   type SessionCommand,
@@ -200,6 +201,10 @@ export const sessionRuntimeDispatchClaimSchema = z
 export const sessionRuntimeClaimRequestSchema = z
   .object({
     version: z.literal("codeops.session-runtime-claim-request/v1"),
+    sessionId: identifier,
+    generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    leaseId: uuid,
+    identity: sessionIdentitySchema,
     leaseMs: z.number().int().min(1_000).max(15 * 60_000),
   })
   .strict();

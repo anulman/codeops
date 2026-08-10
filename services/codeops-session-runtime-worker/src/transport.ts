@@ -12,6 +12,7 @@ import {
   sessionRuntimePermissionSubmissionSchema,
   sessionTimelineUpdateSchema,
   type SessionCommandResult,
+  type SessionIdentity,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
   type SessionRuntimeDispatchClaim,
@@ -235,17 +236,40 @@ function requireCompletionIdentity(
 export class SessionRuntimeTransport {
   readonly #origin: string;
   readonly #token: string;
+  readonly #authority: {
+    readonly sessionId: string;
+    readonly generation: number;
+    readonly leaseId: string;
+    readonly identity: SessionIdentity;
+  };
   readonly #fetch: typeof fetch;
   readonly #requestTimeoutMs: number;
 
   constructor(input: {
     readonly gatewayOrigin: string;
     readonly token: string;
+    readonly authority: {
+      readonly sessionId: string;
+      readonly generation: number;
+      readonly leaseId: string;
+      readonly identity: SessionIdentity;
+    };
     readonly fetch?: typeof fetch;
     readonly requestTimeoutMs?: number;
   }) {
     this.#origin = exactGatewayOrigin(input.gatewayOrigin);
     this.#token = exactToken(input.token);
+    const authority = sessionRuntimeClaimRequestSchema.parse({
+      version: "codeops.session-runtime-claim-request/v1",
+      ...input.authority,
+      leaseMs: 1_000,
+    });
+    this.#authority = {
+      sessionId: authority.sessionId,
+      generation: authority.generation,
+      leaseId: authority.leaseId,
+      identity: authority.identity,
+    };
     this.#fetch = input.fetch ?? fetch;
     this.#requestTimeoutMs = input.requestTimeoutMs ?? 10_000;
     if (
@@ -291,6 +315,7 @@ export class SessionRuntimeTransport {
   async claim(leaseMs: number): Promise<SessionRuntimeDispatchClaim | null> {
     const request = sessionRuntimeClaimRequestSchema.parse({
       version: "codeops.session-runtime-claim-request/v1",
+      ...this.#authority,
       leaseMs,
     });
     const response = sessionRuntimeClaimResponseSchema.parse(

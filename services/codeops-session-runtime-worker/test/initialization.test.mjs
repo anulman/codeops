@@ -39,6 +39,7 @@ function response(overrides = {}) {
   return {
     version: "codeops.session-job-initialization-result/v1",
     disposition: "created",
+    modelProxyToken: `v1.${Buffer.from("session-token").toString("base64url")}.${"s".repeat(43)}`,
     snapshot: {
       version: "codeops.session-snapshot/v1",
       sessionId: "ses_video_1",
@@ -182,6 +183,19 @@ test("rejects a created root without the exact requested active lease", async ()
       ...hibernatedDuplicateResponse(),
       disposition: "created",
     }),
+  });
+  await assert.rejects(
+    initializer.initialize(request()),
+    SessionRuntimeTransportError,
+  );
+});
+
+test("rejects initialization without short-lived model authority", async () => {
+  const { modelProxyToken: _removed, ...missingToken } = response();
+  const initializer = new SessionJobInitializer({
+    gatewayOrigin: "https://gateway.example.test",
+    token,
+    fetch: async () => json(missingToken),
   });
   await assert.rejects(
     initializer.initialize(request()),

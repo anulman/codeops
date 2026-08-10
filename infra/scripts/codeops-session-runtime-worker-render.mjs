@@ -160,12 +160,20 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
   }
   if (
     new Set(Object.values(secretBindings)).size !== 3 ||
-    volumes["codex-auth"]?.persistentVolumeClaim?.claimName !== "codeops-codex-auth" ||
-    pod.volumes.filter((volume) => volume.persistentVolumeClaim).length !== 1 ||
+    pod.volumes.some((volume) => volume.persistentVolumeClaim) ||
     JSON.stringify(resources).includes("hostPath") ||
-    JSON.stringify(resources).includes("codeops-session-broker-database")
+    JSON.stringify(resources).includes("codeops-session-broker-database") ||
+    JSON.stringify(resources).includes("codex-auth")
   ) {
     throw new Error("session runtime credential or volume boundary drifted");
+  }
+  const agentSource = JSON.stringify(agent);
+  if (
+    !agentSource.includes("/run/codeops/model-proxy-token") ||
+    !agentSource.includes("http://codeops-model-proxy:8080/v1") ||
+    agentSource.includes("chat-gpt")
+  ) {
+    throw new Error("session runtime model authority drifted");
   }
   for (const container of [builder, worker, agent]) {
     if (
@@ -175,7 +183,7 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
       throw new Error("session runtime container hardening drifted");
     }
   }
-  const expectedEgressPorts = [53, 53, 443, 5432, 8080];
+  const expectedEgressPorts = [53, 53, 443, 5432, 8080, 8080];
   const actualEgressPorts = policy.spec.egress
     .flatMap((rule) => rule.ports.map((port) => port.port))
     .sort((left, right) => Number(left) - Number(right));
@@ -183,7 +191,8 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
     policy.spec.ingress.length !== 0 ||
     JSON.stringify(actualEgressPorts) !== JSON.stringify(expectedEgressPorts) ||
     policy.spec.egress[0].to[0].podSelector.matchLabels["app.kubernetes.io/name"] !== "codeops-control-gateway" ||
-    policy.spec.egress[1].to[0].podSelector.matchLabels["app.kubernetes.io/name"] !== "codeops-session-proof-database"
+    policy.spec.egress[1].to[0].podSelector.matchLabels["app.kubernetes.io/name"] !== "codeops-session-proof-database" ||
+    policy.spec.egress[2].to[0].podSelector.matchLabels["app.kubernetes.io/name"] !== "codeops-model-proxy"
   ) {
     throw new Error("session runtime network boundary drifted");
   }

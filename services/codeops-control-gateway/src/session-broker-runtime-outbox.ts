@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   sessionCommandResultSchema,
+  sessionRuntimeClaimRequestSchema,
   type SessionCommandResult,
   type SessionSnapshot,
 } from "@renoconcierge/codeops-contracts";
@@ -178,6 +179,10 @@ export async function claimSessionRuntimeDispatch(
   client: TransactionClient,
   input: {
     readonly workerId: string;
+    readonly sessionId: string;
+    readonly generation: number;
+    readonly leaseId: string;
+    readonly identity: unknown;
     readonly leaseMs: number;
     readonly now?: () => Date;
     readonly claimToken?: () => string;
@@ -191,21 +196,38 @@ export async function claimSessionRuntimeDispatch(
   ) {
     throw new Error("runtime claim lease must be between 1 second and 15 minutes");
   }
+  const authority = sessionRuntimeClaimRequestSchema.parse({
+    version: "codeops.session-runtime-claim-request/v1",
+    sessionId: input.sessionId,
+    generation: input.generation,
+    leaseId: input.leaseId,
+    identity: input.identity,
+    leaseMs: input.leaseMs,
+  });
   const now = (input.now ?? (() => new Date()))();
   const claimedAt = now.toISOString();
   const claimExpiresAt = new Date(now.getTime() + input.leaseMs).toISOString();
   const claimToken = (input.claimToken ?? randomUUID)();
   const result = await client.query<ClaimedDispatchRow>(
     `WITH candidate AS (
-       SELECT dispatch_id
-         FROM codeops.session_runtime_outbox
-        WHERE available_at <= $1::timestamptz
+       SELECT outbox.dispatch_id
+         FROM codeops.session_runtime_outbox AS outbox
+         JOIN codeops.sessions AS session
+           ON session.session_id = outbox.session_id
+        WHERE outbox.available_at <= $1::timestamptz
+          AND outbox.session_id = $5
+          AND (outbox.dispatch_json->'command'->>'generation')::bigint = $6
+          AND outbox.dispatch_json->'command'->>'leaseId' = $7
+          AND (session.snapshot_json->>'generation')::bigint = $6
+          AND session.snapshot_json->'lease'->>'status' = 'active'
+          AND session.snapshot_json->'lease'->>'leaseId' = $7
+          AND session.snapshot_json->'identity' = $8::jsonb
           AND (
-            status = 'pending'
-            OR (status = 'claimed' AND claim_expires_at <= $1::timestamptz)
+            outbox.status = 'pending'
+            OR (outbox.status = 'claimed' AND outbox.claim_expires_at <= $1::timestamptz)
           )
-        ORDER BY available_at ASC, created_at ASC, dispatch_id ASC
-        FOR UPDATE SKIP LOCKED
+        ORDER BY outbox.available_at ASC, outbox.created_at ASC, outbox.dispatch_id ASC
+        FOR UPDATE OF outbox SKIP LOCKED
         LIMIT 1
      )
      UPDATE codeops.session_runtime_outbox AS outbox
@@ -219,7 +241,16 @@ export async function claimSessionRuntimeDispatch(
       WHERE outbox.dispatch_id = candidate.dispatch_id
       RETURNING outbox.dispatch_json, outbox.claim_token,
                 outbox.claim_expires_at, outbox.claim_count`,
-    [claimedAt, claimToken, input.workerId, claimExpiresAt],
+    [
+      claimedAt,
+      claimToken,
+      input.workerId,
+      claimExpiresAt,
+      authority.sessionId,
+      authority.generation,
+      authority.leaseId,
+      canonical(authority.identity),
+    ],
   );
   if (!result.rows[0]) return null;
   const row = result.rows[0];
@@ -231,8 +262,17 @@ export async function claimSessionRuntimeDispatch(
   ) {
     throw new Error("runtime claim persistence did not match the requested lease");
   }
+  const dispatch = sessionRuntimeDispatchSchema.parse(row.dispatch_json);
+  if (
+    dispatch.command.sessionId !== authority.sessionId ||
+    dispatch.command.generation !== authority.generation ||
+    dispatch.command.leaseId !== authority.leaseId ||
+    canonical(dispatch.snapshot.identity) !== canonical(authority.identity)
+  ) {
+    throw new Error("runtime claim returned a different session authority");
+  }
   return {
-    dispatch: sessionRuntimeDispatchSchema.parse(row.dispatch_json),
+    dispatch,
     claimToken,
     claimExpiresAt,
     claimCount: Number(row.claim_count),
