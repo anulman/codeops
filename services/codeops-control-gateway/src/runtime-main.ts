@@ -20,7 +20,10 @@ import {
 import { loadInClusterKubernetesClient } from "./kubernetes.js";
 import { publishCandidateRevision } from "./publication.js";
 import { createAgentJobRunner } from "./runtime.js";
-import { createRepositoryRegistry } from "./repository-registry.js";
+import {
+  createRepositoryRegistry,
+  loadRepositoryRegistryFile,
+} from "./repository-registry.js";
 import { createModelProxyToken } from "./model-proxy-token.js";
 import { migrateSessionBroker } from "./session-broker-migration.js";
 import {
@@ -201,14 +204,19 @@ const repositoryWriteToken = await secretFile(
 const repositoryIdentity = new URL(repositoryUrl).pathname
   .replace(/^\//, "")
   .replace(/\.git$/, "");
-const repositoryRegistry = createRepositoryRegistry([
-  {
-    repository: repositoryIdentity,
-    repositoryUrl,
-    readToken: repositoryReadToken,
-    writeToken: repositoryWriteToken,
-  },
-]);
+const repositoryRegistryFile =
+  process.env.CODEOPS_REPOSITORY_REGISTRY_FILE?.trim();
+const repositoryRegistry =
+  repositoryRegistryFile === undefined || repositoryRegistryFile === ""
+    ? createRepositoryRegistry([
+        {
+          repository: repositoryIdentity,
+          repositoryUrl,
+          readToken: repositoryReadToken,
+          writeToken: repositoryWriteToken,
+        },
+      ])
+    : await loadRepositoryRegistryFile(repositoryRegistryFile);
 const database = new Pool({
   connectionString: await secretFile("CODEOPS_DATABASE_URL_FILE"),
   max: 4,

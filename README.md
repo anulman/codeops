@@ -38,7 +38,11 @@ The control gateway resolves Agent Job dispatches through a repository
 registry before it reads retained evidence or creates Kubernetes resources.
 Each admitted repository has a distinct read and write authority. An unknown
 repository, a duplicate identity, an identity/URL mismatch, or credential
-reuse fails closed. The current process entrypoint seeds this registry from
-the legacy single-repository environment variables. File-backed
-multi-repository configuration and repository-aware GitHub routes remain part
-of the extraction work.
+reuse fails closed. The process entrypoint accepts
+`CODEOPS_REPOSITORY_REGISTRY_FILE` as an exact absolute path to a strict
+`codeops.repository-registry/v1` JSON manifest. The manifest contains only
+repository identities, exact GitHub HTTPS URLs, and absolute read/write token
+file references. It rejects inline credentials, ambiguous paths, reused Secret
+files, and reused credential values at startup. The legacy single-repository
+environment variables remain as a compatibility fallback for GitHub routes
+that are not repository-aware yet.
