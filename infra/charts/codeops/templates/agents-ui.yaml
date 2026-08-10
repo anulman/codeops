@@ -130,7 +130,7 @@ spec:
                 name: {{ include "codeops.fullname" . }}-github-controller
                 port: { name: http }
           - path: /webhooks/plane
-            pathType: Exact
+            pathType: Prefix
             backend:
               service:
                 name: {{ include "codeops.fullname" . }}-github-controller

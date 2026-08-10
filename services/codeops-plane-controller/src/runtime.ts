@@ -9,6 +9,7 @@ import {
   githubReviewCommentSchema,
   githubPullRequestStackLinkSchema,
   githubPullRequestStackSnapshotSchema,
+  verifyPlaneWebhookSignature,
   type GitHubReviewComment,
   type GitHubPullRequestStackLink,
   type GitHubPullRequestStackSnapshot,
@@ -59,12 +60,17 @@ export function createRepositoryHeadResolver(input: {
     origin.search !== "" ||
     origin.hash !== ""
   ) {
-    throw new Error("repository head origin must be the internal control gateway");
+    throw new Error(
+      "repository head origin must be the internal control gateway",
+    );
   }
   if (input.token.length < 32 || input.token.length > 4_096) {
     throw new Error("repository head token is invalid");
   }
-  const repository = z.string().regex(REPOSITORY_IDENTITY).parse(input.repository);
+  const repository = z
+    .string()
+    .regex(REPOSITORY_IDENTITY)
+    .parse(input.repository);
   return async () => {
     const response = await (input.fetch ?? fetch)(
       new URL(repositoryRoute(repository, "/heads/main"), origin),
@@ -78,7 +84,9 @@ export function createRepositoryHeadResolver(input: {
       },
     );
     if (!response.ok) {
-      throw new Error(`repository head resolution failed with ${response.status}`);
+      throw new Error(
+        `repository head resolution failed with ${response.status}`,
+      );
     }
     const body = (await response.json()) as {
       version?: unknown;
@@ -120,7 +128,9 @@ export function createGitHubReviewCommentsLoader(input: {
     origin.search !== "" ||
     origin.hash !== ""
   ) {
-    throw new Error("GitHub review origin must be the internal control gateway");
+    throw new Error(
+      "GitHub review origin must be the internal control gateway",
+    );
   }
   if (input.token.length < 32 || input.token.length > 4_096) {
     throw new Error("GitHub review reader token is invalid");
@@ -201,12 +211,17 @@ export function createGitHubHeadQualifier(input: {
     origin.search !== "" ||
     origin.hash !== ""
   ) {
-    throw new Error("GitHub qualification origin must be the internal control gateway");
+    throw new Error(
+      "GitHub qualification origin must be the internal control gateway",
+    );
   }
   if (input.token.length < 32 || input.token.length > 4_096) {
     throw new Error("GitHub qualification token is invalid");
   }
-  const repository = z.string().regex(REPOSITORY_IDENTITY).parse(input.repository);
+  const repository = z
+    .string()
+    .regex(REPOSITORY_IDENTITY)
+    .parse(input.repository);
   return async (value) => {
     const pullRequestNumber = z
       .number()
@@ -214,7 +229,10 @@ export function createGitHubHeadQualifier(input: {
       .positive()
       .max(10_000_000)
       .parse(value.pullRequestNumber);
-    const headSha = z.string().regex(/^[0-9a-f]{40}$/).parse(value.headSha);
+    const headSha = z
+      .string()
+      .regex(/^[0-9a-f]{40}$/)
+      .parse(value.headSha);
     const response = await (input.fetch ?? fetch)(
       new URL(
         repositoryRoute(
@@ -286,7 +304,12 @@ export function createGitHubCurrentPullRequestResolver(input: {
       .string()
       .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)
       .parse(value.repository);
-    const number = z.number().int().positive().max(10_000_000).parse(value.number);
+    const number = z
+      .number()
+      .int()
+      .positive()
+      .max(10_000_000)
+      .parse(value.number);
     const response = await (input.fetch ?? fetch)(
       new URL(
         repositoryRoute(repository, `/pull-requests/${number}/current-head`),
@@ -337,7 +360,9 @@ function internalControlGatewayOrigin(value: string, capability: string): URL {
     origin.search !== "" ||
     origin.hash !== ""
   ) {
-    throw new Error(`${capability} origin must be the internal control gateway`);
+    throw new Error(
+      `${capability} origin must be the internal control gateway`,
+    );
   }
   return origin;
 }
@@ -357,7 +382,10 @@ export function createGitHubStackLoader(input: {
 }): (stackNumber: number) => Promise<GitHubPullRequestStackSnapshot> {
   const origin = internalControlGatewayOrigin(input.origin, "GitHub stack");
   const token = internalCapabilityToken(input.token, "GitHub stack");
-  const repository = z.string().regex(REPOSITORY_IDENTITY).parse(input.repository);
+  const repository = z
+    .string()
+    .regex(REPOSITORY_IDENTITY)
+    .parse(input.repository);
   return async (value) => {
     const stackNumber = z
       .number()
@@ -399,7 +427,10 @@ export function createGitHubStackLinker(input: {
 }): (
   link: GitHubPullRequestStackLink,
 ) => Promise<GitHubPullRequestStackSnapshot> {
-  const origin = internalControlGatewayOrigin(input.origin, "GitHub stack link");
+  const origin = internalControlGatewayOrigin(
+    input.origin,
+    "GitHub stack link",
+  );
   const token = internalCapabilityToken(input.token, "GitHub stack link");
   return async (value) => {
     const link = githubPullRequestStackLinkSchema.parse(value);
@@ -450,7 +481,9 @@ export function createGitHubSessionSteeringClient(input: {
     origin.search !== "" ||
     origin.hash !== ""
   ) {
-    throw new Error("GitHub session steering origin must be the internal session gateway");
+    throw new Error(
+      "GitHub session steering origin must be the internal session gateway",
+    );
   }
   return async (request) => {
     const token = internalCapabilityToken(
@@ -459,10 +492,7 @@ export function createGitHubSessionSteeringClient(input: {
     );
     const response = await (input.fetch ?? fetch)(
       new URL(
-        repositoryRoute(
-          request.binding.repository,
-          "/github-session-events",
-        ),
+        repositoryRoute(request.binding.repository, "/github-session-events"),
         origin,
       ),
       {
@@ -661,14 +691,19 @@ function authenticateBearer(
 }
 
 export function createPlaneWebhookRequestListener(input: {
-  process: (input: {
-    rawBody: Buffer;
-    headers: {
-      delivery: string;
-      event: string;
-      signature: string;
-    };
-  }) => Promise<ResearchWebhookProcessingResult>;
+  plane?: {
+    resolveSecret: (repository: string) => string;
+    process: (input: {
+      repository: string;
+      rawBody: Buffer;
+      webhookSecret: string;
+      headers: {
+        delivery: string;
+        event: string;
+        signature: string;
+      };
+    }) => Promise<ResearchWebhookProcessingResult>;
+  };
   projection?: {
     token: string;
     process: (packet: unknown) => Promise<ResearchProjectionResult>;
@@ -679,10 +714,7 @@ export function createPlaneWebhookRequestListener(input: {
   };
   github?: {
     resolveSecret: (repository: string) => string;
-    process: (input: {
-      delivery: string;
-      event: GitHubEvent;
-    }) => Promise<void>;
+    process: (input: { delivery: string; event: GitHubEvent }) => Promise<void>;
   };
 }): (request: IncomingMessage, response: ServerResponse) => Promise<void> {
   return async (request, response) => {
@@ -816,7 +848,17 @@ export function createPlaneWebhookRequestListener(input: {
       }
       return;
     }
-    if (request.method !== "POST" || request.url !== "/webhooks/plane") {
+    const planeRoute =
+      request.method === "POST"
+        ? request.url?.match(
+            /^\/webhooks\/plane\/([A-Za-z0-9_.-]{1,100})\/([A-Za-z0-9_.-]{1,100})$/,
+          )
+        : null;
+    if (
+      planeRoute === null ||
+      planeRoute === undefined ||
+      input.plane === undefined
+    ) {
       json(response, 404, { status: "not-found" });
       return;
     }
@@ -826,13 +868,35 @@ export function createPlaneWebhookRequestListener(input: {
     }
 
     try {
-      const result = await input.process({
-        rawBody: await readRawBody(request),
-        headers: {
-          delivery: requiredHeader(request, "x-plane-delivery"),
-          event: requiredHeader(request, "x-plane-event"),
-          signature: requiredHeader(request, "x-plane-signature"),
-        },
+      const repository = `${planeRoute[1]}/${planeRoute[2]}`;
+      let webhookSecret: string;
+      try {
+        webhookSecret = input.plane.resolveSecret(repository);
+      } catch {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      const rawBody = await readRawBody(request);
+      const headers = {
+        delivery: requiredHeader(request, "x-plane-delivery"),
+        event: requiredHeader(request, "x-plane-event"),
+        signature: requiredHeader(request, "x-plane-signature"),
+      };
+      if (
+        !verifyPlaneWebhookSignature({
+          rawBody,
+          secret: webhookSecret,
+          signature: headers.signature,
+        })
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      const result = await input.plane.process({
+        repository,
+        rawBody,
+        webhookSecret,
+        headers,
       });
       if (result.status === "busy") {
         const seconds = Math.max(

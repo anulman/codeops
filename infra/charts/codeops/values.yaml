@@ -53,6 +53,7 @@ githubController:
   configSecretName: codeops-controller-config
   secretName: codeops-controller-secrets
   repositoryAuthoritySecretName: codeops-repository-controller-authority
+  repositoryContexts: []
   storageClassName: ""
   storage: 2Gi
   resources:

@@ -131,11 +131,13 @@ export async function recordTransition(
           workspaceId: workItem.codingRequest.workspaceId,
           projectId: workItem.codingRequest.projectId,
           workItemId: workItem.codingRequest.workItem.workItemId,
+          repository: workItem.codingRequest.workItem.repository,
         }
       : {
           workspaceId: workItem.researchRequest.workspaceId,
           projectId: workItem.researchRequest.projectId,
           workItemId: workItem.researchRequest.workItemId,
+          repository: workItem.researchRequest.repository,
         };
   const endpoint = new URL(
     "/v1/workflow-transitions",

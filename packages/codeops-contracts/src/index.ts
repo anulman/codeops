@@ -1590,6 +1590,7 @@ export const workflowTransitionNoticeSchema = z
     workspaceId: uuid,
     projectId: uuid,
     workItemId: uuid,
+    repository,
     workflowId: workflowRunIdentifier,
     state: z.enum(["completed", "failed", "cancelled"]),
     sequence: z.number().int().positive(),

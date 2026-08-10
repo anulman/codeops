@@ -19,6 +19,51 @@ const secretFilePathSchema = z
     "repository registry secret path must be an exact absolute path",
   );
 
+const planeAuthorityReferenceSchema = z
+  .object({
+    apiOrigin: z.string().min(1).max(1_024),
+    workspaceSlug: z.string().min(1).max(63),
+    workspaceId: z.string().uuid(),
+    projectId: z.string().uuid(),
+    apiKeyFile: secretFilePathSchema,
+    webhookSecretFile: secretFilePathSchema,
+    stateIds: z
+      .object({
+        ready: z.string().uuid(),
+        inProgress: z.string().uuid(),
+        needsAttention: z.string().uuid(),
+        complete: z.string().uuid(),
+      })
+      .strict(),
+  })
+  .strict();
+
+const repositoryPolicyReferenceSchema = z
+  .object({
+    githubReviewerIds: z.array(z.number().int().positive()).min(1).max(100),
+    planeHumanActorIds: z.array(z.string().uuid()).min(1).max(100),
+    planePersonas: z
+      .array(
+        z
+          .object({
+            userId: z.string().uuid(),
+            handle: z.enum([
+              "@ai-web",
+              "@ai-security",
+              "@ai-database",
+              "@ai-infra",
+              "@ai-design",
+              "@ai-product",
+              "@ai-ml",
+            ]),
+          })
+          .strict(),
+      )
+      .length(7),
+    projectContextRoot: secretFilePathSchema,
+  })
+  .strict();
+
 const steeringRegistrySchema = z
   .object({
     version: z.literal("codeops.repository-registry/v1"),
@@ -32,6 +77,8 @@ const steeringRegistrySchema = z
             writeTokenFile: secretFilePathSchema,
             githubWebhookSecretFile: secretFilePathSchema.optional(),
             githubSteeringTokenFile: secretFilePathSchema,
+            plane: planeAuthorityReferenceSchema.optional(),
+            policy: repositoryPolicyReferenceSchema.optional(),
           })
           .strict(),
       )
@@ -133,11 +180,7 @@ export async function loadGitHubSteeringRegistryFile(
   const normalizedPath = secretFilePathSchema.parse(filePath);
   const manifest = steeringRegistrySchema.parse(
     JSON.parse(
-      await readBoundedText(
-        normalizedPath,
-        MAX_REGISTRY_BYTES,
-        readTextFile,
-      ),
+      await readBoundedText(normalizedPath, MAX_REGISTRY_BYTES, readTextFile),
     ) as unknown,
   );
   const allSecretFiles = new Set<string>();
@@ -154,6 +197,9 @@ export async function loadGitHubSteeringRegistryFile(
         ? []
         : [entry.githubWebhookSecretFile]),
       entry.githubSteeringTokenFile,
+      ...(entry.plane === undefined
+        ? []
+        : [entry.plane.apiKeyFile, entry.plane.webhookSecretFile]),
     ]) {
       if (allSecretFiles.has(secretPath)) {
         throw new Error(

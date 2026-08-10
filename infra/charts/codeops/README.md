@@ -27,27 +27,38 @@ release boundary must create these Secrets:
   database role;
 - `codeops-model-proxy-credentials`: `openai-api-key`, `signing-key`;
 - `codeops-access`: `audience`, `allowed-emails`.
-- `codeops-controller-secrets`: `plane-api-key`, `plane-webhook-secret`,
-  `research-projection-token`, `repository-head-token`.
+- `codeops-controller-secrets`: `research-projection-token`,
+  `repository-head-token`.
 - `codeops-controller-config`: the controller's non-file runtime
-  configuration, including Temporal, Plane, repository, actor, persona, and
-  lifecycle state identities.
+  configuration, including Temporal, internal service origins, the control
+  plane source SHA, and durable-state settings. Repository, Plane, actor,
+  persona, project, and lifecycle identities belong in the registry.
 - `codeops-repository-controller-authority`: `registry.json` plus only the
-  repository-scoped GitHub webhook secret and session steering token files
-  referenced by that manifest. Use schema
+  repository-scoped GitHub webhook secret, session steering token, Plane API
+  key, and Plane webhook secret files referenced by that manifest. Use schema
   `codeops.repository-registry/v1`. Keep the read-token and write-token file
   references in the manifest, but do not include those credentials in this
-  Secret. The webhook controller must not receive repository read or write
+  Secret. Each repository entry must bind one Plane API origin, workspace,
+  project, Ready/In Progress/Needs attention/Complete state set, and Plane
+  credential file pair. The controller must not receive repository read or write
   authority. Do not put credentials inline. Do not reuse a Secret key or
   credential value across repositories or authority types.
 - `codeops-repository-steering`: `registry.json` plus only the repository-scoped
   session steering token files referenced by that manifest. It must not include
   GitHub webhook, repository read, or repository write credentials.
+- one project-context Secret per repository. Each Secret contains `AGENTS.md`,
+  `SOUL.md`, `CURRENT-STATE.md`, `DECISIONS.md`, `DOMAIN.md`, `PRODUCT.md`, and
+  `SOURCE-MAP.md`. Add its Secret name and a unique lowercase directory to
+  `githubController.repositoryContexts`. Set the manifest's
+  `policy.projectContextRoot` to
+  `/var/run/secrets/<full-name>-contexts/<directory>`.
 - `codeops-runtime-source`: `repository-read-token`. Only the trusted
   root-session Job uses this read-only source credential.
 
-The GitHub webhook controller is a separate HMAC-authenticated process. It
-selects the signing key from the untrusted payload's bounded repository
+The controller is a separate HMAC-authenticated process. Plane webhooks use
+`/webhooks/plane/{owner}/{repository}`. The route selects the repository's
+Plane webhook secret before payload processing. GitHub webhooks
+select the signing key from the untrusted payload's bounded repository
 identity, verifies the exact raw body, and then admits the parsed event. An
 unknown repository or a signature from another repository fails closed. The
 controller and gateway select the same repository-specific steering token and

@@ -20,6 +20,51 @@ const secretFilePathSchema = z
     "repository registry secret path must be an exact absolute path",
   );
 
+const planeAuthorityReferenceSchema = z
+  .object({
+    apiOrigin: z.string().min(1).max(1_024),
+    workspaceSlug: z.string().min(1).max(63),
+    workspaceId: z.string().uuid(),
+    projectId: z.string().uuid(),
+    apiKeyFile: secretFilePathSchema,
+    webhookSecretFile: secretFilePathSchema,
+    stateIds: z
+      .object({
+        ready: z.string().uuid(),
+        inProgress: z.string().uuid(),
+        needsAttention: z.string().uuid(),
+        complete: z.string().uuid(),
+      })
+      .strict(),
+  })
+  .strict();
+
+const repositoryPolicyReferenceSchema = z
+  .object({
+    githubReviewerIds: z.array(z.number().int().positive()).min(1).max(100),
+    planeHumanActorIds: z.array(z.string().uuid()).min(1).max(100),
+    planePersonas: z
+      .array(
+        z
+          .object({
+            userId: z.string().uuid(),
+            handle: z.enum([
+              "@ai-web",
+              "@ai-security",
+              "@ai-database",
+              "@ai-infra",
+              "@ai-design",
+              "@ai-product",
+              "@ai-ml",
+            ]),
+          })
+          .strict(),
+      )
+      .length(7),
+    projectContextRoot: secretFilePathSchema,
+  })
+  .strict();
+
 const repositoryRegistryFileSchema = z
   .object({
     version: z.literal("codeops.repository-registry/v1"),
@@ -33,6 +78,8 @@ const repositoryRegistryFileSchema = z
             writeTokenFile: secretFilePathSchema,
             githubWebhookSecretFile: secretFilePathSchema.optional(),
             githubSteeringTokenFile: secretFilePathSchema.optional(),
+            plane: planeAuthorityReferenceSchema.optional(),
+            policy: repositoryPolicyReferenceSchema.optional(),
           })
           .strict(),
       )
@@ -90,7 +137,9 @@ export function createRepositoryRegistry(
   entries: readonly RepositoryAuthority[],
 ): RepositoryRegistry {
   if (entries.length === 0 || entries.length > 100) {
-    throw new Error("repository registry must contain between 1 and 100 repositories");
+    throw new Error(
+      "repository registry must contain between 1 and 100 repositories",
+    );
   }
   const byRepository = new Map<string, RepositoryAuthority>();
   const credentials = new Set<string>();
@@ -130,7 +179,9 @@ export function createRepositoryRegistry(
       new Set(repositoryCredentials).size !== repositoryCredentials.length ||
       repositoryCredentials.some((credential) => credentials.has(credential))
     ) {
-      throw new Error("repository registry credentials must be repository-scoped");
+      throw new Error(
+        "repository registry credentials must be repository-scoped",
+      );
     }
     for (const credential of repositoryCredentials) credentials.add(credential);
     byRepository.set(entry.repository, {
@@ -147,7 +198,9 @@ export function createRepositoryRegistry(
     resolve(repository) {
       const authority = byRepository.get(repository);
       if (authority === undefined) {
-        throw new Error("repository is not admitted by the repository registry");
+        throw new Error(
+          "repository is not admitted by the repository registry",
+        );
       }
       return authority;
     },
@@ -174,11 +227,7 @@ export async function loadRepositoryRegistryFile(
   const normalizedPath = secretFilePathSchema.parse(filePath);
   const manifest = repositoryRegistryFileSchema.parse(
     JSON.parse(
-      await readBoundedText(
-        normalizedPath,
-        MAX_REGISTRY_BYTES,
-        readTextFile,
-      ),
+      await readBoundedText(normalizedPath, MAX_REGISTRY_BYTES, readTextFile),
     ) as unknown,
   );
   const secretFiles = new Set<string>();
@@ -192,6 +241,9 @@ export async function loadRepositoryRegistryFile(
       ...(entry.githubSteeringTokenFile === undefined
         ? []
         : [entry.githubSteeringTokenFile]),
+      ...(entry.plane === undefined
+        ? []
+        : [entry.plane.apiKeyFile, entry.plane.webhookSecretFile]),
     ];
     if (
       entry.readTokenFile === entry.writeTokenFile ||

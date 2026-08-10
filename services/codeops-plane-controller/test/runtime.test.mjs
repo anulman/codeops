@@ -44,12 +44,13 @@ test("resolves one repository head through an exact repository-qualified route",
     origin: "http://codeops-control-gateway:8080",
     token: "r".repeat(64),
     repository: "anulman/codeops",
-    fetch: async () => Response.json({
-      version: "codeops.repository-head/v1",
-      repository: "anulman/renoconcierge",
-      ref: "refs/heads/main",
-      sha: "a".repeat(40),
-    }),
+    fetch: async () =>
+      Response.json({
+        version: "codeops.repository-head/v1",
+        repository: "anulman/renoconcierge",
+        ref: "refs/heads/main",
+        sha: "a".repeat(40),
+      }),
   });
   await assert.rejects(drifted(), /response is invalid/);
 });
@@ -86,15 +87,16 @@ test("resolves the current pull-request head only through the bounded reader", a
   const mismatched = createGitHubCurrentPullRequestResolver({
     origin: "http://codeops-control-gateway:8080",
     token: "r".repeat(64),
-    fetch: async () => Response.json({
-      version: "codeops.github-current-pull-request/v1",
-      repository: "anulman/renoconcierge",
-      number: 160,
-      state: "open",
-      headSha: "b".repeat(40),
-      headRef: "feat/agents-ui",
-      baseRef: "feat/codeops-contracts-ci",
-    }),
+    fetch: async () =>
+      Response.json({
+        version: "codeops.github-current-pull-request/v1",
+        repository: "anulman/renoconcierge",
+        number: 160,
+        state: "open",
+        headSha: "b".repeat(40),
+        headRef: "feat/agents-ui",
+        baseRef: "feat/codeops-contracts-ci",
+      }),
   });
   await assert.rejects(
     mismatched({ repository: "anulman/renoconcierge", number: 159 }),
@@ -107,9 +109,7 @@ test("projects one normalized GitHub event only through the internal session gat
   const steer = createGitHubSessionSteeringClient({
     origin: "http://agents-session-control-gateway:8080",
     resolveToken: (repository) =>
-      repository === "anulman/renoconcierge"
-        ? "s".repeat(64)
-        : "c".repeat(64),
+      repository === "anulman/renoconcierge" ? "s".repeat(64) : "c".repeat(64),
     fetch: async (url, init) => {
       seen.push({ url: String(url), init });
       const body = JSON.parse(init.body);
@@ -178,10 +178,11 @@ test("projects one normalized GitHub event only through the internal session gat
   });
   assert.equal(seen[1].init.headers.Authorization, `Bearer ${"c".repeat(64)}`);
   assert.throws(
-    () => createGitHubSessionSteeringClient({
-      origin: "https://agents.renoconcierge.ca",
-      resolveToken: () => "s".repeat(64),
-    }),
+    () =>
+      createGitHubSessionSteeringClient({
+        origin: "https://agents.renoconcierge.ca",
+        resolveToken: () => "s".repeat(64),
+      }),
     /internal session gateway/,
   );
 });
@@ -492,13 +493,13 @@ test("keeps terminal workflow projection internal and contract-bound", async () 
     workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",
     projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
     workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
+    repository: { owner: "anulman", name: "renoconcierge" },
     workflowId: "coding-123",
     state: "failed",
     sequence: 4,
     summary: "Agent Job dispatch failed closed before workload execution",
   };
   const listener = createPlaneWebhookRequestListener({
-    process: async () => ({ status: "ignored" }),
     transitionProjection: {
       token,
       process: async (value) => {
@@ -546,14 +547,23 @@ test("keeps terminal workflow projection internal and contract-bound", async () 
 
 test("serves health and preserves the exact raw Plane body and headers", async () => {
   const seen = [];
+  const secret = "p".repeat(64);
+  const codeopsSecret = "c".repeat(64);
   const listener = createPlaneWebhookRequestListener({
-    process: async (input) => {
-      seen.push(input);
-      return {
-        status: "enqueued",
-        requestId: request.requestId,
-        duplicate: false,
-      };
+    plane: {
+      resolveSecret: (repository) => {
+        if (repository === "anulman/renoconcierge") return secret;
+        if (repository === "anulman/codeops") return codeopsSecret;
+        throw new Error("unknown");
+      },
+      process: async (input) => {
+        seen.push(input);
+        return {
+          status: "enqueued",
+          requestId: request.requestId,
+          duplicate: false,
+        };
+      },
     },
   });
   const server = createServer((incoming, response) => {
@@ -568,24 +578,75 @@ test("serves health and preserves the exact raw Plane body and headers", async (
     assert.equal(health.status, 200);
 
     const rawBody = '{"spacing":  "must survive"}';
-    const response = await fetch(`${origin}/webhooks/plane`, {
+    const legacy = await fetch(`${origin}/webhooks/plane`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        "X-Plane-Delivery": "delivery",
-        "X-Plane-Event": "event",
-        "X-Plane-Signature": "signature",
-      },
+      headers: { "Content-Type": "application/json" },
       body: rawBody,
     });
+    assert.equal(legacy.status, 404);
+    const unknown = await fetch(`${origin}/webhooks/plane/anulman/unknown`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: rawBody,
+    });
+    assert.equal(unknown.status, 401);
+    const wrongSignature = await fetch(
+      `${origin}/webhooks/plane/anulman/renoconcierge`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Plane-Delivery": "delivery",
+          "X-Plane-Event": "event",
+          "X-Plane-Signature": "0".repeat(64),
+        },
+        body: rawBody,
+      },
+    );
+    assert.equal(wrongSignature.status, 401);
+    const response = await fetch(
+      `${origin}/webhooks/plane/anulman/renoconcierge`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Plane-Delivery": "delivery",
+          "X-Plane-Event": "event",
+          "X-Plane-Signature": createHmac("sha256", secret)
+            .update(rawBody)
+            .digest("hex"),
+        },
+        body: rawBody,
+      },
+    );
     assert.equal(response.status, 200);
     assert.equal(seen.length, 1);
     assert.equal(seen[0].rawBody.toString("utf8"), rawBody);
+    assert.equal(seen[0].repository, "anulman/renoconcierge");
+    assert.equal(seen[0].webhookSecret, secret);
     assert.deepEqual(seen[0].headers, {
       delivery: "delivery",
       event: "event",
-      signature: "signature",
+      signature: createHmac("sha256", secret).update(rawBody).digest("hex"),
     });
+    const codeopsResponse = await fetch(
+      `${origin}/webhooks/plane/anulman/codeops`,
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "X-Plane-Delivery": "delivery-codeops",
+          "X-Plane-Event": "event",
+          "X-Plane-Signature": createHmac("sha256", codeopsSecret)
+            .update(rawBody)
+            .digest("hex"),
+        },
+        body: rawBody,
+      },
+    );
+    assert.equal(codeopsResponse.status, 200);
+    assert.equal(seen[1].repository, "anulman/codeops");
+    assert.equal(seen[1].webhookSecret, codeopsSecret);
   } finally {
     server.close();
     await once(server, "close");
@@ -613,7 +674,6 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
     .update(body)
     .digest("hex")}`;
   const listener = createPlaneWebhookRequestListener({
-    process: async () => ({ status: "ignored" }),
     github: {
       resolveSecret: (repository) => {
         if (repository !== "anulman/renoconcierge") {
@@ -736,16 +796,23 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
 });
 
 test("returns retry guidance for busy claims and hides processing failures", async () => {
+  const secret = "p".repeat(64);
   const busyListener = createPlaneWebhookRequestListener({
-    process: async () => ({
-      status: "busy",
-      scope: "event",
-      leaseExpiresAt: new Date(Date.now() + 5_000).toISOString(),
-    }),
+    plane: {
+      resolveSecret: () => secret,
+      process: async () => ({
+        status: "busy",
+        scope: "event",
+        leaseExpiresAt: new Date(Date.now() + 5_000).toISOString(),
+      }),
+    },
   });
   const failingListener = createPlaneWebhookRequestListener({
-    process: async () => {
-      throw new Error("sensitive upstream detail");
+    plane: {
+      resolveSecret: () => secret,
+      process: async () => {
+        throw new Error("sensitive upstream detail");
+      },
     },
   });
 
@@ -761,14 +828,16 @@ test("returns retry guidance for busy claims and hides processing failures", asy
     try {
       const address = server.address();
       const response = await fetch(
-        `http://127.0.0.1:${address.port}/webhooks/plane`,
+        `http://127.0.0.1:${address.port}/webhooks/plane/anulman/renoconcierge`,
         {
           method: "POST",
           headers: {
             "Content-Type": "application/json",
             "X-Plane-Delivery": "delivery",
             "X-Plane-Event": "event",
-            "X-Plane-Signature": "signature",
+            "X-Plane-Signature": createHmac("sha256", secret)
+              .update("{}")
+              .digest("hex"),
           },
           body: "{}",
         },
@@ -786,7 +855,6 @@ test("keeps research projection internal and exact-bearer authenticated", async 
   const packets = [];
   const token = "p".repeat(64);
   const listener = createPlaneWebhookRequestListener({
-    process: async () => ({ status: "ignored" }),
     projection: {
       token,
       process: async (packet) => {

@@ -41,7 +41,8 @@ This service owns the privileged Plane integration boundary. It implements:
 - claim both stable identities before enqueue, use the research request ID as
   the deterministic workflow ID, reconcile an already-enqueued request after a
   crash, and persist `request-enqueued` before acknowledging a retry;
-- accept only raw JSON `POST /webhooks/plane` requests using Plane's documented
+- accept only raw JSON `POST /webhooks/plane/{owner}/{repository}` requests
+  using Plane's documented
   delivery, event, and signature headers, with a 1 MiB body limit and a
   separate credential-free `/healthz` liveness route;
 - consume Plane CE's live issue-update shape (`action: updated`,

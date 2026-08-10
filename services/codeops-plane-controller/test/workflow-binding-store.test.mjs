@@ -10,6 +10,7 @@ const binding = {
   workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",
   projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
   workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
+  repository: "anulman/renoconcierge",
   workflowId: "coding-123",
   status: "active",
   baseSha: "a".repeat(40),
@@ -63,6 +64,14 @@ test("fails closed on workflow identity drift and unsafe roots", async () => {
         updatedAt: "2026-07-30T22:00:00.000Z",
       }),
       /only a terminal workflow/,
+    );
+    await assert.rejects(
+      store.put({
+        ...binding,
+        repository: "anulman/codeops",
+        updatedAt: "2026-07-30T22:00:00.000Z",
+      }),
+      /identity is immutable/,
     );
   });
 });

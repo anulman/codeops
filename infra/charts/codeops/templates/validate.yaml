@@ -13,3 +13,16 @@
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .Values.gateway.repositorySteeringRegistrySecretName) -}}
 {{- fail "gateway.repositorySteeringRegistrySecretName must be one Kubernetes Secret name" -}}
 {{- end -}}
+{{- $contextDirectories := dict -}}
+{{- range .Values.githubController.repositoryContexts -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" .directory) -}}
+{{- fail "githubController.repositoryContexts directory must be one lowercase path component" -}}
+{{- end -}}
+{{- if hasKey $contextDirectories .directory -}}
+{{- fail "githubController.repositoryContexts directories must be unique" -}}
+{{- end -}}
+{{- $_ := set $contextDirectories .directory true -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .secretName) -}}
+{{- fail "githubController.repositoryContexts secretName must be one Kubernetes Secret name" -}}
+{{- end -}}
+{{- end -}}

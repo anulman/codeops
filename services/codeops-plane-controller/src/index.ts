@@ -59,6 +59,12 @@ export {
   type GitHubWebhookRegistry,
 } from "./repository-webhooks.js";
 export {
+  createRepositoryPlaneRegistry,
+  loadRepositoryPlaneRegistryFile,
+  type RepositoryPlaneAuthority,
+  type RepositoryPlaneRegistry,
+} from "./repository-plane.js";
+export {
   reconcileGitHubPullRequestMergeGroup,
   reconcileGitHubPullRequestEvent,
   type GitHubReconciliationResult,
@@ -752,6 +758,7 @@ export function identifyPlaneReadyTransition(input: {
   | {
       payload: z.infer<typeof planeCeIssueWebhookSchema>;
       eventId: string;
+      workspaceId: string;
       projectId: string;
       workItemId: string;
     }
@@ -766,6 +773,7 @@ export function identifyPlaneReadyTransition(input: {
   return {
     payload: transition.payload,
     eventId: transition.eventId.replace("state-event:", "ready-event:"),
+    workspaceId: transition.workspaceId,
     projectId: transition.projectId,
     workItemId: transition.workItemId,
   };

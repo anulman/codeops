@@ -10,6 +10,9 @@ export const storedWorkflowBindingSchema = z
     workspaceId: uuid,
     projectId: uuid,
     workItemId: uuid,
+    repository: z
+      .string()
+      .regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/),
     workflowId: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
     status: z.enum(["active", "terminal"]),
     baseSha: z.string().regex(/^[0-9a-f]{40}$/),
@@ -45,7 +48,9 @@ export function createFileWorkflowBindingStore(input: {
   function recordPath(workItemId: string): string {
     return path.join(input.rootDirectory, `${uuid.parse(workItemId)}.json`);
   }
-  async function read(workItemId: string): Promise<StoredWorkflowBinding | null> {
+  async function read(
+    workItemId: string,
+  ): Promise<StoredWorkflowBinding | null> {
     try {
       const record = storedWorkflowBindingSchema.parse(
         JSON.parse(await readFile(recordPath(workItemId), "utf8")) as unknown,
@@ -55,7 +60,11 @@ export function createFileWorkflowBindingStore(input: {
       }
       return record;
     } catch (error) {
-      if (error instanceof Error && "code" in error && error.code === "ENOENT") {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        error.code === "ENOENT"
+      ) {
         return null;
       }
       throw error;
@@ -70,7 +79,8 @@ export function createFileWorkflowBindingStore(input: {
         if (JSON.stringify(existing) === JSON.stringify(binding)) return;
         if (
           existing.workspaceId !== binding.workspaceId ||
-          existing.projectId !== binding.projectId
+          existing.projectId !== binding.projectId ||
+          existing.repository !== binding.repository
         ) {
           throw new Error("workflow binding identity is immutable");
         }

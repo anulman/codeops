@@ -318,6 +318,7 @@ test("projects terminal coding failure to the authenticated Plane boundary", asy
       projectId: "11111111-1111-4111-8111-111111111111",
       workItem: {
         workItemId: "22222222-2222-4222-8222-222222222222",
+        repository: { owner: "anulman", name: "renoconcierge" },
       },
     },
   };
@@ -338,6 +339,7 @@ test("projects terminal coding failure to the authenticated Plane boundary", asy
         version: "codeops.workflow-transition-notice/v1",
         workspaceId: "55555555-5555-4555-8555-555555555555",
         projectId: "11111111-1111-4111-8111-111111111111",
+        repository: { owner: "anulman", name: "renoconcierge" },
         workItemId: "22222222-2222-4222-8222-222222222222",
         workflowId: "coding-123",
         state: "failed",

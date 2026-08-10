@@ -40,9 +40,11 @@ Each admitted repository has a distinct read and write authority. An unknown
 repository, a duplicate identity, an identity/URL mismatch, or credential
 reuse fails closed. The process entrypoint accepts
 `CODEOPS_REPOSITORY_REGISTRY_FILE` as an exact absolute path to a strict
-`codeops.repository-registry/v1` JSON manifest. The manifest contains only
-repository identities, exact GitHub HTTPS URLs, and absolute read/write token
-file references. It rejects inline credentials, ambiguous paths, reused Secret
-files, and reused credential values at startup. The legacy single-repository
-environment variables remain as a compatibility fallback for GitHub routes
-that are not repository-aware yet.
+`codeops.repository-registry/v1` JSON manifest. Each entry binds one repository
+to exact GitHub URLs and credential file references, one Plane project and
+credential pair, lifecycle state IDs, reviewer and human-actor policy, all
+seven persona identities, and one project-context root. It rejects inline
+credentials, ambiguous paths, duplicate projects, reused Secret files, reused
+credential values, and cross-repository identity drift at startup. The legacy
+single-repository environment variables remain only as an explicit
+compatibility fallback when no registry file is configured.
