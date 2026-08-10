@@ -31,6 +31,22 @@ gateway:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: "1", memory: 512Mi }
 
+controlGateway:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/codeops/control-gateway
+    digest: ""
+  secretName: codeops-control-gateway-secrets
+  repositoryAuthoritySecretName: codeops-repository-runtime-authority
+  requiredReviewCheckNames: "CI"
+  workerId: codeops:runtime-worker
+  storageClassName: ""
+  storage: 2Gi
+  kubernetesApiCidrs: []
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
 modelProxy:
   replicas: 1
   image:
@@ -60,6 +76,20 @@ githubController:
     requests: { cpu: 50m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
 
+orchestrator:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/codeops/orchestrator
+    digest: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+temporal:
+  address: ""
+  namespace: codeops
+  taskQueue: codeops
+
 postgresql:
   image:
     repository: postgres
@@ -77,6 +107,9 @@ runtime:
     digest: ""
   agentImage:
     repository: ghcr.io/anulman/codeops/agent
+    digest: ""
+  sessionGatewayImage:
+    repository: ghcr.io/anulman/codeops/session-gateway
     digest: ""
 
 ingress:

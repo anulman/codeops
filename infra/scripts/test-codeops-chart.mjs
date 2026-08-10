@@ -7,17 +7,23 @@ const chart = "infra/charts/codeops";
 const digestSets = [
   "agentsUi.image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "gateway.image.digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "controlGateway.image.digest=sha256:1212121212121212121212121212121212121212121212121212121212121212",
+  "orchestrator.image.digest=sha256:3434343434343434343434343434343434343434343434343434343434343434",
   "githubController.image.digest=sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   "githubController.controlPlaneSha=1111111111111111111111111111111111111111",
   "postgresql.image.digest=sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
   "runtime.workerImage.digest=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "runtime.agentImage.digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+  "runtime.sessionGatewayImage.digest=sha256:5656565656565656565656565656565656565656565656565656565656565656",
   "modelProxy.image.digest=sha256:9999999999999999999999999999999999999999999999999999999999999999",
   "agentsUi.access.issuer=https://example.cloudflareaccess.com",
   "ingress.host=codeops.example.net",
   "agentsUi.access.secretName=team-a-codeops-access",
   "gateway.secretName=team-a-codeops-session-secrets",
   "gateway.repositorySteeringRegistrySecretName=team-a-codeops-repository-steering",
+  "controlGateway.secretName=team-a-codeops-control-gateway-secrets",
+  "controlGateway.repositoryAuthoritySecretName=team-a-codeops-repository-runtime-authority",
+  "controlGateway.kubernetesApiCidrs[0]=10.43.0.1/32",
   "modelProxy.secretName=team-a-codeops-model-proxy-credentials",
   "githubController.configSecretName=team-a-codeops-controller-config",
   "githubController.secretName=team-a-codeops-controller-secrets",
@@ -27,6 +33,7 @@ const digestSets = [
   "githubController.repositoryContexts[1].directory=codeops",
   "githubController.repositoryContexts[1].secretName=team-a-codeops-context",
   "postgresql.secretName=team-a-codeops-postgres",
+  "temporal.address=temporal.engineering.svc:7233",
 ];
 
 function helm(args) {
@@ -59,7 +66,7 @@ function resource(resources, kind, name) {
 
 test("renders one portable CodeOps package with immutable images", () => {
   const resources = render();
-  assert.ok(resources.length >= 21);
+  assert.ok(resources.length >= 30);
   for (const candidate of resources) {
     assert.equal(candidate.metadata?.namespace, "engineering");
     assert.notEqual(candidate.kind, "Secret");
@@ -69,13 +76,22 @@ test("renders one portable CodeOps package with immutable images", () => {
     ...(candidate.spec?.template?.spec?.containers ?? []),
     ...(candidate.spec?.template?.spec?.initContainers ?? []),
   ]).map((container) => container.image).filter(Boolean);
-  assert.equal(images.length, 6);
+  assert.equal(images.length, 8);
   assert.ok(images.every((image) => /@sha256:[0-9a-f]{64}$/.test(image)));
 
   resource(resources, "StatefulSet", "team-a-codeops-postgresql");
   resource(resources, "Deployment", "team-a-codeops-session-gateway");
   resource(resources, "Deployment", "team-a-codeops-github-controller");
   resource(resources, "Deployment", "team-a-codeops-agents-ui");
+  const controlGateway = resource(resources, "Deployment", "team-a-codeops-control-gateway");
+  const orchestrator = resource(resources, "Deployment", "team-a-codeops-orchestrator");
+  resource(resources, "Service", "team-a-codeops-control-gateway");
+  resource(resources, "PersistentVolumeClaim", "team-a-codeops-control-gateway-evidence");
+  resource(resources, "Role", "team-a-codeops-control-gateway");
+  resource(resources, "RoleBinding", "team-a-codeops-control-gateway");
+  assert.match(JSON.stringify(controlGateway), /team-a-codeops-repository-runtime-authority/);
+  assert.doesNotMatch(JSON.stringify(controlGateway), /CODEOPS_REPOSITORY_(URL|READ_TOKEN|WRITE_TOKEN)/);
+  assert.match(JSON.stringify(orchestrator), /temporal\.engineering\.svc:7233/);
   const modelProxy = resource(resources, "Deployment", "team-a-codeops-model-proxy");
   const proxySource = JSON.stringify(modelProxy);
   assert.match(proxySource, /team-a-codeops-model-proxy-credentials/);
@@ -96,11 +112,16 @@ test("renders one portable CodeOps package with immutable images", () => {
   );
   assert.equal(resources.some(({ metadata }) => metadata?.name === "team-a-codeops-codex-auth"), false);
   resource(resources, "PersistentVolumeClaim", "team-a-codeops-controller-state");
-  resource(resources, "ConfigMap", "team-a-codeops-runtime-images");
-  for (const name of ["agents-ui", "session-gateway", "github-controller", "runtime", "model-proxy"]) {
+  const runtimeImages = resource(resources, "ConfigMap", "team-a-codeops-runtime-images");
+  for (const value of Object.values(runtimeImages.data)) {
+    if (value.includes("ghcr.io/")) assert.match(value, /@sha256:[0-9a-f]{64}$/);
+  }
+  for (const name of ["agents-ui", "session-gateway", "github-controller", "orchestrator", "runtime", "model-proxy"]) {
     const account = resource(resources, "ServiceAccount", `team-a-codeops-${name}`);
     assert.equal(account.automountServiceAccountToken, false);
   }
+  const controlGatewayAccount = resource(resources, "ServiceAccount", "team-a-codeops-control-gateway");
+  assert.notEqual(controlGatewayAccount.automountServiceAccountToken, false);
 });
 
 test("exposes only the Agents UI and requires signed Access configuration", () => {
@@ -170,6 +191,10 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
     "http://team-a-codeops-session-control-gateway:8080",
   );
   assert.equal(
+    controllerEnv.get("CODEOPS_REPOSITORY_HEAD_ORIGIN").value,
+    "http://team-a-codeops-control-gateway:8080",
+  );
+  assert.equal(
     controllerEnv.get("CODEOPS_REPOSITORY_REGISTRY_FILE").value,
     "/var/run/secrets/team-a-codeops-repositories/registry.json",
   );
@@ -222,7 +247,7 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
 test("defaults to deny and opens only explicit component paths", () => {
   const resources = render();
   const policies = resources.filter(({ kind }) => kind === "NetworkPolicy");
-  assert.equal(policies.length, 8);
+  assert.equal(policies.length, 10);
   const deny = resource(resources, "NetworkPolicy", "team-a-codeops-default-deny");
   assert.deepEqual(deny.spec.podSelector, {});
   assert.deepEqual(deny.spec.policyTypes, ["Ingress", "Egress"]);
@@ -234,6 +259,12 @@ test("defaults to deny and opens only explicit component paths", () => {
   assert.ok(JSON.stringify(gateway).includes("team-a-codeops-postgresql"));
   const controller = resource(resources, "NetworkPolicy", "team-a-codeops-github-controller");
   assert.ok(JSON.stringify(controller).includes("team-a-codeops-session-gateway"));
+  assert.ok(JSON.stringify(controller).includes("team-a-codeops-control-gateway"));
+  const controlGateway = resource(resources, "NetworkPolicy", "team-a-codeops-control-gateway");
+  assert.ok(JSON.stringify(controlGateway).includes("10.43.0.1/32"));
+  assert.ok(JSON.stringify(controlGateway.spec.ingress).includes("orchestrator"));
+  const orchestrator = resource(resources, "NetworkPolicy", "team-a-codeops-orchestrator");
+  assert.ok(JSON.stringify(orchestrator).includes("team-a-codeops-control-gateway"));
   const migration = resource(resources, "NetworkPolicy", "team-a-codeops-session-migration");
   assert.ok(JSON.stringify(migration).includes("team-a-codeops-postgresql"));
   assert.deepEqual(
@@ -261,6 +292,9 @@ test("accepts arbitrary namespaces and fails closed on invalid configuration", (
     ["--namespace", "engineering", "--set", "githubController.controlPlaneSha=main"],
     ["--namespace", "engineering", "--set", "githubController.repositoryAuthoritySecretName=Invalid_Name"],
     ["--namespace", "engineering", "--set", "gateway.repositorySteeringRegistrySecretName=Invalid_Name"],
+    ["--namespace", "engineering", "--set", "controlGateway.kubernetesApiCidrs={}"],
+    ["--namespace", "engineering", "--set", "controlGateway.kubernetesApiCidrs[0]=not-a-cidr"],
+    ["--namespace", "engineering", "--set", "temporal.address=missing-port"],
     ["--namespace", "engineering", "--set", "githubController.repositoryContexts[0].directory=../escape"],
   ];
   for (const extra of cases) {

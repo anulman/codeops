@@ -46,8 +46,10 @@ jobs:
       matrix:
         image:
           - agent
+          - agents-ui
           - control-gateway
           - model-proxy
+          - orchestrator
           - plane-controller
           - session-control-gateway
           - session-gateway

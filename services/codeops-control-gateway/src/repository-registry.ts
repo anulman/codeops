@@ -107,6 +107,18 @@ export interface ResolvedRepositoryRoute {
   readonly path: string;
 }
 
+export async function loadConfiguredRepositoryRegistry(input: {
+  readonly registryFile?: string;
+  readonly loadRegistryFile?: (filePath: string) => Promise<RepositoryRegistry>;
+  readonly loadLegacy: () => Promise<RepositoryRegistry>;
+}): Promise<RepositoryRegistry> {
+  const registryFile = input.registryFile?.trim();
+  if (registryFile !== undefined && registryFile !== "") {
+    return (input.loadRegistryFile ?? loadRepositoryRegistryFile)(registryFile);
+  }
+  return input.loadLegacy();
+}
+
 function parseRepositoryUrl(value: string): string {
   const repositoryUrl = new URL(value);
   const match = repositoryUrl.pathname.match(

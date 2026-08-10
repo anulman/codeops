@@ -111,6 +111,10 @@ spec:
             matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway }
       ports: [{ protocol: TCP, port: 8080 }]
     - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-control-gateway }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
         - namespaceSelector: {}
       ports: [{ protocol: TCP, port: 7233 }]
     - to:
@@ -124,6 +128,75 @@ spec:
             cidr: 0.0.0.0/0
             except: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4]
       ports: [{ protocol: TCP, port: 443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "codeops.fullname" . }}-control-gateway
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-control-gateway }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [github-controller, orchestrator, runtime]
+      ports: [{ protocol: TCP, port: 8080 }]
+  egress:
+    {{- range .Values.controlGateway.kubernetesApiCidrs }}
+    - to: [{ ipBlock: { cidr: {{ . | quote }} } }]
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+    {{- end }}
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-postgresql }
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4]
+      ports: [{ protocol: TCP, port: 443 }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "codeops.fullname" . }}-orchestrator
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-orchestrator }
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-control-gateway }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-github-controller }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
+        - namespaceSelector: {}
+      ports: [{ protocol: TCP, port: 7233 }]
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -167,7 +240,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/component
                 operator: In
-                values: [session-gateway, runtime]
+                values: [session-gateway, control-gateway, runtime]
       ports: [{ protocol: TCP, port: 5432 }]
   egress: []
 ---

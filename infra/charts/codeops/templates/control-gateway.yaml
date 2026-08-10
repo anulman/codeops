@@ -1,0 +1,187 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "codeops.fullname" . }}-control-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-gateway
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "codeops.fullname" . }}-control-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [create, get, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create, get, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "codeops.fullname" . }}-control-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "codeops.fullname" . }}-control-gateway
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "codeops.fullname" . }}-control-gateway
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "codeops.fullname" . }}-control-gateway-evidence
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-gateway
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.controlGateway.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests: { storage: {{ .Values.controlGateway.storage }} }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "codeops.fullname" . }}-control-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-gateway
+spec:
+  replicas: {{ .Values.controlGateway.replicas }}
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-control-gateway }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "codeops.fullname" . }}-control-gateway
+        app.kubernetes.io/component: control-gateway
+        app.kubernetes.io/part-of: codeops
+    spec:
+      serviceAccountName: {{ include "codeops.fullname" . }}-control-gateway
+      enableServiceLinks: false
+      imagePullSecrets:
+        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: control-gateway
+          image: {{ include "codeops.image" .Values.controlGateway.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CODEOPS_NAMESPACE
+              valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
+            - { name: CODEOPS_AGENT_IMAGE, value: {{ include "codeops.image" .Values.runtime.agentImage | quote }} }
+            - { name: CODEOPS_SESSION_GATEWAY_IMAGE, value: {{ include "codeops.image" .Values.runtime.sessionGatewayImage | quote }} }
+            - { name: CODEOPS_DISPATCH_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/dispatch-token }
+            - { name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/repository-head-token }
+            - { name: CODEOPS_PUBLICATION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/publication-token }
+            - { name: CODEOPS_REPOSITORY_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-runtime-repositories/registry.json }
+            - { name: CODEOPS_REQUIRED_REVIEW_CHECK_NAMES, value: {{ .Values.controlGateway.requiredReviewCheckNames | quote }} }
+            - { name: CODEOPS_MODEL_PROXY_ORIGIN, value: http://{{ include "codeops.fullname" . }}-model-proxy:8080 }
+            - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy/signing-key }
+            - { name: CODEOPS_EVIDENCE_ROOT, value: /var/lib/codeops }
+            - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/codeops/database-url }
+            - { name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE, value: /var/run/secrets/codeops/read-token }
+            - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/codeops/write-token }
+            - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/codeops/runtime-worker-token }
+            - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/codeops/initialization-token }
+            - { name: CODEOPS_SESSION_RUNTIME_WORKER_ID, value: {{ .Values.controlGateway.workerId | quote }} }
+            - { name: CODEOPS_HTTP_HOST, value: 0.0.0.0 }
+            - { name: CODEOPS_HTTP_PORT, value: "8080" }
+          ports: [{ name: http, containerPort: 8080 }]
+          startupProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 2, failureThreshold: 60 }
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10, failureThreshold: 6 }
+          resources:
+            {{- toYaml .Values.controlGateway.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: evidence, mountPath: /var/lib/codeops }
+            - { name: control-gateway-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway, readOnly: true }
+            - { name: session-secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
+            - { name: repository-registry, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-runtime-repositories, readOnly: true }
+            - { name: model-proxy-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy, readOnly: true }
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - { name: evidence, persistentVolumeClaim: { claimName: {{ include "codeops.fullname" . }}-control-gateway-evidence } }
+        - name: control-gateway-auth
+          secret:
+            secretName: {{ .Values.controlGateway.secretName }}
+            defaultMode: 256
+            items:
+              - { key: dispatch-token, path: dispatch-token }
+              - { key: repository-head-token, path: repository-head-token }
+              - { key: publication-token, path: publication-token }
+        - name: session-secrets
+          secret:
+            secretName: {{ .Values.gateway.secretName }}
+            defaultMode: 256
+            items:
+              - { key: database-url, path: database-url }
+              - { key: read-token, path: read-token }
+              - { key: write-token, path: write-token }
+              - { key: runtime-worker-token, path: runtime-worker-token }
+              - { key: initialization-token, path: initialization-token }
+        - name: repository-registry
+          secret:
+            secretName: {{ .Values.controlGateway.repositoryAuthoritySecretName }}
+            defaultMode: 256
+        - name: model-proxy-auth
+          secret:
+            secretName: {{ .Values.modelProxy.secretName }}
+            defaultMode: 256
+            items:
+              - { key: signing-key, path: signing-key }
+        - name: temp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "codeops.fullname" . }}-control-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: control-gateway
+spec:
+  selector: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-control-gateway }
+  ports: [{ name: http, protocol: TCP, port: 8080, targetPort: http }]

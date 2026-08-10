@@ -13,6 +13,23 @@
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .Values.gateway.repositorySteeringRegistrySecretName) -}}
 {{- fail "gateway.repositorySteeringRegistrySecretName must be one Kubernetes Secret name" -}}
 {{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .Values.controlGateway.secretName) -}}
+{{- fail "controlGateway.secretName must be one Kubernetes Secret name" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .Values.controlGateway.repositoryAuthoritySecretName) -}}
+{{- fail "controlGateway.repositoryAuthoritySecretName must be one Kubernetes Secret name" -}}
+{{- end -}}
+{{- if eq (len .Values.controlGateway.kubernetesApiCidrs) 0 -}}
+{{- fail "controlGateway.kubernetesApiCidrs must contain the exact Kubernetes API endpoint CIDR" -}}
+{{- end -}}
+{{- range .Values.controlGateway.kubernetesApiCidrs -}}
+{{- if not (regexMatch "^[0-9]{1,3}(\\.[0-9]{1,3}){3}/[0-9]{1,2}$" .) -}}
+{{- fail "controlGateway.kubernetesApiCidrs entries must be IPv4 CIDRs" -}}
+{{- end -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9.-]+:[0-9]{1,5}$" .Values.temporal.address) -}}
+{{- fail "temporal.address must be an exact host:port" -}}
+{{- end -}}
 {{- $contextDirectories := dict -}}
 {{- range .Values.githubController.repositoryContexts -}}
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" .directory) -}}

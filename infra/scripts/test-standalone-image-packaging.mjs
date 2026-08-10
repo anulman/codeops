@@ -12,6 +12,7 @@ const dockerfiles = [
   "codeops-session-control-gateway.Dockerfile",
   "codeops-session-runtime-worker.Dockerfile",
   "codeops-plane-controller.Dockerfile",
+  "codeops-orchestrator.Dockerfile",
 ];
 
 test("rewrites only the exact workspace contract for isolated npm image installs", async () => {
@@ -37,6 +38,20 @@ test("rewrites only the exact workspace contract for isolated npm image installs
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
+});
+
+test("packages the Agents UI from the frozen standalone workspace", async () => {
+  const filename = "codeops-agents-ui.Dockerfile";
+  const source = await readFile(new URL(`../docker/${filename}`, import.meta.url), "utf8");
+  const dockerignore = await readFile(
+    new URL(`../docker/${filename}.dockerignore`, import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /nub install --frozen-lockfile/);
+  assert.match(source, /nub run --filter @renoconcierge\/agents-ui build/);
+  assert.match(source, /sites\/agents-ui\/\.output\/server\/index\.mjs/);
+  assert.match(dockerignore, /^!lock\.yaml$/m);
+  assert.match(dockerignore, /^!sites\/agents-ui\/src\/\*\*$/m);
 });
 
 test("rewrites every isolated npm service manifest before npm ci", async () => {

@@ -61,7 +61,8 @@ spec:
             - { name: CODEOPS_DEDUP_ROOT, value: /var/lib/codeops/controller }
             - { name: CODEOPS_GITHUB_SESSION_STEERING_ORIGIN, value: http://{{ include "codeops.fullname" . }}-session-control-gateway:8080 }
             - { name: CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/research-projection-token }
-            - { name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/repository-head-token }
+            - { name: CODEOPS_REPOSITORY_HEAD_ORIGIN, value: http://{{ include "codeops.fullname" . }}-control-gateway:8080 }
+            - { name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/repository-head-token }
             - { name: CODEOPS_REPOSITORY_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-repositories/registry.json }
           ports:
             - { name: http, containerPort: 8080 }
@@ -85,6 +86,7 @@ spec:
           volumeMounts:
             - { name: controller-state, mountPath: /var/lib/codeops/controller }
             - { name: controller-secrets, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-controller, readOnly: true }
+            - { name: control-gateway-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway, readOnly: true }
             - { name: repository-registry, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-repositories, readOnly: true }
             {{- if .Values.githubController.repositoryContexts }}
             - { name: repository-contexts, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-contexts, readOnly: true }
@@ -98,6 +100,11 @@ spec:
             defaultMode: 256
             items:
               - { key: research-projection-token, path: research-projection-token }
+        - name: control-gateway-auth
+          secret:
+            secretName: {{ .Values.controlGateway.secretName }}
+            defaultMode: 256
+            items:
               - { key: repository-head-token, path: repository-head-token }
         - name: repository-registry
           secret:

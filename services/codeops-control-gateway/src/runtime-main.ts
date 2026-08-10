@@ -22,6 +22,7 @@ import { publishCandidateRevision } from "./publication.js";
 import { createAgentJobRunner } from "./runtime.js";
 import {
   createRepositoryRegistry,
+  loadConfiguredRepositoryRegistry,
   loadRepositoryRegistryFile,
   resolveRepositoryRoute,
 } from "./repository-registry.js";
@@ -132,10 +133,6 @@ const modelAuth = {
   origin: required("CODEOPS_MODEL_PROXY_ORIGIN"),
   signingKey: await secretFile("CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE"),
 };
-const repositoryUrl = required("CODEOPS_REPOSITORY_URL");
-const repositoryReadToken = await secretFile(
-  "CODEOPS_REPOSITORY_READ_TOKEN_FILE",
-);
 const requiredReviewCheckNames = required(
   "CODEOPS_REQUIRED_REVIEW_CHECK_NAMES",
 )
@@ -199,25 +196,24 @@ const sessionRuntimeWorkerId = required("CODEOPS_SESSION_RUNTIME_WORKER_ID");
 if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(sessionRuntimeWorkerId)) {
   throw new Error("session runtime worker identity is invalid");
 }
-const repositoryWriteToken = await secretFile(
-  "CODEOPS_REPOSITORY_WRITE_TOKEN_FILE",
-);
-const repositoryIdentity = new URL(repositoryUrl).pathname
-  .replace(/^\//, "")
-  .replace(/\.git$/, "");
-const repositoryRegistryFile =
-  process.env.CODEOPS_REPOSITORY_REGISTRY_FILE?.trim();
-const repositoryRegistry =
-  repositoryRegistryFile === undefined || repositoryRegistryFile === ""
-    ? createRepositoryRegistry([
-        {
-          repository: repositoryIdentity,
-          repositoryUrl,
-          readToken: repositoryReadToken,
-          writeToken: repositoryWriteToken,
-        },
-      ])
-    : await loadRepositoryRegistryFile(repositoryRegistryFile);
+const repositoryRegistry = await loadConfiguredRepositoryRegistry({
+  registryFile: process.env.CODEOPS_REPOSITORY_REGISTRY_FILE,
+  loadRegistryFile: loadRepositoryRegistryFile,
+  loadLegacy: async () => {
+    const repositoryUrl = required("CODEOPS_REPOSITORY_URL");
+    const repositoryIdentity = new URL(repositoryUrl).pathname
+      .replace(/^\//, "")
+      .replace(/\.git$/, "");
+    return createRepositoryRegistry([
+      {
+        repository: repositoryIdentity,
+        repositoryUrl,
+        readToken: await secretFile("CODEOPS_REPOSITORY_READ_TOKEN_FILE"),
+        writeToken: await secretFile("CODEOPS_REPOSITORY_WRITE_TOKEN_FILE"),
+      },
+    ]);
+  },
+});
 const database = new Pool({
   connectionString: await secretFile("CODEOPS_DATABASE_URL_FILE"),
   max: 4,

@@ -10,5 +10,6 @@ immutable: true
 data:
   runtime-worker-image: {{ include "codeops.image" .Values.runtime.workerImage | quote }}
   coding-agent-image: {{ include "codeops.image" .Values.runtime.agentImage | quote }}
+  session-gateway-image: {{ include "codeops.image" .Values.runtime.sessionGatewayImage | quote }}
   session-gateway-origin: http://{{ include "codeops.fullname" . }}-session-control-gateway:8080
   model-proxy-origin: http://{{ include "codeops.fullname" . }}-model-proxy:8080

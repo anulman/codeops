@@ -20,6 +20,12 @@ multi-repository acceptance suites pass.
 - `services/codeops-orchestrator`: Temporal workflow worker
 - `infra/charts/codeops`: CodeOps Helm chart
 
+The Helm package deploys the Agents UI, session control gateway, trusted
+control gateway, Plane controller, Temporal orchestrator, model proxy, and
+PostgreSQL. It provides immutable image references for the Agent Job, session
+gateway sidecar, and session runtime worker. Temporal remains an external
+dependency and must be configured with an exact `host:port` address.
+
 ## Local validation
 
 ```sh

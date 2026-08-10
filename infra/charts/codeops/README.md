@@ -7,10 +7,12 @@ names are configurable. All CodeOps images must use exact SHA-256 digests.
 The chart contains:
 
 - dedicated PostgreSQL storage for session state;
+- the trusted Kubernetes Agent Job control gateway and evidence storage;
 - the authenticated session control gateway;
 - the HMAC-authenticated Plane and GitHub webhook controller;
+- the Temporal workflow orchestrator;
 - the Agents UI with signed Cloudflare Access JWT verification;
-- scoped ServiceAccounts for the UI, gateway, model proxy, and per-session runtime;
+- scoped ServiceAccounts and RBAC for each fixed operand and per-session runtime;
 - a Varlock-backed model proxy and immutable runtime image inputs;
 - a pre-upgrade, non-retrying schema migration Job;
 - a namespace-wide default deny plus explicit component NetworkPolicies.
@@ -27,8 +29,9 @@ release boundary must create these Secrets:
   database role;
 - `codeops-model-proxy-credentials`: `openai-api-key`, `signing-key`;
 - `codeops-access`: `audience`, `allowed-emails`.
-- `codeops-controller-secrets`: `research-projection-token`,
-  `repository-head-token`.
+- `codeops-control-gateway-secrets`: `dispatch-token`,
+  `repository-head-token`, `publication-token`.
+- `codeops-controller-secrets`: `research-projection-token`.
 - `codeops-controller-config`: the controller's non-file runtime
   configuration, including Temporal, internal service origins, the control
   plane source SHA, and durable-state settings. Repository, Plane, actor,
@@ -46,6 +49,11 @@ release boundary must create these Secrets:
 - `codeops-repository-steering`: `registry.json` plus only the repository-scoped
   session steering token files referenced by that manifest. It must not include
   GitHub webhook, repository read, or repository write credentials.
+- `codeops-repository-runtime-authority`: `registry.json` plus only the
+  repository-scoped read-token and write-token files referenced by that
+  manifest. The control gateway uses this Secret for GitHub evidence reads and
+  candidate publication. It must not contain Plane, webhook, or steering
+  credentials.
 - one project-context Secret per repository. Each Secret contains `AGENTS.md`,
   `SOUL.md`, `CURRENT-STATE.md`, `DECISIONS.md`, `DOMAIN.md`, `PRODUCT.md`, and
   `SOURCE-MAP.md`. Add its Secret name and a unique lowercase directory to
@@ -126,19 +134,25 @@ helm template codeops infra/charts/codeops \
   --namespace codeops \
   --set agentsUi.image.digest=sha256:<digest> \
   --set gateway.image.digest=sha256:<digest> \
+  --set controlGateway.image.digest=sha256:<digest> \
   --set githubController.image.digest=sha256:<digest> \
+  --set orchestrator.image.digest=sha256:<digest> \
   --set githubController.controlPlaneSha=<git-sha> \
   --set postgresql.image.digest=sha256:<digest> \
   --set runtime.workerImage.digest=sha256:<digest> \
   --set runtime.agentImage.digest=sha256:<digest> \
+  --set runtime.sessionGatewayImage.digest=sha256:<digest> \
   --set modelProxy.image.digest=sha256:<digest> \
-  --set agentsUi.access.issuer=https://<team>.cloudflareaccess.com
+  --set agentsUi.access.issuer=https://<team>.cloudflareaccess.com \
+  --set temporal.address=temporal.codeops.svc:7233 \
+  --set 'controlGateway.kubernetesApiCidrs[0]=<api-service-ip>/32'
 ```
 
 Run the chart contract with:
 
 ```sh
 node --test infra/scripts/test-codeops-chart.mjs
-node --test infra/scripts/test-codeops-root-session.mjs
-node --test infra/scripts/test-codeops-release-images.mjs
+node --test infra/scripts/test-agents-system-root-session.mjs
+node --test infra/scripts/test-agents-system-release-images.mjs
+node --test infra/scripts/test-standalone-image-packaging.mjs
 ```

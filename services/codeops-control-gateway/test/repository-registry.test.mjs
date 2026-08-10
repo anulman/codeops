@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   createRepositoryRegistry,
   dispatchRepositoryIdentity,
+  loadConfiguredRepositoryRegistry,
   loadRepositoryRegistryFile,
   resolveRepositoryRoute,
 } from "../dist/repository-registry.js";
@@ -21,6 +22,39 @@ const entries = [
     writeToken: "d".repeat(32),
   },
 ];
+
+test("file-backed configuration never reads legacy global credentials", async () => {
+  const expected = createRepositoryRegistry(entries);
+  let legacyReads = 0;
+  const registry = await loadConfiguredRepositoryRegistry({
+    registryFile: " /var/run/codeops/repositories.json ",
+    loadRegistryFile: async (filePath) => {
+      assert.equal(filePath, "/var/run/codeops/repositories.json");
+      return expected;
+    },
+    loadLegacy: async () => {
+      legacyReads += 1;
+      throw new Error("legacy credentials must not be read");
+    },
+  });
+  assert.equal(registry, expected);
+  assert.equal(legacyReads, 0);
+});
+
+test("legacy configuration remains an explicit single-repository fallback", async () => {
+  const expected = createRepositoryRegistry(entries.slice(0, 1));
+  let fileReads = 0;
+  const registry = await loadConfiguredRepositoryRegistry({
+    registryFile: " ",
+    loadRegistryFile: async () => {
+      fileReads += 1;
+      throw new Error("registry file must not be read");
+    },
+    loadLegacy: async () => expected,
+  });
+  assert.equal(registry, expected);
+  assert.equal(fileReads, 0);
+});
 
 test("resolves two repositories to distinct credentials and rejects unknown identities", () => {
   const registry = createRepositoryRegistry(entries);
