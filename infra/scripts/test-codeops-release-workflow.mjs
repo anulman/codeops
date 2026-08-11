@@ -11,7 +11,13 @@ const expectedImages = [
 
 test("release stays explicit and publishes one exact immutable bundle", async () => {
   const source = await readFile(new URL("../../.github/workflows/release.yml", import.meta.url), "utf8");
+  const workspace = JSON.parse(await readFile(new URL("../../package.json", import.meta.url), "utf8"));
   const workflow = parse(source);
+  assert.match(workspace.scripts.test, /codeops-contracts test/);
+  assert.match(workspace.scripts.test, /agents-ui test/);
+  assert.match(workspace.scripts.test, /--filter '\.\/services\/\*'/);
+  assert.doesNotMatch(workspace.scripts.test, /--filter '\.\/packages\/\*'/);
+  assert.doesNotMatch(workspace.scripts.test, /--filter '\.\/sites\/\*'/);
   assert.deepEqual(Object.keys(workflow.on), ["push", "workflow_dispatch"]);
   assert.deepEqual(workflow.on.push.branches, ["main"]);
   assert.deepEqual(workflow.on.push.tags, ["v*.*.*"]);
