@@ -313,10 +313,10 @@ jobs:
           KIND_VERSION: v0.32.0
         run: |
           set -euo pipefail
-          curl -fsSLo /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLo /tmp/kind-linux-amd64 "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
           curl -fsSLo /tmp/kind.sha256sum "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum"
           (cd /tmp && sha256sum --check kind.sha256sum)
-          sudo install /tmp/kind /usr/local/bin/kind
+          sudo install /tmp/kind-linux-amd64 /usr/local/bin/kind
 
       - name: Create disposable cluster
         run: kind create cluster --name codeops-registry --image kindest/node:v1.36.1 --wait 120s

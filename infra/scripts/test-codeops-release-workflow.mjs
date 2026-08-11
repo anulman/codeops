@@ -48,6 +48,9 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   const install = registryInstall.steps.find(
     ({ name }) => name === "Install only from the OCI registry",
   );
+  const kindInstall = registryInstall.steps.find(({ name }) => name === "Install kind");
+  assert.match(kindInstall.run, /curl -fsSLo \/tmp\/kind-linux-amd64/);
+  assert.match(kindInstall.run, /sha256sum --check kind\.sha256sum/);
   assert.match(install.run, /helm pull oci:\/\/ghcr\.io\/anulman\/codeops\/charts\/codeops/);
   assert.match(install.run, /helm install codeops oci:\/\/ghcr\.io\/anulman\/codeops\/charts\/codeops/);
   assert.match(install.run, /sourceCheckout:false/);
