@@ -19,6 +19,7 @@ const runtimeDatabaseUrl = (await readFile(runtimeDatabaseUrlFile, "utf8")).trim
 const runtimeCredentials = sessionRuntimeDatabaseCredentials(
   runtimeDatabaseUrl,
   runtimeRole,
+  databaseUrl,
 );
 
 const database = new Pool({ connectionString: databaseUrl, max: 1 });

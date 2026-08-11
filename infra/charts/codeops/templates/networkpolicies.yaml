@@ -240,7 +240,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/component
                 operator: In
-                values: [session-gateway, control-gateway, runtime]
+                values: [session-gateway, session-migration, control-gateway, runtime]
       ports: [{ protocol: TCP, port: 5432 }]
   egress: []
 ---

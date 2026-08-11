@@ -152,8 +152,9 @@ test("grants the runtime role only execution-receipt access", async () => {
 test("binds the receipt-only role to one in-cluster runtime database URL", () => {
   assert.deepEqual(
     sessionRuntimeDatabaseCredentials(
-      "postgres://agents_session_runtime:runtime_password_0123456789abcdef@agents-system-postgresql:5432/agents",
+      "postgres://agents_session_runtime:runtime_password_0123456789abcdef@qualification-codeops-postgresql:5432/agents",
       "agents_session_runtime",
+      "postgresql://agents:control_password@qualification-codeops-postgresql:5432/agents?sslmode=disable",
     ),
     {
       role: "agents_session_runtime",
@@ -161,12 +162,18 @@ test("binds the receipt-only role to one in-cluster runtime database URL", () =>
     },
   );
   for (const value of [
-    "postgres://other:runtime_password_0123456789abcdef@agents-system-postgresql:5432/agents",
+    "postgres://other:runtime_password_0123456789abcdef@qualification-codeops-postgresql:5432/agents",
     "postgres://agents_session_runtime:runtime_password_0123456789abcdef@example.com:5432/agents",
-    "postgres://agents_session_runtime:short@agents-system-postgresql:5432/agents",
+    "postgres://agents_session_runtime:runtime_password_0123456789abcdef@qualification-codeops-postgresql:5433/agents",
+    "postgres://agents_session_runtime:runtime_password_0123456789abcdef@qualification-codeops-postgresql:5432/other",
+    "postgres://agents_session_runtime:short@qualification-codeops-postgresql:5432/agents",
   ]) {
     assert.throws(
-      () => sessionRuntimeDatabaseCredentials(value, "agents_session_runtime"),
+      () => sessionRuntimeDatabaseCredentials(
+        value,
+        "agents_session_runtime",
+        "postgresql://agents:control_password@qualification-codeops-postgresql:5432/agents",
+      ),
       /receipt-only boundary|password is invalid/,
     );
   }

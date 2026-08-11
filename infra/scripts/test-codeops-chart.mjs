@@ -254,6 +254,7 @@ test("defaults to deny and opens only explicit component paths", () => {
 
   const postgresql = resource(resources, "NetworkPolicy", "team-a-codeops-postgresql");
   assert.deepEqual(postgresql.spec.egress, []);
+  assert.ok(JSON.stringify(postgresql.spec.ingress).includes("session-migration"));
   const gateway = resource(resources, "NetworkPolicy", "team-a-codeops-session-gateway");
   assert.ok(JSON.stringify(gateway).includes("github-controller"));
   assert.ok(JSON.stringify(gateway).includes("team-a-codeops-postgresql"));

@@ -24,8 +24,8 @@ release boundary must create these Secrets:
 - `codeops-session-secrets`: `database-url`, `read-token`, `write-token`,
   `runtime-worker-token`, `initialization-token`, `runtime-database-url`,
   `runtime-database-role`. The runtime URL uses the
-  named receipt-only role, a 32–256 character URL-safe password, the in-cluster
-  PostgreSQL service, and database `agents`; it must not use the gateway
+  named receipt-only role and a 32–256 character URL-safe password. Its host,
+  port, and database must match `database-url`; it must not use the gateway
   database role;
 - `codeops-model-proxy-credentials`: `openai-api-key`, `signing-key`;
 - `codeops-access`: `audience`, `allowed-emails`.
@@ -105,6 +105,10 @@ runtime DSN, removes all broad schema/table/sequence authority, and grants only
 the execution-receipt columns. It then
 rolls out all application workloads with `--atomic --wait`. Later releases run
 the same migration hook before each rollout.
+
+Helm uninstall removes the workloads, Services, RBAC, NetworkPolicies, and
+migration hook. Kubernetes retains the PostgreSQL StatefulSet data PVC so an
+operator must explicitly remove that data or delete the release namespace.
 
 Create the first root session only from the trusted operator boundary. Render
 one immutable, non-retrying runtime Job with exact session identity:

@@ -147,18 +147,16 @@ export async function grantSessionRuntimeReceiptAccess(
 export function sessionRuntimeDatabaseCredentials(
   databaseUrl: string,
   role: string,
+  controlPlaneDatabaseUrl: string,
 ): { readonly role: string; readonly password: string } {
   let parsed: URL;
+  let controlPlane: URL;
   try {
     parsed = new URL(databaseUrl);
+    controlPlane = new URL(controlPlaneDatabaseUrl);
   } catch {
     throw new Error("session runtime database URL is invalid");
   }
-  const allowedHosts = new Set([
-    "agents-system-postgresql",
-    "agents-system-postgresql.agents-system.svc",
-    "agents-system-postgresql.agents-system.svc.cluster.local",
-  ]);
   let username: string;
   let password: string;
   try {
@@ -169,9 +167,12 @@ export function sessionRuntimeDatabaseCredentials(
   }
   if (
     !["postgres:", "postgresql:"].includes(parsed.protocol) ||
-    !allowedHosts.has(parsed.hostname) ||
-    (parsed.port !== "" && parsed.port !== "5432") ||
-    parsed.pathname !== "/agents" ||
+    !["postgres:", "postgresql:"].includes(controlPlane.protocol) ||
+    parsed.hostname === "" ||
+    parsed.hostname !== controlPlane.hostname ||
+    (parsed.port || "5432") !== (controlPlane.port || "5432") ||
+    parsed.pathname !== controlPlane.pathname ||
+    parsed.pathname === "" ||
     parsed.search !== "" ||
     parsed.hash !== "" ||
     username !== role
