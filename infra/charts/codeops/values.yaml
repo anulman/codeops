@@ -1,0 +1,355 @@
+nameOverride: ""
+fullnameOverride: ""
+
+# The first release qualifies only these exact dependency combinations.
+# full-managed installs every supported dependency in this namespace.
+# full-external renders only CodeOps and connects it to existing services.
+profile: full-managed
+
+imagePullSecrets: []
+
+nodeSelector: {}
+
+agentsUi:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/codeops/agents-ui
+    digest: ""
+  access:
+    issuer: ""
+    secretName: codeops-access
+    audienceKey: audience
+    allowedEmailsKey: allowed-emails
+  resources:
+    requests: { cpu: 25m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+gateway:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/codeops/session-control-gateway
+    digest: ""
+  secretName: codeops-session-secrets
+  repositorySteeringRegistrySecretName: codeops-repository-steering
+  workerId: codeops:runtime-worker
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: "1", memory: 512Mi }
+
+controlGateway:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/codeops/control-gateway
+    digest: ""
+  secretName: codeops-control-gateway-secrets
+  repositoryAuthoritySecretName: codeops-repository-runtime-authority
+  requiredReviewCheckNames: "CI"
+  workerId: codeops:runtime-worker
+  storageClassName: ""
+  storage: 2Gi
+  kubernetesApiCidrs: []
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+modelProxy:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/codeops/model-proxy
+    digest: ""
+  secretName: codeops-model-proxy-credentials
+  resources:
+    requests: { cpu: 50m, memory: 128Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
+migration:
+  enabled: true
+
+lifecycleRelay:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/codeops/control-gateway
+    digest: ""
+  relayId: codeops:lifecycle-relay
+  leaseMs: 30000
+  idleMs: 250
+  secretName: codeops-lifecycle-relay
+  databaseUrlKey: database-url
+  databaseRoleKey: database-role
+  natsTokenKey: nats-token
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 250m, memory: 256Mi }
+
+githubController:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/codeops/plane-controller
+    digest: ""
+  controlPlaneSha: ""
+  configSecretName: codeops-controller-config
+  secretName: codeops-controller-secrets
+  repositoryAuthoritySecretName: codeops-repository-controller-authority
+  repositoryContexts: []
+  storageClassName: ""
+  storage: 2Gi
+  resources:
+    requests: { cpu: 50m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+orchestrator:
+  replicas: 1
+  image:
+    repository: ghcr.io/anulman/codeops/orchestrator
+    digest: ""
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+
+temporal:
+  enabled: true
+  driver: temporal
+  deployment: managed
+  address: codeops-temporal-frontend:7233
+  namespace: codeops
+  taskQueue: codeops
+  external:
+    namespace: ""
+  fullnameOverride: codeops-temporal
+  serviceAccount:
+    create: true
+  server:
+    replicaCount: 1
+    metrics:
+      annotations:
+        enabled: false
+    config:
+      persistence:
+        defaultStore: default
+        visibilityStore: visibility
+        numHistoryShards: 128
+        datastores:
+          default:
+            sql:
+              createDatabase: true
+              manageSchema: true
+              pluginName: postgres12_pgx
+              driverName: postgres12_pgx
+              databaseName: temporal
+              connectAddr: codeops-database:5432
+              connectProtocol: tcp
+              user: agents
+              existingSecret: codeops-postgres
+              secretKey: password
+          visibility:
+            sql:
+              createDatabase: true
+              manageSchema: true
+              pluginName: postgres12_pgx
+              driverName: postgres12_pgx
+              databaseName: temporal_visibility
+              connectAddr: codeops-database:5432
+              connectProtocol: tcp
+              user: agents
+              existingSecret: codeops-postgres
+              secretKey: password
+      namespaces:
+        create: true
+        namespace:
+          - { name: codeops, retention: 3d }
+    frontend:
+      readinessProbe:
+        grpc:
+          port: 7233
+          service: temporal.api.workflowservice.v1.WorkflowService
+  schema:
+    useHelmHooks: false
+    backoffLimit: 100
+  admintools:
+    enabled: false
+  web:
+    enabled: false
+
+jetstream:
+  enabled: true
+  driver: jetstream
+  deployment: managed
+  url: nats://codeops-jetstream:4222
+  stream: CODEOPS_LIFECYCLE
+  subject: codeops.lifecycle.v1.events
+  external:
+    namespace: ""
+  auth:
+    secretName: codeops-lifecycle-relay
+    tokenKey: nats-token
+  config:
+    jetstream:
+      enabled: true
+      fileStore:
+        enabled: true
+        dir: /data
+        pvc:
+          enabled: true
+          size: 2Gi
+          storageClassName: ""
+      memoryStore:
+        enabled: false
+    merge:
+      authorization:
+        token: << $CODEOPS_NATS_TOKEN >>
+  container:
+    env:
+      CODEOPS_NATS_TOKEN:
+        valueFrom:
+          secretKeyRef:
+            name: codeops-lifecycle-relay
+            key: nats-token
+  service:
+    name: codeops-jetstream
+  natsBox:
+    enabled: false
+  podDisruptionBudget:
+    enabled: false
+
+plane:
+  enabled: true
+  deployment: managed
+  adapter:
+    # A fresh managed Plane install requires one supported human onboarding
+    # handoff before CodeOps can receive a Plane API key and project identity.
+    enabled: false
+    onboardingRequired: true
+  apiOrigin: https://plane.example.com
+  external:
+    namespace: ""
+  planeVersion: v1.4.1
+  ingress:
+    enabled: true
+    appHost: plane.example.com
+    ingressClass: nginx
+    ingress_annotations: {}
+  ssl:
+    createIssuer: false
+    generateCerts: false
+  redis:
+    local_setup: true
+    pullPolicy: IfNotPresent
+  postgres:
+    local_setup: true
+    pullPolicy: IfNotPresent
+  rabbitmq:
+    local_setup: true
+    pullPolicy: IfNotPresent
+  minio:
+    local_setup: true
+    image: docker.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e
+    image_mc: docker.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727
+    pullPolicy: IfNotPresent
+  web: { pullPolicy: IfNotPresent }
+  space: { pullPolicy: IfNotPresent }
+  admin: { pullPolicy: IfNotPresent }
+  live: { pullPolicy: IfNotPresent }
+  api:
+    pullPolicy: IfNotPresent
+    assign_cluster_ip: true
+  worker: { pullPolicy: IfNotPresent }
+  beatworker: { pullPolicy: IfNotPresent }
+  external_secrets:
+    rabbitmq_existingSecret: codeops-plane-rabbitmq
+    pgdb_existingSecret: codeops-plane-postgres
+    doc_store_existingSecret: codeops-plane-object-store
+    app_env_existingSecret: codeops-plane-app
+    live_env_existingSecret: codeops-plane-live
+
+postgresql:
+  deployment: managed
+  serviceName: codeops-database
+  image:
+    repository: postgres
+    digest: ""
+  secretName: codeops-postgres
+  storageClassName: ""
+  storage: 20Gi
+  resources:
+    requests: { cpu: 100m, memory: 256Mi }
+    limits: { cpu: "1", memory: 1Gi }
+  external:
+    host: ""
+    port: 5432
+    namespace: ""
+
+runtime:
+  workerImage:
+    repository: ghcr.io/anulman/codeops/session-runtime-worker
+    digest: ""
+  agentImage:
+    repository: ghcr.io/anulman/codeops/agent
+    digest: ""
+  sessionGatewayImage:
+    repository: ghcr.io/anulman/codeops/session-gateway
+    digest: ""
+
+ingress:
+  className: nginx
+  host: codeops.example.com
+  tlsSecretName: codeops-tls
+  annotations:
+    cert-manager.io/cluster-issuer: letsencrypt-prod-dns
+    nginx.ingress.kubernetes.io/proxy-body-size: 2m
+
+networkPolicy:
+  ingressNamespace: ingress-nginx
+
+# Quickstart creates the required Secret projections for one repository. It is
+# intentionally disabled for existing installations that manage Secrets
+# outside Helm or admit multiple repositories.
+quickstart:
+  enabled: false
+  openaiApiKey: ""
+  registry:
+    enabled: false
+    server: ghcr.io
+    username: ""
+    token: ""
+    email: ""
+    secretName: codeops-registry
+  access:
+    audience: ""
+    allowedEmails: []
+  repository:
+    identity: ""
+    github:
+      readToken: ""
+      writeToken: ""
+      webhookSecret: ""
+      reviewerIds: []
+    plane:
+      apiOrigin: ""
+      workspaceSlug: ""
+      workspaceId: ""
+      projectId: ""
+      apiKey: ""
+      webhookSecret: ""
+      humanActorIds: []
+      stateIds:
+        ready: ""
+        inProgress: ""
+        needsAttention: ""
+        complete: ""
+      personas:
+        - { handle: "@ai-web", userId: "" }
+        - { handle: "@ai-security", userId: "" }
+        - { handle: "@ai-database", userId: "" }
+        - { handle: "@ai-infra", userId: "" }
+        - { handle: "@ai-design", userId: "" }
+        - { handle: "@ai-product", userId: "" }
+        - { handle: "@ai-ml", userId: "" }
+    context:
+      directory: repository
+      agents: ""
+      currentState: ""
+      decisions: ""
+      domain: ""
+      product: ""
+      sourceMap: ""
+      soul: ""

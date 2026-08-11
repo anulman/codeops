@@ -1,0 +1,10 @@
+.DS_Store
+.nub-store/
+.output/
+artifacts/
+coverage/
+dist/
+node_modules/
+*.log
+*.tgz
+codeops-values*.yaml

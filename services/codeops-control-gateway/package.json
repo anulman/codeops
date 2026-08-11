@@ -1,0 +1,25 @@
+{
+  "name": "@codeops/codeops-control-gateway",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "start": "node dist/runtime-main.js",
+    "test": "tsc -p tsconfig.build.json && node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@nats-io/jetstream": "3.4.0",
+    "@nats-io/transport-node": "3.4.0",
+    "@codeops/codeops-contracts": "workspace:*",
+    "pg": "8.22.0",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "25.7.0",
+    "@types/pg": "8.20.3",
+    "typescript": "6.0.3"
+  }
+}

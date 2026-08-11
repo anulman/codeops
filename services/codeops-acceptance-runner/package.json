@@ -1,0 +1,20 @@
+{
+  "name": "@codeops/acceptance-runner",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "packageManager": "nub@0.1.11",
+  "engines": {
+    "node": "24.x",
+    "nub": "0.1.x"
+  },
+  "scripts": {
+    "smoke:agents-ui": "node src/agents-ui-smoke.mjs",
+    "test": "node --test test/*.test.mjs",
+    "test:browser": "node src/local-agents-ui-browser-smoke.mjs"
+  },
+  "dependencies": {
+    "playwright-core": "1.61.1"
+  }
+}

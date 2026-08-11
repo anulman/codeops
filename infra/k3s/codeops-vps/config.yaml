@@ -1,0 +1,18 @@
+# Single-node development cluster for the CodeOps repository.
+# Caddy owns host ports 80 and 443. ingress-nginx uses private NodePorts.
+node-name: codeops-vps
+node-label:
+  - codeops.aidans.computer/environment=development
+write-kubeconfig-mode: "0600"
+secrets-encryption: true
+disable:
+  - traefik
+  - servicelb
+cluster-cidr: 10.52.0.0/16
+service-cidr: 10.53.0.0/16
+cluster-dns: 10.53.0.10
+tls-san:
+  - 100.78.39.12
+kubelet-arg:
+  - system-reserved=cpu=250m,memory=512Mi
+  - eviction-hard=memory.available<350Mi,nodefs.available<10%

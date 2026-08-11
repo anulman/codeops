@@ -1,0 +1,151 @@
+{{- if .Values.plane.adapter.enabled }}
+{{- $repositoryContexts := .Values.githubController.repositoryContexts }}
+{{- if .Values.quickstart.enabled }}
+{{- $repositoryContexts = list (dict "directory" .Values.quickstart.repository.context.directory "secretName" (printf "%s-context" (include "codeops.fullname" .))) }}
+{{- end }}
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ include "codeops.fullname" . }}-controller-state
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: github-controller
+spec:
+  accessModes: [ReadWriteOnce]
+  {{- with .Values.githubController.storageClassName }}
+  storageClassName: {{ . | quote }}
+  {{- end }}
+  resources:
+    requests: { storage: {{ .Values.githubController.storage }} }
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "codeops.fullname" . }}-github-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: github-controller
+spec:
+  replicas: {{ .Values.githubController.replicas }}
+  strategy: { type: Recreate }
+  selector:
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-github-controller }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "codeops.fullname" . }}-github-controller
+        app.kubernetes.io/component: github-controller
+        app.kubernetes.io/part-of: codeops
+    spec:
+      serviceAccountName: {{ include "codeops.fullname" . }}-github-controller
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        {{- include "codeops.imagePullSecrets" . | nindent 8 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: github-controller
+          image: {{ include "codeops.image" .Values.githubController.image | quote }}
+          imagePullPolicy: IfNotPresent
+          envFrom:
+            - secretRef: { name: {{ .Values.githubController.configSecretName }} }
+          env:
+            - { name: CODEOPS_HTTP_HOST, value: 0.0.0.0 }
+            - { name: CODEOPS_HTTP_PORT, value: "8080" }
+            - { name: CODEOPS_CONTROL_PLANE_SHA, value: {{ .Values.githubController.controlPlaneSha | quote }} }
+            - { name: CODEOPS_DEDUP_ROOT, value: /var/lib/codeops/controller }
+            - { name: CODEOPS_GITHUB_SESSION_STEERING_ORIGIN, value: http://{{ include "codeops.fullname" . }}-session-control-gateway:8080 }
+            - { name: CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/research-projection-token }
+            - { name: CODEOPS_REPOSITORY_HEAD_ORIGIN, value: http://{{ include "codeops.fullname" . }}-control-gateway:8080 }
+            - { name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/repository-head-token }
+            - { name: CODEOPS_REPOSITORY_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-repositories/registry.json }
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.githubController.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: controller-state, mountPath: /var/lib/codeops/controller }
+            - { name: controller-secrets, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-controller, readOnly: true }
+            - { name: control-gateway-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway, readOnly: true }
+            - { name: repository-registry, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-repositories, readOnly: true }
+            {{- if $repositoryContexts }}
+            - { name: repository-contexts, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-contexts, readOnly: true }
+            {{- end }}
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - { name: controller-state, persistentVolumeClaim: { claimName: {{ include "codeops.fullname" . }}-controller-state } }
+        - name: controller-secrets
+          secret:
+            secretName: {{ .Values.githubController.secretName }}
+            defaultMode: 256
+            items:
+              - { key: research-projection-token, path: research-projection-token }
+        - name: control-gateway-auth
+          secret:
+            secretName: {{ .Values.controlGateway.secretName }}
+            defaultMode: 256
+            items:
+              - { key: repository-head-token, path: repository-head-token }
+        - name: repository-registry
+          secret:
+            secretName: {{ .Values.githubController.repositoryAuthoritySecretName }}
+            defaultMode: 256
+        {{- if $repositoryContexts }}
+        - name: repository-contexts
+          projected:
+            defaultMode: 256
+            sources:
+              {{- range $repositoryContexts }}
+              - secret:
+                  name: {{ .secretName }}
+                  items:
+                    - { key: AGENTS.md, path: {{ printf "%s/AGENTS.md" .directory | quote }} }
+                    - { key: CURRENT-STATE.md, path: {{ printf "%s/docs/agent-context/CURRENT-STATE.md" .directory | quote }} }
+                    - { key: DECISIONS.md, path: {{ printf "%s/docs/agent-context/DECISIONS.md" .directory | quote }} }
+                    - { key: DOMAIN.md, path: {{ printf "%s/docs/agent-context/DOMAIN.md" .directory | quote }} }
+                    - { key: PRODUCT.md, path: {{ printf "%s/docs/agent-context/PRODUCT.md" .directory | quote }} }
+                    - { key: SOURCE-MAP.md, path: {{ printf "%s/docs/agent-context/SOURCE-MAP.md" .directory | quote }} }
+                    - { key: SOUL.md, path: {{ printf "%s/SOUL.md" .directory | quote }} }
+              {{- end }}
+        {{- end }}
+        - name: temp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "codeops.fullname" . }}-github-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: github-controller
+spec:
+  selector: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-github-controller }
+  ports:
+    - { name: http, protocol: TCP, port: 8080, targetPort: http }
+{{- end }}

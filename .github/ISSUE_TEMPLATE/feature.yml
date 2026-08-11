@@ -1,0 +1,17 @@
+name: Feature request
+description: Propose one bounded product change
+title: "feature: "
+labels: [enhancement]
+body:
+  - type: textarea
+    id: problem
+    attributes: { label: Problem }
+    validations: { required: true }
+  - type: textarea
+    id: outcome
+    attributes: { label: Required outcome }
+    validations: { required: true }
+  - type: textarea
+    id: authority
+    attributes: { label: Authority and security impact }
+    validations: { required: true }

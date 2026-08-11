@@ -1,0 +1,95 @@
+# This example selects managed PostgreSQL, Temporal, and JetStream with one
+# external Plane instance. Use init:quickstart to replace every placeholder and
+# write credentials to a private mode-0600 file.
+
+profile: custom
+
+agentsUi:
+  access:
+    issuer: https://<cloudflare-team>.cloudflareaccess.com
+
+ingress:
+  className: nginx
+  host: <codeops-hostname>
+  tlsSecretName: codeops-tls
+  annotations:
+    cert-manager.io/cluster-issuer: <cluster-issuer>
+    nginx.ingress.kubernetes.io/proxy-body-size: 2m
+
+networkPolicy:
+  ingressNamespace: ingress-nginx
+
+controlGateway:
+  kubernetesApiCidrs:
+    - <kubernetes-api-service-ip>/32
+
+plane:
+  enabled: false
+  deployment: external
+  adapter:
+    enabled: true
+    onboardingRequired: false
+  apiOrigin: https://<plane-host>
+
+quickstart:
+  enabled: true
+  openaiApiKey: ""
+
+  # Public releases need no registry credential.
+  registry:
+    enabled: false
+    server: ghcr.io
+    username: ""
+    token: ""
+    email: ""
+    secretName: codeops-registry
+
+  access:
+    audience: ""
+    allowedEmails:
+      - <operator-email>
+
+  repository:
+    identity: <github-owner>/<github-repository>
+    github:
+      readToken: ""
+      writeToken: ""
+      webhookSecret: ""
+      reviewerIds:
+        - <numeric-github-user-id>
+
+    plane:
+      apiOrigin: https://<plane-host>
+      workspaceSlug: <workspace-slug>
+      workspaceId: ""
+      projectId: ""
+      apiKey: ""
+      webhookSecret: ""
+      humanActorIds:
+        - ""
+      stateIds:
+        ready: ""
+        inProgress: ""
+        needsAttention: ""
+        complete: ""
+      personas:
+        - { handle: "@ai-web", userId: "" }
+        - { handle: "@ai-security", userId: "" }
+        - { handle: "@ai-database", userId: "" }
+        - { handle: "@ai-infra", userId: "" }
+        - { handle: "@ai-design", userId: "" }
+        - { handle: "@ai-product", userId: "" }
+        - { handle: "@ai-ml", userId: "" }
+
+    # Paste the repository's exact context documents. CodeOps supplies generic
+    # AGENTS.md and SOUL.md baselines when those two values remain empty. The
+    # other five documents are repository-specific and must not be empty.
+    context:
+      directory: repository
+      agents: ""
+      currentState: ""
+      decisions: ""
+      domain: ""
+      product: ""
+      sourceMap: ""
+      soul: ""

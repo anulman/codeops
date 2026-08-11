@@ -1,0 +1,379 @@
+import * as acp from "@agentclientprotocol/sdk";
+import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import net from "node:net";
+import path from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
+import { promisify } from "node:util";
+import { Readable, Writable } from "node:stream";
+import {
+  boundedText,
+  requireAgentRole,
+  requireLowerHex,
+  requireRunId,
+} from "./safety.js";
+
+const execFileAsync = promisify(execFile);
+const MAX_PROMPT_BYTES = 100_000;
+const MAX_PATCH_BYTES = 2_000_000;
+const PATCH_LOG_CHUNK_BYTES = 48_000;
+
+interface SafeEvent {
+  readonly sequence: number;
+  readonly type: string;
+  readonly toolCallId?: string;
+  readonly title?: string;
+  readonly status?: string;
+}
+
+interface Checkpoint {
+  readonly schemaVersion: 3;
+  readonly runId: string;
+  readonly agentRole:
+    | "coding-agent"
+    | "critic-agent"
+    | "qa-contract-researcher";
+  readonly baseSha: string;
+  readonly projectContextDigest: string;
+  readonly model: "gpt-5.6-sol";
+  readonly reasoningEffort: "high";
+  readonly sessionId?: string;
+  readonly stopReason?: string;
+  readonly response: string;
+  readonly events: readonly SafeEvent[];
+  readonly patch: {
+    readonly path: "changes.patch";
+    readonly sha256: string;
+    readonly bytes: number;
+  };
+  readonly error?: string;
+}
+
+export function createCheckpointLogRecord(checkpoint: Checkpoint): Readonly<{
+  type: "codeops.checkpoint";
+  checkpointDigest: string;
+  checkpoint: Checkpoint;
+}> {
+  return {
+    type: "codeops.checkpoint",
+    checkpointDigest: `sha256:${createHash("sha256")
+      .update(JSON.stringify(checkpoint))
+      .digest("hex")}`,
+    checkpoint,
+  };
+}
+
+export function createPatchLogRecords(
+  runId: string,
+  patch: Uint8Array,
+): readonly Readonly<{
+  type: "codeops.patch-chunk";
+  runId: string;
+  sequence: number;
+  total: number;
+  patchDigest: string;
+  dataBase64: string;
+}>[] {
+  const digest = createHash("sha256").update(patch).digest("hex");
+  const total = Math.max(1, Math.ceil(patch.length / PATCH_LOG_CHUNK_BYTES));
+  return Array.from({ length: total }, (_, index) => ({
+    type: "codeops.patch-chunk" as const,
+    runId,
+    sequence: index + 1,
+    total,
+    patchDigest: `sha256:${digest}`,
+    dataBase64: Buffer.from(
+      patch.subarray(
+        index * PATCH_LOG_CHUNK_BYTES,
+        Math.min((index + 1) * PATCH_LOG_CHUNK_BYTES, patch.length),
+      ),
+    ).toString("base64"),
+  }));
+}
+
+export async function loadPrompt(): Promise<string> {
+  const promptFile = process.env.CODEOPS_PROMPT_FILE;
+  const encoded = process.env.CODEOPS_PROMPT_B64;
+  if (promptFile && encoded) {
+    throw new Error("CodeOps prompt must use exactly one input");
+  }
+  let bytes: Buffer;
+  if (promptFile) {
+    if (promptFile !== "/input/agent-prompt.txt") {
+      throw new Error("CODEOPS_PROMPT_FILE must use the fixed run input path");
+    }
+    bytes = await readFile(promptFile);
+  } else {
+    if (!encoded || !/^[A-Za-z0-9+/]*={0,2}$/.test(encoded)) {
+      throw new Error("CodeOps prompt input is required");
+    }
+    bytes = Buffer.from(encoded, "base64");
+  }
+  if (bytes.length === 0 || bytes.length > MAX_PROMPT_BYTES) {
+    throw new Error("decoded CodeOps prompt must contain 1 to 100000 bytes");
+  }
+  const prompt = bytes.toString("utf8").trim();
+  if (!prompt || Buffer.from(prompt).length > MAX_PROMPT_BYTES) {
+    throw new Error("decoded CodeOps prompt must be non-empty UTF-8");
+  }
+  return prompt;
+}
+
+export async function connectSocket(
+  socketPath: string,
+  options: { timeoutMs?: number; retryIntervalMs?: number } = {},
+): Promise<net.Socket> {
+  const timeoutMs = options.timeoutMs ?? 30_000;
+  const retryIntervalMs = options.retryIntervalMs ?? 100;
+  const deadline = Date.now() + timeoutMs;
+  let lastError: Error | undefined;
+  do {
+    const socket = net.createConnection(socketPath);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once("connect", resolve);
+        socket.once("error", reject);
+      });
+      return socket;
+    } catch (error) {
+      socket.destroy();
+      const code =
+        error instanceof Error && "code" in error
+          ? String(error.code)
+          : "";
+      if (code !== "ENOENT" && code !== "ECONNREFUSED") throw error;
+      lastError = error instanceof Error ? error : new Error(String(error));
+      if (Date.now() >= deadline) break;
+      await delay(retryIntervalMs);
+    }
+  } while (Date.now() < deadline);
+  throw new Error(
+    `ACP socket was not ready within ${timeoutMs}ms: ${lastError?.message ?? "unavailable"}`,
+  );
+}
+
+function safeEvent(sequence: number, update: acp.SessionUpdate): SafeEvent {
+  const record = update as unknown as Record<string, unknown>;
+  return {
+    sequence,
+    type: update.sessionUpdate,
+    ...(typeof record.toolCallId === "string"
+      ? { toolCallId: record.toolCallId }
+      : {}),
+    ...(typeof record.title === "string"
+      ? { title: boundedText(record.title, 500) }
+      : {}),
+    ...(typeof record.status === "string" ? { status: record.status } : {}),
+  };
+}
+
+export async function capturePatch(workspace: string): Promise<Buffer> {
+  const git = [
+    "-c",
+    `safe.directory=${workspace}`,
+    "-C",
+    workspace,
+  ];
+  // `git diff` omits untracked files, and a plain worktree diff also omits
+  // staged changes. Record non-ignored new paths as intent-to-add, then compare
+  // the complete index/worktree state with the immutable checkout.
+  await execFileAsync(
+    "git",
+    [...git, "add", "--intent-to-add", "--all", "--"],
+    {
+      encoding: "buffer",
+      maxBuffer: MAX_PATCH_BYTES + 1,
+    },
+  );
+  const { stdout } = await execFileAsync(
+    "git",
+    [
+      ...git,
+      "diff",
+      "--binary",
+      "--no-ext-diff",
+      "HEAD",
+      "--",
+    ],
+    {
+      encoding: "buffer",
+      maxBuffer: MAX_PATCH_BYTES + 1,
+    },
+  );
+  if (stdout.length > MAX_PATCH_BYTES) {
+    throw new Error("CodeOps patch exceeds the 2000000-byte Trial 0 limit");
+  }
+  return stdout;
+}
+
+async function writeCheckpoint(
+  checkpointDirectory: string,
+  checkpoint: Omit<Checkpoint, "patch">,
+  patch: Uint8Array,
+): Promise<Checkpoint> {
+  await mkdir(checkpointDirectory, { recursive: true });
+  const patchPath = path.join(checkpointDirectory, "changes.patch");
+  const checkpointPath = path.join(checkpointDirectory, "checkpoint.json");
+  const temporaryPath = `${checkpointPath}.tmp`;
+  await writeFile(patchPath, patch, { mode: 0o600 });
+  const completedCheckpoint = {
+    ...checkpoint,
+    patch: {
+      path: "changes.patch" as const,
+      sha256: createHash("sha256").update(patch).digest("hex"),
+      bytes: patch.length,
+    },
+  } satisfies Checkpoint;
+  await writeFile(
+    temporaryPath,
+    `${JSON.stringify(completedCheckpoint, null, 2)}\n`,
+    { mode: 0o600 },
+  );
+  await rename(temporaryPath, checkpointPath);
+  return completedCheckpoint;
+}
+
+export async function runGateway(): Promise<void> {
+  const runId = requireRunId(process.env.CODEOPS_RUN_ID);
+  const agentRole = requireAgentRole(process.env.CODEOPS_AGENT_ROLE);
+  const baseSha = requireLowerHex("CODEOPS_BASE_SHA", process.env.CODEOPS_BASE_SHA, 40);
+  const projectContextDigest = process.env.CODEOPS_PROJECT_CONTEXT_DIGEST;
+  if (
+    !projectContextDigest ||
+    !/^sha256:[0-9a-f]{64}$/.test(projectContextDigest)
+  ) {
+    throw new Error(
+      "CODEOPS_PROJECT_CONTEXT_DIGEST must contain one SHA-256 digest",
+    );
+  }
+  if (
+    process.env.CODEOPS_MODEL !== "gpt-5.6-sol" ||
+    process.env.CODEOPS_REASONING_EFFORT !== "high"
+  ) {
+    throw new Error("CodeOps Trial 0 requires gpt-5.6-sol with high reasoning");
+  }
+  const workspace = process.env.CODEOPS_WORKSPACE ?? "/workspace";
+  const checkpointDirectory =
+    process.env.CODEOPS_CHECKPOINT_DIR ?? "/checkpoint";
+  const socketPath = process.env.CODEOPS_ACP_SOCKET ?? "/run/codeops/agent.sock";
+  const prompt = await loadPrompt();
+  const events: SafeEvent[] = [];
+  let response = "";
+  let sessionId: string | undefined;
+  let stopReason: string | undefined;
+  let failure: string | undefined;
+
+  try {
+    const socket = await connectSocket(socketPath);
+    const stream = acp.ndJsonStream(
+      Writable.toWeb(socket),
+      Readable.toWeb(socket) as ReadableStream<Uint8Array>,
+    );
+    try {
+      await acp
+        .client({ name: "codeops-session-gateway" })
+        .onRequest(acp.methods.client.session.requestPermission, (context) => {
+          const option = context.params.options.find(
+            (candidate) => candidate.kind === "allow_once",
+          );
+          if (!option) return { outcome: { outcome: "cancelled" } };
+          return {
+            outcome: { outcome: "selected", optionId: option.optionId },
+          };
+        })
+        .onNotification(acp.methods.client.session.update, (context) => {
+          const update = context.params.update;
+          events.push(safeEvent(events.length + 1, update));
+          if (
+            update.sessionUpdate === "agent_message_chunk" &&
+            update.content.type === "text"
+          ) {
+            response = boundedText(response + update.content.text);
+          }
+        })
+        .connectWith(stream, async (agent) => {
+          await agent.request(acp.methods.agent.initialize, {
+            protocolVersion: acp.PROTOCOL_VERSION,
+            clientInfo: {
+              name: "codeops-session-gateway",
+              version: "0.1.0",
+            },
+          });
+          const session = await agent.request(acp.methods.agent.session.new, {
+            cwd: workspace,
+            mcpServers: [],
+          });
+          sessionId = session.sessionId;
+          const result = await agent.request(acp.methods.agent.session.prompt, {
+            sessionId: session.sessionId,
+            prompt: [{ type: "text", text: prompt }],
+          });
+          stopReason = result.stopReason;
+        });
+    } finally {
+      socket.destroy();
+    }
+  } catch (error) {
+    failure = boundedText(error instanceof Error ? error.message : String(error), 2_000);
+  }
+
+  let patch: Uint8Array = new Uint8Array();
+  try {
+    patch = await capturePatch(workspace);
+    if (agentRole === "qa-contract-researcher" && patch.length !== 0) {
+      failure ??= "QA Contract Researcher must leave the source workspace unchanged";
+    }
+    if (agentRole === "critic-agent") {
+      const expectedDigest = process.env.CODEOPS_CANDIDATE_PATCH_DIGEST;
+      const expectedSize = Number(process.env.CODEOPS_CANDIDATE_PATCH_SIZE);
+      const actualDigest = `sha256:${createHash("sha256")
+        .update(patch)
+        .digest("hex")}`;
+      if (
+        !expectedDigest ||
+        !/^sha256:[0-9a-f]{64}$/.test(expectedDigest) ||
+        !Number.isSafeInteger(expectedSize) ||
+        expectedSize < 0 ||
+        actualDigest !== expectedDigest ||
+        patch.length !== expectedSize
+      ) {
+        failure ??=
+          "Critic Agent must leave the exact cumulative candidate patch unchanged";
+      }
+    }
+  } catch (error) {
+    failure ??= boundedText(
+      error instanceof Error ? error.message : String(error),
+      2_000,
+    );
+  }
+  const checkpoint = await writeCheckpoint(
+    checkpointDirectory,
+    {
+      schemaVersion: 3,
+      runId,
+      agentRole,
+      baseSha,
+      projectContextDigest,
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+      ...(sessionId ? { sessionId } : {}),
+      ...(stopReason ? { stopReason } : {}),
+      response: boundedText(response),
+      events,
+      ...(failure ? { error: failure } : {}),
+    },
+    patch,
+  );
+  for (const record of createPatchLogRecords(runId, patch)) {
+    console.log(JSON.stringify(record));
+  }
+  console.log(JSON.stringify(createCheckpointLogRecord(checkpoint)));
+  await writeFile(path.dirname(socketPath) + "/done", "", { mode: 0o600 });
+  if (failure) throw new Error(failure);
+}
+
+if (import.meta.url === `file://${process.argv[1]}`) {
+  await runGateway();
+}

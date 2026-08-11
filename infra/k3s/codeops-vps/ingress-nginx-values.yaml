@@ -1,0 +1,19 @@
+controller:
+  ingressClassResource:
+    default: true
+  service:
+    type: NodePort
+    nodePorts:
+      http: 32080
+      https: 32443
+  resources:
+    requests:
+      cpu: 50m
+      memory: 96Mi
+    limits:
+      cpu: 500m
+      memory: 384Mi
+  config:
+    use-forwarded-headers: "true"
+defaultBackend:
+  enabled: false

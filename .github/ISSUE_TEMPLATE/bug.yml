@@ -1,0 +1,21 @@
+name: Bug report
+description: Report a reproducible CodeOps defect
+title: "bug: "
+labels: [bug]
+body:
+  - type: input
+    id: version
+    attributes: { label: CodeOps version }
+    validations: { required: true }
+  - type: textarea
+    id: observed
+    attributes: { label: Observed behavior }
+    validations: { required: true }
+  - type: textarea
+    id: expected
+    attributes: { label: Expected behavior }
+    validations: { required: true }
+  - type: textarea
+    id: reproduction
+    attributes: { label: Reproduction steps, description: Do not include credentials or Secret data. }
+    validations: { required: true }

@@ -1,0 +1,40 @@
+{
+  "repository": "owner/repository",
+  "host": "codeops.example.com",
+  "accessIssuer": "https://team.cloudflareaccess.com",
+  "operatorEmails": ["operator@example.com"],
+  "kubernetesApiCidrs": [],
+  "githubReviewerIds": [],
+  "contextRoot": "/absolute/path/to/repository/docs/context",
+  "plane": {
+    "apiOrigin": "https://plane.example.com",
+    "workspaceSlug": "engineering",
+    "workspaceId": "00000000-0000-4000-8000-000000000001",
+    "projectId": "00000000-0000-4000-8000-000000000002",
+    "humanActorIds": ["00000000-0000-4000-8000-000000000003"],
+    "stateIds": {
+      "ready": "00000000-0000-4000-8000-000000000004",
+      "inProgress": "00000000-0000-4000-8000-000000000005",
+      "needsAttention": "00000000-0000-4000-8000-000000000006",
+      "complete": "00000000-0000-4000-8000-000000000007"
+    },
+    "personas": [
+      { "handle": "@ai-web", "userId": "10000000-0000-4000-8000-000000000001" },
+      { "handle": "@ai-security", "userId": "10000000-0000-4000-8000-000000000002" },
+      { "handle": "@ai-database", "userId": "10000000-0000-4000-8000-000000000003" },
+      { "handle": "@ai-infra", "userId": "10000000-0000-4000-8000-000000000004" },
+      { "handle": "@ai-design", "userId": "10000000-0000-4000-8000-000000000005" },
+      { "handle": "@ai-product", "userId": "10000000-0000-4000-8000-000000000006" },
+      { "handle": "@ai-ml", "userId": "10000000-0000-4000-8000-000000000007" }
+    ]
+  },
+  "credentialEnvironment": {
+    "openai": "CODEOPS_OPENAI_API_KEY",
+    "githubRead": "CODEOPS_GITHUB_READ_TOKEN",
+    "githubWrite": "CODEOPS_GITHUB_WRITE_TOKEN",
+    "githubWebhook": "CODEOPS_GITHUB_WEBHOOK_SECRET",
+    "planeApi": "CODEOPS_PLANE_API_KEY",
+    "planeWebhook": "CODEOPS_PLANE_WEBHOOK_SECRET",
+    "accessAudience": "CODEOPS_ACCESS_AUDIENCE"
+  }
+}
