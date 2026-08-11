@@ -6,7 +6,7 @@ const DNS = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const LABEL = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
-const REPOSITORY = "https://github.com/anulman/renoconcierge";
+const REPOSITORY = "https://github.com/example-org/example-repository";
 
 const TOKENS = {
   __CODEOPS_AGENT_DIGEST__: "agentDigest",
@@ -31,7 +31,7 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
     throw new Error("base SHA must contain 40 lowercase hex characters");
   }
   if (input.repository !== REPOSITORY) {
-    throw new Error("session runtime repository is fixed to RenoConcierge");
+    throw new Error("session runtime repository is fixed to CodeOps");
   }
   if (
     !IDENTIFIER.test(input.sessionId ?? "") ||
@@ -109,7 +109,7 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
   const images = [builder, worker, agent].map((container) => container.image);
   if (
     images.filter((image) => image.endsWith(`@${input.agentDigest}`)).length !== 2 ||
-    worker.image !== `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-runtime-worker@${input.workerDigest}` ||
+    worker.image !== `ghcr.io/anulman/codeops/session-runtime-worker@${input.workerDigest}` ||
     images.some((image) => !/@sha256:[0-9a-f]{64}$/.test(image))
   ) {
     throw new Error("session runtime Job image identity drifted");

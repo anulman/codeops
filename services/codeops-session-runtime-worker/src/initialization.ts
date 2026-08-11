@@ -3,7 +3,7 @@ import {
   sessionJobInitializationResponseSchema,
   type SessionJobInitializationRequest,
   type SessionJobInitializationResponse,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   boundedJson,
   exactGatewayOrigin,

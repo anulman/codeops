@@ -4,7 +4,7 @@ import {
   githubPullRequestStackSnapshotSchema,
   type GitHubPullRequestStackLink,
   type GitHubPullRequestStackSnapshot,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { z } from "zod";
 
 const gitSha = z.string().regex(/^[0-9a-f]{40}$/);
@@ -87,7 +87,7 @@ function headers(value: string): Readonly<Record<string, string>> {
     Accept: "application/vnd.github+json",
     Authorization: `Bearer ${token(value)}`,
     "Content-Type": "application/json",
-    "User-Agent": "renoconcierge-codeops-control-gateway",
+    "User-Agent": "codeops-control-gateway",
     "X-GitHub-Api-Version": "2022-11-28",
   };
 }

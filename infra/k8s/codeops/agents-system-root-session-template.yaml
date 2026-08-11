@@ -7,7 +7,7 @@ metadata:
     app.kubernetes.io/name: agents-system-runtime
     app.kubernetes.io/component: runtime
     app.kubernetes.io/part-of: agents-system
-    codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+    codeops.example/session-id: __CODEOPS_SESSION_ID__
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 21600
@@ -18,15 +18,15 @@ spec:
         app.kubernetes.io/name: agents-system-runtime
         app.kubernetes.io/component: runtime
         app.kubernetes.io/part-of: agents-system
-        codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+        codeops.example/session-id: __CODEOPS_SESSION_ID__
     spec:
       restartPolicy: Never
       terminationGracePeriodSeconds: 960
       serviceAccountName: agents-system-runtime
       automountServiceAccountToken: false
       enableServiceLinks: false
-      imagePullSecrets: [{ name: ghcr-renoconcierge }]
-      nodeSelector: { renoconcierge.ca/codeops: "true" }
+      imagePullSecrets: [{ name: codeops-registry }]
+      nodeSelector: { codeops.example/codeops: "true" }
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -36,7 +36,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       initContainers:
         - name: workspace-builder
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
+          image: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
           imagePullPolicy: IfNotPresent
           command: [/bin/sh, -ceu]
           args:
@@ -50,7 +50,7 @@ spec:
               git -c safe.directory=/workspace -C /workspace remote remove origin
               test "$(git -c safe.directory=/workspace -C /workspace rev-parse HEAD)" = "$CODEOPS_SESSION_BASE_SHA"
           env:
-            - { name: CODEOPS_SESSION_REPOSITORY, value: https://github.com/anulman/renoconcierge }
+            - { name: CODEOPS_SESSION_REPOSITORY, value: https://github.com/example-org/example-repository }
             - { name: CODEOPS_SESSION_BASE_SHA, value: __CODEOPS_BASE_SHA__ }
             - name: CODEOPS_REPOSITORY_READ_TOKEN
               valueFrom:
@@ -67,7 +67,7 @@ spec:
             - { name: temp, mountPath: /tmp }
       containers:
         - name: runtime-worker
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-runtime-worker@__CODEOPS_SESSION_RUNTIME_WORKER_DIGEST__
+          image: ghcr.io/anulman/codeops/session-runtime-worker@__CODEOPS_SESSION_RUNTIME_WORKER_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - { name: CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN, value: http://agents-session-control-gateway:8080 }
@@ -78,7 +78,7 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_WORKSPACE, value: /workspace }
             - { name: CODEOPS_SESSION_RUNTIME_ACP_STATE_PATH, value: /var/lib/codeops-session/state.json }
             - { name: CODEOPS_SESSION_ID, value: __CODEOPS_SESSION_ID__ }
-            - { name: CODEOPS_SESSION_REPOSITORY, value: anulman/renoconcierge }
+            - { name: CODEOPS_SESSION_REPOSITORY, value: example-org/example-repository }
             - { name: CODEOPS_SESSION_BRANCH, value: __CODEOPS_BRANCH__ }
             - { name: CODEOPS_SESSION_BASE_SHA, value: __CODEOPS_BASE_SHA__ }
             - { name: CODEOPS_SESSION_WORKFLOW_ID, value: __CODEOPS_WORKFLOW_ID__ }
@@ -104,7 +104,7 @@ spec:
             - { name: temp, mountPath: /tmp }
             - { name: session-secrets, mountPath: /var/run/secrets/agents-system, readOnly: true }
         - name: coding-agent
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
+          image: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - { name: CODEX_HOME, value: /tmp/codex-home }

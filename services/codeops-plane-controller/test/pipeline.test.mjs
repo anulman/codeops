@@ -98,7 +98,7 @@ const readyPayload = {
 
 function readyResearchPacket() {
   const projectContext = compileProjectContext({
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha,
     baseSha,
     workspaceId: payload.workspace_id,
@@ -154,7 +154,7 @@ function webhookInput(ledger, enqueue, body = payload) {
     },
     webhookSecret: secret,
     allowedHumanActorIds: new Set([actorId]),
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha,
     baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
@@ -179,7 +179,7 @@ function readyWebhookInput(ledger, enqueue, body = readyPayload) {
     allowedHumanActorIds: new Set([actorId]),
     aiPersonaUserIds: new Set([aiAssigneeId]),
     readyStateId,
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha,
     baseSha,
     receivedAt: "2026-07-27T02:45:01.000Z",

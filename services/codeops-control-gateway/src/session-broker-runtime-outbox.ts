@@ -4,7 +4,7 @@ import {
   sessionRuntimeClaimRequestSchema,
   type SessionCommandResult,
   type SessionSnapshot,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   executeSessionCommandTransaction,
   type TransactionClient,

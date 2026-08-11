@@ -22,7 +22,7 @@ const METADATA_TEMPLATE = [
   '{{.metadata.uid}}{{"\\n"}}',
   '{{.type}}{{"\\n"}}',
   '{{index .metadata.labels "app.kubernetes.io/part-of"}}{{"\\n"}}',
-  '{{index .metadata.labels "codeops.renoconcierge.ca/credential-scope"}}{{"\\n"}}',
+  '{{index .metadata.labels "codeops.example/credential-scope"}}{{"\\n"}}',
   '{{range $key,$value := .data}}{{$key}}{{"\\n"}}{{end}}',
 ].join("");
 
@@ -44,7 +44,7 @@ const ISSUERS = {
   "issue-runtime-capabilities": {
     action: "operator-issue-exact-runtime-credentials",
     script: fileURLToPath(new URL("./issue-codeops-session-proof-runtime-credentials.sh", import.meta.url)),
-    names: ["ghcr-renoconcierge", "codeops-agent-source-credentials"],
+    names: ["codeops-registry", "codeops-agent-source-credentials"],
     args: (input) => {
       if (
         typeof input.registryConfigFile !== "string" ||
@@ -92,7 +92,7 @@ function readCredentialMetadata(namespace, name, runner) {
     dataKeys: dataKeys.filter(Boolean).sort(),
     labels: {
       "app.kubernetes.io/part-of": partOf,
-      "codeops.renoconcierge.ca/credential-scope": scope,
+      "codeops.example/credential-scope": scope,
     },
   };
 }

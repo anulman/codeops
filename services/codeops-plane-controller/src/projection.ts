@@ -3,7 +3,7 @@ import {
   canonicalSerialize,
   researchPacketSchema,
   type ResearchPacket,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   applyResearchMutationBatch,
   type PlaneContentClient,

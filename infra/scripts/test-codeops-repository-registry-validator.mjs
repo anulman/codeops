@@ -46,7 +46,7 @@ test("validates one complete two-repository authority manifest offline", async (
   assert.match(result.manifestSha256, /^[0-9a-f]{64}$/);
   assert.deepEqual(
     result.repositories.map(({ repository }) => repository),
-    ["anulman/renoconcierge", "anulman/codeops"],
+    ["example-org/example-repository", "anulman/codeops"],
   );
   assert.equal(result.repositories.every(({ authorityClasses }) => authorityClasses.length === 9), true);
   assert.equal(JSON.stringify(result).includes("fixture-"), false);
@@ -62,7 +62,7 @@ test("exposes the offline validator as a credential-safe command", async (t) => 
   assert.equal(result.stderr, "");
   assert.deepEqual(
     JSON.parse(result.stdout).repositories.map(({ repository }) => repository),
-    ["anulman/renoconcierge", "anulman/codeops"],
+    ["example-org/example-repository", "anulman/codeops"],
   );
   assert.equal(result.stdout.includes("fixture-"), false);
 
@@ -83,7 +83,7 @@ test("rejects missing files and inline or malformed repository authority", async
   await assert.rejects(validateRepositoryRegistry(input.manifestPath));
 
   delete inline.repositories[0].readToken;
-  inline.repositories[0].repositoryUrl = "https://github.example.com/anulman/renoconcierge";
+  inline.repositories[0].repositoryUrl = "https://github.example.com/example-org/example-repository";
   await writeFile(input.manifestPath, JSON.stringify(inline));
   await assert.rejects(validateRepositoryRegistry(input.manifestPath), /GitHub HTTPS URL/);
 });

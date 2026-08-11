@@ -8,15 +8,15 @@ must separately verify the downloaded chart archive against the pinned digest.
 The trusted external supervisor must:
 
 1. derive the disposable namespace from the exact candidate SHA;
-2. label the admitted worker `renoconcierge.ca/codeops=true` only after the live
+2. label the admitted worker `codeops.example/codeops=true` only after the live
    capacity gate passes;
-3. copy the `ghcr-renoconcierge` image-pull Secret into the disposable
+3. copy the `codeops-registry` image-pull Secret into the disposable
    namespace without exposing its contents;
 4. create the five referenced Plane Secrets in that namespace without writing their
    values to Git, logs, workflow inputs, Plane, or Temporal history;
-5. copy `renoconcierge-preview-wildcard-tls` into the disposable namespace;
-6. replace `plane-candidate.preview.renoconcierge.ca` with
-   `plane-<candidate-sha-prefix>.preview.renoconcierge.ca`;
+5. copy `codeops-preview-wildcard-tls` into the disposable namespace;
+6. replace `plane-candidate.preview.codeops.example` with
+   `plane-<candidate-sha-prefix>.preview.codeops.example`;
 7. resolve every image in the rendered chart to an immutable registry digest
    and attest that every source tag still matches `plane-images.lock.json`;
 8. apply `plane-limit-range.yaml`, then install the pinned, digest-rewritten
@@ -40,7 +40,7 @@ Required Secret names and keys:
 - `codeops-session-broker-database`: `database-url`. This is a dedicated,
   externally provisioned least-privilege PostgreSQL DSN for the CodeOps
   session broker. It must target the stable
-  `renoconcierge-postgres-cnpg-pgbouncer` service and must not reuse the
+  `codeops-postgres-cnpg-pgbouncer` service and must not reuse the
   shared application owner credential.
 - `codeops-session-broker-read-auth`: `token`. This read-only bearer
   capability is mounted by the control gateway and Agent Sessions UI only.
@@ -220,17 +220,14 @@ CODEOPS_AGENTS_UI_DIGEST=sha256:<64-lowercase-hex> \
   > "$CODEOPS_AGENTS_UI_MANIFEST"
 ```
 
-After the internal Service and broker are ready, render and apply the bounded
-cluster Playwright smoke Job using the exact acceptance-runner image digest.
-The tokenless Job may reach only the UI Service, sends a synthetic Access
-principal, validates desktop and mobile fleet surfaces, and fails on horizontal
-overflow. It does not test the external Cloudflare Access policy owned by
-`HARDEN-13`.
+The standalone acceptance runner owns the browser contract. The local command
+builds the real UI, starts a deterministic broker fixture, and validates the
+desktop and mobile surfaces with Chromium. A deployment workflow can run the
+published acceptance-runner image against the external HTTPS origin with a
+Cloudflare Access service token.
 
 ```bash
-CODEOPS_ACCEPTANCE_RUNNER_DIGEST=sha256:<64-lowercase-hex> \
-  node infra/scripts/render-codeops-agents-ui-smoke.mjs \
-  > "$CODEOPS_AGENTS_UI_SMOKE_MANIFEST"
+nub run acceptance:agents-ui
 ```
 
 ## Disposable Agent Sessions runtime Job
@@ -1442,7 +1439,7 @@ CODEOPS_SESSION_RUNTIME_WORKER_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_BASE_SHA=<40-lowercase-hex> \
 CODEOPS_BRANCH=feat/agents-ui \
 CODEOPS_LEASE_ID=<lowercase-uuid> \
-CODEOPS_REPOSITORY=https://github.com/anulman/renoconcierge \
+CODEOPS_REPOSITORY=https://github.com/example-org/example-repository \
 CODEOPS_RUN_ID=video-proof-1 \
 CODEOPS_SESSION_ID=ses_video_1 \
 CODEOPS_SESSION_SUFFIX=video-1 \
@@ -1468,7 +1465,7 @@ uses `Recreate` with one replica so two writers cannot mount or update the
 ledger concurrently.
 
 Only the exact SHA-bound
-`https://work.renoconcierge.ca/webhooks/plane`
+`https://work.codeops.example/webhooks/plane`
 endpoint is public. `/healthz` remains pod-local. Network policy admits ingress
 only from ingress-nginx and egress only to Temporal, cluster DNS, and public
 HTTPS for the fixed Plane API origin plus the internal control gateway. The
@@ -1478,7 +1475,7 @@ IDs, and exact webhook host are validated by the trusted renderer:
 ```bash
 CODEOPS_PLANE_CONTROLLER_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_CONTROL_PLANE_SHA=<40-lowercase-hex> \
-CODEOPS_PLANE_CONTROLLER_HOST=work.renoconcierge.ca \
+CODEOPS_PLANE_CONTROLLER_HOST=work.codeops.example \
 CODEOPS_PLANE_WORKSPACE_SLUG=<workspace-slug> \
 CODEOPS_ALLOWED_HUMAN_ACTOR_IDS=<comma-separated-lowercase-uuids> \
 CODEOPS_READY_STATE_ID=<ready-state-lowercase-uuid> \
@@ -1544,7 +1541,7 @@ to an immutable digest before rendering any runtime workload.
 
 ```bash
 CODEOPS_BASE_SHA=<40-lowercase-hex> \
-CODEOPS_REGISTRY_HOST=registry-<first-12-sha>.preview.renoconcierge.ca \
+CODEOPS_REGISTRY_HOST=registry-<first-12-sha>.preview.codeops.example \
   node infra/scripts/render-codeops-cluster-registry.mjs \
   > "$CODEOPS_REGISTRY_MANIFEST"
 
@@ -1594,7 +1591,7 @@ sequentially, preserving the strict Trial 0 one-Job concurrency cap, and the
 research packet must record one explicit terminal perspective for each tag.
 Neither role receives a Plane credential. Research packets and proposed Plane
 mutations must cross the separate controller boundary and satisfy the
-`@renoconcierge/codeops-contracts` schemas before application; lifecycle state
+`@codeops/codeops-contracts` schemas before application; lifecycle state
 changes are not representable for the researcher.
 
 CI independently installs both npm locks, tests and typechecks the gateway,

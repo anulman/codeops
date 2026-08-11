@@ -1,5 +1,5 @@
 {
-  "name": "@renoconcierge/codeops-agent-image",
+  "name": "@codeops/codeops-agent-image",
   "version": "0.1.0",
   "private": true,
   "scripts": {

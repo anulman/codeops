@@ -3,7 +3,7 @@ kind: ServiceAccount
 metadata:
   name: codeops-image-builder-__CODEOPS_BUILD_SUFFIX__
   labels:
-    codeops.renoconcierge.ca/build-id: __CODEOPS_BUILD_ID__
+    codeops.example/build-id: __CODEOPS_BUILD_ID__
 automountServiceAccountToken: false
 ---
 apiVersion: batch/v1
@@ -12,8 +12,8 @@ metadata:
   name: codeops-image-builder-__CODEOPS_BUILD_SUFFIX__
   labels:
     app.kubernetes.io/name: codeops-image-builder
-    codeops.renoconcierge.ca/build-id: __CODEOPS_BUILD_ID__
-    codeops.renoconcierge.ca/image-name: __CODEOPS_IMAGE_KIND__
+    codeops.example/build-id: __CODEOPS_BUILD_ID__
+    codeops.example/image-name: __CODEOPS_IMAGE_KIND__
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 3600
@@ -23,8 +23,8 @@ spec:
       labels:
         app.kubernetes.io/name: codeops-image-builder
         app.kubernetes.io/part-of: codeops-trial0
-        codeops.renoconcierge.ca/build-id: __CODEOPS_BUILD_ID__
-        codeops.renoconcierge.ca/image-name: __CODEOPS_IMAGE_KIND__
+        codeops.example/build-id: __CODEOPS_BUILD_ID__
+        codeops.example/image-name: __CODEOPS_IMAGE_KIND__
     spec:
       serviceAccountName: codeops-image-builder-__CODEOPS_BUILD_SUFFIX__
       automountServiceAccountToken: false
@@ -33,7 +33,7 @@ spec:
       imagePullSecrets:
         - name: codeops-registry-pull
       nodeSelector:
-        renoconcierge.ca/codeops: "true"
+        codeops.example/codeops: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -60,7 +60,7 @@ spec:
               chmod 700 /tmp/git-askpass
               GIT_ASKPASS=/tmp/git-askpass GIT_TERMINAL_PROMPT=0 \
                 git clone --filter=blob:none --no-checkout \
-                  https://github.com/anulman/renoconcierge.git /workspace
+                  https://github.com/example-org/example-repository.git /workspace
               cd /workspace
               GIT_ASKPASS=/tmp/git-askpass GIT_TERMINAL_PROMPT=0 \
                 git fetch --depth=1 origin "$CODEOPS_BASE_SHA"
@@ -171,11 +171,11 @@ kind: NetworkPolicy
 metadata:
   name: codeops-image-builder-__CODEOPS_BUILD_SUFFIX__
   labels:
-    codeops.renoconcierge.ca/build-id: __CODEOPS_BUILD_ID__
+    codeops.example/build-id: __CODEOPS_BUILD_ID__
 spec:
   podSelector:
     matchLabels:
-      codeops.renoconcierge.ca/build-id: __CODEOPS_BUILD_ID__
+      codeops.example/build-id: __CODEOPS_BUILD_ID__
   policyTypes:
     - Ingress
     - Egress

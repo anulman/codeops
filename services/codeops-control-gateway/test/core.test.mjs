@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createProjectContext } from "@renoconcierge/codeops-contracts";
+import { createProjectContext } from "@codeops/codeops-contracts";
 import {
   authenticateBearer,
   buildAgentPrompt,
@@ -29,7 +29,7 @@ const modelAuth = {
 
 const projectContext = createProjectContext({
   version: "codeops.project-context/v1",
-  repository: { owner: "anulman", name: "renoconcierge" },
+  repository: { owner: "example-org", name: "example-repository" },
   controlPlaneSha: "b".repeat(40),
   baseSha: "a".repeat(40),
   project: {
@@ -53,7 +53,7 @@ const projectContext = createProjectContext({
 test("loads and bounds the exact submitted review's inline comments", async () => {
   const calls = [];
   const comments = await loadGitHubReviewComments({
-    repositoryUrl: "https://github.com/anulman/renoconcierge",
+    repositoryUrl: "https://github.com/example-org/example-repository",
     repositoryReadToken: "r".repeat(32),
     pullRequestNumber: 158,
     reviewId: 9001,
@@ -86,7 +86,7 @@ test("loads and bounds the exact submitted review's inline comments", async () =
   ]);
   assert.equal(
     calls[0].url,
-    "https://api.github.com/repos/anulman/renoconcierge/pulls/158/reviews/9001/comments?per_page=100&page=1",
+    "https://api.github.com/repos/example-org/example-repository/pulls/158/reviews/9001/comments?per_page=100&page=1",
   );
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(32)}`);
 });
@@ -94,7 +94,7 @@ test("loads and bounds the exact submitted review's inline comments", async () =
 test("qualifies only an approved exact PR head with passing checks and resolved threads", async () => {
   const calls = [];
   const qualified = await qualifyGitHubHead({
-    repositoryUrl: "https://github.com/anulman/renoconcierge",
+    repositoryUrl: "https://github.com/example-org/example-repository",
     repositoryReadToken: "r".repeat(32),
     pullRequestNumber: 155,
     headSha: "a".repeat(40),
@@ -150,8 +150,8 @@ test("qualifies only an approved exact PR head with passing checks and resolved 
   assert.equal(calls[1].url, "https://api.github.com/graphql");
   assert.equal(calls[1].init.method, "POST");
   assert.deepEqual(JSON.parse(calls[1].init.body).variables, {
-    owner: "anulman",
-    name: "renoconcierge",
+    owner: "example-org",
+    name: "example-repository",
     number: 155,
   });
 });
@@ -160,7 +160,7 @@ test("rejects approval qualification while any review thread is unresolved", asy
   let calls = 0;
   assert.equal(
     await qualifyGitHubHead({
-      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryUrl: "https://github.com/example-org/example-repository",
       repositoryReadToken: "r".repeat(32),
       pullRequestNumber: 155,
       headSha: "a".repeat(40),
@@ -224,7 +224,7 @@ const request = {
     workItemId: "22222222-2222-4222-8222-222222222222",
     triggerCommentId: "33333333-3333-4333-8333-333333333333",
     requestedBy: "44444444-4444-4444-8444-444444444444",
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha: "b".repeat(40),
     baseSha: "a".repeat(40),
     planeRevisionDigest: `sha256:${"b".repeat(64)}`,
@@ -294,7 +294,7 @@ const codingRequest = {
     workItemId: codingWorkItemId,
     workflowId: "coding-request-1",
     runId: "coding-request-1",
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     baseSha: projectContext.baseSha,
     branch: "codeops/routing-fixtures",
     summary: "Build routing fixtures",
@@ -319,7 +319,7 @@ test("resolves only the exact GitHub main ref through the read-only boundary", a
   const sha = "c".repeat(40);
   assert.equal(
     await resolveGitHubBranchHead({
-      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryUrl: "https://github.com/example-org/example-repository",
       repositoryReadToken: "r".repeat(32),
       branch: "main",
       fetch: async (url, init) => {
@@ -340,17 +340,17 @@ test("resolves only the exact GitHub main ref through the read-only boundary", a
   );
   assert.equal(
     calls[0].url,
-    "https://api.github.com/repos/anulman/renoconcierge/git/ref/heads/main",
+    "https://api.github.com/repos/example-org/example-repository/git/ref/heads/main",
   );
   assert.equal(
     calls[0].init.headers.Authorization,
     `Bearer ${"r".repeat(32)}`,
   );
   for (const repositoryUrl of [
-    "http://github.com/anulman/renoconcierge",
-    "https://evil.example/anulman/renoconcierge",
-    "https://user@github.com/anulman/renoconcierge",
-    "https://github.com/anulman/renoconcierge?ref=main",
+    "http://github.com/example-org/example-repository",
+    "https://evil.example/example-org/example-repository",
+    "https://user@github.com/example-org/example-repository",
+    "https://github.com/example-org/example-repository?ref=main",
   ]) {
     await assert.rejects(
       resolveGitHubBranchHead({
@@ -363,7 +363,7 @@ test("resolves only the exact GitHub main ref through the read-only boundary", a
   }
   await assert.rejects(
     resolveGitHubBranchHead({
-      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryUrl: "https://github.com/example-org/example-repository",
       repositoryReadToken: "short",
       branch: "main",
     }),
@@ -375,7 +375,7 @@ test("resolves one exact current pull-request head through the read-only boundar
   const calls = [];
   const headSha = "d".repeat(40);
   const result = await resolveGitHubPullRequestHead({
-    repositoryUrl: "https://github.com/anulman/renoconcierge",
+    repositoryUrl: "https://github.com/example-org/example-repository",
     repositoryReadToken: "r".repeat(32),
     pullRequestNumber: 159,
     fetch: async (url, init) => {
@@ -389,7 +389,7 @@ test("resolves one exact current pull-request head through the read-only boundar
     },
   });
   assert.deepEqual(result, {
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-repository",
     number: 159,
     state: "open",
     headSha,
@@ -398,13 +398,13 @@ test("resolves one exact current pull-request head through the read-only boundar
   });
   assert.equal(
     calls[0].url,
-    "https://api.github.com/repos/anulman/renoconcierge/pulls/159",
+    "https://api.github.com/repos/example-org/example-repository/pulls/159",
   );
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(32)}`);
 
   await assert.rejects(
     resolveGitHubPullRequestHead({
-      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryUrl: "https://github.com/example-org/example-repository",
       repositoryReadToken: "r".repeat(32),
       pullRequestNumber: 159,
       fetch: async () => Response.json({
@@ -538,7 +538,7 @@ test("delivers immutable ticket and sibling decision context to coding jobs", ()
     {
       namespace: "codeops-trial",
       ...createRunIdentity(codingDispatch),
-      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryUrl: "https://github.com/example-org/example-repository",
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
       repositoryReadToken: "repo-token",
@@ -640,7 +640,7 @@ test("retains passing coding evidence and mounts the exact cumulative patch for 
       {
         namespace: "codeops-trial",
         ...criticIdentity,
-        repositoryUrl: "https://github.com/anulman/renoconcierge",
+        repositoryUrl: "https://github.com/example-org/example-repository",
         agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
         sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
         repositoryReadToken: "repo-token",
@@ -1048,7 +1048,7 @@ test("builds only the fixed tokenless run resources", () => {
     {
       namespace: "codeops-trial",
       ...identity,
-      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repositoryUrl: "https://github.com/example-org/example-repository",
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
       repositoryReadToken: "repo-token",

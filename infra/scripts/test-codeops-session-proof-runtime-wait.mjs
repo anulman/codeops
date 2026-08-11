@@ -13,14 +13,14 @@ const operator = { username: "kubernetes-admin", uid: null, credentialSha256: di
 const target = { context: "proof-context", server: "https://cluster.example.invalid" };
 const artifacts = ["codex-login", "codex-smoke", "database", "gateway", "grants", "namespace", "runtime", "ui"]
   .map((id) => ({ id, sha256: digest(`${id}\n`) }));
-const planSource = JSON.stringify({ apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1", admission: "closed", execution: "render-and-review-only", identity, artifacts, sequence: sessionProofSequence() });
+const planSource = JSON.stringify({ apiVersion: "codeops.example/session-proof-plan/v1", admission: "closed", execution: "render-and-review-only", identity, artifacts, sequence: sessionProofSequence() });
 const planSha256 = digest(planSource);
 
 function namespaceResource(uid = "namespace-uid-1") {
   return { apiVersion: "v1", kind: "Namespace", metadata: { name: identity.namespace, uid, labels: {
     "app.kubernetes.io/part-of": "codeops-session-proof",
-    "codeops.renoconcierge.ca/proof-run": identity.runId,
-    "codeops.renoconcierge.ca/base-sha": identity.baseSha,
+    "codeops.example/proof-run": identity.runId,
+    "codeops.example/base-sha": identity.baseSha,
   } } };
 }
 
@@ -35,12 +35,12 @@ const applyEvidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
     .map((resource, index) => ({ ...resource, uid: `runtime-resource-uid-${index}` })),
 }));
 const applyReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1", result: "completed", proceed: true,
+  apiVersion: "codeops.example/session-proof-step-receipt/v1", result: "completed", proceed: true,
   planSha256, namespace: applyAuthorization.namespace, stepIndex: 16, stepId: "start-runtime", action: "operator-apply",
   artifact: "runtime", artifactSha256: applyAuthorization.artifactSha256, evidenceSha256: digest(applyEvidenceSource),
 });
 const authorization = {
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+  apiVersion: "codeops.example/session-proof-step-authorization/v1",
   planSha256, admission, namespace: applyAuthorization.namespace, stepIndex: 17,
   stepId: "wait-runtime", action: "operator-wait-ready", artifact: null, artifactSha256: null,
   previousReceiptSha256: digest(applyReceiptSource), authorizedAt: "2026-08-05T22:19:45Z",

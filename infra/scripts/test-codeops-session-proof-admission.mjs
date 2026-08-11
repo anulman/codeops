@@ -29,7 +29,7 @@ const artifactIds = [
 
 function planSource() {
   return JSON.stringify({
-    apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+    apiVersion: "codeops.example/session-proof-plan/v1",
     admission: "closed",
     execution: "render-and-review-only",
     identity,
@@ -62,8 +62,8 @@ function namespace(uid = "namespace-uid-1") {
       uid,
       labels: {
         "app.kubernetes.io/part-of": "codeops-session-proof",
-        "codeops.renoconcierge.ca/proof-run": identity.runId,
-        "codeops.renoconcierge.ca/base-sha": identity.baseSha,
+        "codeops.example/proof-run": identity.runId,
+        "codeops.example/base-sha": identity.baseSha,
       },
     },
   };
@@ -126,7 +126,7 @@ test("fails closed on principal, cluster, expiry, namespace labels, UID, or step
     ...base, namespaceResource: namespace("replacement-uid"),
   }));
   const relabeled = namespace();
-  relabeled.metadata.labels["codeops.renoconcierge.ca/proof-run"] = "other";
+  relabeled.metadata.labels["codeops.example/proof-run"] = "other";
   assert.throws(() => verifySessionProofOperation(bound, {
     ...base, namespaceResource: relabeled,
   }));
@@ -146,7 +146,7 @@ test("recovers only the exact expired bound admission, live Namespace UID, and p
   });
   const sourceAdmissionSource = `${JSON.stringify(bound, null, 2)}\n`;
   const predecessorReceiptSource = `${JSON.stringify({
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+    apiVersion: "codeops.example/session-proof-step-receipt/v1",
     result: "completed",
     proceed: true,
     checkedAt: "2026-08-05T07:00:00.000Z",
@@ -215,7 +215,7 @@ test("refuses recovery drift before it can authorize a remaining step", () => {
     sourceAdmissionSource: `${JSON.stringify(bound, null, 2)}\n`,
     predecessorStepId: "start-gateway",
     predecessorReceiptSource: `${JSON.stringify({
-      apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+      apiVersion: "codeops.example/session-proof-step-receipt/v1",
       result: "completed",
       proceed: true,
       checkedAt: "2026-08-05T07:00:00.000Z",

@@ -175,9 +175,14 @@
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $repository.context.directory) -}}
 {{- fail "quickstart.repository.context.directory must be one lowercase path component" -}}
 {{- end -}}
-{{- range (list $repository.context.agents $repository.context.currentState $repository.context.decisions $repository.context.domain $repository.context.product $repository.context.sourceMap $repository.context.soul) -}}
+{{- range (list $repository.context.currentState $repository.context.decisions $repository.context.domain $repository.context.product $repository.context.sourceMap) -}}
 {{- if or (eq (trim .) "") (gt (len .) 100000) -}}
-{{- fail "quickstart repository context documents must contain 1 to 100000 bytes" -}}
+{{- fail "quickstart repository-specific context documents must contain 1 to 100000 bytes" -}}
+{{- end -}}
+{{- end -}}
+{{- range (list $repository.context.agents $repository.context.soul) -}}
+{{- if gt (len .) 100000 -}}
+{{- fail "quickstart baseline context overrides must contain at most 100000 bytes" -}}
 {{- end -}}
 {{- end -}}
 {{- end -}}

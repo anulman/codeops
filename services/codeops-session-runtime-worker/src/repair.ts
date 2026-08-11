@@ -1,7 +1,7 @@
 import {
   sessionRuntimeDispatchSchema,
   type SessionRuntimeDispatch,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   sessionRuntimeDispatchDigest,
   type RuntimeExecutionReceiptStore,

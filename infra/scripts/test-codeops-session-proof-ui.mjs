@@ -31,7 +31,7 @@ test("binds the immutable UI to the exact proof namespace and run", () => {
       "codeops-session-proof",
     );
     assert.equal(
-      resource.metadata.labels["codeops.renoconcierge.ca/proof-run"],
+      resource.metadata.labels["codeops.example/proof-run"],
       input.runId,
     );
   }

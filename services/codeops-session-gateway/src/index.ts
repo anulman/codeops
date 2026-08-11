@@ -272,7 +272,7 @@ export async function runGateway(): Promise<void> {
     );
     try {
       await acp
-        .client({ name: "renoconcierge-codeops-session-gateway" })
+        .client({ name: "codeops-session-gateway" })
         .onRequest(acp.methods.client.session.requestPermission, (context) => {
           const option = context.params.options.find(
             (candidate) => candidate.kind === "allow_once",
@@ -296,7 +296,7 @@ export async function runGateway(): Promise<void> {
           await agent.request(acp.methods.agent.initialize, {
             protocolVersion: acp.PROTOCOL_VERSION,
             clientInfo: {
-              name: "renoconcierge-codeops-session-gateway",
+              name: "codeops-session-gateway",
               version: "0.1.0",
             },
           });

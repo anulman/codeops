@@ -14,7 +14,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import { createSessionProofAdmission } from "./codeops-session-proof-admission.mjs";
 import { buildSessionProofOperatorItinerary } from "./codeops-session-proof-operator-itinerary.mjs";
 
-const PACKET_VERSION = "codeops.renoconcierge.ca/session-proof-operator-packet/v1";
+const PACKET_VERSION = "codeops.example/session-proof-operator-packet/v1";
 const FILES = {
   namespace: "artifacts/namespace.yaml",
   database: "artifacts/database.yaml",
@@ -227,7 +227,7 @@ export function attachSessionProofOperatorAdmission(input) {
   const admissionSource = `${JSON.stringify(admission, null, 2)}\n`;
   writeAdmission(input.admissionPath, admissionSource);
   return {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-operator-admission-attachment/v1",
+    apiVersion: "codeops.example/session-proof-operator-admission-attachment/v1",
     result: "attached-approved-unbound-admission",
     packetPath: input.packetPath,
     admissionPath: input.admissionPath,

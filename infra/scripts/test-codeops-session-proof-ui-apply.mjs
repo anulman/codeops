@@ -28,7 +28,7 @@ const artifacts = ["codex-login", "codex-smoke", "database", "gateway", "grants"
     sha256: createHash("sha256").update(id === "ui" ? manifestSource : `${id}\n`).digest("hex"),
   }));
 const planSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+  apiVersion: "codeops.example/session-proof-plan/v1",
   admission: "closed",
   execution: "render-and-review-only",
   identity,
@@ -46,8 +46,8 @@ function namespaceResource(uid = "namespace-uid-1") {
       uid,
       labels: {
         "app.kubernetes.io/part-of": "codeops-session-proof",
-        "codeops.renoconcierge.ca/proof-run": identity.runId,
-        "codeops.renoconcierge.ca/base-sha": identity.baseSha,
+        "codeops.example/proof-run": identity.runId,
+        "codeops.example/base-sha": identity.baseSha,
       },
     },
   };
@@ -68,7 +68,7 @@ const admission = bindSessionProofNamespace(unbound, {
   observedAt: "2026-08-05T21:01:00Z",
 });
 const authorization = {
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+  apiVersion: "codeops.example/session-proof-step-authorization/v1",
   planSha256,
   admission,
   namespace: { name: identity.namespace, uid: admission.namespaceUid },

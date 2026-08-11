@@ -12,7 +12,7 @@ import {
   canonicalSerialize,
   codingRequestSchema,
   type CodingRequest,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { z } from "zod";
 
 const uuid = z.string().uuid();

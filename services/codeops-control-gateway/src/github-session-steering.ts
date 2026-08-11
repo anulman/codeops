@@ -4,7 +4,7 @@ import {
   sessionSnapshotSchema,
   type SessionRuntimeDispatch,
   type SessionSnapshot,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { z } from "zod";
 import { authenticateBearer } from "./bearer-auth.js";
 

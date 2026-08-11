@@ -50,8 +50,8 @@ export function evaluateCodeOpsCapacity(
   if (!Number.isFinite(requiredMemoryBytes) || requiredMemoryBytes <= 0) {
     reasons.push("required memory must be a positive finite number");
   }
-  if (node.metadata?.labels?.["renoconcierge.ca/codeops"] !== "true") {
-    reasons.push("node is missing renoconcierge.ca/codeops=true");
+  if (node.metadata?.labels?.["codeops.example/codeops"] !== "true") {
+    reasons.push("node is missing codeops.example/codeops=true");
   }
   if (condition(node, "Ready") !== "True") reasons.push("node is not Ready");
   for (const type of ["MemoryPressure", "DiskPressure", "PIDPressure"]) {

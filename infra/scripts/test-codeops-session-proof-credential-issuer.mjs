@@ -25,7 +25,7 @@ const target = { context: "proof-context", server: "https://cluster.example.inva
 const artifacts = ["codex-login", "codex-smoke", "database", "gateway", "grants", "namespace", "runtime", "ui"]
   .map((id) => ({ id, sha256: createHash("sha256").update(`${id}\n`).digest("hex") }));
 const planSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+  apiVersion: "codeops.example/session-proof-plan/v1",
   admission: "closed",
   execution: "render-and-review-only",
   identity,
@@ -41,8 +41,8 @@ const namespaceResource = (uid = "namespace-uid-1") => ({
     uid,
     labels: {
       "app.kubernetes.io/part-of": "codeops-session-proof",
-      "codeops.renoconcierge.ca/proof-run": identity.runId,
-      "codeops.renoconcierge.ca/base-sha": identity.baseSha,
+      "codeops.example/proof-run": identity.runId,
+      "codeops.example/base-sha": identity.baseSha,
     },
   },
 });
@@ -61,7 +61,7 @@ const admission = bindSessionProofNamespace(unbound, {
   observedAt: "2026-08-05T18:01:00Z",
 });
 const creationReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-namespace-create/v1",
+  apiVersion: "codeops.example/session-proof-namespace-create/v1",
   result: "created-and-uid-bound",
   checkedAt: "2026-08-05T18:01:00Z",
   planSha256,
@@ -93,7 +93,7 @@ const brokerContracts = {
   "codeops-session-runtime-worker-database": ["database-url", "password"],
 };
 const runtimeContracts = {
-  "ghcr-renoconcierge": [".dockerconfigjson"],
+  "codeops-registry": [".dockerconfigjson"],
   "codeops-agent-source-credentials": ["repository-read-token"],
 };
 
@@ -101,7 +101,7 @@ function secretMetadata(name, runtime = false) {
   const keys = (runtime ? runtimeContracts : brokerContracts)[name];
   return [
     `secret-uid-${name}`,
-    name === "ghcr-renoconcierge" ? "kubernetes.io/dockerconfigjson" : "Opaque",
+    name === "codeops-registry" ? "kubernetes.io/dockerconfigjson" : "Opaque",
     "codeops-session-proof",
     runtime ? "session-video-proof-runtime" : "session-video-proof",
     ...keys,
@@ -167,7 +167,7 @@ function brokerReceiptSource() {
         dataKeys: keys.filter(Boolean),
         labels: {
           "app.kubernetes.io/part-of": partOf,
-          "codeops.renoconcierge.ca/credential-scope": scope,
+          "codeops.example/credential-scope": scope,
         },
       };
     }),

@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { sessionProofSequence } from "./codeops-session-proof-plan.mjs";
 
 const SHA256 = /^[0-9a-f]{64}$/;
-const PLAN_VERSION = "codeops.renoconcierge.ca/session-proof-plan/v1";
+const PLAN_VERSION = "codeops.example/session-proof-plan/v1";
 
 const adapters = {
   "create-namespace": ["./codeops-session-proof-namespace-create.mjs", "createSessionProofNamespace"],
@@ -178,7 +178,7 @@ export function buildSessionProofOperatorItinerary(input) {
   }
 
   return {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-operator-itinerary/v1",
+    apiVersion: "codeops.example/session-proof-operator-itinerary/v1",
     mode: "closed-rehearsal",
     liveAccess: false,
     mutation: false,

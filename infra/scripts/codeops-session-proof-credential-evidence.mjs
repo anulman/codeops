@@ -26,7 +26,7 @@ const EXPECTED = {
   "issue-runtime-capabilities": {
     scope: "session-video-proof-runtime",
     secrets: {
-      "ghcr-renoconcierge": {
+      "codeops-registry": {
         type: "kubernetes.io/dockerconfigjson",
         keys: [".dockerconfigjson"],
       },
@@ -50,7 +50,7 @@ export function verifySessionProofCredentialEvidence(authorization, evidence) {
       "apiVersion", "result", "observedAt", "planSha256", "stepId", "namespace",
       "credentialInventory",
     ]) ||
-    evidence.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
+    evidence.apiVersion !== "codeops.example/session-proof-step-evidence/v1" ||
     evidence.result !== "verified" ||
     evidence.planSha256 !== authorization.planSha256 ||
     evidence.stepId !== authorization.stepId ||
@@ -77,10 +77,10 @@ export function verifySessionProofCredentialEvidence(authorization, evidence) {
       JSON.stringify([...(secret.dataKeys ?? [])].sort()) !== JSON.stringify(contract.keys) ||
       !sameKeys(secret.labels, [
         "app.kubernetes.io/part-of",
-        "codeops.renoconcierge.ca/credential-scope",
+        "codeops.example/credential-scope",
       ]) ||
       secret.labels["app.kubernetes.io/part-of"] !== "codeops-session-proof" ||
-      secret.labels["codeops.renoconcierge.ca/credential-scope"] !== expected.scope
+      secret.labels["codeops.example/credential-scope"] !== expected.scope
     ) {
       throw new Error("proof credential evidence metadata drifted");
     }
@@ -108,7 +108,7 @@ export function buildSessionProofCredentialEvidence(input) {
       secret.type !== contract.type ||
       JSON.stringify([...(secret.dataKeys ?? [])].sort()) !== JSON.stringify(contract.keys) ||
       secret.labels?.["app.kubernetes.io/part-of"] !== "codeops-session-proof" ||
-      secret.labels?.["codeops.renoconcierge.ca/credential-scope"] !== expected.scope ||
+      secret.labels?.["codeops.example/credential-scope"] !== expected.scope ||
       Object.hasOwn(secret, "data") ||
       Object.hasOwn(secret, "stringData")
     ) {
@@ -122,12 +122,12 @@ export function buildSessionProofCredentialEvidence(input) {
       dataKeys: [...secret.dataKeys].sort(),
       labels: {
         "app.kubernetes.io/part-of": "codeops-session-proof",
-        "codeops.renoconcierge.ca/credential-scope": expected.scope,
+        "codeops.example/credential-scope": expected.scope,
       },
     };
   }).sort((left, right) => left.name.localeCompare(right.name));
   const evidence = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+    apiVersion: "codeops.example/session-proof-step-evidence/v1",
     result: "verified",
     observedAt: input.observedAt,
     planSha256: input.authorization.planSha256,

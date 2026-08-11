@@ -1,5 +1,5 @@
 {
-  "name": "@renoconcierge/codeops-plane-controller",
+  "name": "@codeops/codeops-plane-controller",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -16,7 +16,7 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
-    "@renoconcierge/codeops-contracts": "workspace:*",
+    "@codeops/codeops-contracts": "workspace:*",
     "@temporalio/client": "1.21.1",
     "zod": "3.25.76"
   },

@@ -89,7 +89,7 @@ export function persistSessionProofOperatorPacket(input) {
   }
   records.push(fileRecord("itinerary.json", itinerarySource));
   const manifest = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-operator-packet/v1",
+    apiVersion: "codeops.example/session-proof-operator-packet/v1",
     state: "reviewed-inputs-only",
     liveAccess: false,
     clusterMutation: false,

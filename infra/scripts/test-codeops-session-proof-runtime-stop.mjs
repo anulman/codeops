@@ -46,7 +46,7 @@ const operator = {
 };
 const target = { context: "proof-context", server: "https://cluster.example.invalid" };
 const planSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+  apiVersion: "codeops.example/session-proof-plan/v1",
   admission: "closed",
   execution: "render-and-review-only",
   identity,
@@ -65,8 +65,8 @@ function namespaceResource(uid = "namespace-uid-1") {
       uid,
       labels: {
         "app.kubernetes.io/part-of": "codeops-session-proof",
-        "codeops.renoconcierge.ca/proof-run": identity.runId,
-        "codeops.renoconcierge.ca/base-sha": identity.baseSha,
+        "codeops.example/proof-run": identity.runId,
+        "codeops.example/base-sha": identity.baseSha,
       },
     },
   };
@@ -105,7 +105,7 @@ const applyEvidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
   resources: runtimeResources,
 }));
 const applyReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   planSha256,
@@ -165,7 +165,7 @@ const runtimeEvidenceSource = JSON.stringify(buildSessionProofRuntimeReadinessEv
   observedAt: "2026-08-05T22:21:00Z",
 }));
 const runtimeReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   planSha256,
@@ -210,7 +210,7 @@ const recordEvidenceSource = JSON.stringify(buildSessionProofRecordEvidence({
   },
 }));
 const recordReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   planSha256,
@@ -224,7 +224,7 @@ const recordReceiptSource = JSON.stringify({
   evidenceSha256: digest(recordEvidenceSource),
 });
 const authorization = {
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+  apiVersion: "codeops.example/session-proof-step-authorization/v1",
   planSha256,
   admission,
   namespace,

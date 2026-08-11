@@ -43,7 +43,7 @@ const sha = "8f3d2c033f70be04b4b2dc8a005683806e84e209";
 function makeProjectContext(workspaceId, projectId) {
   return createProjectContext({
     version: contractVersions.projectContext,
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha: sha,
     baseSha: sha,
     project: {
@@ -68,7 +68,7 @@ function makeProjectContext(workspaceId, projectId) {
 test("sorts mixed-case project context paths with the canonical comparator", () => {
   const context = createProjectContext({
     version: contractVersions.projectContext,
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha: sha,
     baseSha: sha,
     project: {
@@ -230,7 +230,7 @@ const workItem = {
   workItemId: "plane:2fdebb4c",
   workflowId: "workflow-123",
   runId: "run-123",
-  repository: { owner: "anulman", name: "renoconcierge" },
+  repository: { owner: "example-org", name: "example-repository" },
   baseSha: sha,
   branch: "feat/customer-routing-matrix",
   summary: "Validate customer routing across file and browser states.",
@@ -474,7 +474,7 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
     requestedBy: "github:6723643628",
     humanReview: {
       version: "codeops.human-review-request/v1",
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       pullRequestNumber: 158,
       reviewId: 9001,
       reviewedHeadSha: codingWorkItem.baseSha,
@@ -1095,7 +1095,7 @@ const planeCommentEvent = {
 };
 
 const researchSource = {
-  repository: { owner: "anulman", name: "renoconcierge" },
+  repository: { owner: "example-org", name: "example-repository" },
   controlPlaneSha: sha,
   baseSha: sha,
   planeRevisionDigest: `sha256:${"b".repeat(64)}`,
@@ -1653,7 +1653,7 @@ test("binds native GitHub stacks to one exact linear pull-request chain", () => 
   assert.equal(
     githubPullRequestStackSnapshotSchema.parse({
       version: contractVersions.githubPullRequestStackSnapshot,
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 42,
       baseRef: "main",
       open: true,
@@ -1681,7 +1681,7 @@ test("binds native GitHub stacks to one exact linear pull-request chain", () => 
   assert.equal(
     githubPullRequestStackLinkSchema.parse({
       version: contractVersions.githubPullRequestStackLink,
-      repository: { owner: "anulman", name: "renoconcierge" },
+      repository: { owner: "example-org", name: "example-repository" },
       parent: {
         number: 155,
         headSha: "a".repeat(40),
@@ -1700,7 +1700,7 @@ test("binds native GitHub stacks to one exact linear pull-request chain", () => 
   assert.throws(() =>
     githubPullRequestStackLinkSchema.parse({
       version: contractVersions.githubPullRequestStackLink,
-      repository: { owner: "anulman", name: "renoconcierge" },
+      repository: { owner: "example-org", name: "example-repository" },
       parent: {
         number: 155,
         headSha: "a".repeat(40),

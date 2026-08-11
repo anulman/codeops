@@ -58,7 +58,7 @@ function verifyRuntimeReadinessChain(authorization, receiptSource, evidenceSourc
   }
   const receipt = parseJson(receiptSource, "proof runtime readiness receipt");
   if (
-    receipt?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+    receipt?.apiVersion !== "codeops.example/session-proof-step-receipt/v1" ||
     receipt.result !== "completed" ||
     receipt.proceed !== true ||
     receipt.planSha256 !== authorization.planSha256 ||
@@ -134,7 +134,7 @@ export function verifySessionProofRecordEvidence(authorization, evidence) {
       "apiVersion", "result", "observedAt", "planSha256", "stepId", "namespace",
       "runtimeReadinessReceiptSource", "runtimeReadinessEvidenceSource", "capture",
     ]) ||
-    evidence.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
+    evidence.apiVersion !== "codeops.example/session-proof-step-evidence/v1" ||
     evidence.result !== "verified" ||
     evidence.planSha256 !== authorization.planSha256 ||
     evidence.stepId !== authorization.stepId ||
@@ -189,7 +189,7 @@ export function buildSessionProofRecordEvidence(input) {
   };
   verifyCapture(authorization, capture, runtimeReadyAt);
   const evidence = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+    apiVersion: "codeops.example/session-proof-step-evidence/v1",
     result: "verified",
     observedAt: input.observedAt,
     planSha256: authorization.planSha256,

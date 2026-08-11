@@ -4,7 +4,7 @@ import {
   canonicalSerialize,
   workItemLifecycleEventSchema,
   type WorkItemLifecycleEvent,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 
 import type { TransactionClient } from "./session-broker-repository.js";
 

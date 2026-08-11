@@ -61,8 +61,8 @@ test("selects distinct Plane projects and credentials for two repositories", asy
     version: "codeops.repository-registry/v1",
     repositories: [
       {
-        repository: "anulman/renoconcierge",
-        repositoryUrl: "https://github.com/anulman/renoconcierge.git",
+        repository: "example-org/example-repository",
+        repositoryUrl: "https://github.com/example-org/example-repository.git",
         readTokenFile: "/var/run/codeops/reno-read",
         writeTokenFile: "/var/run/codeops/reno-write",
         githubWebhookSecretFile: "/var/run/codeops/reno-github-webhook",
@@ -98,11 +98,11 @@ test("selects distinct Plane projects and credentials for two repositories", asy
     },
   );
   assert.deepEqual(registry.repositories, [
-    "anulman/renoconcierge",
+    "example-org/example-repository",
     "anulman/codeops",
   ]);
   assert.equal(
-    registry.resolve("anulman/renoconcierge").apiKey,
+    registry.resolve("example-org/example-repository").apiKey,
     "r".repeat(32),
   );
   assert.equal(
@@ -114,7 +114,7 @@ test("selects distinct Plane projects and credentials for two repositories", asy
     "anulman/codeops",
   );
   assert.equal(
-    registry.resolve("anulman/renoconcierge").workspaceId,
+    registry.resolve("example-org/example-repository").workspaceId,
     ids.renoWorkspace,
   );
   assert.equal(
@@ -126,7 +126,7 @@ test("selects distinct Plane projects and credentials for two repositories", asy
     [6723643629],
   );
   assert.equal(
-    registry.resolve("anulman/renoconcierge").policy.projectContextRoot,
+    registry.resolve("example-org/example-repository").policy.projectContextRoot,
     "/var/run/codeops/context/reno",
   );
   assert.throws(() => registry.resolve("anulman/unknown"), /not admitted/);
@@ -141,7 +141,7 @@ test("rejects reused Plane credentials, projects, and incomplete authorities", a
     () =>
       createRepositoryPlaneRegistry([
         {
-          repository: "anulman/renoconcierge",
+          repository: "example-org/example-repository",
           apiOrigin: "https://plane.example.com",
           workspaceSlug: "engineering",
           workspaceId: ids.renoWorkspace,

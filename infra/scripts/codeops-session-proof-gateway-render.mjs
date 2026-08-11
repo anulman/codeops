@@ -29,7 +29,7 @@ export function renderSessionProofGatewayManifest(template, digest) {
     pod.automountServiceAccountToken !== false ||
     pod.serviceAccountName !== "codeops-control-gateway" ||
     pod.containers.length !== 1 ||
-    container.image !== `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-control-gateway@${digest}` ||
+    container.image !== `ghcr.io/anulman/codeops/session-control-gateway@${digest}` ||
     container.securityContext?.readOnlyRootFilesystem !== true ||
     JSON.stringify(container.securityContext?.capabilities?.drop) !== JSON.stringify(["ALL"]) ||
     JSON.stringify(deployment.spec.selector.matchLabels) !== JSON.stringify(selector) ||

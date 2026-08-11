@@ -17,7 +17,7 @@ export function renderAgentsUiManifest(template, digest) {
     rendered.includes(TOKEN) ||
     images.length !== 1 ||
     images[0] !==
-      `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agents-ui@${digest}`
+      `ghcr.io/anulman/codeops/agents-ui@${digest}`
   ) {
     throw new Error("mutable or unresolved agents UI image survived rendering");
   }
@@ -112,18 +112,6 @@ export function renderAgentsUiManifest(template, digest) {
           namespaceSelector: {
             matchLabels: {
               "kubernetes.io/metadata.name": "ingress-nginx",
-            },
-          },
-        },
-      ],
-      ports: [{ protocol: "TCP", port: 3000 }],
-    },
-    {
-      from: [
-        {
-          podSelector: {
-            matchLabels: {
-              "codeops.renoconcierge.ca/agents-ui-smoke": "true",
             },
           },
         },

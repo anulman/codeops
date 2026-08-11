@@ -15,7 +15,7 @@ import type {
   CandidatePublicationResult,
   CodingRequest,
   ResearchRequest,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import type {
   DispatchResult,
   ResearchProjectionResult,

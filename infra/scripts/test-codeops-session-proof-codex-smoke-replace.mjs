@@ -46,7 +46,7 @@ const artifacts = ["codex-login", "codex-smoke", "database", "gateway", "grants"
     sha256: createHash("sha256").update(id === "codex-smoke" ? manifestSource : `${id}\n`).digest("hex"),
   }));
 const planSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+  apiVersion: "codeops.example/session-proof-plan/v1",
   admission: "closed",
   execution: "render-and-review-only",
   identity,
@@ -64,8 +64,8 @@ function namespaceResource(uid = "namespace-uid-1") {
       uid,
       labels: {
         "app.kubernetes.io/part-of": "codeops-session-proof",
-        "codeops.renoconcierge.ca/proof-run": identity.runId,
-        "codeops.renoconcierge.ca/base-sha": identity.baseSha,
+        "codeops.example/proof-run": identity.runId,
+        "codeops.example/base-sha": identity.baseSha,
       },
     },
   };
@@ -104,7 +104,7 @@ const loginApplyEvidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
   resources: loginResources,
 }));
 const loginApplyReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   planSha256,
@@ -153,7 +153,7 @@ const loginCompletionEvidenceSource = JSON.stringify(buildSessionProofCodexLogin
   observedAt: "2026-08-05T18:18:00Z",
 }));
 const loginCompletionReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   planSha256,
@@ -166,7 +166,7 @@ const loginCompletionReceiptSource = JSON.stringify({
   evidenceSha256: createHash("sha256").update(loginCompletionEvidenceSource).digest("hex"),
 });
 const authorization = {
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+  apiVersion: "codeops.example/session-proof-step-authorization/v1",
   planSha256,
   admission,
   namespace,

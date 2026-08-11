@@ -1,7 +1,7 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
-import { sessionJobInitializationRequestSchema } from "@renoconcierge/codeops-contracts";
+import { sessionJobInitializationRequestSchema } from "@codeops/codeops-contracts";
 import {
   createAcpPermissionRelay,
   SocketAcpWorkspaceLifecycle,

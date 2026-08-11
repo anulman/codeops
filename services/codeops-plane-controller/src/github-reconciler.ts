@@ -1,5 +1,5 @@
 import { z } from "zod";
-import type { GitHubPullRequestStackSnapshot } from "@renoconcierge/codeops-contracts";
+import type { GitHubPullRequestStackSnapshot } from "@codeops/codeops-contracts";
 import type { GitHubPullRequestEvent } from "./github-events.js";
 import type {
   PullRequestBindingStore,

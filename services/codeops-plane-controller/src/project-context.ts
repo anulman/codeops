@@ -5,7 +5,7 @@ import {
   createProjectContext,
   type ProjectContext,
   type ProjectContextDocument,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 
 const requiredDocuments = Object.freeze([
   {

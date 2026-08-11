@@ -1,5 +1,5 @@
 {
-  "name": "@renoconcierge/codeops-session-gateway",
+  "name": "@codeops/codeops-session-gateway",
   "version": "0.1.0",
   "private": true,
   "type": "module",

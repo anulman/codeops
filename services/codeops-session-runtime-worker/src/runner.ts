@@ -1,5 +1,5 @@
 import { setTimeout as delay } from "node:timers/promises";
-import type { SessionCommandResult } from "@renoconcierge/codeops-contracts";
+import type { SessionCommandResult } from "@codeops/codeops-contracts";
 import type { RuntimeExecutor } from "./transport.js";
 
 export interface RuntimeWorkerTransport {

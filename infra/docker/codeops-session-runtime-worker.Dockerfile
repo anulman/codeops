@@ -17,10 +17,10 @@ RUN services/codeops-session-runtime-worker/node_modules/.bin/tsc -p packages/co
   && npm run build --prefix services/codeops-session-runtime-worker \
   && npm prune --omit=dev --prefix services/codeops-session-runtime-worker \
   && test -f services/codeops-session-runtime-worker/dist/runtime-main.js \
-  && rm services/codeops-session-runtime-worker/node_modules/@renoconcierge/codeops-contracts \
-  && mkdir services/codeops-session-runtime-worker/node_modules/@renoconcierge/codeops-contracts \
-  && cp packages/codeops-contracts/package.json services/codeops-session-runtime-worker/node_modules/@renoconcierge/codeops-contracts/ \
-  && cp -R packages/codeops-contracts/dist services/codeops-session-runtime-worker/node_modules/@renoconcierge/codeops-contracts/
+  && rm services/codeops-session-runtime-worker/node_modules/@codeops/codeops-contracts \
+  && mkdir services/codeops-session-runtime-worker/node_modules/@codeops/codeops-contracts \
+  && cp packages/codeops-contracts/package.json services/codeops-session-runtime-worker/node_modules/@codeops/codeops-contracts/ \
+  && cp -R packages/codeops-contracts/dist services/codeops-session-runtime-worker/node_modules/@codeops/codeops-contracts/
 
 FROM node:24-bookworm-slim
 WORKDIR /app

@@ -4,7 +4,7 @@ import test from "node:test";
 import { parse } from "yaml";
 
 const expectedImages = [
-  "agent", "agents-ui", "control-gateway", "model-proxy", "orchestrator",
+  "acceptance-runner", "agent", "agents-ui", "control-gateway", "model-proxy", "orchestrator",
   "plane-controller", "session-control-gateway", "session-gateway",
   "session-runtime-worker",
 ];
@@ -70,5 +70,5 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(serialized, /helm package \.release\/chart/);
   assert.match(serialized, /release-manifest\.json/);
   assert.match(serialized, /values\.release\.yaml/);
-  assert.doesNotMatch(serialized, /renoconcierge\/renoconcierge-codeops/);
+  assert.doesNotMatch(serialized, /example-repository\/example-repository-codeops/);
 });

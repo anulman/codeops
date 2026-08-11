@@ -40,7 +40,7 @@ test("renders one namespace-scoped authenticated gateway", () => {
   );
   assert.equal(
     deployment.spec.template.spec.containers[0].image,
-    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-control-gateway@${input.controlGatewayDigest}`,
+    `ghcr.io/anulman/codeops/control-gateway@${input.controlGatewayDigest}`,
   );
   assert.equal(
     JSON.stringify(deployment).includes("codeops-agent-source-credentials"),
@@ -75,7 +75,7 @@ test("renders one namespace-scoped authenticated gateway", () => {
   );
   assert.equal(
     proxy.spec.template.spec.containers[0].image,
-    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-model-proxy@${input.modelProxyDigest}`,
+    `ghcr.io/anulman/codeops/model-proxy@${input.modelProxyDigest}`,
   );
   assert.equal(proxy.spec.template.spec.automountServiceAccountToken, false);
   assert.equal(
@@ -259,7 +259,7 @@ test("admits only exact control-plane and session-runtime callers", () => {
   const databaseEgress = policy.spec.egress.find(
     (entry) =>
       entry.to?.[0]?.podSelector?.matchLabels?.["cnpg.io/poolerName"] ===
-      "renoconcierge-postgres-cnpg-pgbouncer",
+      "codeops-postgres-cnpg-pgbouncer",
   );
   assert.deepEqual(databaseEgress.ports, [{ protocol: "TCP", port: 5432 }]);
 });
@@ -285,7 +285,7 @@ test("fails closed on mutable images, broad API CIDRs, or template drift", () =>
     renderControlGatewayManifest(
       template.replace(
         "secretName: codeops-session-broker-database",
-        "secretName: renoconcierge-postgres",
+        "secretName: codeops-postgres",
       ),
       input,
     ),
@@ -338,7 +338,7 @@ test("fails closed on mutable images, broad API CIDRs, or template drift", () =>
   assert.throws(() =>
     renderControlGatewayManifest(
       template.replace(
-        "cnpg.io/poolerName: renoconcierge-postgres-cnpg-pgbouncer",
+        "cnpg.io/poolerName: codeops-postgres-cnpg-pgbouncer",
         "ipBlock:\n            cidr: 10.0.0.0/8",
       ),
       input,

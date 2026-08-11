@@ -8,7 +8,7 @@ import {
   type SessionCommandSubmission,
   type SessionEvent,
   type SessionSnapshot,
-} from "@renoconcierge/codeops-contracts/session-broker";
+} from "@codeops/codeops-contracts/session-broker";
 import { z } from "zod";
 
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
@@ -116,6 +116,7 @@ export interface SessionBrokerClient {
 export function parseSessionBrokerBaseUrl(
   value: string,
   nodeEnv = process.env.NODE_ENV,
+  localHarness = false,
 ): URL {
   const url = new URL(value);
   if (
@@ -123,8 +124,7 @@ export function parseSessionBrokerBaseUrl(
     url.password !== "" ||
     url.pathname !== "/" ||
     url.search !== "" ||
-    url.hash !== "" ||
-    (url.port !== "" && url.port !== "8080")
+    url.hash !== ""
   ) {
     throw new Error("session broker URL must be one exact service origin");
   }
@@ -132,11 +132,17 @@ export function parseSessionBrokerBaseUrl(
     url.hostname === "codeops-control-gateway" ||
     url.hostname.endsWith(".svc.cluster.local");
   const developmentHttpHost =
-    nodeEnv !== "production" &&
+    (nodeEnv !== "production" || localHarness) &&
     (url.hostname === "localhost" ||
       url.hostname === "127.0.0.1" ||
       productionHttpHost);
+  const allowedPort =
+    url.port === "" ||
+    url.port === "8080" ||
+    ((nodeEnv !== "production" || localHarness) &&
+      (url.hostname === "localhost" || url.hostname === "127.0.0.1"));
   if (
+    !allowedPort ||
     url.protocol !== "https:" &&
     !(url.protocol === "http:" && (productionHttpHost || developmentHttpHost))
   ) {
@@ -279,7 +285,12 @@ export function sessionBrokerClient(): Promise<SessionBrokerClient> {
       readFile(writeTokenPath, "utf8").then((value) => value.trim()),
     ]);
     return createSessionBrokerClient({
-      baseUrl: parseSessionBrokerBaseUrl(baseUrl),
+      baseUrl: parseSessionBrokerBaseUrl(
+        baseUrl,
+        process.env.NODE_ENV,
+        process.env.AGENTS_UI_ACCESS_REQUIRED === "false" &&
+          ["127.0.0.1", "localhost", "::1"].includes(process.env.HOST?.trim() ?? ""),
+      ),
       readToken,
       writeToken,
     });

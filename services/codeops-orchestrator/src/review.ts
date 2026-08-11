@@ -1,10 +1,10 @@
 import type {
   AgentJobDispatchResult,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import type {
   AdversarialReview,
   CandidateCheckpoint,
-} from "@renoconcierge/codeops-contracts/adversarial-review";
+} from "@codeops/codeops-contracts/adversarial-review";
 
 export const MAX_CODING_ROUNDS = 4;
 

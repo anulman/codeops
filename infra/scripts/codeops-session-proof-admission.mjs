@@ -81,8 +81,8 @@ function assertAdmissionShape(admission) {
   const expectedNamespace = `codeops-session-proof-${admission.identity?.runId ?? ""}`;
   const approved = parseTime(admission.approvedAt, "approval time");
   const expires = parseTime(admission.expiresAt, "expiry time");
-  const isInitial = admission.apiVersion === "codeops.renoconcierge.ca/session-proof-admission/v1";
-  const isRecovery = admission.apiVersion === "codeops.renoconcierge.ca/session-proof-recovery-admission/v1";
+  const isInitial = admission.apiVersion === "codeops.example/session-proof-admission/v1";
+  const isRecovery = admission.apiVersion === "codeops.example/session-proof-recovery-admission/v1";
   if (
     (!isInitial && !isRecovery) ||
     !SHA256.test(admission.planSha256 ?? "") ||
@@ -153,8 +153,8 @@ function assertNamespaceIdentity(admission, namespaceResource) {
   const labels = namespaceResource.metadata.labels ?? {};
   if (
     labels["app.kubernetes.io/part-of"] !== "codeops-session-proof" ||
-    labels["codeops.renoconcierge.ca/proof-run"] !== admission.identity.runId ||
-    labels["codeops.renoconcierge.ca/base-sha"] !== admission.identity.baseSha
+    labels["codeops.example/proof-run"] !== admission.identity.runId ||
+    labels["codeops.example/base-sha"] !== admission.identity.baseSha
   ) {
     throw new Error("live proof Namespace labels drifted");
   }
@@ -182,7 +182,7 @@ export function createSessionProofAdmission(input) {
     throw new Error("proof plan must be valid JSON");
   }
   if (
-    plan.apiVersion !== "codeops.renoconcierge.ca/session-proof-plan/v1" ||
+    plan.apiVersion !== "codeops.example/session-proof-plan/v1" ||
     plan.admission !== "closed" ||
     plan.execution !== "render-and-review-only" ||
     JSON.stringify(plan.sequence) !== JSON.stringify(sessionProofSequence())
@@ -232,7 +232,7 @@ export function createSessionProofAdmission(input) {
   }
 
   return {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-admission/v1",
+    apiVersion: "codeops.example/session-proof-admission/v1",
     state: "approved-unbound",
     planSha256: digest,
     identity: plan.identity,
@@ -266,7 +266,7 @@ export function bindSessionProofNamespace(admission, input) {
 export function recoverSessionProofAdmission(admission, input) {
   assertAdmissionShape(admission);
   if (
-    admission.apiVersion !== "codeops.renoconcierge.ca/session-proof-admission/v1" ||
+    admission.apiVersion !== "codeops.example/session-proof-admission/v1" ||
     admission.state !== "approved-bound"
   ) {
     throw new Error("proof recovery requires the original Namespace-UID-bound admission");
@@ -292,7 +292,7 @@ export function recoverSessionProofAdmission(admission, input) {
   if (
     predecessorIndex < 0 ||
     predecessorIndex === steps.length - 1 ||
-    predecessorReceipt.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+    predecessorReceipt.apiVersion !== "codeops.example/session-proof-step-receipt/v1" ||
     predecessorReceipt.result !== "completed" ||
     predecessorReceipt.proceed !== true ||
     predecessorReceipt.planSha256 !== admission.planSha256 ||
@@ -321,7 +321,7 @@ export function recoverSessionProofAdmission(admission, input) {
   }
 
   return {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-recovery-admission/v1",
+    apiVersion: "codeops.example/session-proof-recovery-admission/v1",
     state: "approved-bound",
     planSha256: admission.planSha256,
     identity: admission.identity,

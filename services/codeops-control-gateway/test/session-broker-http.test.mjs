@@ -24,7 +24,7 @@ function snapshot() {
     generation: 3,
     state: "running",
     identity: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       branch: "feat/agents-ui",
       baseSha: "a".repeat(40),
       workflowId: "workflow-155",

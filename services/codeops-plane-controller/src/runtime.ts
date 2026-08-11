@@ -16,7 +16,7 @@ import {
   type CodingRequest,
   type ResearchRequest,
   type WorkflowTransitionNotice,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   parseGitHubEvent,
   parseGitHubWebhookRepository,

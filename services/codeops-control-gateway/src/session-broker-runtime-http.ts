@@ -7,7 +7,7 @@ import {
   sessionRuntimePermissionSubmissionSchema,
   type SessionCommandResult,
   type SessionRuntimePermissionResult,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { authenticateBearer } from "./bearer-auth.js";
 import type { SessionRuntimeDispatchClaim } from "./session-broker-runtime-outbox.js";
 

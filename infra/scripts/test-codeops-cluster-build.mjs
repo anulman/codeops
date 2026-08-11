@@ -22,7 +22,7 @@ const lock = JSON.parse(
 const baseSha = "a".repeat(40);
 const registryInput = {
   baseSha,
-  registryHost: `registry-${"a".repeat(12)}.preview.renoconcierge.ca`,
+  registryHost: `registry-${"a".repeat(12)}.preview.codeops.example`,
 };
 
 test("locks the registry, rootless BuildKit, and source Git images", () => {
@@ -83,7 +83,7 @@ test("renders a bounded authenticated single-writer registry", () => {
   assert.equal(ingress.spec.rules[0].host, registryInput.registryHost);
   assert.equal(
     ingress.spec.tls[0].secretName,
-    "renoconcierge-preview-wildcard-tls",
+    "codeops-preview-wildcard-tls",
   );
 });
 
@@ -127,7 +127,7 @@ for (const imageKind of ["orchestrator", "plane-controller"]) {
 test("fails closed on identity, host, image kind, or template drift", () => {
   for (const patch of [
     { baseSha: "abc" },
-    { registryHost: "registry.preview.renoconcierge.ca" },
+    { registryHost: "registry.preview.codeops.example" },
   ]) {
     assert.throws(() =>
       renderClusterRegistryManifest(registryTemplate, {

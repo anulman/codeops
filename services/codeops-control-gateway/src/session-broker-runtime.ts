@@ -9,13 +9,13 @@ import {
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
   type SessionSnapshot,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 export {
   sessionRuntimeCompletionSchema,
   sessionRuntimeDispatchSchema,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import type {
   SessionMutation,
   SessionMutationContext,

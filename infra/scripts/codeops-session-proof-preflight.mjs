@@ -156,7 +156,7 @@ export function runSessionProofPreflight(input, runner = execFileSync) {
   });
 
   return {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-preflight/v1",
+    apiVersion: "codeops.example/session-proof-preflight/v1",
     result: "ready-for-reviewed-namespace-creation",
     checkedAt: input.observedAt,
     planSha256,

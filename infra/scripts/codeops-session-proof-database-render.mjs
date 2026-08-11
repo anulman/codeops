@@ -52,7 +52,7 @@ export function renderSessionProofDatabaseManifest(template, digest) {
     pod.securityContext?.runAsUser !== 26 ||
     pod.securityContext?.runAsGroup !== 102 ||
     pod.securityContext?.fsGroup !== 102 ||
-    container.image !== `ghcr.io/anulman/renoconcierge/renoconcierge-postgres@${digest}` ||
+    container.image !== `postgres@${digest}` ||
     JSON.stringify(container.command) !== JSON.stringify(POSTGRES_COMMAND) ||
     !Array.isArray(container.args) || container.args.length !== 1 ||
     container.securityContext?.readOnlyRootFilesystem !== true ||

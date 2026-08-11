@@ -18,10 +18,10 @@ RUN services/codeops-orchestrator/node_modules/.bin/tsc -p packages/codeops-cont
   && npm prune --omit=dev --prefix services/codeops-orchestrator \
   && test -f services/codeops-orchestrator/dist/worker.js \
   && test -f services/codeops-orchestrator/dist/workflow.js \
-  && rm services/codeops-orchestrator/node_modules/@renoconcierge/codeops-contracts \
-  && mkdir services/codeops-orchestrator/node_modules/@renoconcierge/codeops-contracts \
-  && cp packages/codeops-contracts/package.json services/codeops-orchestrator/node_modules/@renoconcierge/codeops-contracts/ \
-  && cp -R packages/codeops-contracts/dist services/codeops-orchestrator/node_modules/@renoconcierge/codeops-contracts/
+  && rm services/codeops-orchestrator/node_modules/@codeops/codeops-contracts \
+  && mkdir services/codeops-orchestrator/node_modules/@codeops/codeops-contracts \
+  && cp packages/codeops-contracts/package.json services/codeops-orchestrator/node_modules/@codeops/codeops-contracts/ \
+  && cp -R packages/codeops-contracts/dist services/codeops-orchestrator/node_modules/@codeops/codeops-contracts/
 
 FROM node:24-bookworm-slim
 WORKDIR /app

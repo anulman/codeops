@@ -10,7 +10,7 @@ const binding = {
   workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",
   projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
   workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
-  repository: "anulman/renoconcierge",
+  repository: "example-org/example-repository",
   workflowId: "coding-123",
   status: "active",
   baseSha: "a".repeat(40),

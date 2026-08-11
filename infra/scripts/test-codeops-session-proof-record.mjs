@@ -51,7 +51,7 @@ const operator = {
 };
 const target = { context: "proof-context", server: "https://cluster.example.invalid" };
 const planSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+  apiVersion: "codeops.example/session-proof-plan/v1",
   admission: "closed",
   execution: "render-and-review-only",
   identity,
@@ -70,8 +70,8 @@ function namespaceResource(uid = "namespace-uid-1") {
       uid,
       labels: {
         "app.kubernetes.io/part-of": "codeops-session-proof",
-        "codeops.renoconcierge.ca/proof-run": identity.runId,
-        "codeops.renoconcierge.ca/base-sha": identity.baseSha,
+        "codeops.example/proof-run": identity.runId,
+        "codeops.example/base-sha": identity.baseSha,
       },
     },
   };
@@ -109,7 +109,7 @@ const applyEvidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
     .map((resource, index) => ({ ...resource, uid: `runtime-resource-uid-${index}` })),
 }));
 const applyReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   planSha256,
@@ -169,7 +169,7 @@ const runtimeEvidenceSource = JSON.stringify(buildSessionProofRuntimeReadinessEv
   observedAt: "2026-08-05T22:21:00Z",
 }));
 const runtimeReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   planSha256,
@@ -183,7 +183,7 @@ const runtimeReceiptSource = JSON.stringify({
   evidenceSha256: digest(runtimeEvidenceSource),
 });
 const authorization = {
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+  apiVersion: "codeops.example/session-proof-step-authorization/v1",
   planSha256,
   admission,
   namespace,
@@ -500,7 +500,7 @@ test("authorizes stop-runtime from the exact persisted recording predecessor cha
   const stub = makeRunner();
   const plan = JSON.parse(planSource);
   const creationReceipt = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-namespace-create/v1",
+    apiVersion: "codeops.example/session-proof-namespace-create/v1",
     result: "created-and-uid-bound",
     checkedAt: "2026-08-05T22:01:00Z",
     planSha256,
@@ -514,7 +514,7 @@ test("authorizes stop-runtime from the exact persisted recording predecessor cha
   const receiptSources = plan.sequence.slice(2, 19).map((step, offset) => {
     const stepIndex = offset + 2;
     const source = JSON.stringify({
-      apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+      apiVersion: "codeops.example/session-proof-step-receipt/v1",
       result: "completed",
       proceed: true,
       checkedAt: `2026-08-05T22:${String(stepIndex + 1).padStart(2, "0")}:00Z`,
@@ -606,7 +606,7 @@ test("persists and reopens the exact private stop-runtime authorization", () => 
       `${identity.namespace}.step-22-stop-runtime.authorization.json`,
     );
     const authorization = {
-      apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+      apiVersion: "codeops.example/session-proof-step-authorization/v1",
       planSha256,
       admission,
       namespace,

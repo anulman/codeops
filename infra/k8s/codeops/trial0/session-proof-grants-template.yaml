@@ -41,8 +41,8 @@ spec:
       serviceAccountName: codeops-session-proof-grants
       automountServiceAccountToken: false
       enableServiceLinks: false
-      imagePullSecrets: [{ name: ghcr-renoconcierge }]
-      nodeSelector: { renoconcierge.ca/codeops: "true" }
+      imagePullSecrets: [{ name: codeops-registry }]
+      nodeSelector: { codeops.example/codeops: "true" }
       securityContext:
         runAsNonRoot: true
         runAsUser: 999
@@ -51,7 +51,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: grant
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-postgres@__CODEOPS_SESSION_PROOF_POSTGRES_DIGEST__
+          image: postgres@__CODEOPS_SESSION_PROOF_POSTGRES_DIGEST__
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh

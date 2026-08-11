@@ -9,7 +9,7 @@ import {
   type CodingRequest,
   type ResearchRequest,
   verifyPlaneWebhookSignature,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { z } from "zod";
 import { compileProjectContext } from "./project-context.js";
 
@@ -794,7 +794,7 @@ export async function admitPlaneReadyTransition(input: {
   loadResearchPacket: (input: {
     projectId: string;
     workItemId: string;
-  }) => Promise<import("@renoconcierge/codeops-contracts").ResearchPacket | null>;
+  }) => Promise<import("@codeops/codeops-contracts").ResearchPacket | null>;
   loadSource: (input: {
     workspaceId: string;
     projectId: string;

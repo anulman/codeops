@@ -37,9 +37,9 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
-        - name: ghcr-renoconcierge
+        - name: codeops-registry
       nodeSelector:
-        renoconcierge.ca/codeops: "true"
+        codeops.example/codeops: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -50,7 +50,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: controller
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-plane-controller@__CODEOPS_PLANE_CONTROLLER_DIGEST__
+          image: ghcr.io/anulman/codeops/plane-controller@__CODEOPS_PLANE_CONTROLLER_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - name: CODEOPS_TEMPORAL_ADDRESS
@@ -60,7 +60,7 @@ spec:
             - name: CODEOPS_TEMPORAL_TASK_QUEUE
               value: codeops-trial0
             - name: CODEOPS_PLANE_API_ORIGIN
-              value: https://work.renoconcierge.ca
+              value: https://work.codeops.example
             - name: CODEOPS_PLANE_WORKSPACE_SLUG
               value: __CODEOPS_PLANE_WORKSPACE_SLUG__
             - name: CODEOPS_PLANE_API_KEY_FILE
@@ -92,7 +92,7 @@ spec:
             - name: CODEOPS_REPOSITORY_OWNER
               value: anulman
             - name: CODEOPS_REPOSITORY_NAME
-              value: renoconcierge
+              value: example-repository
             - name: CODEOPS_CONTROL_PLANE_SHA
               value: __CODEOPS_CONTROL_PLANE_SHA__
             - name: CODEOPS_DEDUP_ROOT

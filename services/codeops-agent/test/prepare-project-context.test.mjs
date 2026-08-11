@@ -30,7 +30,7 @@ function canonicalSerialize(value) {
 function projectContext(documentContent) {
   const identity = {
     version: "codeops.project-context/v1",
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha: "b".repeat(40),
     baseSha: "a".repeat(40),
     project: {

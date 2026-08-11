@@ -13,7 +13,7 @@ import {
   type SessionSnapshot,
   type SessionState,
   type SessionTimelineUpdate,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 
 type LocalLifecycleCommand = Extract<
   SessionCommand,

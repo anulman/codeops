@@ -1,7 +1,7 @@
 import {
   canonicalSerialize,
   type WorkItemLifecycleEvent,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 
 import type {
   LifecyclePublicationClaim,

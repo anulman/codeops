@@ -94,7 +94,7 @@ export function renderPlaneControllerManifest(template, input) {
       "persona user IDs must map seven unique UUIDs to the registered handles",
     );
   }
-  const expectedHost = "work.renoconcierge.ca";
+  const expectedHost = "work.codeops.example";
   if (input.controllerHost !== expectedHost) {
     throw new Error(`controller host must be ${expectedHost}`);
   }
@@ -162,7 +162,7 @@ export function renderPlaneControllerManifest(template, input) {
     CODEOPS_IN_PROGRESS_STATE_ID: input.inProgressStateId,
     CODEOPS_NEEDS_ATTENTION_STATE_ID: input.needsAttentionStateId,
     CODEOPS_PLANE_API_KEY_FILE: "/var/run/secrets/codeops/plane-api-key",
-    CODEOPS_PLANE_API_ORIGIN: "https://work.renoconcierge.ca",
+    CODEOPS_PLANE_API_ORIGIN: "https://work.codeops.example",
     CODEOPS_PLANE_WEBHOOK_SECRET_FILE:
       "/var/run/secrets/codeops/webhook-secret",
     CODEOPS_GITHUB_WEBHOOK_SECRET_FILE:
@@ -173,7 +173,7 @@ export function renderPlaneControllerManifest(template, input) {
     CODEOPS_REPOSITORY_HEAD_TOKEN_FILE:
       "/var/run/codeops-repository-head/token",
     CODEOPS_PLANE_WORKSPACE_SLUG: input.workspaceSlug,
-    CODEOPS_REPOSITORY_NAME: "renoconcierge",
+    CODEOPS_REPOSITORY_NAME: "example-repository",
     CODEOPS_REPOSITORY_OWNER: "anulman",
     CODEOPS_TEMPORAL_ADDRESS: "codeops-temporal:7233",
     CODEOPS_TEMPORAL_NAMESPACE: "codeops",
@@ -191,7 +191,7 @@ export function renderPlaneControllerManifest(template, input) {
   }
   if (
     container.image !==
-    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-plane-controller@${input.controllerDigest}`
+    `ghcr.io/anulman/codeops/plane-controller@${input.controllerDigest}`
   ) {
     throw new Error("mutable or unexpected controller image survived rendering");
   }

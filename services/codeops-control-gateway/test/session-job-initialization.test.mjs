@@ -11,7 +11,7 @@ const request = {
   version: "codeops.session-job-initialization/v1",
   sessionId: "ses_video_1",
   identity: {
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-repository",
     branch: "feat/agents-ui",
     baseSha: "a".repeat(40),
     workflowId: "agents-video-proof",

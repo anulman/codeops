@@ -31,9 +31,9 @@ test("renders one trusted idempotent root-session runtime Job", () => {
   assert.deepEqual(
     [...job.spec.template.spec.initContainers, ...job.spec.template.spec.containers].map(({ image }) => image),
     [
-      `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@${input.agentDigest}`,
-      `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-runtime-worker@${input.workerDigest}`,
-      `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@${input.agentDigest}`,
+      `ghcr.io/anulman/codeops/agent@${input.agentDigest}`,
+      `ghcr.io/anulman/codeops/session-runtime-worker@${input.workerDigest}`,
+      `ghcr.io/anulman/codeops/agent@${input.agentDigest}`,
     ],
   );
 });

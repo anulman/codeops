@@ -51,8 +51,8 @@ export function createTwoRepositoryRegistryFixture(root) {
     version: "codeops.repository-registry/v1",
     repositories: [
       repositoryEntry(root, {
-        repository: "anulman/renoconcierge",
-        prefix: "renoconcierge",
+        repository: "example-org/example-repository",
+        prefix: "example-repository",
         workspaceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
         projectId: "11111111-1111-4111-8111-111111111111",
         githubReviewerId: 6723643628,

@@ -51,8 +51,8 @@ function namespaceResource() {
       uid: "namespace-uid-3",
       labels: {
         "app.kubernetes.io/part-of": "codeops-session-proof",
-        "codeops.renoconcierge.ca/proof-run": "video-3",
-        "codeops.renoconcierge.ca/base-sha": "a".repeat(40),
+        "codeops.example/proof-run": "video-3",
+        "codeops.example/base-sha": "a".repeat(40),
       },
     },
   };
@@ -60,7 +60,7 @@ function namespaceResource() {
 
 function fixtureOutputs() {
   const planSource = JSON.stringify({
-    apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+    apiVersion: "codeops.example/session-proof-plan/v1",
     admission: "closed",
     execution: "render-and-review-only",
     identity: {
@@ -90,7 +90,7 @@ function fixtureOutputs() {
     observedAt: "2026-08-08T02:31:00.000Z",
   });
   const seventhStepReceiptSource = `${JSON.stringify({
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+    apiVersion: "codeops.example/session-proof-step-receipt/v1",
     result: "completed",
     proceed: true,
     checkedAt: "2026-08-08T12:58:00.000Z",
@@ -305,12 +305,12 @@ test("hands the exact persisted grant recovery continuation to step 9", () => {
     admissionSource: "exact-grant-recovery-continuation\n",
   };
   const expected = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+    apiVersion: "codeops.example/session-proof-step-authorization/v1",
     namespace: { name: namespace, uid: "namespace-uid-3" },
     stepIndex: 9,
     stepId: "wait-grants",
     admission: {
-      apiVersion: "codeops.renoconcierge.ca/session-proof-recovery-admission/v1",
+      apiVersion: "codeops.example/session-proof-recovery-admission/v1",
     },
   };
   let outputReads = 0;
@@ -358,12 +358,12 @@ test("persists and canonically reopens only the recovered step-9 authorization",
       `${namespace}.grant-recovery-continuation.json`,
     );
     const authorization = {
-      apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+      apiVersion: "codeops.example/session-proof-step-authorization/v1",
       namespace: { name: namespace, uid: "namespace-uid-3" },
       stepIndex: 9,
       stepId: "wait-grants",
       admission: {
-        apiVersion: "codeops.renoconcierge.ca/session-proof-recovery-admission/v1",
+        apiVersion: "codeops.example/session-proof-recovery-admission/v1",
       },
       authorizedAt: "2026-08-08T15:30:00.000Z",
     };
@@ -425,12 +425,12 @@ test("hands only the exact persisted recovered authorization and grant outputs t
     seventhEvidenceSource: "grant-apply-evidence-source",
   };
   const authorization = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+    apiVersion: "codeops.example/session-proof-step-authorization/v1",
     namespace: { name: namespace, uid: "namespace-uid-3" },
     stepIndex: 9,
     stepId: "wait-grants",
     admission: {
-      apiVersion: "codeops.renoconcierge.ca/session-proof-recovery-admission/v1",
+      apiVersion: "codeops.example/session-proof-recovery-admission/v1",
     },
   };
   const stub = makeRunner();

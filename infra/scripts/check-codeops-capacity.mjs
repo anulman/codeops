@@ -20,7 +20,7 @@ if (snapshotPath) {
     "get",
     "nodes",
     "-l",
-    "renoconcierge.ca/codeops=true",
+    "codeops.example/codeops=true",
     "-o",
     "json",
   ).items;

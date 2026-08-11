@@ -254,7 +254,7 @@ export function renderControlGatewayManifest(template, input) {
             podSelector: {
               matchLabels: {
                 "cnpg.io/poolerName":
-                  "renoconcierge-postgres-cnpg-pgbouncer",
+                  "codeops-postgres-cnpg-pgbouncer",
               },
             },
           },

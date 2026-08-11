@@ -237,7 +237,7 @@ export function readEighthSessionProofStepAuthorizationFromOperatorPacket(
     expected.stepId !== "wait-grants" ||
     (input.grantRecoveryContinuationPath !== undefined &&
       expected.admission?.apiVersion !==
-        "codeops.renoconcierge.ca/session-proof-recovery-admission/v1")
+        "codeops.example/session-proof-recovery-admission/v1")
   ) {
     throw new Error("proof eighth-step authorization drifted from the operator packet");
   }

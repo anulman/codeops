@@ -9,11 +9,11 @@ const authorization = {
 };
 const labels = {
   "app.kubernetes.io/part-of": "codeops-session-proof",
-  "codeops.renoconcierge.ca/credential-scope": "session-video-proof-runtime",
+  "codeops.example/credential-scope": "session-video-proof-runtime",
 };
 const secrets = [
   {
-    name: "ghcr-renoconcierge",
+    name: "codeops-registry",
     namespace: authorization.namespace.name,
     uid: "secret-uid-1",
     type: "kubernetes.io/dockerconfigjson",
@@ -39,7 +39,7 @@ test("attests only exact runtime credential metadata without values", () => {
   assert.equal(evidence.result, "verified");
   assert.deepEqual(evidence.credentialInventory.map((secret) => secret.name), [
     "codeops-agent-source-credentials",
-    "ghcr-renoconcierge",
+    "codeops-registry",
   ]);
   assert.equal(JSON.stringify(evidence).includes("data\""), false);
 });
@@ -61,7 +61,7 @@ test("attests the exact seven broker capabilities as a separate scope", () => {
   const brokerAuthorization = { ...authorization, stepId: "issue-broker-capabilities" };
   const brokerLabels = {
     "app.kubernetes.io/part-of": "codeops-session-proof",
-    "codeops.renoconcierge.ca/credential-scope": "session-video-proof",
+    "codeops.example/credential-scope": "session-video-proof",
   };
   const contracts = {
     "codeops-session-proof-database-owner": ["database", "password", "username"],

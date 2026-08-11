@@ -2,13 +2,13 @@ planeVersion: v1.3.1
 
 ingress:
   enabled: true
-  appHost: plane-candidate.preview.renoconcierge.ca
+  appHost: plane-candidate.preview.codeops.example
   ingressClass: nginx
   ingress_annotations:
     nginx.ingress.kubernetes.io/proxy-body-size: 20m
 
 ssl:
-  tls_secret_name: renoconcierge-preview-wildcard-tls
+  tls_secret_name: codeops-preview-wildcard-tls
   createIssuer: false
   generateCerts: false
 
@@ -18,7 +18,7 @@ redis:
   volumeSize: 1Gi
   pullPolicy: IfNotPresent
   nodeSelector: &codeopsNode
-    renoconcierge.ca/codeops: "true"
+    codeops.example/codeops: "true"
 
 postgres:
   local_setup: true

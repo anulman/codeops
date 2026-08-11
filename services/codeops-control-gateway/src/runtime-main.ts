@@ -12,7 +12,7 @@ import {
 import {
   candidatePublicationSchema,
   githubPullRequestStackLinkSchema,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   linkGitHubPullRequestStack,
   loadGitHubPullRequestStack,

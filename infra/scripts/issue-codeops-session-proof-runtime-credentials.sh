@@ -26,7 +26,7 @@ done
   exit 2
 }
 
-credential_names=(ghcr-renoconcierge codeops-agent-source-credentials)
+credential_names=(codeops-registry codeops-agent-source-credentials)
 if [[ "$dry_run" == true ]]; then
   printf 'Would issue two create-only Agent Sessions runtime credentials in %s:\n' "$namespace"
   printf '  %s\n' "${credential_names[@]}"
@@ -100,10 +100,10 @@ printf '%s' "$repository_token" > "$temp_dir/repository-read-token"
 chmod 600 "$temp_dir/repository-read-token"
 unset repository_token
 
-kubectl -n "$namespace" create secret generic ghcr-renoconcierge \
+kubectl -n "$namespace" create secret generic codeops-registry \
   --type=kubernetes.io/dockerconfigjson \
   "--from-file=.dockerconfigjson=$temp_dir/registry-config.json" >/dev/null
-created+=(ghcr-renoconcierge)
+created+=(codeops-registry)
 kubectl -n "$namespace" create secret generic codeops-agent-source-credentials \
   "--from-file=repository-read-token=$temp_dir/repository-read-token" >/dev/null
 created+=(codeops-agent-source-credentials)
@@ -111,7 +111,7 @@ created+=(codeops-agent-source-credentials)
 for credential_name in "${created[@]}"; do
   kubectl -n "$namespace" label secret "$credential_name" \
     app.kubernetes.io/part-of=codeops-session-proof \
-    codeops.renoconcierge.ca/credential-scope=session-video-proof-runtime \
+    codeops.example/credential-scope=session-video-proof-runtime \
     --overwrite >/dev/null
 done
 

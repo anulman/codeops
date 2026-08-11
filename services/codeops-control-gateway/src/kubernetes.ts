@@ -117,7 +117,7 @@ export function createInClusterKubernetesClient(input: {
       if (
         existing.kind !== resource.kind ||
         existing.metadata.annotations?.[
-          "codeops.renoconcierge.ca/request-digest"
+          "codeops.example/request-digest"
         ] !== requestDigest
       ) {
         throw new Error("existing Kubernetes run resource identity drift");
@@ -132,7 +132,7 @@ export function createInClusterKubernetesClient(input: {
     },
     async listRunPods(runId) {
       const selector = encodeURIComponent(
-        `codeops.renoconcierge.ca/run-id=${runId}`,
+        `codeops.example/run-id=${runId}`,
       );
       const response = await request(
         "GET",

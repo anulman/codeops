@@ -34,7 +34,7 @@ function snapshot(overrides = {}) {
     generation: 1,
     state: "running",
     identity: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       branch: "feat/agents-ui",
       baseSha: "a".repeat(40),
       workflowId: "video-proof-1",

@@ -11,7 +11,7 @@ export function runSessionProofOperatorPacketPreflight(input, runner = execFileS
   }, runner);
   return {
     ...preflight,
-    apiVersion: "codeops.renoconcierge.ca/session-proof-operator-packet-preflight/v1",
+    apiVersion: "codeops.example/session-proof-operator-packet-preflight/v1",
     packetManifestSha256: attachment.packetManifestSha256,
     admissionSha256: attachment.admissionSha256,
   };

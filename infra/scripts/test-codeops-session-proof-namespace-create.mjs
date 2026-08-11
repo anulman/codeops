@@ -244,7 +244,7 @@ const artifactIds = [
   "namespace", "database", "gateway", "grants", "codex-login", "codex-smoke", "ui", "runtime",
 ];
 const planSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+  apiVersion: "codeops.example/session-proof-plan/v1",
   admission: "closed",
   execution: "render-and-review-only",
   identity,
@@ -274,7 +274,7 @@ const brokerContracts = {
   "codeops-session-runtime-worker-database": ["database-url", "password"],
 };
 const runtimeContracts = {
-  "ghcr-renoconcierge": {
+  "codeops-registry": {
     type: "kubernetes.io/dockerconfigjson",
     keys: [".dockerconfigjson"],
   },
@@ -290,7 +290,7 @@ function persistOperatorInputs(root) {
     id === "namespace" ? namespaceManifestSource : `synthetic-${id}-artifact\n`,
   ]));
   const packetPlanSource = JSON.stringify({
-    apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+    apiVersion: "codeops.example/session-proof-plan/v1",
     admission: "closed",
     execution: "render-and-review-only",
     identity,
@@ -553,8 +553,8 @@ function namespace() {
       uid: "namespace-uid-1",
       labels: {
         "app.kubernetes.io/part-of": "codeops-session-proof",
-        "codeops.renoconcierge.ca/proof-run": identity.runId,
-        "codeops.renoconcierge.ca/base-sha": identity.baseSha,
+        "codeops.example/proof-run": identity.runId,
+        "codeops.example/base-sha": identity.baseSha,
       },
     },
   };
@@ -2031,7 +2031,7 @@ test("durably persists the exact database apply evidence and completion receipt"
     const stub = runner();
     const authorization = persistThroughDatabaseAuthorization(inputs, stub);
     const evidenceSource = JSON.stringify({
-      apiVersion: "codeops.renoconcierge.ca/session-proof-apply-evidence/v1",
+      apiVersion: "codeops.example/session-proof-apply-evidence/v1",
       stepId: "start-database",
       observedAt: "2026-08-05T06:09:00Z",
     });

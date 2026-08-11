@@ -1,7 +1,7 @@
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 
-const dependencyName = "@renoconcierge/codeops-contracts";
+const dependencyName = "@codeops/codeops-contracts";
 const workspaceSpecifier = "workspace:*";
 const npmSpecifier = "file:../../packages/codeops-contracts";
 

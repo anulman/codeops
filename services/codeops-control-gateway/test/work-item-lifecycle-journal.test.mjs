@@ -7,7 +7,7 @@ import {
   contractVersions,
   createEventId,
   createTransitionId,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   ImmutableLifecycleEventConflictError,
   LifecycleCompareAndSwapError,

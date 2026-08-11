@@ -9,7 +9,7 @@ import {
   type SessionCommandResult,
   type SessionEvent,
   type SessionSnapshot,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 
 export interface TransactionClient {
   query<Row extends Record<string, unknown> = Record<string, unknown>>(

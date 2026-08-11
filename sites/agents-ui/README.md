@@ -1,6 +1,6 @@
 # Agent Sessions UI
 
-Internal TanStack Start command center for live and archived RenoConcierge
+Internal TanStack Start command center for live and archived CodeOps
 CodeOps sessions.
 
 The fleet and cockpit load strict session snapshots and ordered event pages
@@ -27,7 +27,7 @@ Server configuration:
 - `AGENTS_UI_ACCESS_ALLOWED_EMAILS_FILE` — mounted newline-delimited allowlist.
 
 The shared wire boundary lives at
-`@renoconcierge/codeops-contracts/session-broker`. Mutations must carry the
+`@codeops/codeops-contracts/session-broker`. Mutations must carry the
 exact session generation, durable lease ID, and an idempotency key, then render
 the broker's committed command result.
 
@@ -64,9 +64,9 @@ runtime actions through this boundary.
 Run focused checks from the repository root:
 
 ```sh
-nub run --filter @renoconcierge/codeops-contracts test
-nub run --filter @renoconcierge/agents-ui test
-nub run --filter @renoconcierge/agents-ui typecheck
-nub run --filter @renoconcierge/agents-ui build
-nub run --filter @renoconcierge/codeops-control-gateway test
+nub run --filter @codeops/codeops-contracts test
+nub run --filter @codeops/agents-ui test
+nub run --filter @codeops/agents-ui typecheck
+nub run --filter @codeops/agents-ui build
+nub run --filter @codeops/codeops-control-gateway test
 ```

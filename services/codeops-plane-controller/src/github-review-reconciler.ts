@@ -7,7 +7,7 @@ import {
   humanReviewRequestSchema,
   type CodingRequest,
   type GitHubReviewComment,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { z } from "zod";
 import type { ResearchDedupLedger } from "./dedup-ledger.js";
 import type { GitHubPullRequestReviewEvent } from "./github-events.js";

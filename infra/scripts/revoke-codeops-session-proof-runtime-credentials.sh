@@ -16,7 +16,7 @@ done
 }
 
 kubectl -n "$namespace" delete secret \
-  ghcr-renoconcierge \
+  codeops-registry \
   codeops-agent-source-credentials \
   --ignore-not-found >/dev/null
 printf 'Revoked two Agent Sessions proof runtime credentials from %s.\n' "$namespace"

@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { AgentJobDispatchRequest } from "@renoconcierge/codeops-contracts";
+import type { AgentJobDispatchRequest } from "@codeops/codeops-contracts";
 import { z } from "zod";
 
 const REPOSITORY_IDENTITY = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;

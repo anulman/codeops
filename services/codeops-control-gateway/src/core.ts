@@ -21,7 +21,7 @@ import {
   type CandidateCheckpoint,
   githubReviewCommentSchema,
   type GitHubReviewComment,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { z } from "zod";
 
 const SHA256 = /^sha256:[0-9a-f]{64}$/;
@@ -130,7 +130,7 @@ export async function resolveGitHubBranchHead(input: {
       headers: {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${input.repositoryReadToken}`,
-        "User-Agent": "renoconcierge-codeops-control-gateway",
+        "User-Agent": "codeops-control-gateway",
         "X-GitHub-Api-Version": "2022-11-28",
       },
       signal: AbortSignal.timeout(30_000),
@@ -211,7 +211,7 @@ export async function resolveGitHubPullRequestHead(input: {
       headers: {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${input.repositoryReadToken}`,
-        "User-Agent": "renoconcierge-codeops-control-gateway",
+        "User-Agent": "codeops-control-gateway",
         "X-GitHub-Api-Version": "2022-11-28",
       },
       signal: AbortSignal.timeout(30_000),
@@ -281,7 +281,7 @@ export async function loadGitHubReviewComments(input: {
         headers: {
           Accept: "application/vnd.github+json",
           Authorization: `Bearer ${input.repositoryReadToken}`,
-          "User-Agent": "renoconcierge-codeops-control-gateway",
+          "User-Agent": "codeops-control-gateway",
           "X-GitHub-Api-Version": "2022-11-28",
         },
         signal: AbortSignal.timeout(30_000),
@@ -363,7 +363,7 @@ export async function qualifyGitHubHead(input: {
       headers: {
         Accept: "application/vnd.github+json",
         Authorization: `Bearer ${input.repositoryReadToken}`,
-        "User-Agent": "renoconcierge-codeops-control-gateway",
+        "User-Agent": "codeops-control-gateway",
         "X-GitHub-Api-Version": "2022-11-28",
       },
       signal: AbortSignal.timeout(30_000),
@@ -411,7 +411,7 @@ export async function qualifyGitHubHead(input: {
       Accept: "application/vnd.github+json",
       Authorization: `Bearer ${input.repositoryReadToken}`,
       "Content-Type": "application/json",
-      "User-Agent": "renoconcierge-codeops-control-gateway",
+      "User-Agent": "codeops-control-gateway",
       "X-GitHub-Api-Version": "2022-11-28",
     },
     body: JSON.stringify({
@@ -507,7 +507,7 @@ export function createRunIdentity(request: AgentJobDispatchRequest): {
 export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
   if (request.role === "coding-agent") {
     return [
-      "You are the bounded RenoConcierge CodeOps coding agent.",
+      "You are the bounded CodeOps coding agent.",
       `Work item: ${request.workItemId}`,
       `Exact base SHA: ${request.baseSha}`,
       `Task: ${request.summary}`,
@@ -616,7 +616,7 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       summary: "The exact cumulative candidate is ready for human review.",
     };
     return [
-      "You are the isolated RenoConcierge CodeOps critic agent.",
+      "You are the isolated CodeOps critic agent.",
       "Review only; do not edit source. The gateway will reject any source patch.",
       `Work item: ${request.workItemId}`,
       `Exact base SHA: ${request.baseSha}`,

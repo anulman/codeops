@@ -34,7 +34,7 @@ const namespaceResource = {
   metadata: { name: "codeops-session-proof-video-1", uid: "namespace-uid-1" },
 };
 const persistedAuthorization = {
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+  apiVersion: "codeops.example/session-proof-step-authorization/v1",
   planSha256: "1".repeat(64),
   admission: {
     planSha256: "1".repeat(64),

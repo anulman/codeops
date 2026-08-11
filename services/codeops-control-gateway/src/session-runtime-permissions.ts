@@ -9,7 +9,7 @@ import {
   type SessionRuntimePermissionResult,
   type SessionRuntimeDispatch,
   type SessionSnapshot,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import type { TransactionClient } from "./session-broker-repository.js";
 import { applyRuntimePermissionRequestTransition } from "./session-broker-transitions.js";
 

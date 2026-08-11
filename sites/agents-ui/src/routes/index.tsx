@@ -3,7 +3,7 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { getSessionFleet } from "@/lib/sessionBroker.data";
-import type { SessionSnapshot } from "@renoconcierge/codeops-contracts/session-broker";
+import type { SessionSnapshot } from "@codeops/codeops-contracts/session-broker";
 
 export const Route = createFileRoute("/")({
   loader: () => getSessionFleet(),
@@ -84,7 +84,7 @@ function MobileFleet({ sessions }: Readonly<{ sessions: readonly SessionSnapshot
         <span className="sr-only">Search sessions</span><SearchIcon />
         <input value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search sessions" className="h-10 w-full rounded-xl border border-white/[0.07] bg-white/[0.035] pl-9 pr-3 text-sm text-white/82 outline-none placeholder:text-white/28 focus:border-[#7774ff]/55 focus:ring-2 focus:ring-[#7774ff]/10" />
       </label>
-      <div className="no-scrollbar -mx-4 mt-4 flex gap-1 overflow-x-auto border-b border-white/[0.07] px-4 pb-3" aria-label="Session filters">
+      <div className="no-scrollbar -mx-4 mt-4 flex gap-1 overflow-x-auto border-b border-white/[0.07] px-4 pb-3" role="group" aria-label="Session filters">
         {filters.map((item) => <button key={item} type="button" onClick={() => setFilter(item)} className={`shrink-0 rounded-lg px-3 py-1.5 text-xs font-medium capitalize transition ${filter === item ? "bg-white/[0.09] text-white" : "text-white/38"}`}>{item}</button>)}
       </div>
       <div className="mt-2 divide-y divide-white/[0.055]">

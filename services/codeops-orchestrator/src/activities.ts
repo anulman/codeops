@@ -13,7 +13,7 @@ import {
   candidatePublicationSchema,
   type CandidatePublication,
   type CandidatePublicationResult,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { z } from "zod";
 import { cancellationSignal } from "@temporalio/activity";
 import type { WorkflowSnapshot } from "./model.js";

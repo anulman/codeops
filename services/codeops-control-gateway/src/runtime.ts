@@ -2,7 +2,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import type {
   AgentJobDispatchRequest,
   AgentJobDispatchResult,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   createRunIdentity,
   claimRequest,

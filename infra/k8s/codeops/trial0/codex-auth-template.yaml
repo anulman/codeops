@@ -22,7 +22,7 @@ metadata:
   labels:
     app.kubernetes.io/name: codeops-codex-auth
     app.kubernetes.io/part-of: codeops-trial0
-    codeops.renoconcierge.ca/auth-action: __CODEOPS_AUTH_ACTION__
+    codeops.example/auth-action: __CODEOPS_AUTH_ACTION__
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 900
@@ -32,16 +32,16 @@ spec:
       labels:
         app.kubernetes.io/name: codeops-codex-auth
         app.kubernetes.io/part-of: codeops-trial0
-        codeops.renoconcierge.ca/auth-action: __CODEOPS_AUTH_ACTION__
+        codeops.example/auth-action: __CODEOPS_AUTH_ACTION__
     spec:
       restartPolicy: Never
       serviceAccountName: codeops-codex-auth
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
-        - name: ghcr-renoconcierge
+        - name: codeops-registry
       nodeSelector:
-        renoconcierge.ca/codeops: "true"
+        codeops.example/codeops: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -52,7 +52,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: codex-auth
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
+          image: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
           imagePullPolicy: IfNotPresent
           command: [/bin/sh, -ceu]
           args:

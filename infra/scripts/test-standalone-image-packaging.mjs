@@ -6,7 +6,7 @@ import test from "node:test";
 
 import { rewriteWorkspaceDependencyForNpm } from "./rewrite-workspace-dependency-for-npm.mjs";
 
-const dependencyName = "@renoconcierge/codeops-contracts";
+const dependencyName = "@codeops/codeops-contracts";
 const dockerfiles = [
   "codeops-control-gateway.Dockerfile",
   "codeops-session-control-gateway.Dockerfile",
@@ -14,6 +14,19 @@ const dockerfiles = [
   "codeops-plane-controller.Dockerfile",
   "codeops-orchestrator.Dockerfile",
 ];
+
+test("packages the standalone browser acceptance runner", async () => {
+  const filename = "codeops-acceptance-runner.Dockerfile";
+  const source = await readFile(new URL(`../docker/${filename}`, import.meta.url), "utf8");
+  const dockerignore = await readFile(
+    new URL(`../docker/${filename}.dockerignore`, import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /mcr\.microsoft\.com\/playwright:v1\.61\.1-noble/);
+  assert.match(source, /services\/codeops-acceptance-runner\/package-lock\.json/);
+  assert.match(source, /ENTRYPOINT \["node", "src\/agents-ui-smoke\.mjs"\]/);
+  assert.match(dockerignore, /^!services\/codeops-acceptance-runner\/src\/\*\*$/m);
+});
 
 test("rewrites only the exact workspace contract for isolated npm image installs", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "codeops-image-package-"));
@@ -33,7 +46,7 @@ test("rewrites only the exact workspace contract for isolated npm image installs
 
     await assert.rejects(
       () => rewriteWorkspaceDependencyForNpm(packagePath),
-      /expected @renoconcierge\/codeops-contracts=workspace:\*/,
+      /expected @codeops\/codeops-contracts=workspace:\*/,
     );
   } finally {
     await rm(directory, { recursive: true, force: true });
@@ -48,7 +61,7 @@ test("packages the Agents UI from the frozen standalone workspace", async () => 
     "utf8",
   );
   assert.match(source, /nub install --frozen-lockfile/);
-  assert.match(source, /nub run --filter @renoconcierge\/agents-ui build/);
+  assert.match(source, /nub run --filter @codeops\/agents-ui build/);
   assert.match(source, /sites\/agents-ui\/\.output\/server\/index\.mjs/);
   assert.match(dockerignore, /^!lock\.yaml$/m);
   assert.match(dockerignore, /^!sites\/agents-ui\/src\/\*\*$/m);

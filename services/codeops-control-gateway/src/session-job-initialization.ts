@@ -8,7 +8,7 @@ import {
   sessionSnapshotSchema,
   type SessionJobInitializationResponse,
   type SessionSnapshot,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { authenticateBearer } from "./bearer-auth.js";
 import type { TransactionClient } from "./session-broker-repository.js";
 import { sessionCapabilitiesFor } from "./session-broker-transitions.js";

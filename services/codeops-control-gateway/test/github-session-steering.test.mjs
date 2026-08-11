@@ -25,7 +25,7 @@ function snapshot(overrides = {}) {
     generation: 2,
     state: "running",
     identity: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       branch: "feat/agents-ui",
       baseSha: "b".repeat(40),
       workflowId: "workflow-159",
@@ -61,7 +61,7 @@ function body(overrides = {}) {
   return {
     version: "codeops.github-session-steering/v1",
     binding: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 159,
       workItemId,
       state: "open",
@@ -71,7 +71,7 @@ function body(overrides = {}) {
     },
     event: {
       kind: "issue_comment",
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 159,
       actorId: 6723643628,
       actorType: "User",
@@ -92,13 +92,13 @@ function request(overrides = {}) {
     calls,
     promise: serveGitHubSessionSteering({
       method: "POST",
-      url: "/v1/repositories/anulman/renoconcierge/github-session-events",
+      url: "/v1/repositories/example-org/example-repository/github-session-events",
       headers: {
         authorization: `Bearer ${token}`,
         "content-type": "application/json",
       },
       resolveToken: (repository) => {
-        if (repository !== "anulman/renoconcierge") {
+        if (repository !== "example-org/example-repository") {
           throw new Error("repository not admitted");
         }
         return token;

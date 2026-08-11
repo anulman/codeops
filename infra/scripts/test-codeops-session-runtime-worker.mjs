@@ -18,7 +18,7 @@ const input = {
   baseSha: "c".repeat(40),
   branch: "feat/agents-ui",
   leaseId: "11111111-1111-4111-8111-111111111111",
-  repository: "https://github.com/anulman/renoconcierge",
+  repository: "https://github.com/example-org/example-repository",
   runId: "video-proof-1",
   sessionId: "ses_video_1",
   sessionSuffix: "video-1",
@@ -51,9 +51,9 @@ test("packages one immutable non-retrying disposable session Job", () => {
   assert.deepEqual(
     [...pod.initContainers, ...pod.containers].map((container) => container.image),
     [
-      `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@${input.agentDigest}`,
-      `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-runtime-worker@${input.workerDigest}`,
-      `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@${input.agentDigest}`,
+      `ghcr.io/anulman/codeops/agent@${input.agentDigest}`,
+      `ghcr.io/anulman/codeops/session-runtime-worker@${input.workerDigest}`,
+      `ghcr.io/anulman/codeops/agent@${input.agentDigest}`,
     ],
   );
 });

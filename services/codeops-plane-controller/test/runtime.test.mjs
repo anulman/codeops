@@ -47,7 +47,7 @@ test("resolves one repository head through an exact repository-qualified route",
     fetch: async () =>
       Response.json({
         version: "codeops.repository-head/v1",
-        repository: "anulman/renoconcierge",
+        repository: "example-org/example-repository",
         ref: "refs/heads/main",
         sha: "a".repeat(40),
       }),
@@ -78,7 +78,7 @@ test("resolves the current pull-request head only through the bounded reader", a
       calls.push({ url: String(url), init });
       return Response.json({
         version: "codeops.github-current-pull-request/v1",
-        repository: "anulman/renoconcierge",
+        repository: "example-org/example-repository",
         number: 159,
         state: "open",
         headSha: "b".repeat(40),
@@ -88,13 +88,13 @@ test("resolves the current pull-request head only through the bounded reader", a
     },
   });
   const result = await resolveCurrentPullRequest({
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-repository",
     number: 159,
   });
   assert.equal(result.headSha, "b".repeat(40));
   assert.equal(
     calls[0].url,
-    "http://codeops-control-gateway:8080/v1/repositories/anulman/renoconcierge/pull-requests/159/current-head",
+    "http://codeops-control-gateway:8080/v1/repositories/example-org/example-repository/pull-requests/159/current-head",
   );
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
 
@@ -104,7 +104,7 @@ test("resolves the current pull-request head only through the bounded reader", a
     fetch: async () =>
       Response.json({
         version: "codeops.github-current-pull-request/v1",
-        repository: "anulman/renoconcierge",
+        repository: "example-org/example-repository",
         number: 160,
         state: "open",
         headSha: "b".repeat(40),
@@ -113,7 +113,7 @@ test("resolves the current pull-request head only through the bounded reader", a
       }),
   });
   await assert.rejects(
-    mismatched({ repository: "anulman/renoconcierge", number: 159 }),
+    mismatched({ repository: "example-org/example-repository", number: 159 }),
     /identity mismatch/,
   );
 });
@@ -123,7 +123,7 @@ test("projects one normalized GitHub event only through the internal session gat
   const steer = createGitHubSessionSteeringClient({
     origin: "http://codeops-external-session-control-gateway:8080",
     resolveToken: (repository) =>
-      repository === "anulman/renoconcierge" ? "s".repeat(64) : "c".repeat(64),
+      repository === "example-org/example-repository" ? "s".repeat(64) : "c".repeat(64),
     fetch: async (url, init) => {
       seen.push({ url: String(url), init });
       const body = JSON.parse(init.body);
@@ -143,7 +143,7 @@ test("projects one normalized GitHub event only through the internal session gat
     projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
     workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
     workflowId: "coding-initial",
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-repository",
     number: 159,
     state: "open",
     headSha: "b".repeat(40),
@@ -163,7 +163,7 @@ test("projects one normalized GitHub event only through the internal session gat
       pullRequestState: "open",
       commentId: 7001,
       body: "Keep this exact.",
-      url: "https://github.com/anulman/renoconcierge/pull/159#issuecomment-7001",
+      url: "https://github.com/example-org/example-repository/pull/159#issuecomment-7001",
       actorId: 6723643628,
       actorLogin: "anulman",
       actorType: "User",
@@ -177,7 +177,7 @@ test("projects one normalized GitHub event only through the internal session gat
   assert.deepEqual(result, { sessionId: "session-159" });
   assert.equal(
     seen[0].url,
-    "http://codeops-external-session-control-gateway:8080/v1/repositories/anulman/renoconcierge/github-session-events",
+    "http://codeops-external-session-control-gateway:8080/v1/repositories/example-org/example-repository/github-session-events",
   );
   assert.equal(seen[0].init.headers.Authorization, `Bearer ${"s".repeat(64)}`);
   await steer({
@@ -194,7 +194,7 @@ test("projects one normalized GitHub event only through the internal session gat
   assert.throws(
     () =>
       createGitHubSessionSteeringClient({
-        origin: "https://agents.renoconcierge.ca",
+        origin: "https://agents.codeops.example",
         resolveToken: () => "s".repeat(64),
       }),
     /internal session gateway/,
@@ -218,7 +218,7 @@ test("projects one normalized GitHub event only through the internal session gat
 test("reads and links native stacks only through bounded internal capabilities", async () => {
   const stack = {
     version: "codeops.github-pull-request-stack-snapshot/v1",
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-repository",
     number: 42,
     baseRef: "main",
     open: true,
@@ -245,7 +245,7 @@ test("reads and links native stacks only through bounded internal capabilities",
   const load = createGitHubStackLoader({
     origin: "http://codeops-control-gateway:8080",
     token: "r".repeat(64),
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-repository",
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
       return Response.json(stack);
@@ -264,7 +264,7 @@ test("reads and links native stacks only through bounded internal capabilities",
     (
       await link({
         version: "codeops.github-pull-request-stack-link/v1",
-        repository: { owner: "anulman", name: "renoconcierge" },
+        repository: { owner: "example-org", name: "example-repository" },
         parent: {
           number: 155,
           headSha: "a".repeat(40),
@@ -283,11 +283,11 @@ test("reads and links native stacks only through bounded internal capabilities",
   );
   assert.equal(
     calls[0].url,
-    "http://codeops-control-gateway:8080/v1/repositories/anulman/renoconcierge/pull-request-stacks/42",
+    "http://codeops-control-gateway:8080/v1/repositories/example-org/example-repository/pull-request-stacks/42",
   );
   assert.equal(
     calls[1].url,
-    "http://codeops-control-gateway:8080/v1/repositories/anulman/renoconcierge/pull-request-stacks",
+    "http://codeops-control-gateway:8080/v1/repositories/example-org/example-repository/pull-request-stacks",
   );
   assert.equal(calls[1].init.method, "POST");
   assert.equal(calls[1].init.headers.Authorization, `Bearer ${"p".repeat(64)}`);
@@ -298,13 +298,13 @@ test("loads review comments only through the bounded internal repository reader"
   const load = createGitHubReviewCommentsLoader({
     origin: "http://codeops-control-gateway:8080",
     token: "r".repeat(64),
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-repository",
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
       return new Response(
         JSON.stringify({
           version: "codeops.github-review-comments/v1",
-          repository: "anulman/renoconcierge",
+          repository: "example-org/example-repository",
           comments: [
             {
               id: 7001,
@@ -323,7 +323,7 @@ test("loads review comments only through the bounded internal repository reader"
   assert.equal(
     (
       await load({
-        repository: "anulman/renoconcierge",
+        repository: "example-org/example-repository",
         number: 158,
         reviewId: 9001,
       })
@@ -332,7 +332,7 @@ test("loads review comments only through the bounded internal repository reader"
   );
   assert.equal(
     calls[0].url,
-    "http://codeops-control-gateway:8080/v1/repositories/anulman/renoconcierge/pull-requests/158/reviews/9001/comments",
+    "http://codeops-control-gateway:8080/v1/repositories/example-org/example-repository/pull-requests/158/reviews/9001/comments",
   );
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
   await assert.rejects(
@@ -350,13 +350,13 @@ test("qualifies one exact pull request and head through the bounded internal rea
   const qualify = createGitHubHeadQualifier({
     origin: "http://codeops-control-gateway:8080",
     token: "r".repeat(64),
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-repository",
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
       return new Response(
         JSON.stringify({
           version: "codeops.github-pull-request-qualification/v1",
-          repository: "anulman/renoconcierge",
+          repository: "example-org/example-repository",
           pullRequestNumber: 155,
           headSha: "a".repeat(40),
           qualified: true,
@@ -374,7 +374,7 @@ test("qualifies one exact pull request and head through the bounded internal rea
   );
   assert.equal(
     calls[0].url,
-    `http://codeops-control-gateway:8080/v1/repositories/anulman/renoconcierge/pull-requests/155/heads/${"a".repeat(40)}/qualification`,
+    `http://codeops-control-gateway:8080/v1/repositories/example-org/example-repository/pull-requests/155/heads/${"a".repeat(40)}/qualification`,
   );
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
 });
@@ -386,7 +386,7 @@ const request = {
   workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
   triggerCommentId: "4797f841-c731-4e55-971f-d9cfe1938dfb",
   requestedBy: "88fc36c8-73b0-4547-81c7-96b70f61835e",
-  repository: { owner: "anulman", name: "renoconcierge" },
+  repository: { owner: "example-org", name: "example-repository" },
   baseSha: "8f3d2c033f70be04b4b2dc8a005683806e84e209",
   planeRevisionDigest: `sha256:${"b".repeat(64)}`,
   personas: ["@ai-security", "@ai-web"],
@@ -521,7 +521,7 @@ test("keeps terminal workflow projection internal and contract-bound", async () 
     workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",
     projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
     workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     workflowId: "coding-123",
     state: "failed",
     sequence: 4,
@@ -580,7 +580,7 @@ test("serves health and preserves the exact raw Plane body and headers", async (
   const listener = createPlaneWebhookRequestListener({
     plane: {
       resolveSecret: (repository) => {
-        if (repository === "anulman/renoconcierge") return secret;
+        if (repository === "example-org/example-repository") return secret;
         if (repository === "anulman/codeops") return codeopsSecret;
         throw new Error("unknown");
       },
@@ -619,7 +619,7 @@ test("serves health and preserves the exact raw Plane body and headers", async (
     });
     assert.equal(unknown.status, 401);
     const wrongSignature = await fetch(
-      `${origin}/webhooks/plane/anulman/renoconcierge`,
+      `${origin}/webhooks/plane/example-org/example-repository`,
       {
         method: "POST",
         headers: {
@@ -633,7 +633,7 @@ test("serves health and preserves the exact raw Plane body and headers", async (
     );
     assert.equal(wrongSignature.status, 401);
     const response = await fetch(
-      `${origin}/webhooks/plane/anulman/renoconcierge`,
+      `${origin}/webhooks/plane/example-org/example-repository`,
       {
         method: "POST",
         headers: {
@@ -650,7 +650,7 @@ test("serves health and preserves the exact raw Plane body and headers", async (
     assert.equal(response.status, 200);
     assert.equal(seen.length, 1);
     assert.equal(seen[0].rawBody.toString("utf8"), rawBody);
-    assert.equal(seen[0].repository, "anulman/renoconcierge");
+    assert.equal(seen[0].repository, "example-org/example-repository");
     assert.equal(seen[0].webhookSecret, secret);
     assert.deepEqual(seen[0].headers, {
       delivery: "delivery",
@@ -686,11 +686,11 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
   const secret = "g".repeat(64);
   const body = JSON.stringify({
     action: "closed",
-    repository: { full_name: "anulman/renoconcierge" },
+    repository: { full_name: "example-org/example-repository" },
     pull_request: {
       number: 158,
       title: "Bounded PR",
-      html_url: "https://github.com/anulman/renoconcierge/pull/158",
+      html_url: "https://github.com/example-org/example-repository/pull/158",
       updated_at: "2026-07-30T22:45:00.000Z",
       merged: true,
       head: { sha: "a".repeat(40), ref: "feat/a" },
@@ -704,7 +704,7 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
   const listener = createPlaneWebhookRequestListener({
     github: {
       resolveSecret: (repository) => {
-        if (repository !== "anulman/renoconcierge") {
+        if (repository !== "example-org/example-repository") {
           throw new Error("repository not admitted");
         }
         return secret;
@@ -746,7 +746,7 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
     assert.deepEqual(await accepted.json(), { status: "accepted" });
     const reviewBody = JSON.stringify({
       action: "submitted",
-      repository: { full_name: "anulman/renoconcierge" },
+      repository: { full_name: "example-org/example-repository" },
       pull_request: {
         number: 158,
         head: { sha: "b".repeat(40), ref: "feat/reviewed" },
@@ -779,7 +779,7 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
         delivery: "delivery-1",
         event: {
           kind: "pull_request",
-          repository: "anulman/renoconcierge",
+          repository: "example-org/example-repository",
           number: 158,
           action: "closed",
           merged: true,
@@ -788,7 +788,7 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
           baseRef: "main",
           stack: null,
           title: "Bounded PR",
-          url: "https://github.com/anulman/renoconcierge/pull/158",
+          url: "https://github.com/example-org/example-repository/pull/158",
           actorId: 6723643628,
           actorLogin: "anulman",
           actorType: "User",
@@ -799,7 +799,7 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
         delivery: "delivery-2",
         event: {
           kind: "pull_request_review",
-          repository: "anulman/renoconcierge",
+          repository: "example-org/example-repository",
           number: 158,
           action: "submitted",
           reviewId: 9001,
@@ -856,7 +856,7 @@ test("returns retry guidance for busy claims and hides processing failures", asy
     try {
       const address = server.address();
       const response = await fetch(
-        `http://127.0.0.1:${address.port}/webhooks/plane/anulman/renoconcierge`,
+        `http://127.0.0.1:${address.port}/webhooks/plane/example-org/example-repository`,
         {
           method: "POST",
           headers: {

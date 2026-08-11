@@ -24,8 +24,8 @@ function files() {
   const ns = resource("Namespace", input.namespace);
   ns.metadata.labels = {
     "app.kubernetes.io/part-of": "codeops-session-proof",
-    "codeops.renoconcierge.ca/proof-run": input.runId,
-    "codeops.renoconcierge.ca/base-sha": input.baseSha,
+    "codeops.example/proof-run": input.runId,
+    "codeops.example/base-sha": input.baseSha,
   };
   const targeted = (values) => manifest(values.map(([kind, name]) => resource(kind, name)));
   const explicit = (values) => manifest(values.map(([kind, name]) => resource(kind, name, input.namespace)));

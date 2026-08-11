@@ -6,7 +6,7 @@ import {
   loadGitHubPullRequestStack,
 } from "../dist/github-stacks.js";
 
-const repositoryUrl = "https://github.com/anulman/renoconcierge.git";
+const repositoryUrl = "https://github.com/example-org/example-repository.git";
 const repositoryWriteToken = "w".repeat(32);
 const mainSha = "0".repeat(40);
 const parentSha = "a".repeat(40);
@@ -48,7 +48,7 @@ const child = pullRequest({
 });
 const link = {
   version: contractVersions.githubPullRequestStackLink,
-  repository: { owner: "anulman", name: "renoconcierge" },
+  repository: { owner: "example-org", name: "example-repository" },
   parent: {
     number: parent.number,
     headSha: parentSha,
@@ -80,7 +80,7 @@ test("loads one bounded native GitHub stack snapshot", async () => {
     fetch: async (url, options) => {
       assert.equal(
         url,
-        "https://api.github.com/repos/anulman/renoconcierge/stacks/42",
+        "https://api.github.com/repos/example-org/example-repository/stacks/42",
       );
       assert.equal(options.method, "GET");
       return Response.json(stackResponse());

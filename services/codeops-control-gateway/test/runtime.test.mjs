@@ -7,15 +7,15 @@ import test from "node:test";
 import {
   agentJobDispatchRequestSchema,
   createProjectContext,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { createRunIdentity } from "../dist/core.js";
 import { createAgentJobRunner } from "../dist/runtime.js";
 import { createRepositoryRegistry } from "../dist/repository-registry.js";
 
 const repositoryRegistry = createRepositoryRegistry([
   {
-    repository: "anulman/renoconcierge",
-    repositoryUrl: "https://github.com/anulman/renoconcierge",
+    repository: "example-org/example-repository",
+    repositoryUrl: "https://github.com/example-org/example-repository",
     readToken: "r".repeat(32),
     writeToken: "w".repeat(32),
   },
@@ -29,7 +29,7 @@ const modelAuth = {
 
 const projectContext = createProjectContext({
   version: "codeops.project-context/v1",
-  repository: { owner: "anulman", name: "renoconcierge" },
+  repository: { owner: "example-org", name: "example-repository" },
   controlPlaneSha: "b".repeat(40),
   baseSha: "a".repeat(40),
   project: {
@@ -66,7 +66,7 @@ const request = {
     workItemId: "22222222-2222-4222-8222-222222222222",
     triggerCommentId: "33333333-3333-4333-8333-333333333333",
     requestedBy: "44444444-4444-4444-8444-444444444444",
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha: "b".repeat(40),
     baseSha: "a".repeat(40),
     planeRevisionDigest: `sha256:${"b".repeat(64)}`,
@@ -188,8 +188,8 @@ test("binds each admitted dispatch to only its repository-scoped runtime credent
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-registry-"));
   const registry = createRepositoryRegistry([
     {
-      repository: "anulman/renoconcierge",
-      repositoryUrl: "https://github.com/anulman/renoconcierge",
+      repository: "example-org/example-repository",
+      repositoryUrl: "https://github.com/example-org/example-repository",
       readToken: "a".repeat(32),
       writeToken: "b".repeat(32),
     },

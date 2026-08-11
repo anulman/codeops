@@ -13,7 +13,7 @@ const input = {
   role: "coding-agent",
   baseSha: "a".repeat(40),
   prompt: "Inspect the routing matrix and propose a bounded implementation plan.",
-  repository: "https://github.com/anulman/renoconcierge",
+  repository: "https://github.com/example-org/example-repository",
   agentDigest: `sha256:${"b".repeat(64)}`,
   sessionGatewayDigest: `sha256:${"c".repeat(64)}`,
 };
@@ -36,8 +36,8 @@ test("renders one tokenless, bounded Agent Job without reusable model credential
   assert.equal(job.spec.ttlSecondsAfterFinished, 3600);
   assert.equal(pod.automountServiceAccountToken, false);
   assert.equal(pod.enableServiceLinks, false);
-  assert.deepEqual(pod.imagePullSecrets, [{ name: "ghcr-renoconcierge" }]);
-  assert.deepEqual(pod.nodeSelector, { "renoconcierge.ca/codeops": "true" });
+  assert.deepEqual(pod.imagePullSecrets, [{ name: "codeops-registry" }]);
+  assert.deepEqual(pod.nodeSelector, { "codeops.example/codeops": "true" });
   assert.equal(pod.volumes.some((volume) => volume.persistentVolumeClaim), false);
   assert.equal(rendered.includes("hostPath"), false);
   assert.equal(rendered.includes("PersistentVolumeClaim"), false);
@@ -76,7 +76,7 @@ test("mounts the source read-only for the QA Contract Researcher", () => {
   const manifests = resources(rendered);
   const job = manifests[1];
   assert.equal(
-    job.metadata.labels["codeops.renoconcierge.ca/agent-role"],
+    job.metadata.labels["codeops.example/agent-role"],
     "qa-contract-researcher",
   );
   for (const container of job.spec.template.spec.containers) {
@@ -146,9 +146,9 @@ test("uses an exact source SHA and only immutable images", () => {
     (container) => container.image,
   );
   assert.deepEqual(images, [
-    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@${input.agentDigest}`,
-    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-gateway@${input.sessionGatewayDigest}`,
-    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@${input.agentDigest}`,
+    `ghcr.io/anulman/codeops/agent@${input.agentDigest}`,
+    `ghcr.io/anulman/codeops/session-gateway@${input.sessionGatewayDigest}`,
+    `ghcr.io/anulman/codeops/agent@${input.agentDigest}`,
   ]);
 });
 
@@ -213,7 +213,7 @@ test("fails closed on malformed identity, source, image, or template drift", () 
     { runId: "-bad" },
     { role: "administrator" },
     { baseSha: "abc" },
-    { repository: "git@github.com:anulman/renoconcierge.git" },
+    { repository: "git@github.com:example-org/example-repository.git" },
     { prompt: "" },
     { agentDigest: "latest" },
     { sessionGatewayDigest: `sha256:${"C".repeat(64)}` },

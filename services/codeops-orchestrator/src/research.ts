@@ -4,11 +4,11 @@ import type {
   ResearchPacket,
   ResearchRequest,
   ResearchSynthesis,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   RESEARCH_MANAGED_HEADING,
   RESEARCH_TASK_MANAGED_HEADING,
-} from "@renoconcierge/codeops-contracts/managed-content";
+} from "@codeops/codeops-contracts/managed-content";
 const DESCRIPTION_HTML_LIMIT = 50_000;
 
 function escapeHtml(value: string): string {

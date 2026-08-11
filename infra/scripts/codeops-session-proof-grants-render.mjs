@@ -27,7 +27,7 @@ export function renderSessionProofGrantsManifest(template, digest) {
     pod.serviceAccountName !== "codeops-session-proof-grants" || pod.restartPolicy !== "Never" ||
     job.spec.backoffLimit !== 0 || job.spec.activeDeadlineSeconds !== 300 ||
     Object.hasOwn(job.spec, "ttlSecondsAfterFinished") || pod.containers.length !== 1 ||
-    container.image !== `ghcr.io/anulman/renoconcierge/renoconcierge-postgres@${digest}` ||
+    container.image !== `postgres@${digest}` ||
     container.securityContext?.readOnlyRootFilesystem !== true ||
     JSON.stringify(container.securityContext?.capabilities?.drop) !== JSON.stringify(["ALL"])
   ) throw new Error("proof grant Job identity or retry boundary drifted");

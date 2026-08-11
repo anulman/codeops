@@ -2,11 +2,11 @@ import {
   canonicalSerialize,
   researchMutationBatchSchema,
   type ResearchMutationBatch,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   RESEARCH_MANAGED_HEADING,
   RESEARCH_TASK_MANAGED_HEADING,
-} from "@renoconcierge/codeops-contracts/managed-content";
+} from "@codeops/codeops-contracts/managed-content";
 import { createHash } from "node:crypto";
 
 export type PlaneWorkItemRecord = Readonly<{

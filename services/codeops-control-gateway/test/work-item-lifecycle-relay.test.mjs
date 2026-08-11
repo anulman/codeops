@@ -6,7 +6,7 @@ import {
   contractVersions,
   createEventId,
   createTransitionId,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   WORK_ITEM_LIFECYCLE_ROUTE,
   relayOneWorkItemLifecycleEvent,

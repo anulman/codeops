@@ -54,7 +54,7 @@ test("keeps Temporal UI and gRPC cluster-internal", () => {
 
 test("places and bounds the Temporal process on the admitted CodeOps node", () => {
   const pod = byKind("Deployment")[0].spec.template.spec;
-  assert.deepEqual(pod.nodeSelector, { "renoconcierge.ca/codeops": "true" });
+  assert.deepEqual(pod.nodeSelector, { "codeops.example/codeops": "true" });
   assert.equal(pod.automountServiceAccountToken, false);
   assert.deepEqual(pod.containers[0].resources, {
     requests: { cpu: "250m", memory: "512Mi" },
@@ -90,11 +90,11 @@ test("renders exactly one immutable orchestrator image", () => {
     .find((resource) => resource.kind === "Deployment");
   assert.equal(rendered.includes("CODEOPS_ORCHESTRATOR_DIGEST"), false);
   assert.deepEqual(deployment.spec.template.spec.imagePullSecrets, [
-    { name: "ghcr-renoconcierge" },
+    { name: "codeops-registry" },
   ]);
   assert.ok(
     rendered.includes(
-      `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-orchestrator@${digest}`,
+      `ghcr.io/anulman/codeops/orchestrator@${digest}`,
     ),
   );
   const pod = deployment.spec.template.spec;

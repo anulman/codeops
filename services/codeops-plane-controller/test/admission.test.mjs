@@ -186,7 +186,7 @@ const readyPayload = {
 
 function researchPacket() {
   const projectContext = compileProjectContext({
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha,
     baseSha,
     workspaceId: payload.workspace_id,
@@ -244,7 +244,7 @@ function signedInput(overrides = {}) {
     },
     webhookSecret: secret,
     allowedHumanActorIds: new Set([actorId]),
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha,
     baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
@@ -267,7 +267,7 @@ function signedCeInput(overrides = {}) {
     webhookSecret: secret,
     allowedHumanActorIds: new Set([actorId]),
     personaUserIds: new Map([[personaUserId, "@ai-security"]]),
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha,
     baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
@@ -291,7 +291,7 @@ function signedReadyInput(overrides = {}) {
     allowedHumanActorIds: new Set([actorId]),
     aiPersonaUserIds: new Set([readyPersonaId]),
     readyStateId,
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha,
     baseSha,
     receivedAt: "2026-07-27T02:45:01.000Z",

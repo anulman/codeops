@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import {
   sessionRuntimeDispatchSchema,
   type SessionRuntimeDispatch,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   runtimeExecutionResultSchema,
   SessionRuntimeTransportError,

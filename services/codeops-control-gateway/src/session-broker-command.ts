@@ -8,7 +8,7 @@ import {
   type SessionCommandResult,
   type SessionSnapshot,
   type SessionRuntimeDispatch,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { authenticateBearer } from "./bearer-auth.js";
 import {
   executeSessionCommandTransaction,

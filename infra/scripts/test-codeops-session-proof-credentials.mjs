@@ -9,7 +9,7 @@ const revoke = new URL("./revoke-codeops-session-proof-secrets.sh", import.meta.
 test("scripts are valid shell and reject an unscoped namespace", () => {
   for (const script of [issue, revoke]) {
     assert.equal(spawnSync("bash", ["-n", script.pathname]).status, 0);
-    const result = spawnSync("bash", [script.pathname, "--namespace", "renoconcierge"], { encoding: "utf8" });
+    const result = spawnSync("bash", [script.pathname, "--namespace", "example-repository"], { encoding: "utf8" });
     assert.equal(result.status, 2);
     assert.match(result.stderr, /codeops-session-proof/);
   }

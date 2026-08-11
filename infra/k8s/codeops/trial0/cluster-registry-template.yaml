@@ -37,7 +37,7 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       nodeSelector:
-        renoconcierge.ca/codeops: "true"
+        codeops.example/codeops: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -139,7 +139,7 @@ spec:
   tls:
     - hosts:
         - __CODEOPS_REGISTRY_HOST__
-      secretName: renoconcierge-preview-wildcard-tls
+      secretName: codeops-preview-wildcard-tls
   rules:
     - host: __CODEOPS_REGISTRY_HOST__
       http:

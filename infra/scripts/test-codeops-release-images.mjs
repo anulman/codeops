@@ -3,7 +3,7 @@ import test from "node:test";
 import { resolveCodeOpsReleaseImages } from "./codeops-release-images.mjs";
 
 const names = [
-  "agent", "agents-ui", "control-gateway", "model-proxy", "orchestrator",
+  "acceptance-runner", "agent", "agents-ui", "control-gateway", "model-proxy", "orchestrator",
   "plane-controller", "session-control-gateway", "session-gateway",
   "session-runtime-worker",
 ];
@@ -19,7 +19,7 @@ const plan = {
   })),
 };
 
-test("resolves all nine CodeOps operands and release values to immutable digests", async () => {
+test("resolves all ten CodeOps operands and release values to immutable digests", async () => {
   const seen = [];
   const result = await resolveCodeOpsReleaseImages(plan, async (ref) => {
     seen.push(ref);
@@ -27,9 +27,10 @@ test("resolves all nine CodeOps operands and release values to immutable digests
   });
   assert.equal(result.version, "codeops.release-images/v1");
   assert.equal(result.sourceSha, sourceSha);
-  assert.equal(seen.length, 9);
+  assert.equal(seen.length, 10);
   assert.deepEqual(Object.keys(result.images), names);
   assert.equal(result.values.githubController.controlPlaneSha, sourceSha);
+  assert.equal(result.values.acceptanceRunner, undefined);
   assert.deepEqual(result.values.lifecycleRelay.image, result.values.controlGateway.image);
   assert.equal(result.values.postgresql.image.digest, `sha256:${"c".repeat(64)}`);
   assert.ok(Object.values(result.images).every(({ immutableRef }) => immutableRef.endsWith(`@sha256:${"b".repeat(64)}`)));

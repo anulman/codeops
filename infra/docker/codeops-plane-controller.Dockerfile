@@ -18,10 +18,10 @@ RUN services/codeops-plane-controller/node_modules/.bin/tsc -p packages/codeops-
   && npm prune --omit=dev --prefix services/codeops-plane-controller \
   && test -f services/codeops-plane-controller/dist/runtime-main.js \
   && test -f packages/codeops-contracts/dist/index.js \
-  && rm services/codeops-plane-controller/node_modules/@renoconcierge/codeops-contracts \
-  && mkdir services/codeops-plane-controller/node_modules/@renoconcierge/codeops-contracts \
-  && cp packages/codeops-contracts/package.json services/codeops-plane-controller/node_modules/@renoconcierge/codeops-contracts/ \
-  && cp -R packages/codeops-contracts/dist services/codeops-plane-controller/node_modules/@renoconcierge/codeops-contracts/
+  && rm services/codeops-plane-controller/node_modules/@codeops/codeops-contracts \
+  && mkdir services/codeops-plane-controller/node_modules/@codeops/codeops-contracts \
+  && cp packages/codeops-contracts/package.json services/codeops-plane-controller/node_modules/@codeops/codeops-contracts/ \
+  && cp -R packages/codeops-contracts/dist services/codeops-plane-controller/node_modules/@codeops/codeops-contracts/
 
 FROM node:24-bookworm-slim
 WORKDIR /app

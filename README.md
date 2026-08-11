@@ -4,7 +4,7 @@ CodeOps is a Kubernetes control plane for durable coding-agent sessions. One
 control plane is designed to manage multiple allowlisted repositories.
 
 This repository is in a private extraction phase. The current source comes
-from the reviewed RenoConcierge CodeOps stack. Do not treat the chart or
+from the reviewed CodeOps stack. Do not treat the chart or
 configuration as a stable public API until the portability and
 multi-repository acceptance suites pass.
 
@@ -12,6 +12,7 @@ multi-repository acceptance suites pass.
 
 - `packages/codeops-contracts`: shared session and workflow contracts
 - `sites/agents-ui`: operator UI
+- `services/codeops-acceptance-runner`: portable browser acceptance runner
 - `services/codeops-plane-controller`: work-item and GitHub controller
 - `services/codeops-control-gateway`: trusted session control gateway
 - `services/codeops-session-runtime-worker`: ACP runtime transport
@@ -51,6 +52,7 @@ credential storage, and the advanced existing-Secret mode.
 ```sh
 nub install
 nub run verify
+nub run acceptance:agents-ui
 ```
 
 Validate one complete repository authority manifest before you create or
@@ -71,7 +73,7 @@ classes. It never prints credential values or Secret file paths.
 `.github/workflows/release.yml` is the only package publication boundary.
 Release-contract changes run it in validation-only mode. An operator must use
 manual dispatch, select `main`, enter one exact SemVer version, and set
-`publish=true` before it writes to GHCR. A publishing run builds all nine
+`publish=true` before it writes to GHCR. A publishing run builds all ten
 images from one source SHA, resolves
 their registry digests, embeds those digests and the source SHA into the
 packaged values, publishes the Helm chart to

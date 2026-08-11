@@ -6,7 +6,7 @@ import { test } from "node:test";
 import {
   contractVersions,
   createProjectContext,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import {
   createFileCodingRequestStore,
   createFileResearchDedupLedger,
@@ -25,7 +25,7 @@ const reviewedAt = "2026-07-30T22:45:00.000Z";
 function initialRequest() {
   const projectContext = createProjectContext({
     version: contractVersions.projectContext,
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha: "a".repeat(40),
     baseSha,
     project: {
@@ -79,7 +79,7 @@ function initialRequest() {
       workItemId,
       workflowId: "coding-initial",
       runId: "coding-initial",
-      repository: { owner: "anulman", name: "renoconcierge" },
+      repository: { owner: "example-org", name: "example-repository" },
       baseSha,
       branch: "codeops/original",
       summary: "Implement the bounded route",
@@ -96,7 +96,7 @@ const binding = {
   projectId,
   workItemId,
   workflowId: "coding-initial",
-  repository: "anulman/renoconcierge",
+  repository: "example-org/example-repository",
   number: 158,
   state: "open",
   headSha: reviewHead,

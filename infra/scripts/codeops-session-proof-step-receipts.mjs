@@ -35,7 +35,7 @@ function parseJson(source, label) {
 function assertCreationReceipt(receipt) {
   const admission = receipt?.admission;
   if (
-    receipt?.apiVersion !== "codeops.renoconcierge.ca/session-proof-namespace-create/v1" ||
+    receipt?.apiVersion !== "codeops.example/session-proof-namespace-create/v1" ||
     receipt.result !== "created-and-uid-bound" ||
     receipt.proceed !== true ||
     admission?.state !== "approved-bound" ||
@@ -50,7 +50,7 @@ function assertCreationReceipt(receipt) {
 
 function assertPlan(plan, planSha256, admission) {
   if (
-    plan?.apiVersion !== "codeops.renoconcierge.ca/session-proof-plan/v1" ||
+    plan?.apiVersion !== "codeops.example/session-proof-plan/v1" ||
     plan.admission !== "closed" ||
     plan.execution !== "render-and-review-only" ||
     planSha256 !== admission.planSha256 ||
@@ -63,7 +63,7 @@ function assertPlan(plan, planSha256, admission) {
 
 function assertPriorReceipt(receipt, expected) {
   if (
-    receipt?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+    receipt?.apiVersion !== "codeops.example/session-proof-step-receipt/v1" ||
     receipt.result !== "completed" ||
     receipt.proceed !== true ||
     receipt.planSha256 !== expected.planSha256 ||
@@ -162,7 +162,7 @@ export function authorizeSessionProofStep(input) {
     if (
       typeof recoveryAdmissionSource !== "string" ||
       recoveryAdmission.apiVersion !==
-        "codeops.renoconcierge.ca/session-proof-recovery-admission/v1" ||
+        "codeops.example/session-proof-recovery-admission/v1" ||
       recoveryAdmission.planSha256 !== planSha256 ||
       JSON.stringify(recoveryAdmission.identity) !== JSON.stringify(admission.identity) ||
       JSON.stringify(recoveryAdmission.operator) !== JSON.stringify(admission.operator) ||
@@ -188,7 +188,7 @@ export function authorizeSessionProofStep(input) {
   });
 
   return {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+    apiVersion: "codeops.example/session-proof-step-authorization/v1",
     planSha256,
     admission: operationAdmission,
     namespace: creationReceipt.namespace,
@@ -205,7 +205,7 @@ export function authorizeSessionProofStep(input) {
 export function verifySessionProofStepAuthorization(authorization) {
   const expectedStep = sessionProofSequence()[authorization?.stepIndex];
   if (
-    authorization?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-authorization/v1" ||
+    authorization?.apiVersion !== "codeops.example/session-proof-step-authorization/v1" ||
     !SHA256.test(authorization.planSha256 ?? "") ||
     !SHA256.test(authorization.previousReceiptSha256 ?? "") ||
     !Number.isInteger(authorization.stepIndex) ||
@@ -233,7 +233,7 @@ export function completeSessionProofStep(authorization, input) {
   const evidence = parseJson(evidenceSource, "proof step evidence");
   if (
     !RFC3339.test(input.completedAt ?? "") ||
-    evidence?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
+    evidence?.apiVersion !== "codeops.example/session-proof-step-evidence/v1" ||
     evidence.result !== "verified" ||
     evidence.planSha256 !== authorization.planSha256 ||
     evidence.stepId !== authorization.stepId ||
@@ -284,7 +284,7 @@ export function completeSessionProofStep(authorization, input) {
     observedAt: input.completedAt,
   });
   return {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+    apiVersion: "codeops.example/session-proof-step-receipt/v1",
     result: "completed",
     proceed: true,
     checkedAt: input.completedAt,

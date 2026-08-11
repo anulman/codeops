@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { canonicalSerialize } from "@renoconcierge/codeops-contracts";
+import { canonicalSerialize } from "@codeops/codeops-contracts";
 import { z } from "zod";
 import type { ResearchDedupLedger } from "./dedup-ledger.js";
 import type {

@@ -195,7 +195,7 @@ export function persistRecoveredSixthSessionProofStepAuthorizationFromOperatorPa
     authorization.namespace.name !== namespace ||
     authorization.stepId !== "wait-gateway-migration" ||
     authorization.admission?.apiVersion !==
-      "codeops.renoconcierge.ca/session-proof-recovery-admission/v1"
+      "codeops.example/session-proof-recovery-admission/v1"
   ) {
     throw new Error("proof recovered sixth-step authorization drifted from the operator packet");
   }
@@ -240,7 +240,7 @@ export function readRecoveredSixthSessionProofStepAuthorizationFromOperatorPacke
     expected.namespace.name !== namespace ||
     expected.stepId !== "wait-gateway-migration" ||
     expected.admission?.apiVersion !==
-      "codeops.renoconcierge.ca/session-proof-recovery-admission/v1"
+      "codeops.example/session-proof-recovery-admission/v1"
   ) {
     throw new Error("proof recovered sixth-step authorization drifted from the operator packet");
   }

@@ -24,7 +24,7 @@ printf '%s  %s\n' "${chart_sha}" "${archive}" | sha256sum --check --status
 helm template codeops-plane "${archive}" \
   --namespace codeops-bootstrap-0123456789ab \
   -f "${values_path}" \
-  --set ingress.appHost=plane-0123456789ab.preview.renoconcierge.ca \
+  --set ingress.appHost=plane-0123456789ab.preview.codeops.example \
   | node "${rewrite_path}" \
   > "${rendered}"
 

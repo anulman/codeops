@@ -46,9 +46,9 @@ RUN test -f /usr/lib/postgresql/18/lib/pg_textsearch.so \
   && test -f /usr/lib/postgresql/18/lib/vector.so \
   && test -f /usr/share/postgresql/18/extension/vector.control
 
-LABEL ca.renoconcierge.postgresql.major="18" \
-  ca.renoconcierge.postgis.version="3.6.4" \
-  ca.renoconcierge.pg_textsearch.version="1.3.1" \
-  ca.renoconcierge.pgvector.version="0.8.5"
+LABEL ca.example-repository.postgresql.major="18" \
+  ca.example-repository.postgis.version="3.6.4" \
+  ca.example-repository.pg_textsearch.version="1.3.1" \
+  ca.example-repository.pgvector.version="0.8.5"
 
 USER 26

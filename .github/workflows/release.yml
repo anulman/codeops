@@ -21,7 +21,7 @@ on:
         required: true
         type: string
       publish:
-        description: Publish nine images and the OCI Helm chart
+        description: Publish ten images and the OCI Helm chart
         required: true
         default: false
         type: boolean
@@ -128,7 +128,7 @@ jobs:
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          names=(agent agents-ui control-gateway model-proxy orchestrator plane-controller session-control-gateway session-gateway session-runtime-worker)
+          names=(acceptance-runner agent agents-ui control-gateway model-proxy orchestrator plane-controller session-control-gateway session-gateway session-runtime-worker)
           for name in "${names[@]}"; do
             ref="ghcr.io/anulman/codeops/${name}:sha-${SOURCE_SHA}"
             if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
@@ -154,6 +154,7 @@ jobs:
       fail-fast: false
       matrix:
         image:
+          - acceptance-runner
           - agent
           - agents-ui
           - control-gateway
@@ -241,7 +242,7 @@ jobs:
           set -euo pipefail
           node --input-type=module -e '
             import { writeFileSync } from "node:fs";
-            const names = ["agent","agents-ui","control-gateway","model-proxy","orchestrator","plane-controller","session-control-gateway","session-gateway","session-runtime-worker"];
+            const names = ["acceptance-runner","agent","agents-ui","control-gateway","model-proxy","orchestrator","plane-controller","session-control-gateway","session-gateway","session-runtime-worker"];
             const sourceSha = process.env.SOURCE_SHA;
             const services = names.map((name) => ({ name, repository: `ghcr.io/anulman/codeops/${name}`, sourceRef: `ghcr.io/anulman/codeops/${name}:sha-${sourceSha}` }));
             writeFileSync("image-plan.json", JSON.stringify({ version: "codeops.image-publication-plan/v1", sourceSha, upstream: { postgresql: { repository: "postgres", digest: process.env.POSTGRES_DIGEST } }, services }, null, 2));

@@ -92,7 +92,7 @@ security/privacy regressions can never be fast follows.
 ## Agent session broker
 
 Import the browser-safe session boundary from
-`@renoconcierge/codeops-contracts/session-broker`. The subpath intentionally
+`@codeops/codeops-contracts/session-broker`. The subpath intentionally
 avoids pulling Node-only contract helpers into client bundles.
 
 The boundary covers session snapshots, active/released lease epochs, immutable
@@ -180,7 +180,7 @@ an artifact merely because its profile can sometimes use one.
 Run the boundary suite with:
 
 ```sh
-nub run --filter @renoconcierge/codeops-contracts test
-nub run --filter @renoconcierge/codeops-contracts typecheck
-nub run --filter @renoconcierge/codeops-contracts build
+nub run --filter @codeops/codeops-contracts test
+nub run --filter @codeops/codeops-contracts typecheck
+nub run --filter @codeops/codeops-contracts build
 ```

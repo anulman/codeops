@@ -13,7 +13,7 @@ function snapshot(overrides = {}) {
         name: "codeops-node",
         labels: {
           "node.kubernetes.io/instance-type": "b3-8",
-          "renoconcierge.ca/codeops": "true",
+          "codeops.example/codeops": "true",
         },
       },
       status: {
@@ -49,10 +49,10 @@ test("accepts the resized Trial 0 node despite a stale cloud flavor label", () =
 
 test("fails closed without the explicit CodeOps placement label", () => {
   const value = snapshot();
-  delete value.node.metadata.labels["renoconcierge.ca/codeops"];
+  delete value.node.metadata.labels["codeops.example/codeops"];
   const result = evaluateCodeOpsCapacity(value);
   assert.equal(result.ok, false);
-  assert.match(result.reasons.join("\n"), /missing renoconcierge.ca\/codeops=true/);
+  assert.match(result.reasons.join("\n"), /missing codeops.example\/codeops=true/);
 });
 
 test("fails closed on readiness or pressure", () => {

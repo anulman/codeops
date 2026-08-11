@@ -22,8 +22,8 @@ spec:
       serviceAccountName: codeops-control-gateway
       automountServiceAccountToken: false
       enableServiceLinks: false
-      imagePullSecrets: [{ name: ghcr-renoconcierge }]
-      nodeSelector: { renoconcierge.ca/codeops: "true" }
+      imagePullSecrets: [{ name: codeops-registry }]
+      nodeSelector: { codeops.example/codeops: "true" }
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -33,7 +33,7 @@ spec:
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: gateway
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-control-gateway@__CODEOPS_SESSION_CONTROL_GATEWAY_DIGEST__
+          image: ghcr.io/anulman/codeops/session-control-gateway@__CODEOPS_SESSION_CONTROL_GATEWAY_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/codeops-session-broker/database-url }

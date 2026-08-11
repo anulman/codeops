@@ -3,8 +3,8 @@ kind: ServiceAccount
 metadata:
   name: codeops-agent-__CODEOPS_RUN_SUFFIX__
   labels:
-    codeops.renoconcierge.ca/run-id: __CODEOPS_RUN_ID__
-    codeops.renoconcierge.ca/agent-role: __CODEOPS_AGENT_ROLE__
+    codeops.example/run-id: __CODEOPS_RUN_ID__
+    codeops.example/agent-role: __CODEOPS_AGENT_ROLE__
 automountServiceAccountToken: false
 ---
 apiVersion: batch/v1
@@ -14,8 +14,8 @@ metadata:
   labels:
     app.kubernetes.io/name: codeops-agent
     app.kubernetes.io/part-of: codeops-trial0
-    codeops.renoconcierge.ca/run-id: __CODEOPS_RUN_ID__
-    codeops.renoconcierge.ca/agent-role: __CODEOPS_AGENT_ROLE__
+    codeops.example/run-id: __CODEOPS_RUN_ID__
+    codeops.example/agent-role: __CODEOPS_AGENT_ROLE__
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 3600
@@ -25,17 +25,17 @@ spec:
       labels:
         app.kubernetes.io/name: codeops-agent
         app.kubernetes.io/part-of: codeops-trial0
-        codeops.renoconcierge.ca/run-id: __CODEOPS_RUN_ID__
-        codeops.renoconcierge.ca/agent-role: __CODEOPS_AGENT_ROLE__
+        codeops.example/run-id: __CODEOPS_RUN_ID__
+        codeops.example/agent-role: __CODEOPS_AGENT_ROLE__
     spec:
       restartPolicy: Never
       serviceAccountName: codeops-agent-__CODEOPS_RUN_SUFFIX__
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
-        - name: ghcr-renoconcierge
+        - name: codeops-registry
       nodeSelector:
-        renoconcierge.ca/codeops: "true"
+        codeops.example/codeops: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -45,7 +45,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: workspace-builder
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
+          image: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -93,7 +93,7 @@ spec:
               readOnly: true
       containers:
         - name: session-gateway
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-gateway@__CODEOPS_SESSION_GATEWAY_DIGEST__
+          image: ghcr.io/anulman/codeops/session-gateway@__CODEOPS_SESSION_GATEWAY_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - name: CODEOPS_RUN_ID
@@ -136,7 +136,7 @@ spec:
               mountPath: /input
               readOnly: true
         - name: coding-agent
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
+          image: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - name: CODEOPS_RUN_ID
@@ -207,12 +207,12 @@ kind: NetworkPolicy
 metadata:
   name: codeops-agent-__CODEOPS_RUN_SUFFIX__
   labels:
-    codeops.renoconcierge.ca/run-id: __CODEOPS_RUN_ID__
-    codeops.renoconcierge.ca/agent-role: __CODEOPS_AGENT_ROLE__
+    codeops.example/run-id: __CODEOPS_RUN_ID__
+    codeops.example/agent-role: __CODEOPS_AGENT_ROLE__
 spec:
   podSelector:
     matchLabels:
-      codeops.renoconcierge.ca/run-id: __CODEOPS_RUN_ID__
+      codeops.example/run-id: __CODEOPS_RUN_ID__
   policyTypes: [Ingress, Egress]
   ingress: []
   egress:

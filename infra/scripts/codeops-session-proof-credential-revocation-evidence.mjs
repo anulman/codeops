@@ -8,7 +8,7 @@ const EXPECTED_NAMES = [
   "codeops-session-runtime-worker-auth",
   "codeops-session-job-initialization-auth",
   "codeops-session-runtime-worker-database",
-  "ghcr-renoconcierge",
+  "codeops-registry",
   "codeops-agent-source-credentials",
 ].sort();
 
@@ -37,7 +37,7 @@ export function verifySessionProofCredentialRevocationEvidence(authorization, ev
       "apiVersion", "result", "observedAt", "planSha256", "stepId", "namespace",
       "absentCredentialNames",
     ]) ||
-    evidence.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
+    evidence.apiVersion !== "codeops.example/session-proof-step-evidence/v1" ||
     evidence.result !== "verified" ||
     evidence.planSha256 !== authorization.planSha256 ||
     evidence.stepId !== authorization.stepId ||
@@ -52,7 +52,7 @@ export function verifySessionProofCredentialRevocationEvidence(authorization, ev
 
 export function buildSessionProofCredentialRevocationEvidence(input) {
   const evidence = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+    apiVersion: "codeops.example/session-proof-step-evidence/v1",
     result: "verified",
     observedAt: input.observedAt,
     planSha256: input.authorization?.planSha256,

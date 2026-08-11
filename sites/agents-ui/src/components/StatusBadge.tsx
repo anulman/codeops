@@ -1,4 +1,4 @@
-import type { SessionState } from "@renoconcierge/codeops-contracts/session-broker";
+import type { SessionState } from "@codeops/codeops-contracts/session-broker";
 
 const styles: Record<SessionState, string> = {
   queued: "border-[#6da8ff]/18 bg-[#6da8ff]/8 text-[#8dbbff]",

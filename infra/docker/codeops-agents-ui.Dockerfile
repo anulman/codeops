@@ -24,9 +24,9 @@ COPY packages/codeops-contracts/tsconfig.json packages/codeops-contracts/tsconfi
 COPY packages/codeops-contracts/src ./packages/codeops-contracts/src
 COPY sites/agents-ui/tsconfig.json sites/agents-ui/vite.config.ts ./sites/agents-ui/
 COPY sites/agents-ui/src ./sites/agents-ui/src
-RUN nub run --filter @renoconcierge/codeops-contracts build \
-  && nub run --filter @renoconcierge/agents-ui build \
-  && nub run --filter @renoconcierge/agents-ui typecheck \
+RUN nub run --filter @codeops/codeops-contracts build \
+  && nub run --filter @codeops/agents-ui build \
+  && nub run --filter @codeops/agents-ui typecheck \
   && test -f sites/agents-ui/.output/server/index.mjs \
   && mkdir -p /deploy/node_modules \
   && cp -a node_modules/.nub /deploy/node_modules/.nub \

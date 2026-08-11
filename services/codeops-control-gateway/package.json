@@ -1,5 +1,5 @@
 {
-  "name": "@renoconcierge/codeops-control-gateway",
+  "name": "@codeops/codeops-control-gateway",
   "version": "0.1.0",
   "private": true,
   "type": "module",
@@ -12,7 +12,7 @@
   "dependencies": {
     "@nats-io/jetstream": "3.4.0",
     "@nats-io/transport-node": "3.4.0",
-    "@renoconcierge/codeops-contracts": "workspace:*",
+    "@codeops/codeops-contracts": "workspace:*",
     "pg": "8.22.0",
     "zod": "3.25.76"
   },

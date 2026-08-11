@@ -24,8 +24,8 @@ test("binds one restricted disposable namespace to the exact run and SHA", () =>
   ]);
   const namespace = values.find((resource) => resource.kind === "Namespace");
   assert.equal(namespace.metadata.name, input.namespace);
-  assert.equal(namespace.metadata.labels["codeops.renoconcierge.ca/proof-run"], input.runId);
-  assert.equal(namespace.metadata.labels["codeops.renoconcierge.ca/base-sha"], input.baseSha);
+  assert.equal(namespace.metadata.labels["codeops.example/proof-run"], input.runId);
+  assert.equal(namespace.metadata.labels["codeops.example/base-sha"], input.baseSha);
   assert.equal(namespace.metadata.labels["pod-security.kubernetes.io/enforce"], "restricted");
 });
 

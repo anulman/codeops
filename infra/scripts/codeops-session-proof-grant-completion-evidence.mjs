@@ -93,7 +93,7 @@ export function verifySessionProofGrantApplyChain(authorization, receiptSource, 
   }
   const receipt = parseJson(receiptSource, "proof grant apply receipt");
   if (
-    receipt?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+    receipt?.apiVersion !== "codeops.example/session-proof-step-receipt/v1" ||
     receipt.result !== "completed" ||
     receipt.proceed !== true ||
     receipt.planSha256 !== authorization.planSha256 ||
@@ -131,7 +131,7 @@ export function verifySessionProofGrantCompletionEvidence(authorization, evidenc
       "apiVersion", "result", "observedAt", "planSha256", "stepId", "namespace",
       "grantApplyReceiptSource", "grantApplyEvidenceSource", "job",
     ]) ||
-    evidence.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
+    evidence.apiVersion !== "codeops.example/session-proof-step-evidence/v1" ||
     evidence.result !== "verified" ||
     evidence.planSha256 !== authorization.planSha256 ||
     evidence.stepId !== authorization.stepId ||
@@ -175,7 +175,7 @@ export function buildSessionProofGrantCompletionEvidence(input) {
   }
   verifyJob(job);
   const evidence = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+    apiVersion: "codeops.example/session-proof-step-evidence/v1",
     result: "verified",
     observedAt: input.observedAt,
     planSha256: authorization.planSha256,

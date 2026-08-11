@@ -3,7 +3,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { executeSessionCommand, getSessionDetail, getSessionEvents, getSessionFleet } from "@/lib/sessionBroker.data";
-import type { SessionCommand, SessionActionType, SessionCapability, SessionContentBlock, SessionEvent, SessionSnapshot, SessionTimelineUpdate, SessionUserAction } from "@renoconcierge/codeops-contracts/session-broker";
+import type { SessionCommand, SessionActionType, SessionCapability, SessionContentBlock, SessionEvent, SessionSnapshot, SessionTimelineUpdate, SessionUserAction } from "@codeops/codeops-contracts/session-broker";
 
 export const Route = createFileRoute("/sessions/$sessionId")({
   loader: async ({ params }) => {

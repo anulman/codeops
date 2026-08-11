@@ -20,11 +20,11 @@ export function renderSessionProofCodexAuthManifest(template, input) {
     resource.metadata.labels = {
       ...(resource.metadata.labels ?? {}),
       "app.kubernetes.io/part-of": "codeops-session-proof",
-      "codeops.renoconcierge.ca/proof-run": input.runId,
+      "codeops.example/proof-run": input.runId,
     };
     if (resource.kind === "Job") {
       resource.spec.template.metadata.labels["app.kubernetes.io/part-of"] = "codeops-session-proof";
-      resource.spec.template.metadata.labels["codeops.renoconcierge.ca/proof-run"] = input.runId;
+      resource.spec.template.metadata.labels["codeops.example/proof-run"] = input.runId;
     }
   }
 
@@ -40,7 +40,7 @@ export function renderSessionProofCodexAuthManifest(template, input) {
     if (
       resource.metadata.namespace !== input.namespace ||
       resource.metadata.labels["app.kubernetes.io/part-of"] !== "codeops-session-proof" ||
-      resource.metadata.labels["codeops.renoconcierge.ca/proof-run"] !== input.runId
+      resource.metadata.labels["codeops.example/proof-run"] !== input.runId
     ) throw new Error("proof Codex auth identity drifted");
   }
 
@@ -57,7 +57,7 @@ export function renderSessionProofCodexAuthManifest(template, input) {
     account.automountServiceAccountToken !== false || pod.automountServiceAccountToken !== false ||
     job.spec.backoffLimit !== 0 || job.spec.activeDeadlineSeconds !== 900 ||
     pod.serviceAccountName !== "codeops-codex-auth" || pod.containers.length !== 1 ||
-    JSON.stringify(pod.imagePullSecrets) !== JSON.stringify([{ name: "ghcr-renoconcierge" }]) ||
+    JSON.stringify(pod.imagePullSecrets) !== JSON.stringify([{ name: "codeops-registry" }]) ||
     pod.volumes.find((volume) => volume.name === "codex-auth")?.persistentVolumeClaim?.claimName !== "codeops-codex-auth" ||
     pod.volumes.some((volume) => volume.secret || volume.hostPath) ||
     container.env.some((entry) => /TOKEN|KEY|REPOSITORY|PLANE|GITHUB|KUBERNETES/.test(entry.name))

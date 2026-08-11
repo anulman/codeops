@@ -29,9 +29,9 @@ test("uses the existing preview ingress and TLS boundary", () => {
   assert.equal(values.ingress.ingressClass, "nginx");
   assert.equal(
     values.ingress.appHost,
-    "plane-candidate.preview.renoconcierge.ca",
+    "plane-candidate.preview.codeops.example",
   );
-  assert.equal(values.ssl.tls_secret_name, "renoconcierge-preview-wildcard-tls");
+  assert.equal(values.ssl.tls_secret_name, "codeops-preview-wildcard-tls");
   assert.equal(values.ssl.createIssuer, false);
   assert.equal(values.ssl.generateCerts, false);
 });
@@ -51,7 +51,7 @@ test("places every Plane workload only on the admitted CodeOps node", () => {
     "beatworker",
   ]) {
     assert.deepEqual(values[component].nodeSelector, {
-      "renoconcierge.ca/codeops": "true",
+      "codeops.example/codeops": "true",
     });
     assert.equal(values[component].pullPolicy, "IfNotPresent");
   }

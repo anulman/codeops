@@ -25,9 +25,9 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
-        - name: ghcr-renoconcierge
+        - name: codeops-registry
       nodeSelector:
-        renoconcierge.ca/codeops: "true"
+        codeops.example/codeops: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -38,7 +38,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: agents-ui
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agents-ui@CODEOPS_AGENTS_UI_DIGEST
+          image: ghcr.io/anulman/codeops/agents-ui@CODEOPS_AGENTS_UI_DIGEST
           imagePullPolicy: IfNotPresent
           env:
             - name: HOST
@@ -138,12 +138,6 @@ spec:
         - namespaceSelector:
             matchLabels:
               kubernetes.io/metadata.name: ingress-nginx
-      ports:
-        - { protocol: TCP, port: 3000 }
-    - from:
-        - podSelector:
-            matchLabels:
-              codeops.renoconcierge.ca/agents-ui-smoke: "true"
       ports:
         - { protocol: TCP, port: 3000 }
   egress:

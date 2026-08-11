@@ -10,7 +10,7 @@ export default defineConfig({
   },
   server: {
     port: 4176,
-    allowedHosts: ["agents.renoconcierge.ca"],
+    allowedHosts: ["agents.codeops.example"],
   },
   optimizeDeps: {
     exclude: ["@tanstack/react-start", "@tanstack/start-server-core"],

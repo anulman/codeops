@@ -14,7 +14,7 @@ const authority = {
   generation: 3,
   leaseId: "11111111-1111-4111-8111-111111111111",
   identity: {
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-repository",
     branch: "feat/agents-ui",
     baseSha: "a".repeat(40),
     workflowId: "workflow-155",

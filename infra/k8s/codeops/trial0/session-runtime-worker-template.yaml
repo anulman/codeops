@@ -4,7 +4,7 @@ metadata:
   name: codeops-session-runtime-__CODEOPS_SESSION_SUFFIX__
   labels:
     app.kubernetes.io/name: codeops-session-runtime-worker
-    codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+    codeops.example/session-id: __CODEOPS_SESSION_ID__
 automountServiceAccountToken: false
 ---
 apiVersion: batch/v1
@@ -14,7 +14,7 @@ metadata:
   labels:
     app.kubernetes.io/name: codeops-session-runtime-worker
     app.kubernetes.io/part-of: codeops-trial0
-    codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+    codeops.example/session-id: __CODEOPS_SESSION_ID__
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 3600
@@ -24,7 +24,7 @@ spec:
       labels:
         app.kubernetes.io/name: codeops-session-runtime-worker
         app.kubernetes.io/part-of: codeops-trial0
-        codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+        codeops.example/session-id: __CODEOPS_SESSION_ID__
     spec:
       restartPolicy: Never
       terminationGracePeriodSeconds: 960
@@ -32,9 +32,9 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
-        - name: ghcr-renoconcierge
+        - name: codeops-registry
       nodeSelector:
-        renoconcierge.ca/codeops: "true"
+        codeops.example/codeops: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -45,7 +45,7 @@ spec:
           type: RuntimeDefault
       initContainers:
         - name: workspace-builder
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
+          image: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
           imagePullPolicy: IfNotPresent
           command:
             - /bin/sh
@@ -83,7 +83,7 @@ spec:
             - { name: temp, mountPath: /tmp }
       containers:
         - name: runtime-worker
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-runtime-worker@__CODEOPS_SESSION_RUNTIME_WORKER_DIGEST__
+          image: ghcr.io/anulman/codeops/session-runtime-worker@__CODEOPS_SESSION_RUNTIME_WORKER_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - { name: CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN, value: "http://codeops-control-gateway:8080" }
@@ -94,7 +94,7 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_WORKSPACE, value: "/workspace" }
             - { name: CODEOPS_SESSION_RUNTIME_ACP_STATE_PATH, value: "/var/lib/codeops-session/state.json" }
             - { name: CODEOPS_SESSION_ID, value: "__CODEOPS_SESSION_ID__" }
-            - { name: CODEOPS_SESSION_REPOSITORY, value: "anulman/renoconcierge" }
+            - { name: CODEOPS_SESSION_REPOSITORY, value: "example-org/example-repository" }
             - { name: CODEOPS_SESSION_BRANCH, value: "__CODEOPS_BRANCH__" }
             - { name: CODEOPS_SESSION_BASE_SHA, value: "__CODEOPS_BASE_SHA__" }
             - { name: CODEOPS_SESSION_WORKFLOW_ID, value: "__CODEOPS_WORKFLOW_ID__" }
@@ -129,7 +129,7 @@ spec:
             - { name: session-job-initialization-auth, mountPath: /var/run/secrets/codeops-session-job-initialization, readOnly: true }
             - { name: session-runtime-database, mountPath: /var/run/secrets/codeops-session-runtime-database, readOnly: true }
         - name: coding-agent
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
+          image: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - { name: CODEX_HOME, value: "/tmp/codex-home" }
@@ -175,12 +175,12 @@ metadata:
   name: codeops-session-runtime-__CODEOPS_SESSION_SUFFIX__
   labels:
     app.kubernetes.io/name: codeops-session-runtime-worker
-    codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+    codeops.example/session-id: __CODEOPS_SESSION_ID__
 spec:
   podSelector:
     matchLabels:
       app.kubernetes.io/name: codeops-session-runtime-worker
-      codeops.renoconcierge.ca/session-id: __CODEOPS_SESSION_ID__
+      codeops.example/session-id: __CODEOPS_SESSION_ID__
   policyTypes: [Ingress, Egress]
   ingress: []
   egress:

@@ -39,7 +39,7 @@ const namespaceResource = {
   metadata: { name: namespace, uid: "namespace-uid-3" },
 };
 const recoveryAdmission = {
-  apiVersion: "codeops.renoconcierge.ca/session-proof-recovery-admission/v1",
+  apiVersion: "codeops.example/session-proof-recovery-admission/v1",
   planSha256: "1".repeat(64),
   identity: { namespace },
   namespaceUid: namespaceResource.metadata.uid,
@@ -47,7 +47,7 @@ const recoveryAdmission = {
 };
 const recoveryAdmissionSource = `${JSON.stringify(recoveryAdmission, null, 2)}\n`;
 const persistedAuthorization = {
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-authorization/v1",
+  apiVersion: "codeops.example/session-proof-step-authorization/v1",
   planSha256: recoveryAdmission.planSha256,
   admission: recoveryAdmission,
   namespace: { name: namespace, uid: namespaceResource.metadata.uid },

@@ -129,7 +129,7 @@ export function verifySessionProofGatewayApplyChain(authorization, receiptSource
   }
   const receipt = parseJson(receiptSource, "proof gateway apply receipt");
   if (
-    receipt?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+    receipt?.apiVersion !== "codeops.example/session-proof-step-receipt/v1" ||
     receipt.result !== "completed" ||
     receipt.proceed !== true ||
     receipt.planSha256 !== authorization.planSha256 ||
@@ -168,7 +168,7 @@ export function verifySessionProofGatewayReadinessEvidence(authorization, eviden
       "gatewayApplyReceiptSource", "gatewayApplyEvidenceSource", "deployment",
       "migrationRelation",
     ]) ||
-    evidence.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
+    evidence.apiVersion !== "codeops.example/session-proof-step-evidence/v1" ||
     evidence.result !== "verified" ||
     evidence.planSha256 !== authorization.planSha256 ||
     evidence.stepId !== authorization.stepId ||
@@ -207,7 +207,7 @@ export function buildSessionProofGatewayReadinessEvidence(input) {
   verifyDeployment(deployment);
   verifyMigrationRelation(input.migrationRelation);
   const evidence = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+    apiVersion: "codeops.example/session-proof-step-evidence/v1",
     result: "verified",
     observedAt: input.observedAt,
     planSha256: authorization.planSha256,

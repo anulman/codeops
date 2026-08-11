@@ -1,7 +1,7 @@
-# RenoConcierge PostgreSQL operand image
+# CodeOps PostgreSQL operand image
 
 This image extends the pinned CloudNativePG PostgreSQL 18/PostGIS system image
-with the two retrieval extensions RenoConcierge owns operationally:
+with the two retrieval extensions CodeOps owns operationally:
 
 - `pg_textsearch` 1.3.1 for BM25 lexical candidates
 - `pgvector` 0.8.5 for dense semantic candidates
@@ -14,8 +14,8 @@ Cluster manifests must preload `pg_textsearch`, and each database must install
 Build and run the extension smoke locally:
 
 ```bash
-docker build -f infra/images/postgres/Dockerfile -t renoconcierge-postgres:test .
-infra/scripts/test-postgres-retrieval-image.sh renoconcierge-postgres:test
+docker build -f infra/images/postgres/Dockerfile -t codeops-postgres:test .
+infra/scripts/test-postgres-retrieval-image.sh codeops-postgres:test
 ```
 
 The canonical PG16 cluster must not be changed merely because this image

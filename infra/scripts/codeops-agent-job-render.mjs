@@ -109,7 +109,7 @@ export function renderAgentJobManifest(template, input) {
   }
   for (const resource of [account, job, job.spec.template, networkPolicy]) {
     if (
-      resource.metadata.labels?.["codeops.renoconcierge.ca/agent-role"] !==
+      resource.metadata.labels?.["codeops.example/agent-role"] !==
       input.role
     ) {
       throw new Error("every agent-run resource must carry the exact agent role");

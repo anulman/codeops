@@ -6,6 +6,7 @@ import { stringify } from "yaml";
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SHA = /^[0-9a-f]{40}$/;
 const imageNames = [
+  "acceptance-runner",
   "agent",
   "agents-ui",
   "control-gateway",
@@ -68,7 +69,10 @@ export async function resolveCodeOpsReleaseImages(plan, inspect) {
       digest: descriptor.digest,
       immutableRef: `${repository}@${descriptor.digest}`,
     };
-    setPath(values, valuePaths[name], { repository, digest: descriptor.digest });
+    const valuePath = valuePaths[name];
+    if (valuePath) {
+      setPath(values, valuePath, { repository, digest: descriptor.digest });
+    }
     if (name === "control-gateway") {
       setPath(values, ["lifecycleRelay", "image"], {
         repository,

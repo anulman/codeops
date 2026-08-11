@@ -1,5 +1,5 @@
 {
-  "name": "@renoconcierge/codeops-contracts",
+  "name": "@codeops/codeops-contracts",
   "version": "0.1.0",
   "private": true,
   "type": "module",

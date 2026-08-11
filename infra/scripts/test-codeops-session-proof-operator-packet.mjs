@@ -33,8 +33,8 @@ function fixture() {
   const namespace = resource("Namespace", identity.namespace);
   namespace.metadata.labels = {
     "app.kubernetes.io/part-of": "codeops-session-proof",
-    "codeops.renoconcierge.ca/proof-run": identity.runId,
-    "codeops.renoconcierge.ca/base-sha": identity.baseSha,
+    "codeops.example/proof-run": identity.runId,
+    "codeops.example/base-sha": identity.baseSha,
   };
   const targeted = (rows) => manifest(rows.map(([kind, name]) => resource(kind, name)));
   const explicit = (rows) => manifest(rows.map(([kind, name]) => resource(kind, name, identity.namespace)));

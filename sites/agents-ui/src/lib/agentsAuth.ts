@@ -6,6 +6,13 @@ import {
 } from "./cloudflareAccess.server";
 
 function accessRequired(): boolean {
+  const localHost = process.env.HOST?.trim();
+  if (
+    process.env.AGENTS_UI_ACCESS_REQUIRED === "false" &&
+    (localHost === "127.0.0.1" || localHost === "localhost" || localHost === "::1")
+  ) {
+    return false;
+  }
   return (
     process.env.NODE_ENV === "production" ||
     process.env.AGENTS_UI_ACCESS_REQUIRED === "true"

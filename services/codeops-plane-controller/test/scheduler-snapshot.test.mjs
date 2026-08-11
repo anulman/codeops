@@ -21,7 +21,7 @@ const binding = {
   projectId,
   workItemId: a,
   workflowId: "coding-123",
-  repository: "anulman/renoconcierge",
+  repository: "example-org/example-repository",
   number: 158,
   state: "open",
   headSha: "a".repeat(40),

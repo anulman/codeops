@@ -19,14 +19,14 @@ export function renderSessionProofUiManifest(template, input) {
     resource.metadata.labels = {
       ...(resource.metadata.labels ?? {}),
       "app.kubernetes.io/part-of": "codeops-session-proof",
-      "codeops.renoconcierge.ca/proof-run": input.runId,
+      "codeops.example/proof-run": input.runId,
     };
   }
 
   const deployment = resources.find((resource) => resource.kind === "Deployment");
   deployment.spec.template.metadata.labels["app.kubernetes.io/part-of"] =
     "codeops-session-proof";
-  deployment.spec.template.metadata.labels["codeops.renoconcierge.ca/proof-run"] =
+  deployment.spec.template.metadata.labels["codeops.example/proof-run"] =
     input.runId;
 
   const policy = resources.find((resource) => resource.kind === "NetworkPolicy");
@@ -49,7 +49,7 @@ export function renderSessionProofUiManifest(template, input) {
       resource.metadata.namespace !== input.namespace ||
       resource.metadata.labels["app.kubernetes.io/part-of"] !==
         "codeops-session-proof" ||
-      resource.metadata.labels["codeops.renoconcierge.ca/proof-run"] !==
+      resource.metadata.labels["codeops.example/proof-run"] !==
         input.runId
     ) {
       throw new Error("proof UI identity drifted");

@@ -4,8 +4,8 @@ metadata:
   name: __CODEOPS_SESSION_PROOF_NAMESPACE__
   labels:
     app.kubernetes.io/part-of: codeops-session-proof
-    codeops.renoconcierge.ca/proof-run: __CODEOPS_RUN_ID__
-    codeops.renoconcierge.ca/base-sha: __CODEOPS_BASE_SHA__
+    codeops.example/proof-run: __CODEOPS_RUN_ID__
+    codeops.example/base-sha: __CODEOPS_BASE_SHA__
     pod-security.kubernetes.io/enforce: restricted
     pod-security.kubernetes.io/audit: restricted
     pod-security.kubernetes.io/warn: restricted

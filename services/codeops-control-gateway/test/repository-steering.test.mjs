@@ -13,12 +13,12 @@ test("selects a distinct GitHub steering token for each admitted repository", as
         version: "codeops.repository-registry/v1",
         repositories: [
           {
-            repository: "anulman/renoconcierge",
-            repositoryUrl: "https://github.com/anulman/renoconcierge.git",
-            readTokenFile: "/var/run/codeops/renoconcierge-read",
-            writeTokenFile: "/var/run/codeops/renoconcierge-write",
-            githubWebhookSecretFile: "/var/run/codeops/renoconcierge-webhook",
-            githubSteeringTokenFile: "/var/run/codeops/renoconcierge-steering",
+            repository: "example-org/example-repository",
+            repositoryUrl: "https://github.com/example-org/example-repository.git",
+            readTokenFile: "/var/run/codeops/example-repository-read",
+            writeTokenFile: "/var/run/codeops/example-repository-write",
+            githubWebhookSecretFile: "/var/run/codeops/example-repository-webhook",
+            githubSteeringTokenFile: "/var/run/codeops/example-repository-steering",
           },
           {
             repository: "anulman/codeops",
@@ -31,7 +31,7 @@ test("selects a distinct GitHub steering token for each admitted repository", as
         ],
       }),
     ],
-    ["/var/run/codeops/renoconcierge-steering", `${"r".repeat(32)}\n`],
+    ["/var/run/codeops/example-repository-steering", `${"r".repeat(32)}\n`],
     ["/var/run/codeops/codeops-steering", `${"c".repeat(32)}\n`],
   ]);
   const registry = await loadGitHubSteeringRegistryFile(
@@ -42,7 +42,7 @@ test("selects a distinct GitHub steering token for each admitted repository", as
       return value;
     },
   );
-  assert.equal(registry.resolve("anulman/renoconcierge"), "r".repeat(32));
+  assert.equal(registry.resolve("example-org/example-repository"), "r".repeat(32));
   assert.equal(registry.resolve("anulman/codeops"), "c".repeat(32));
   assert.throws(() => registry.resolve("anulman/unknown"), /not admitted/);
 });
@@ -51,7 +51,7 @@ test("rejects reused steering authority and incomplete registry entries", async 
   assert.throws(
     () =>
       createGitHubSteeringRegistry([
-        { repository: "anulman/renoconcierge", token: "s".repeat(32) },
+        { repository: "example-org/example-repository", token: "s".repeat(32) },
         { repository: "anulman/codeops", token: "s".repeat(32) },
       ]),
     /repository-scoped/,

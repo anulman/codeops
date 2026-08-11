@@ -28,7 +28,7 @@ const applyEvidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
     .map((resource, index) => ({ ...resource, uid: `runtime-resource-uid-${index}` })),
 }));
 const applyReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed", proceed: true, planSha256, namespace, stepIndex: 16,
   stepId: "start-runtime", action: "operator-apply", artifact: "runtime",
   artifactSha256: applyAuthorization.artifactSha256,
@@ -70,7 +70,7 @@ const runtimeEvidenceSource = JSON.stringify(buildSessionProofRuntimeReadinessEv
   observedAt: "2026-08-05T22:21:00Z",
 }));
 const runtimeReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed", proceed: true, planSha256, namespace, stepIndex: 17,
   stepId: "wait-runtime", action: "operator-wait-ready", artifact: null,
   artifactSha256: null, previousReceiptSha256: digest(applyReceiptSource),

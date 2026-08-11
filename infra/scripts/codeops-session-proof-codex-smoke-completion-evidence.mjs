@@ -124,7 +124,7 @@ export function verifySessionProofCodexSmokeReplacementChain(
   }
   const receipt = parseJson(receiptSource, "proof Codex smoke replacement receipt");
   if (
-    receipt?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+    receipt?.apiVersion !== "codeops.example/session-proof-step-receipt/v1" ||
     receipt.result !== "completed" ||
     receipt.proceed !== true ||
     receipt.planSha256 !== authorization.planSha256 ||
@@ -182,7 +182,7 @@ export function verifySessionProofCodexSmokeCompletionEvidence(authorization, ev
       "smokeReplacementReceiptSource", "smokeReplacementEvidenceSource",
       "loginJobAbsent", "job", "persistentVolumeClaim",
     ]) ||
-    evidence.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
+    evidence.apiVersion !== "codeops.example/session-proof-step-evidence/v1" ||
     evidence.result !== "verified" ||
     evidence.planSha256 !== authorization.planSha256 ||
     evidence.stepId !== authorization.stepId ||
@@ -239,7 +239,7 @@ export function buildSessionProofCodexSmokeCompletionEvidence(input) {
   verifyJob(job);
   verifyPersistentVolumeClaim(persistentVolumeClaim);
   const evidence = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+    apiVersion: "codeops.example/session-proof-step-evidence/v1",
     result: "verified",
     observedAt: input.observedAt,
     planSha256: authorization.planSha256,

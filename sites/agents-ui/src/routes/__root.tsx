@@ -8,7 +8,7 @@ export const Route = tsr.createRootRoute({
     meta: [
       { charSet: "utf-8" },
       { name: "viewport", content: "width=device-width, initial-scale=1" },
-      { title: "Agent Sessions · RenoConcierge" },
+      { title: "Agent Sessions · CodeOps" },
       {
         name: "description",
         content: "Live and archived CodeOps agent sessions.",

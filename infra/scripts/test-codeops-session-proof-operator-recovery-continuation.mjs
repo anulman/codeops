@@ -43,8 +43,8 @@ function namespaceResource() {
       uid: "namespace-uid-3",
       labels: {
         "app.kubernetes.io/part-of": "codeops-session-proof",
-        "codeops.renoconcierge.ca/proof-run": "video-3",
-        "codeops.renoconcierge.ca/base-sha": "a".repeat(40),
+        "codeops.example/proof-run": "video-3",
+        "codeops.example/base-sha": "a".repeat(40),
       },
     },
   };
@@ -52,7 +52,7 @@ function namespaceResource() {
 
 function fixtureOutputs() {
   const planSource = JSON.stringify({
-    apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+    apiVersion: "codeops.example/session-proof-plan/v1",
     admission: "closed",
     execution: "render-and-review-only",
     identity: {
@@ -82,7 +82,7 @@ function fixtureOutputs() {
     observedAt: "2026-08-08T02:31:00.000Z",
   });
   const sixthStepReceiptSource = `${JSON.stringify({
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+    apiVersion: "codeops.example/session-proof-step-receipt/v1",
     result: "completed",
     proceed: true,
     checkedAt: "2026-08-08T10:15:00.000Z",

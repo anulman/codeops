@@ -45,7 +45,7 @@ function decodeBase64(value, label) {
 function validateCreationReceipt(receipt) {
   const admission = receipt?.admission;
   if (
-    receipt?.apiVersion !== "codeops.renoconcierge.ca/session-proof-namespace-create/v1" ||
+    receipt?.apiVersion !== "codeops.example/session-proof-namespace-create/v1" ||
     ![
       "created-and-uid-bound",
       "namespace-uid-bound-create-incomplete",
@@ -241,7 +241,7 @@ export async function deleteSessionProofNamespace(
     }
     if (now().getTime() >= deadline) {
       return {
-        apiVersion: "codeops.renoconcierge.ca/session-proof-namespace-delete/v1",
+        apiVersion: "codeops.example/session-proof-namespace-delete/v1",
         result: "deletion-requested-absence-unconfirmed",
         checkedAt: now().toISOString(),
         planSha256,
@@ -274,7 +274,7 @@ export async function deleteSessionProofNamespace(
       })
     : null;
   return {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-namespace-delete/v1",
+    apiVersion: "codeops.example/session-proof-namespace-delete/v1",
     result: "deleted-and-absence-verified",
     checkedAt: verifiedAt,
     planSha256,

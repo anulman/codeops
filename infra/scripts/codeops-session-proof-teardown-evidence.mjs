@@ -43,7 +43,7 @@ function verifyReceipt(receipt, expected) {
       "stepIndex", "stepId", "action", "artifact", "artifactSha256",
       "previousReceiptSha256", "evidenceSha256",
     ]) ||
-    receipt.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+    receipt.apiVersion !== "codeops.example/session-proof-step-receipt/v1" ||
     receipt.result !== "completed" ||
     receipt.proceed !== true ||
     !RFC3339.test(receipt.checkedAt ?? "") ||
@@ -63,7 +63,7 @@ function verifyReceipt(receipt, expected) {
 
 function buildReceipt(input) {
   const receipt = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+    apiVersion: "codeops.example/session-proof-step-receipt/v1",
     result: "completed",
     proceed: true,
     checkedAt: input.checkedAt,
@@ -127,7 +127,7 @@ export function verifySessionProofNamespaceDeleteEvidence(input, evidence) {
       "revocationReceiptSource", "revocationEvidenceSource", "deletedNamespaceUid",
       "deletionAccepted",
     ]) ||
-    evidence.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
+    evidence.apiVersion !== "codeops.example/session-proof-step-evidence/v1" ||
     evidence.result !== "verified" ||
     evidence.observedAt !== input.observedAt ||
     evidence.planSha256 !== input.planSha256 ||
@@ -145,7 +145,7 @@ export function verifySessionProofNamespaceDeleteEvidence(input, evidence) {
 
 export function buildSessionProofNamespaceDeleteEvidence(input) {
   const evidence = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+    apiVersion: "codeops.example/session-proof-step-evidence/v1",
     result: "verified",
     observedAt: input.observedAt,
     planSha256: input.planSha256,
@@ -206,7 +206,7 @@ export function buildSessionProofTeardownReceipt(input) {
     throw new Error("proof final teardown evidence drifted");
   }
   const evidence = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+    apiVersion: "codeops.example/session-proof-step-evidence/v1",
     result: "verified",
     observedAt: input.observedAt,
     planSha256: input.planSha256,

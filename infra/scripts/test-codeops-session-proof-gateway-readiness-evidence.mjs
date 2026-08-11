@@ -29,7 +29,7 @@ const applyEvidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
   })),
 }));
 const applyReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   planSha256: applyAuthorization.planSha256,

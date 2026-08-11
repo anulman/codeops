@@ -18,7 +18,7 @@ import {
   type SessionRuntimeDispatchClaim,
   type SessionRuntimePermissionResult,
   type SessionRuntimePermissionSubmission,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { z } from "zod";
 import { setTimeout as delay } from "node:timers/promises";
 

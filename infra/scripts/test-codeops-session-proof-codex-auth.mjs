@@ -26,7 +26,7 @@ for (const action of ["login", "smoke"]) {
     for (const resource of values) {
       assert.equal(resource.metadata.namespace, baseInput.namespace);
       assert.equal(resource.metadata.labels["app.kubernetes.io/part-of"], "codeops-session-proof");
-      assert.equal(resource.metadata.labels["codeops.renoconcierge.ca/proof-run"], baseInput.runId);
+      assert.equal(resource.metadata.labels["codeops.example/proof-run"], baseInput.runId);
     }
   });
 }

@@ -45,7 +45,7 @@ const artifactIds = [
   "namespace", "database", "gateway", "grants", "codex-login", "codex-smoke", "ui", "runtime",
 ];
 const planSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+  apiVersion: "codeops.example/session-proof-plan/v1",
   admission: "closed",
   execution: "render-and-review-only",
   identity,
@@ -62,7 +62,7 @@ const unbound = createSessionProofAdmission({
 });
 const admission = { ...unbound, state: "approved-bound", namespaceUid: "namespace-uid-1" };
 const creationReceipt = {
-  apiVersion: "codeops.renoconcierge.ca/session-proof-namespace-create/v1",
+  apiVersion: "codeops.example/session-proof-namespace-create/v1",
   result: "created-and-uid-bound",
   checkedAt: "2026-08-05T06:00:00Z",
   planSha256: admission.planSha256,
@@ -83,7 +83,7 @@ const revocationEvidenceSource = JSON.stringify(buildSessionProofCredentialRevoc
   absentCredentialNames: sessionProofCredentialNames(),
 }));
 const revocationReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   checkedAt: "2026-08-05T06:21:00Z",
@@ -118,8 +118,8 @@ function namespace(uid = admission.namespaceUid) {
       uid,
       labels: {
         "app.kubernetes.io/part-of": "codeops-session-proof",
-        "codeops.renoconcierge.ca/proof-run": identity.runId,
-        "codeops.renoconcierge.ca/base-sha": identity.baseSha,
+        "codeops.example/proof-run": identity.runId,
+        "codeops.example/base-sha": identity.baseSha,
       },
     },
   };

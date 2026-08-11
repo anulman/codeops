@@ -60,7 +60,7 @@ export function createSessionProofNamespace(input, runner = execFileSync) {
     observedAt: input.observedAt,
   });
   return {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-namespace-create/v1",
+    apiVersion: "codeops.example/session-proof-namespace-create/v1",
     result: createSucceeded
       ? "created-and-uid-bound"
       : "namespace-uid-bound-create-incomplete",

@@ -22,9 +22,9 @@ spec:
       serviceAccountName: codeops-orchestrator
       automountServiceAccountToken: false
       imagePullSecrets:
-        - name: ghcr-renoconcierge
+        - name: codeops-registry
       nodeSelector:
-        renoconcierge.ca/codeops: "true"
+        codeops.example/codeops: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -35,7 +35,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: orchestrator
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-orchestrator@CODEOPS_ORCHESTRATOR_DIGEST
+          image: ghcr.io/anulman/codeops/orchestrator@CODEOPS_ORCHESTRATOR_DIGEST
           imagePullPolicy: IfNotPresent
           env:
             - name: CODEOPS_TEMPORAL_ADDRESS

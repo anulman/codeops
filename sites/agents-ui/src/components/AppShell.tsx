@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
-import type { SessionSnapshot } from "@renoconcierge/codeops-contracts/session-broker";
+import type { SessionSnapshot } from "@codeops/codeops-contracts/session-broker";
 
 interface AppShellProps {
   readonly children: ReactNode;

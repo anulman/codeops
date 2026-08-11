@@ -12,7 +12,7 @@ import {
   type SessionContentBlock,
   type SessionRuntimeDispatch,
   type SessionTimelineUpdate,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import type {
   AcpWorkspaceLifecycle,
 } from "./lifecycle.js";
@@ -530,7 +530,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     const promptOutput = new Map<string, AcpPromptCapture>();
     try {
       return await acp
-        .client({ name: "renoconcierge-session-runtime-worker" })
+        .client({ name: "codeops-session-runtime-worker" })
         .onRequest(
           acp.methods.client.session.requestPermission,
           async ({ params }) => {
@@ -557,7 +557,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
           await agent.request(acp.methods.agent.initialize, {
             protocolVersion: acp.PROTOCOL_VERSION,
             clientInfo: {
-              name: "renoconcierge-session-runtime-worker",
+              name: "codeops-session-runtime-worker",
               version: "0.1.0",
             },
           });

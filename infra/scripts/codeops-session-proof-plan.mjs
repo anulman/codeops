@@ -143,9 +143,9 @@ function inspectArtifact(expected, source, input) {
     if (
       namespace.metadata.labels?.["app.kubernetes.io/part-of"] !==
         "codeops-session-proof" ||
-      namespace.metadata.labels?.["codeops.renoconcierge.ca/proof-run"] !==
+      namespace.metadata.labels?.["codeops.example/proof-run"] !==
         input.runId ||
-      namespace.metadata.labels?.["codeops.renoconcierge.ca/base-sha"] !==
+      namespace.metadata.labels?.["codeops.example/base-sha"] !==
         input.baseSha
     ) {
       throw new Error("proof namespace identity labels drifted");
@@ -222,7 +222,7 @@ export function buildSessionProofPlan(input) {
   });
 
   return {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+    apiVersion: "codeops.example/session-proof-plan/v1",
     admission: "closed",
     execution: "render-and-review-only",
     identity: {

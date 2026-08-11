@@ -76,8 +76,9 @@ quickstart:
         - { handle: "@ai-product", userId: "" }
         - { handle: "@ai-ml", userId: "" }
 
-    # Paste the repository's exact agent-context documents. Each document must
-    # contain at least one byte. CodeOps mounts these files read-only.
+    # Paste the repository's exact context documents. CodeOps supplies generic
+    # AGENTS.md and SOUL.md baselines when those two values remain empty. The
+    # other five documents are repository-specific and must not be empty.
     context:
       directory: repository
       agents: ""

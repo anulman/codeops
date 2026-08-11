@@ -85,7 +85,7 @@ create_secret() {
   created+=("$secret_name")
   kubectl -n "$namespace" label secret "$secret_name" \
     app.kubernetes.io/part-of=codeops-session-proof \
-    codeops.renoconcierge.ca/credential-scope=session-video-proof \
+    codeops.example/credential-scope=session-video-proof \
     --overwrite >/dev/null
 }
 

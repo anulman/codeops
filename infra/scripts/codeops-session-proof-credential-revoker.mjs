@@ -88,7 +88,7 @@ function verifyRuntimeStopPredecessor(authorization, receiptSource, evidenceSour
   }
   const receipt = parseJson(receiptSource, "proof runtime-stop receipt");
   if (
-    receipt?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+    receipt?.apiVersion !== "codeops.example/session-proof-step-receipt/v1" ||
     receipt.result !== "completed" ||
     receipt.proceed !== true ||
     receipt.planSha256 !== authorization.planSha256 ||
@@ -153,7 +153,7 @@ function verifyIssuanceChain(authorization, receiptSources, evidenceSources, run
     const stepIndex = index + 2;
     const step = sequence[stepIndex];
     if (
-      receipt?.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-receipt/v1" ||
+      receipt?.apiVersion !== "codeops.example/session-proof-step-receipt/v1" ||
       receipt.result !== "completed" ||
       receipt.proceed !== true ||
       receipt.planSha256 !== authorization.planSha256 ||

@@ -7,7 +7,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { bundleWorkflowCode } from "@temporalio/worker";
-import { canonicalSerialize } from "@renoconcierge/codeops-contracts";
+import { canonicalSerialize } from "@codeops/codeops-contracts";
 import {
   dispatchAgentJob,
   publishCandidateRevision,
@@ -23,7 +23,7 @@ import {
 
 const projectContext = {
   version: "codeops.project-context/v1",
-  repository: { owner: "anulman", name: "renoconcierge" },
+  repository: { owner: "example-org", name: "example-repository" },
   controlPlaneSha: "b".repeat(40),
   baseSha: "a".repeat(40),
   project: {
@@ -318,7 +318,7 @@ test("projects terminal coding failure to the authenticated Plane boundary", asy
       projectId: "11111111-1111-4111-8111-111111111111",
       workItem: {
         workItemId: "22222222-2222-4222-8222-222222222222",
-        repository: { owner: "anulman", name: "renoconcierge" },
+        repository: { owner: "example-org", name: "example-repository" },
       },
     },
   };
@@ -339,7 +339,7 @@ test("projects terminal coding failure to the authenticated Plane boundary", asy
         version: "codeops.workflow-transition-notice/v1",
         workspaceId: "55555555-5555-4555-8555-555555555555",
         projectId: "11111111-1111-4111-8111-111111111111",
-        repository: { owner: "anulman", name: "renoconcierge" },
+        repository: { owner: "example-org", name: "example-repository" },
         workItemId: "22222222-2222-4222-8222-222222222222",
         workflowId: "coding-123",
         state: "failed",
@@ -456,7 +456,7 @@ test("the Agent Job boundary authenticates and validates the dispatcher result",
         workItemId: "22222222-2222-4222-8222-222222222222",
         triggerCommentId: "33333333-3333-4333-8333-333333333333",
         requestedBy: "44444444-4444-4444-8444-444444444444",
-        repository: { owner: "anulman", name: "renoconcierge" },
+        repository: { owner: "example-org", name: "example-repository" },
         controlPlaneSha: "b".repeat(40),
         baseSha: "a".repeat(40),
         planeRevisionDigest: `sha256:${"b".repeat(64)}`,
@@ -575,13 +575,13 @@ test("the publication activity uses its separate bearer capability and exact ide
     projectId: "11111111-1111-4111-8111-111111111111",
     workItemId: "22222222-2222-4222-8222-222222222222",
     workflowId: "review-123",
-    repository: { owner: "anulman", name: "renoconcierge" },
+    repository: { owner: "example-org", name: "example-repository" },
     pullRequestNumber: 158,
     expectedHeadSha: "a".repeat(40),
     headRef: "codeops/reviewed",
     humanReview: {
       version: "codeops.human-review-request/v1",
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       pullRequestNumber: 158,
       reviewId: 9001,
       reviewedHeadSha: "a".repeat(40),
@@ -626,7 +626,7 @@ test("the publication activity uses its separate bearer capability and exact ide
     request.on("end", () => {
       assert.equal(
         request.url,
-        "/v1/repositories/anulman/renoconcierge/candidate-publications",
+        "/v1/repositories/example-org/example-repository/candidate-publications",
       );
       assert.equal(request.headers.authorization, `Bearer ${token}`);
       assert.deepEqual(JSON.parse(Buffer.concat(chunks).toString()), publication);

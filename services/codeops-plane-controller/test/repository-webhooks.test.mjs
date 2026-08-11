@@ -13,12 +13,12 @@ test("selects a distinct GitHub webhook secret for each admitted repository", as
         version: "codeops.repository-registry/v1",
         repositories: [
           {
-            repository: "anulman/renoconcierge",
-            repositoryUrl: "https://github.com/anulman/renoconcierge.git",
-            readTokenFile: "/var/run/codeops/renoconcierge-read",
-            writeTokenFile: "/var/run/codeops/renoconcierge-write",
-            githubWebhookSecretFile: "/var/run/codeops/renoconcierge-webhook",
-            githubSteeringTokenFile: "/var/run/codeops/renoconcierge-steering",
+            repository: "example-org/example-repository",
+            repositoryUrl: "https://github.com/example-org/example-repository.git",
+            readTokenFile: "/var/run/codeops/example-repository-read",
+            writeTokenFile: "/var/run/codeops/example-repository-write",
+            githubWebhookSecretFile: "/var/run/codeops/example-repository-webhook",
+            githubSteeringTokenFile: "/var/run/codeops/example-repository-steering",
           },
           {
             repository: "anulman/codeops",
@@ -31,9 +31,9 @@ test("selects a distinct GitHub webhook secret for each admitted repository", as
         ],
       }),
     ],
-    ["/var/run/codeops/renoconcierge-webhook", `${"r".repeat(32)}\n`],
+    ["/var/run/codeops/example-repository-webhook", `${"r".repeat(32)}\n`],
     ["/var/run/codeops/codeops-webhook", `${"c".repeat(32)}\n`],
-    ["/var/run/codeops/renoconcierge-steering", `${"a".repeat(64)}\n`],
+    ["/var/run/codeops/example-repository-steering", `${"a".repeat(64)}\n`],
     ["/var/run/codeops/codeops-steering", `${"b".repeat(64)}\n`],
   ]);
   const registry = await loadGitHubWebhookRegistryFile(
@@ -45,10 +45,10 @@ test("selects a distinct GitHub webhook secret for each admitted repository", as
     },
   );
   assert.deepEqual(registry.repositories, [
-    "anulman/renoconcierge",
+    "example-org/example-repository",
     "anulman/codeops",
   ]);
-  assert.deepEqual(registry.resolve("anulman/renoconcierge"), {
+  assert.deepEqual(registry.resolve("example-org/example-repository"), {
     webhookSecret: "r".repeat(32),
     steeringToken: "a".repeat(64),
   });
@@ -64,7 +64,7 @@ test("rejects reused webhook authority and incomplete registry entries", async (
     () =>
       createGitHubWebhookRegistry([
         {
-          repository: "anulman/renoconcierge",
+          repository: "example-org/example-repository",
           webhookSecret: "s".repeat(32),
           steeringToken: "a".repeat(64),
         },

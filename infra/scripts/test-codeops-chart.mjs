@@ -29,8 +29,8 @@ const digestSets = [
   "githubController.configSecretName=team-a-codeops-controller-config",
   "githubController.secretName=team-a-codeops-controller-secrets",
   "githubController.repositoryAuthoritySecretName=team-a-codeops-repository-controller-authority",
-  "githubController.repositoryContexts[0].directory=renoconcierge",
-  "githubController.repositoryContexts[0].secretName=team-a-renoconcierge-context",
+  "githubController.repositoryContexts[0].directory=example-repository",
+  "githubController.repositoryContexts[0].secretName=team-a-example-repository-context",
   "githubController.repositoryContexts[1].directory=codeops",
   "githubController.repositoryContexts[1].secretName=team-a-codeops-context",
   "postgresql.secretName=team-a-codeops-postgres",
@@ -290,7 +290,7 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
   );
   assert.deepEqual(
     contexts.projected.sources.map(({ secret }) => secret.name),
-    ["team-a-renoconcierge-context", "team-a-codeops-context"],
+    ["team-a-example-repository-context", "team-a-codeops-context"],
   );
   assert.equal(
     contexts.projected.sources.every(
@@ -298,8 +298,8 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
         secret.items.length === 7 &&
         secret.items.every(({ path }) =>
           path.startsWith(
-            secret.name.includes("renoconcierge")
-              ? "renoconcierge/"
+            secret.name.includes("example-repository")
+              ? "example-repository/"
               : "codeops/",
           ),
         ),

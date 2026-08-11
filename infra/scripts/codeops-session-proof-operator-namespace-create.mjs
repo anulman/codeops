@@ -177,7 +177,7 @@ export function readSessionProofOperatorCreationReceipt(input) {
     throw new Error("proof Namespace creation receipt outcome drifted");
   }
   const expected = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-namespace-create/v1",
+    apiVersion: "codeops.example/session-proof-namespace-create/v1",
     result: receipt.result,
     checkedAt: receipt.checkedAt,
     planSha256: attachment.admission.planSha256,

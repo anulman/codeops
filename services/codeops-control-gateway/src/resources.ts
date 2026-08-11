@@ -1,7 +1,7 @@
 import type {
   AgentJobDispatchRequest,
   CandidateCheckpoint,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { buildAgentPrompt } from "./core.js";
 import { createModelProxyToken } from "./model-proxy-token.js";
 
@@ -26,8 +26,8 @@ function labels(input: ResourceConfig, request: AgentJobDispatchRequest) {
   return {
     "app.kubernetes.io/name": "codeops-agent",
     "app.kubernetes.io/part-of": "codeops-trial0",
-    "codeops.renoconcierge.ca/run-id": input.runId,
-    "codeops.renoconcierge.ca/agent-role": request.role,
+    "codeops.example/run-id": input.runId,
+    "codeops.example/agent-role": request.role,
   };
 }
 
@@ -52,7 +52,7 @@ export function buildRunResources(
     namespace: input.namespace,
     labels: labels(input, request),
     annotations: {
-      "codeops.renoconcierge.ca/request-digest": input.requestDigest,
+      "codeops.example/request-digest": input.requestDigest,
     },
   };
   const name = `codeops-agent-${input.runId}`;
@@ -180,8 +180,8 @@ export function buildRunResources(
             serviceAccountName: name,
             automountServiceAccountToken: false,
             enableServiceLinks: false,
-            imagePullSecrets: [{ name: "ghcr-renoconcierge" }],
-            nodeSelector: { "renoconcierge.ca/codeops": "true" },
+            imagePullSecrets: [{ name: "codeops-registry" }],
+            nodeSelector: { "codeops.example/codeops": "true" },
             securityContext: {
               runAsNonRoot: true,
               runAsUser: 1000,
@@ -464,7 +464,7 @@ export function buildRunResources(
       spec: {
         podSelector: {
           matchLabels: {
-            "codeops.renoconcierge.ca/run-id": input.runId,
+            "codeops.example/run-id": input.runId,
           },
         },
         policyTypes: ["Ingress", "Egress"],

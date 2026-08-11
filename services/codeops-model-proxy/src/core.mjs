@@ -195,7 +195,7 @@ export function createModelProxyRequestListener(input) {
           Accept: typeof request.headers.accept === "string" ? request.headers.accept : "application/json",
           Authorization: `Bearer ${input.openAiApiKey}`,
           "Content-Type": "application/json",
-          "User-Agent": "renoconcierge-codeops-model-proxy/0.1",
+          "User-Agent": "codeops-model-proxy/0.1",
         });
         for (const name of ["openai-beta", "idempotency-key", "x-client-request-id"]) {
           const value = request.headers[name];

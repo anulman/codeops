@@ -9,7 +9,7 @@ import {
   candidatePublicationSchema,
   type CandidatePublication,
   type CandidatePublicationResult,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 
 const execFileAsync = promisify(execFile);
 
@@ -108,9 +108,9 @@ export async function publishCandidateRevision(input: {
       "-C",
       repository,
       "-c",
-      "user.name=RenoConcierge CodeOps",
+      "user.name=CodeOps",
       "-c",
-      "user.email=codeops@renoconcierge.ca",
+      "user.email=codeops@codeops.ca",
       "commit",
       "--no-gpg-sign",
       "-m",

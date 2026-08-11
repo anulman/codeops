@@ -36,7 +36,7 @@ const loginApplyEvidenceSource = JSON.stringify(buildSessionProofApplyEvidence({
   resources: loginResources,
 }));
 const loginApplyReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   planSha256,
@@ -85,7 +85,7 @@ const loginCompletionEvidenceSource = JSON.stringify(buildSessionProofCodexLogin
   observedAt: "2026-08-05T21:18:00Z",
 }));
 const loginCompletionReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   planSha256,
@@ -124,7 +124,7 @@ const replacementEvidenceSource = JSON.stringify(buildSessionProofCodexSmokeRepl
   observedAt: "2026-08-05T21:19:00Z",
 }));
 const replacementReceiptSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-step-receipt/v1",
+  apiVersion: "codeops.example/session-proof-step-receipt/v1",
   result: "completed",
   proceed: true,
   planSha256,

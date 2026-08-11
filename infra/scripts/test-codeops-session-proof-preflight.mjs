@@ -24,7 +24,7 @@ const artifactIds = [
   "namespace", "database", "gateway", "grants", "codex-login", "codex-smoke", "ui", "runtime",
 ];
 const planSource = JSON.stringify({
-  apiVersion: "codeops.renoconcierge.ca/session-proof-plan/v1",
+  apiVersion: "codeops.example/session-proof-plan/v1",
   admission: "closed",
   execution: "render-and-review-only",
   identity,

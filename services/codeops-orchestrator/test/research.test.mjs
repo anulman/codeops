@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createProjectContext } from "@renoconcierge/codeops-contracts";
+import { createProjectContext } from "@codeops/codeops-contracts";
 import { buildResearchPacket } from "../dist/research.js";
 
 const projectContext = createProjectContext({
   version: "codeops.project-context/v1",
-  repository: { owner: "anulman", name: "renoconcierge" },
+  repository: { owner: "example-org", name: "example-repository" },
   controlPlaneSha: "b".repeat(40),
   baseSha: "a".repeat(40),
   project: {
@@ -34,7 +34,7 @@ const request = {
   workItemId: "22222222-2222-4222-8222-222222222222",
   triggerCommentId: "33333333-3333-4333-8333-333333333333",
   requestedBy: "44444444-4444-4444-8444-444444444444",
-  repository: { owner: "anulman", name: "renoconcierge" },
+  repository: { owner: "example-org", name: "example-repository" },
   controlPlaneSha: "b".repeat(40),
   baseSha: "a".repeat(40),
   planeRevisionDigest: `sha256:${"b".repeat(64)}`,
@@ -212,7 +212,7 @@ test("assembles one deterministic source-ticket refinement in requested persona 
   );
   assert.match(
     packet.proposedMutations.mutations.at(-1).bodyHtml,
-    /github\.com\/anulman\/renoconcierge\/blob\/a{40}/,
+    /github\.com\/example-org\/example-repository\/blob\/a{40}/,
   );
   assert.equal(packet.evidence.length, 3);
   assert.equal(packet.createdAt, request.requestedAt);

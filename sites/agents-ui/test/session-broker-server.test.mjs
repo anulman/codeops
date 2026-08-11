@@ -27,7 +27,7 @@ function snapshot() {
     generation: 3,
     state: "running",
     identity: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       branch: "feat/agents-ui",
       baseSha: "a".repeat(40),
       workflowId: "workflow-155",
@@ -95,6 +95,21 @@ test("allows writes only from the configured exact HTTPS origin", () => {
     );
   }
   assert.equal(commandOriginIsAllowed(undefined, false, undefined), true);
+});
+
+test("allows an ephemeral loopback broker port only outside production", () => {
+  assert.equal(
+    parseSessionBrokerBaseUrl("http://127.0.0.1:43127", "development").port,
+    "43127",
+  );
+  assert.equal(
+    parseSessionBrokerBaseUrl("http://127.0.0.1:43127", "production", true).port,
+    "43127",
+  );
+  assert.throws(
+    () => parseSessionBrokerBaseUrl("http://127.0.0.1:43127", "production"),
+    /exact service origin|HTTPS/,
+  );
 });
 
 test("keeps the read token server-side and validates all fleet snapshots", async () => {

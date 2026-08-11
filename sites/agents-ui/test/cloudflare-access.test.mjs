@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   SignJWT,
@@ -11,7 +12,7 @@ import {
   verifyCloudflareAccessJwt,
 } from "../src/lib/cloudflareAccess.server.ts";
 
-const issuer = "https://renoconcierge.cloudflareaccess.com";
+const issuer = "https://example.cloudflareaccess.com";
 const audience = "agents_control_plane_audience_2026";
 const allowedEmail = "operator@example.com";
 const currentDate = new Date("2026-08-09T18:00:00.000Z");
@@ -90,4 +91,16 @@ test("rejects non-Cloudflare issuers and empty identity allowlists", () => {
     audience,
     allowedEmails: [],
   }), /at least one identity/);
+});
+
+test("permits the unauthenticated browser harness only on loopback", async () => {
+  const source = await readFile(
+    new URL("../src/lib/agentsAuth.ts", import.meta.url),
+    "utf8",
+  );
+  assert.match(source, /AGENTS_UI_ACCESS_REQUIRED === "false"/);
+  assert.match(source, /localHost === "127\.0\.0\.1"/);
+  assert.match(source, /localHost === "localhost"/);
+  assert.match(source, /localHost === "::1"/);
+  assert.match(source, /process\.env\.NODE_ENV === "production"/);
 });

@@ -70,9 +70,9 @@ spec:
       serviceAccountName: codeops-control-gateway
       enableServiceLinks: false
       imagePullSecrets:
-        - name: ghcr-renoconcierge
+        - name: codeops-registry
       nodeSelector:
-        renoconcierge.ca/codeops: "true"
+        codeops.example/codeops: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -83,7 +83,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: gateway
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-control-gateway@__CODEOPS_CONTROL_GATEWAY_DIGEST__
+          image: ghcr.io/anulman/codeops/control-gateway@__CODEOPS_CONTROL_GATEWAY_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - name: CODEOPS_NAMESPACE
@@ -91,11 +91,11 @@ spec:
                 fieldRef:
                   fieldPath: metadata.namespace
             - name: CODEOPS_REPOSITORY_URL
-              value: https://github.com/anulman/renoconcierge
+              value: https://github.com/example-org/example-repository
             - name: CODEOPS_AGENT_IMAGE
-              value: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agent@__CODEOPS_AGENT_DIGEST__
+              value: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
             - name: CODEOPS_SESSION_GATEWAY_IMAGE
-              value: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-session-gateway@__CODEOPS_SESSION_GATEWAY_DIGEST__
+              value: ghcr.io/anulman/codeops/session-gateway@__CODEOPS_SESSION_GATEWAY_DIGEST__
             - name: CODEOPS_DISPATCH_TOKEN_FILE
               value: /var/run/secrets/codeops-dispatch/token
             - name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE
@@ -341,7 +341,7 @@ spec:
     - to:
         - podSelector:
             matchLabels:
-              cnpg.io/poolerName: renoconcierge-postgres-cnpg-pgbouncer
+              cnpg.io/poolerName: codeops-postgres-cnpg-pgbouncer
       ports:
         - { protocol: TCP, port: 5432 }
     - to:
@@ -387,9 +387,9 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
-        - name: ghcr-renoconcierge
+        - name: codeops-registry
       nodeSelector:
-        renoconcierge.ca/codeops: "true"
+        codeops.example/codeops: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
@@ -398,7 +398,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: proxy
-          image: ghcr.io/anulman/renoconcierge/renoconcierge-codeops-model-proxy@__CODEOPS_MODEL_PROXY_DIGEST__
+          image: ghcr.io/anulman/codeops/model-proxy@__CODEOPS_MODEL_PROXY_DIGEST__
           imagePullPolicy: IfNotPresent
           env:
             - name: OPENAI_API_KEY

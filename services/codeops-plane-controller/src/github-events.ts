@@ -2,7 +2,7 @@ import { createHmac, timingSafeEqual } from "node:crypto";
 import {
   githubPullRequestStackPositionSchema,
   type GitHubPullRequestStackPosition,
-} from "@renoconcierge/codeops-contracts";
+} from "@codeops/codeops-contracts";
 import { z } from "zod";
 
 const githubActorSchema = z

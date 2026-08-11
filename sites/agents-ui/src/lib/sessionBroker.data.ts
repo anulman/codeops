@@ -1,7 +1,7 @@
 import { createServerFn } from "@tanstack/react-start";
 import { getRequestHeader, setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
-import { sessionCommandSchema } from "@renoconcierge/codeops-contracts/session-broker";
+import { sessionCommandSchema } from "@codeops/codeops-contracts/session-broker";
 import { agentsAuthMiddleware } from "./agentsAuth";
 import { commandOriginIsAllowed, sessionBrokerClient } from "./sessionBroker.server";
 

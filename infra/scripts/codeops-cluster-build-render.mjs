@@ -1,19 +1,19 @@
 import { parseAllDocuments } from "yaml";
 
 const SHA = /^[0-9a-f]{40}$/;
-const HOST = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.preview\.renoconcierge\.ca$/;
+const HOST = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.preview\.example-repository\.ca$/;
 const BUILD_KINDS = {
   orchestrator: {
     dockerfileDirectory: ".",
     dockerfileName: "Dockerfile",
-    imageRepository: "renoconcierge-codeops-orchestrator",
+    imageRepository: "codeops-orchestrator",
     targetArgs:
       "            - --opt\n            - target=codeops-orchestrator-runtime",
   },
   "plane-controller": {
     dockerfileDirectory: "infra/docker",
     dockerfileName: "codeops-plane-controller.Dockerfile",
-    imageRepository: "renoconcierge-codeops-plane-controller",
+    imageRepository: "codeops-plane-controller",
     targetArgs: "",
   },
 };
@@ -37,7 +37,7 @@ export function renderClusterRegistryManifest(template, input) {
   if (!SHA.test(input.baseSha ?? "")) {
     throw new Error("base SHA must contain exactly 40 lowercase hex characters");
   }
-  const expectedHost = `registry-${input.baseSha.slice(0, 12)}.preview.renoconcierge.ca`;
+  const expectedHost = `registry-${input.baseSha.slice(0, 12)}.preview.codeops.example`;
   if (!HOST.test(input.registryHost ?? "") || input.registryHost !== expectedHost) {
     throw new Error(`registry host must be ${expectedHost}`);
   }
@@ -123,7 +123,7 @@ export function renderClusterRegistryManifest(template, input) {
     ingress.spec.rules[0].host !== input.registryHost ||
     ingress.spec.tls[0].hosts[0] !== input.registryHost ||
     ingress.spec.tls[0].secretName !==
-      "renoconcierge-preview-wildcard-tls" ||
+      "codeops-preview-wildcard-tls" ||
     ingress.spec.rules[0].http.paths[0].path !== "/"
   ) {
     throw new Error("registry TLS ingress drifted");

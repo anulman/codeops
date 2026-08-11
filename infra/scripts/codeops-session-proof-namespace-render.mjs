@@ -42,8 +42,8 @@ export function renderSessionProofNamespaceManifest(template, input) {
   }
   if (
     namespace.metadata.labels["app.kubernetes.io/part-of"] !== "codeops-session-proof" ||
-    namespace.metadata.labels["codeops.renoconcierge.ca/proof-run"] !== input.runId ||
-    namespace.metadata.labels["codeops.renoconcierge.ca/base-sha"] !== input.baseSha ||
+    namespace.metadata.labels["codeops.example/proof-run"] !== input.runId ||
+    namespace.metadata.labels["codeops.example/base-sha"] !== input.baseSha ||
     namespace.metadata.labels["pod-security.kubernetes.io/enforce"] !== "restricted" ||
     namespace.metadata.labels["pod-security.kubernetes.io/audit"] !== "restricted" ||
     namespace.metadata.labels["pod-security.kubernetes.io/warn"] !== "restricted"

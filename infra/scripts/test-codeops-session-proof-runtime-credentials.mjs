@@ -9,7 +9,7 @@ const revoke = new URL("./revoke-codeops-session-proof-runtime-credentials.sh", 
 test("scripts are valid shell and reject an unscoped namespace", () => {
   for (const script of [issue, revoke]) assert.equal(spawnSync("bash", ["-n", script.pathname]).status, 0);
   for (const script of [issue, revoke]) {
-    const result = spawnSync("bash", [script.pathname, "--namespace", "renoconcierge"], { encoding: "utf8" });
+    const result = spawnSync("bash", [script.pathname, "--namespace", "example-repository"], { encoding: "utf8" });
     assert.equal(result.status, 2);
     assert.match(result.stderr, /codeops-session-proof/);
   }
@@ -19,7 +19,7 @@ test("dry-run reports only the exact two runtime credential identities", () => {
   const result = spawnSync("bash", [issue.pathname, "--namespace", "codeops-session-proof-video-1", "--dry-run"], { encoding: "utf8" });
   assert.equal(result.status, 0);
   assert.deepEqual(result.stdout.split("\n").filter((line) => line.startsWith("  ")).map((line) => line.trim()), [
-    "ghcr-renoconcierge",
+    "codeops-registry",
     "codeops-agent-source-credentials",
   ]);
   assert.equal(/token value|dockerconfigjson/.test(result.stdout), false);
@@ -38,7 +38,7 @@ test("issuer validates inputs, normalizes the token, rolls back, and creates no 
   assert.match(source, /chmod 700/);
   assert.match(source, /created=\(\)/);
   assert.match(source, /delete secret.*--ignore-not-found/s);
-  assert.match(source, /create secret generic ghcr-renoconcierge/);
+  assert.match(source, /create secret generic codeops-registry/);
   assert.match(source, /--type=kubernetes\.io\/dockerconfigjson/);
   assert.match(source, /create secret generic codeops-agent-source-credentials/);
   assert.equal(source.includes("kubectl apply"), false);
@@ -48,7 +48,7 @@ test("issuer validates inputs, normalizes the token, rolls back, and creates no 
 test("revoker names only the two proof runtime credentials", async () => {
   const source = await readFile(revoke, "utf8");
   const block = source.match(/kubectl -n .*? --ignore-not-found/s)?.[0] ?? "";
-  assert.match(block, /ghcr-renoconcierge/);
+  assert.match(block, /codeops-registry/);
   assert.match(block, /codeops-agent-source-credentials/);
   assert.equal(block.includes("codeops-session-broker"), false);
   assert.equal(block.includes("codeops-codex-auth"), false);

@@ -110,7 +110,7 @@ export function verifySessionProofApplyEvidence(authorization, evidence) {
       "apiVersion", "result", "observedAt", "planSha256", "stepId", "namespace",
       "artifactSha256", "resourceInventory",
     ]) ||
-    evidence.apiVersion !== "codeops.renoconcierge.ca/session-proof-step-evidence/v1" ||
+    evidence.apiVersion !== "codeops.example/session-proof-step-evidence/v1" ||
     evidence.result !== "verified" ||
     evidence.planSha256 !== authorization.planSha256 ||
     evidence.stepId !== authorization.stepId ||
@@ -161,7 +161,7 @@ export function buildSessionProofApplyEvidence(input) {
     throw new Error("proof apply resource inventory drifted");
   }
   const evidence = {
-    apiVersion: "codeops.renoconcierge.ca/session-proof-step-evidence/v1",
+    apiVersion: "codeops.example/session-proof-step-evidence/v1",
     result: "verified",
     observedAt: input.observedAt,
     planSha256: input.authorization.planSha256,

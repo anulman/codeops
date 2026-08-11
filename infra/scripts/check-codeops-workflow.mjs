@@ -96,7 +96,7 @@ for (const stepName of [
 assert.ok(contracts.steps.some((step) => step.run === "nub install --frozen-lockfile"));
 assert.ok(
   contracts.steps.some(
-    (step) => step.run === "nub run --filter @renoconcierge/codeops-contracts test",
+    (step) => step.run === "nub run --filter @codeops/codeops-contracts test",
   ),
 );
 assert.ok(
@@ -109,7 +109,7 @@ assert.ok(
         "infra/scripts/render-codeops-cluster-image-builder.mjs",
       ) &&
       step.env?.CODEOPS_REGISTRY_HOST ===
-        "registry-bbbbbbbbbbbb.preview.renoconcierge.ca",
+        "registry-bbbbbbbbbbbb.preview.codeops.example",
   ),
 );
 assert.ok(
@@ -125,7 +125,7 @@ assert.ok(
       step.name === "Test and render the Trial 0 Plane controller" &&
       step.run?.includes("infra/scripts/test-codeops-plane-controller.mjs") &&
       step.run?.includes("infra/scripts/render-codeops-plane-controller.mjs") &&
-      step.env?.CODEOPS_PLANE_CONTROLLER_HOST === "work.renoconcierge.ca" &&
+      step.env?.CODEOPS_PLANE_CONTROLLER_HOST === "work.codeops.example" &&
       step.env?.CODEOPS_ALLOWED_GITHUB_REVIEWER_IDS === "6723643628" &&
       step.env?.CODEOPS_READY_STATE_ID &&
       step.env?.CODEOPS_IN_PROGRESS_STATE_ID &&
@@ -135,12 +135,12 @@ assert.ok(
 );
 assert.ok(
   contracts.steps.some(
-    (step) => step.run === "nub run --filter @renoconcierge/codeops-contracts typecheck",
+    (step) => step.run === "nub run --filter @codeops/codeops-contracts typecheck",
   ),
 );
 assert.ok(
   contracts.steps.some(
-    (step) => step.run === "nub run --filter @renoconcierge/codeops-contracts build",
+    (step) => step.run === "nub run --filter @codeops/codeops-contracts build",
   ),
 );
 assert.ok(contracts.steps.some((step) => step.run === "git diff --check HEAD^ HEAD"));

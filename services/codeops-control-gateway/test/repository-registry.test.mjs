@@ -10,8 +10,8 @@ import {
 
 const entries = [
   {
-    repository: "anulman/renoconcierge",
-    repositoryUrl: "https://github.com/anulman/renoconcierge.git",
+    repository: "example-org/example-repository",
+    repositoryUrl: "https://github.com/example-org/example-repository.git",
     readToken: "a".repeat(32),
     writeToken: "b".repeat(32),
   },
@@ -59,10 +59,10 @@ test("legacy configuration remains an explicit single-repository fallback", asyn
 test("resolves two repositories to distinct credentials and rejects unknown identities", () => {
   const registry = createRepositoryRegistry(entries);
   assert.deepEqual(registry.repositories, [
-    "anulman/renoconcierge",
+    "example-org/example-repository",
     "anulman/codeops",
   ]);
-  assert.equal(registry.resolve("anulman/renoconcierge").readToken, "a".repeat(32));
+  assert.equal(registry.resolve("example-org/example-repository").readToken, "a".repeat(32));
   assert.equal(registry.resolve("anulman/codeops").readToken, "c".repeat(32));
   assert.throws(
     () => registry.resolve("anulman/not-admitted"),
@@ -86,7 +86,7 @@ test("resolves only exact repository-qualified API routes", () => {
   assert.equal(
     resolveRepositoryRoute(
       registry,
-      "/v1/repositories/anulman/codeops/pull-requests/42/current-head?repository=anulman/renoconcierge",
+      "/v1/repositories/anulman/codeops/pull-requests/42/current-head?repository=example-org/example-repository",
     ),
     null,
   );
@@ -134,10 +134,10 @@ test("derives the exact repository identity from research and coding dispatches"
     dispatchRepositoryIdentity({
       role: "coding-agent",
       codingRequest: {
-        workItem: { repository: { owner: "anulman", name: "renoconcierge" } },
+        workItem: { repository: { owner: "example-org", name: "example-repository" } },
       },
     }),
-    "anulman/renoconcierge",
+    "example-org/example-repository",
   );
 });
 
@@ -149,12 +149,12 @@ test("loads a strict two-repository manifest through only Secret file references
         version: "codeops.repository-registry/v1",
         repositories: [
           {
-            repository: "anulman/renoconcierge",
-            repositoryUrl: "https://github.com/anulman/renoconcierge.git",
-            readTokenFile: "/var/run/codeops/renoconcierge-read",
-            writeTokenFile: "/var/run/codeops/renoconcierge-write",
-            githubWebhookSecretFile: "/var/run/codeops/renoconcierge-webhook",
-            githubSteeringTokenFile: "/var/run/codeops/renoconcierge-steering",
+            repository: "example-org/example-repository",
+            repositoryUrl: "https://github.com/example-org/example-repository.git",
+            readTokenFile: "/var/run/codeops/example-repository-read",
+            writeTokenFile: "/var/run/codeops/example-repository-write",
+            githubWebhookSecretFile: "/var/run/codeops/example-repository-webhook",
+            githubSteeringTokenFile: "/var/run/codeops/example-repository-steering",
           },
           {
             repository: "anulman/codeops",
@@ -167,10 +167,10 @@ test("loads a strict two-repository manifest through only Secret file references
         ],
       }),
     ],
-    ["/var/run/codeops/renoconcierge-read", `${"a".repeat(32)}\n`],
-    ["/var/run/codeops/renoconcierge-write", `${"b".repeat(32)}\n`],
-    ["/var/run/codeops/renoconcierge-webhook", `${"e".repeat(32)}\n`],
-    ["/var/run/codeops/renoconcierge-steering", `${"g".repeat(32)}\n`],
+    ["/var/run/codeops/example-repository-read", `${"a".repeat(32)}\n`],
+    ["/var/run/codeops/example-repository-write", `${"b".repeat(32)}\n`],
+    ["/var/run/codeops/example-repository-webhook", `${"e".repeat(32)}\n`],
+    ["/var/run/codeops/example-repository-steering", `${"g".repeat(32)}\n`],
     ["/var/run/codeops/codeops-read", `${"c".repeat(32)}\n`],
     ["/var/run/codeops/codeops-write", `${"d".repeat(32)}\n`],
     ["/var/run/codeops/codeops-webhook", `${"f".repeat(32)}\n`],
@@ -185,7 +185,7 @@ test("loads a strict two-repository manifest through only Secret file references
     },
   );
   assert.deepEqual(registry.repositories, [
-    "anulman/renoconcierge",
+    "example-org/example-repository",
     "anulman/codeops",
   ]);
   assert.equal(registry.resolve("anulman/codeops").readToken, "c".repeat(32));

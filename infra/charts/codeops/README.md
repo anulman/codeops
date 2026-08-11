@@ -107,6 +107,14 @@ installation, the operator must create these Secrets:
   `githubController.repositoryContexts`. Set the manifest's
   `policy.projectContextRoot` to
   `/var/run/secrets/<full-name>-contexts/<directory>`.
+
+Quickstart uses the chart's generic `AGENTS.md` and `SOUL.md` baselines when
+their values are empty. These defaults include the repository authority
+boundary and the ASD-STE100 technical product writing standard. Existing-
+Secret mode remains explicit: an operator must supply all seven documents.
+`CURRENT-STATE.md`, `DECISIONS.md`, `DOMAIN.md`, `PRODUCT.md`, and
+`SOURCE-MAP.md` never have generic defaults because they describe one exact
+repository.
 - `codeops-runtime-source`: `repository-read-token`. Only the trusted
   root-session Job uses this read-only source credential.
 

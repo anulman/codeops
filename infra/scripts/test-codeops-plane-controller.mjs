@@ -14,8 +14,8 @@ const template = await readFile(
 const input = {
   controllerDigest: `sha256:${"a".repeat(64)}`,
   controlPlaneSha: "b".repeat(40),
-  controllerHost: "work.renoconcierge.ca",
-  workspaceSlug: "reno-concierge",
+  controllerHost: "work.codeops.example",
+  workspaceSlug: "example-workspace",
   allowedHumanActorIds:
     "123e4567-e89b-12d3-a456-426614174000,223e4567-e89b-12d3-a456-426614174001",
   readyStateId: "a23e4567-e89b-12d3-a456-426614174009",
@@ -60,11 +60,11 @@ test("renders one immutable tokenless single-writer controller", () => {
   assert.equal(pod.automountServiceAccountToken, false);
   assert.equal(
     pod.containers[0].image,
-    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-plane-controller@${input.controllerDigest}`,
+    `ghcr.io/anulman/codeops/plane-controller@${input.controllerDigest}`,
   );
-  assert.deepEqual(pod.imagePullSecrets, [{ name: "ghcr-renoconcierge" }]);
+  assert.deepEqual(pod.imagePullSecrets, [{ name: "codeops-registry" }]);
   assert.deepEqual(pod.nodeSelector, {
-    "renoconcierge.ca/codeops": "true",
+    "codeops.example/codeops": "true",
   });
 });
 
@@ -191,7 +191,7 @@ test("fails closed on malformed identity, image, host, or resource drift", () =>
       allowedHumanActorIds:
         "123e4567-e89b-12d3-a456-426614174000,123e4567-e89b-12d3-a456-426614174000",
     },
-    { controllerHost: "research.preview.renoconcierge.ca" },
+    { controllerHost: "research.preview.codeops.example" },
   ]) {
     assert.throws(() =>
       renderPlaneControllerManifest(template, { ...input, ...patch }),

@@ -31,7 +31,7 @@ function snapshot({ state = "running", checkpoint = true, enabled = ["prompt", "
     generation: 3,
     state,
     identity: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       branch: "feat/agents-ui",
       baseSha: "a".repeat(40),
       workflowId: "workflow-155",

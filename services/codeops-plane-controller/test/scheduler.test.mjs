@@ -61,7 +61,7 @@ test("uses one native stack and branch-only fallback for direct Ready siblings",
   const parent = ticket("A", {
     state: "needs_attention",
     pullRequest: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 158,
       state: "open",
       headSha: A_HEAD,
@@ -97,7 +97,7 @@ test("requires a qualified exact open PR instead of trusting Needs attention alo
   for (const pullRequest of [
     undefined,
     {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 158,
       state: "closed",
       headSha: A_HEAD,
@@ -106,7 +106,7 @@ test("requires a qualified exact open PR instead of trusting Needs attention alo
       qualified: true,
     },
     {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 158,
       state: "open",
       headSha: A_HEAD,
@@ -129,7 +129,7 @@ test("prohibits a third unmerged PR in one dependency chain", () => {
   const a = ticket("A", {
     state: "needs_attention",
     pullRequest: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 158,
       state: "open",
       headSha: A_HEAD,
@@ -142,7 +142,7 @@ test("prohibits a third unmerged PR in one dependency chain", () => {
     state: "needs_attention",
     blockedBy: ["A"],
     pullRequest: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 159,
       state: "open",
       headSha: B_HEAD,
@@ -164,7 +164,7 @@ test("fails closed when a review parent has any unresolved ancestor state", () =
     state: "needs_attention",
     blockedBy: ["A"],
     pullRequest: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 159,
       state: "open",
       headSha: B_HEAD,
@@ -184,7 +184,7 @@ test("allows the next stack after the older ancestor becomes Complete", () => {
   const a = ticket("A", {
     state: "complete",
     pullRequest: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 158,
       state: "merged",
       headSha: A_HEAD,
@@ -197,7 +197,7 @@ test("allows the next stack after the older ancestor becomes Complete", () => {
     state: "needs_attention",
     blockedBy: ["A"],
     pullRequest: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 159,
       state: "open",
       headSha: B_HEAD,
@@ -224,7 +224,7 @@ test("retains integration provenance when a completed child landed in an open pa
   const a = ticket("A", {
     state: "needs_attention",
     pullRequest: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 158,
       state: "open",
       headSha: UPDATED_A_HEAD,
@@ -237,7 +237,7 @@ test("retains integration provenance when a completed child landed in an open pa
     state: "complete",
     blockedBy: ["A"],
     pullRequest: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 159,
       state: "merged",
       headSha: B_HEAD,
@@ -266,7 +266,7 @@ test("extends a native stack only from its exact current top", () => {
     ticket("A", {
       state: "needs_attention",
       pullRequest: {
-        repository: "anulman/renoconcierge",
+        repository: "example-org/example-repository",
         number: 158,
         state: "open",
         headSha: A_HEAD,
@@ -314,7 +314,7 @@ test("fails closed when multiple qualified review blockers imply unrelated bases
     ticket(id, {
       state: "needs_attention",
       pullRequest: {
-        repository: "anulman/renoconcierge",
+        repository: "example-org/example-repository",
         number,
         state: "open",
         headSha,
@@ -349,7 +349,7 @@ test("marks only an exact bound merged PR complete", () => {
   const bound = ticket("A", {
     state: "needs_attention",
     pullRequest: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 158,
       state: "open",
       headSha: A_HEAD,
@@ -362,7 +362,7 @@ test("marks only an exact bound merged PR complete", () => {
     evaluatePullRequestEvent({
       ticket: bound,
       event: {
-        repository: "anulman/renoconcierge",
+        repository: "example-org/example-repository",
         number: 158,
         action: "closed",
         merged: true,
@@ -375,7 +375,7 @@ test("marks only an exact bound merged PR complete", () => {
     evaluatePullRequestEvent({
       ticket: bound,
       event: {
-        repository: "anulman/renoconcierge",
+        repository: "example-org/example-repository",
         number: 158,
         action: "closed",
         merged: true,
@@ -394,7 +394,7 @@ test("never completes a closed-unmerged or rewritten PR", () => {
   const bound = ticket("A", {
     state: "needs_attention",
     pullRequest: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 158,
       state: "open",
       headSha: A_HEAD,
@@ -407,7 +407,7 @@ test("never completes a closed-unmerged or rewritten PR", () => {
     evaluatePullRequestEvent({
       ticket: bound,
       event: {
-        repository: "anulman/renoconcierge",
+        repository: "example-org/example-repository",
         number: 158,
         action: "closed",
         merged: false,
@@ -424,7 +424,7 @@ test("never completes a closed-unmerged or rewritten PR", () => {
     evaluatePullRequestEvent({
       ticket: bound,
       event: {
-        repository: "anulman/renoconcierge",
+        repository: "example-org/example-repository",
         number: 158,
         action: "synchronize",
         merged: false,

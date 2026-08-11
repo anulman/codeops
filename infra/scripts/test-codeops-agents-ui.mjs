@@ -26,7 +26,7 @@ test("packages one immutable tokenless internal UI", () => {
   assert.equal(pod.automountServiceAccountToken, false);
   assert.equal(
     pod.containers[0].image,
-    `ghcr.io/anulman/renoconcierge/renoconcierge-codeops-agents-ui@${digest}`,
+    `ghcr.io/anulman/codeops/agents-ui@${digest}`,
   );
   assert.equal(pod.containers[0].securityContext.readOnlyRootFilesystem, true);
   assert.deepEqual(pod.containers[0].securityContext.capabilities.drop, ["ALL"]);
@@ -65,7 +65,7 @@ test("stays cluster-internal until the Access-owned ingress is added", () => {
   );
 });
 
-test("admits only ingress-nginx and the bounded smoke job", () => {
+test("admits only ingress-nginx", () => {
   const policy = resources().find((resource) => resource.kind === "NetworkPolicy");
   assert.deepEqual(policy.spec.policyTypes, ["Ingress", "Egress"]);
   assert.deepEqual(policy.spec.podSelector.matchLabels, {
@@ -77,12 +77,7 @@ test("admits only ingress-nginx and the bounded smoke job", () => {
     ],
     "ingress-nginx",
   );
-  assert.deepEqual(policy.spec.ingress[1].from[0].podSelector.matchLabels, {
-    "codeops.renoconcierge.ca/agents-ui-smoke": "true",
-  });
-  assert.deepEqual(policy.spec.ingress[1].ports, [
-    { protocol: "TCP", port: 3000 },
-  ]);
+  assert.equal(policy.spec.ingress.length, 1);
   assert.deepEqual(
     policy.spec.egress.flatMap((rule) => rule.ports.map((port) => port.port)).sort((a, b) => Number(a) - Number(b)),
     [53, 53, 8080],

@@ -11,7 +11,7 @@ const binding = {
   projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
   workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
   workflowId: "codeops-ready-123",
-  repository: "anulman/renoconcierge",
+  repository: "example-org/example-repository",
   number: 158,
   state: "open",
   headSha: "a".repeat(40),

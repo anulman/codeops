@@ -19,7 +19,7 @@ test("starts eligible siblings on the exact review head in deterministic order",
   const parent = ticket("a", {
     state: "needs_attention",
     pullRequest: {
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-repository",
       number: 158,
       state: "open",
       headSha: reviewSha,
@@ -92,7 +92,7 @@ test("after a parent merge, starts the formerly held direct child from main", as
       ticket("a", {
         state: "complete",
         pullRequest: {
-          repository: "anulman/renoconcierge",
+          repository: "example-org/example-repository",
           number: 158,
           state: "merged",
           headSha: reviewSha,

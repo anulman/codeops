@@ -36,7 +36,7 @@ spec:
       serviceAccountName: codeops-temporal
       automountServiceAccountToken: false
       nodeSelector:
-        renoconcierge.ca/codeops: "true"
+        codeops.example/codeops: "true"
       securityContext:
         runAsNonRoot: true
         runAsUser: 1000
