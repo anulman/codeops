@@ -50,6 +50,26 @@ test("stages a release chart with the exact immutable image identity embedded", 
   assert.equal(staged.postgresql.image.repository, "postgres");
   assert.equal(staged.postgresql.image.digest, digest("2"));
   assert.equal(staged.quickstart.enabled, false);
+  assert.match(
+    await readFile(path.join(outputRoot, "LICENSE"), "utf8"),
+    /GNU AFFERO GENERAL PUBLIC LICENSE/,
+  );
+  assert.match(
+    await readFile(path.join(outputRoot, "THIRD_PARTY_NOTICES.md"), "utf8"),
+    /NATS Helm chart/,
+  );
+  assert.match(
+    await readFile(path.join(outputRoot, "licenses/NATS-CHART-APACHE-2.0.txt"), "utf8"),
+    /Apache License/,
+  );
+  assert.match(
+    await readFile(path.join(outputRoot, "licenses/TEMPORAL-CHART-MIT.txt"), "utf8"),
+    /Temporal Technologies/,
+  );
+  assert.match(
+    await readFile(path.join(outputRoot, "licenses/PLANE-CHART-AGPL-3.0.txt"), "utf8"),
+    /Plane Software/,
+  );
   assert.equal(await readFile("infra/charts/codeops/values.yaml", "utf8"), sourceBefore);
 });
 

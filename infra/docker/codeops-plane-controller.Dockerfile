@@ -24,7 +24,10 @@ RUN services/codeops-plane-controller/node_modules/.bin/tsc -p packages/codeops-
   && cp -R packages/codeops-contracts/dist services/codeops-plane-controller/node_modules/@codeops/codeops-contracts/
 
 FROM node:24-bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/anulman/codeops" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
 WORKDIR /app
+COPY --chown=node:node LICENSE THIRD_PARTY_NOTICES.md /usr/share/licenses/codeops/
 COPY --from=build --chown=node:node /repo/services/codeops-plane-controller ./services/codeops-plane-controller
 COPY --chown=node:node config/project-context ./project-context
 ENV NODE_ENV=production

@@ -14,6 +14,32 @@ const dockerfiles = [
   "codeops-plane-controller.Dockerfile",
   "codeops-orchestrator.Dockerfile",
 ];
+const allDockerfiles = [
+  "codeops-acceptance-runner.Dockerfile",
+  "codeops-agent.Dockerfile",
+  "codeops-agents-ui.Dockerfile",
+  "codeops-control-gateway.Dockerfile",
+  "codeops-model-proxy.Dockerfile",
+  "codeops-orchestrator.Dockerfile",
+  "codeops-plane-controller.Dockerfile",
+  "codeops-session-control-gateway.Dockerfile",
+  "codeops-session-gateway.Dockerfile",
+  "codeops-session-runtime-worker.Dockerfile",
+];
+
+test("packages CodeOps license identity in every published image", async () => {
+  for (const filename of allDockerfiles) {
+    const source = await readFile(new URL(`../docker/${filename}`, import.meta.url), "utf8");
+    const dockerignore = await readFile(
+      new URL(`../docker/${filename}.dockerignore`, import.meta.url),
+      "utf8",
+    );
+    assert.match(source, /org\.opencontainers\.image\.licenses="AGPL-3\.0-only"/);
+    assert.match(source, /COPY .*LICENSE THIRD_PARTY_NOTICES\.md \/usr\/share\/licenses\/codeops\//);
+    assert.match(dockerignore, /^!LICENSE$/m);
+    assert.match(dockerignore, /^!THIRD_PARTY_NOTICES\.md$/m);
+  }
+});
 
 test("packages the standalone browser acceptance runner", async () => {
   const filename = "codeops-acceptance-runner.Dockerfile";

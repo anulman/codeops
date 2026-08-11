@@ -16,7 +16,7 @@ export function AppShell({ children, sessions = [], activeSessionId }: AppShellP
         <SessionNavigator sessions={sessions} activeSessionId={activeSessionId} />
         <div className="flex h-11 shrink-0 items-center justify-between border-t border-white/[0.06] px-3 text-[11px] text-white/38">
           <span className="flex items-center gap-2"><span className="size-1.5 rounded-full bg-[#54d18b] shadow-[0_0_7px_rgba(84,209,139,.7)]" />Broker connected</span>
-          <span>CodeOps</span>
+          <a href="https://github.com/anulman/codeops#license" target="_blank" rel="noreferrer" className="transition hover:text-white/65">Legal &amp; source</a>
         </div>
       </aside>
 
@@ -26,7 +26,10 @@ export function AppShell({ children, sessions = [], activeSessionId }: AppShellP
             <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-[#6d6af7] text-white shadow-[0_0_0_1px_rgba(255,255,255,.12)_inset]"><PulseMark /></span>
             <span className="truncate text-sm font-semibold tracking-[-0.02em]">Agent Sessions</span>
           </Link>
-          <span className="flex items-center gap-1.5 text-[10px] font-medium uppercase tracking-[0.12em] text-white/35"><span className="size-1.5 rounded-full bg-[#54d18b]" />Live</span>
+          <span className="flex items-center gap-3 text-[10px] font-medium uppercase tracking-[0.12em] text-white/35">
+            <span className="flex items-center gap-1.5"><span className="size-1.5 rounded-full bg-[#54d18b]" />Live</span>
+            <a href="https://github.com/anulman/codeops#license" target="_blank" rel="noreferrer" className="transition hover:text-white/65">Legal &amp; source</a>
+          </span>
         </header>
         {children}
       </div>
@@ -41,7 +44,7 @@ function SidebarHeader() {
         <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-[#6d6af7] text-white shadow-[0_0_0_1px_rgba(255,255,255,.12)_inset]"><PulseMark /></span>
         <span className="truncate text-sm font-semibold tracking-[-0.02em]">Agent Sessions</span>
       </Link>
-      <span className="ml-auto rounded-md border border-white/[0.07] bg-white/[0.035] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-white/32">Internal</span>
+      <span className="ml-auto rounded-md border border-white/[0.07] bg-white/[0.035] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-white/32">Alpha</span>
     </div>
   );
 }

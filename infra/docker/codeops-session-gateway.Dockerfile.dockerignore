@@ -1,4 +1,6 @@
 **
+!LICENSE
+!THIRD_PARTY_NOTICES.md
 !tsconfig.json
 !services/
 services/*

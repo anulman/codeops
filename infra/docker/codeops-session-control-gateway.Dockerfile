@@ -25,7 +25,10 @@ RUN services/codeops-control-gateway/node_modules/.bin/tsc -p packages/codeops-c
   && cp -R packages/codeops-contracts/dist services/codeops-control-gateway/node_modules/@codeops/codeops-contracts/
 
 FROM node:24-bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/anulman/codeops" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
 WORKDIR /app
+COPY --chown=node:node LICENSE THIRD_PARTY_NOTICES.md /usr/share/licenses/codeops/
 COPY --from=build --chown=node:node /repo/services/codeops-control-gateway ./services/codeops-control-gateway
 ENV NODE_ENV=production
 USER node

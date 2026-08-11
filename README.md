@@ -1,12 +1,12 @@
 # CodeOps
 
-CodeOps is a Kubernetes control plane for durable coding-agent sessions. One
-control plane is designed to manage multiple allowlisted repositories.
+CodeOps is an open-source Kubernetes control plane for durable coding-agent
+sessions. One control plane is designed to manage multiple allowlisted
+repositories.
 
-This repository is in a private extraction phase. The current source comes
-from the reviewed CodeOps stack. Do not treat the chart or
-configuration as a stable public API until the portability and
-multi-repository acceptance suites pass.
+The project is in alpha. The chart and configuration can change before the
+first stable release. The portability, multi-repository, browser, image, and
+registry-install acceptance suites qualify each published release.
 
 ## Components
 
@@ -83,7 +83,28 @@ proof passes, the workflow creates an immutable prerelease in GitHub Releases
 with the chart archive, image plan, release manifest, release values, and
 checksums. GHCR remains the canonical Helm registry. GitHub Releases is the
 durable human-facing release record. Ordinary pushes and CI runs do not publish
-artifacts.
+artifacts. Each release also retains an SPDX SBOM and a license-policy report
+for every published CodeOps image.
+
+## License
+
+Copyright (c) 2026 Aidan Nulman.
+
+CodeOps-authored source is licensed under
+[AGPL-3.0-only](LICENSE). Network operators that modify CodeOps must offer the
+Corresponding Source as required by section 13 of the license.
+
+CodeOps is free software. You may redistribute and modify it under the license.
+It comes without warranty, to the extent permitted by law. The complete
+Corresponding Source is available in this repository.
+
+The Helm archive is a multi-license aggregate. Bundled NATS, Temporal, and
+Plane chart code remains under its upstream license. See
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the license files packaged
+inside the chart. Release SBOMs provide the exact image-package inventory.
+
+Contributions use the same AGPL-3.0-only license without a separate CLA. See
+[CONTRIBUTING.md](CONTRIBUTING.md).
 
 ## Safety boundary
 

@@ -40,8 +40,11 @@ RUN nub run --filter @codeops/codeops-contracts build \
   done
 
 FROM node:24-bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/anulman/codeops" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
 WORKDIR /app
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
+COPY --chown=node:node LICENSE THIRD_PARTY_NOTICES.md /usr/share/licenses/codeops/
 COPY --from=build --chown=node:node /deploy/node_modules ./node_modules
 COPY --from=build --chown=node:node /repo/sites/agents-ui/.output ./.output
 USER node

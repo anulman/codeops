@@ -26,9 +26,26 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.deepEqual(workflow.jobs.images.strategy.matrix.image, expectedImages);
   const build = workflow.jobs.images.steps.find(({ name }) => name === "Build exact image");
   assert.equal(build.with.push, "${{ needs.validate.outputs.publish == 'true' }}");
+  assert.equal(build.with.load, "${{ needs.validate.outputs.publish != 'true' }}");
+  assert.equal(build.with.provenance, "${{ needs.validate.outputs.publish == 'true' && 'mode=max' || 'false' }}");
+  assert.equal(build.with.sbom, "${{ needs.validate.outputs.publish == 'true' }}");
   assert.equal(build.with.tags, "ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}");
+  const imageSbom = workflow.jobs.images.steps.find(
+    ({ name }) => name === "Generate exact image SPDX SBOM",
+  );
+  assert.equal(
+    imageSbom.uses,
+    "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
+  );
+  assert.equal(imageSbom.with.format, "spdx-json");
+  assert.equal(imageSbom.with["syft-version"], "v1.50.0");
+  const imageLicensePolicy = workflow.jobs.images.steps.find(
+    ({ name }) => name === "Enforce exact image license policy",
+  );
+  assert.match(imageLicensePolicy.run, /check-codeops-license-policy\.mjs/);
   assert.equal(workflow.jobs.chart.if, "needs.validate.outputs.publish == 'true'");
   assert.deepEqual(workflow.jobs.chart.needs, ["validate", "images"]);
+  assert.equal(workflow.jobs.chart.permissions.actions, "read");
   const chartDockerLogin = workflow.jobs.chart.steps.find(
     ({ name }) => name === "Authenticate Docker to GHCR",
   );
@@ -71,6 +88,10 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(serialized, /helm package \.release\/chart/);
   assert.match(serialized, /release-manifest\.json/);
   assert.match(serialized, /values\.release\.yaml/);
+  assert.match(serialized, /Download exact image license evidence/);
+  assert.match(serialized, /Verify complete image license evidence/);
+  assert.match(serialized, /sbom-\$\{\{ matrix\.image \}\}\.spdx\.json/);
+  assert.match(serialized, /license-policy-\$\{\{ matrix\.image \}\}\.json/);
   assert.match(serialized, /sha256sum/);
   const githubRelease = workflow.jobs["github-release"];
   assert.equal(githubRelease.if, "needs.validate.outputs.publish == 'true'");
@@ -86,8 +107,6 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   );
   assert.match(publishRelease.run, /gh release create/);
   assert.match(publishRelease.run, /--target "\$SOURCE_SHA"/);
-  assert.match(publishRelease.run, /codeops-\$\{RELEASE_VERSION\}\.tgz/);
-  assert.match(publishRelease.run, /release-manifest\.json/);
-  assert.match(publishRelease.run, /SHA256SUMS/);
+  assert.match(publishRelease.run, /release\/\*/);
   assert.doesNotMatch(serialized, /example-repository\/example-repository-codeops/);
 });

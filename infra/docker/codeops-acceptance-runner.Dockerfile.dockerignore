@@ -1,4 +1,6 @@
 *
+!LICENSE
+!THIRD_PARTY_NOTICES.md
 !services/codeops-acceptance-runner/package.json
 !services/codeops-acceptance-runner/package-lock.json
 !services/codeops-acceptance-runner/src/**

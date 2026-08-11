@@ -10,10 +10,13 @@ RUN npm run build \
   && test -f dist/index.js
 
 FROM node:24-bookworm-slim
+LABEL org.opencontainers.image.source="https://github.com/anulman/codeops" \
+      org.opencontainers.image.licenses="AGPL-3.0-only"
 WORKDIR /app
 RUN apt-get update \
   && apt-get install -y --no-install-recommends git \
   && rm -rf /var/lib/apt/lists/*
+COPY --chown=node:node LICENSE THIRD_PARTY_NOTICES.md /usr/share/licenses/codeops/
 COPY --from=build --chown=node:node /build/node_modules ./node_modules
 COPY --from=build --chown=node:node /build/dist ./dist
 ENV NODE_ENV=production

@@ -7,7 +7,12 @@ on:
       - "v*.*.*"
     paths:
       - .github/workflows/release.yml
+      - LICENSE
+      - THIRD_PARTY_NOTICES.md
+      - CONTRIBUTING.md
       - infra/charts/codeops/**
+      - infra/scripts/check-codeops-license-policy.mjs
+      - infra/license-policy/npm-license-overrides.json
       - infra/scripts/codeops-release-images.mjs
       - infra/scripts/codeops-release-chart.mjs
       - infra/scripts/test-codeops-release-chart.mjs
@@ -191,9 +196,39 @@ jobs:
           file: infra/docker/codeops-${{ matrix.image }}.Dockerfile
           platforms: linux/amd64
           push: ${{ needs.validate.outputs.publish == 'true' }}
+          load: ${{ needs.validate.outputs.publish != 'true' }}
           tags: ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}
-          provenance: mode=max
-          sbom: true
+          provenance: ${{ needs.validate.outputs.publish == 'true' && 'mode=max' || 'false' }}
+          sbom: ${{ needs.validate.outputs.publish == 'true' }}
+
+      - name: Generate exact image SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.image }}.spdx.json
+          syft-version: v1.50.0
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Enforce exact image license policy
+        run: >-
+          node infra/scripts/check-codeops-license-policy.mjs
+          --sbom sbom-${{ matrix.image }}.spdx.json
+          --report license-policy-${{ matrix.image }}.json
+          --subject ${{ matrix.image }}
+
+      - name: Retain exact image license evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeops-license-${{ matrix.image }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            sbom-${{ matrix.image }}.spdx.json
+            license-policy-${{ matrix.image }}.json
 
   chart:
     if: needs.validate.outputs.publish == 'true'
@@ -201,6 +236,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
+      actions: read
       contents: read
       packages: write
       id-token: write
@@ -260,6 +296,24 @@ jobs:
       - name: Embed immutable release identity in chart
         run: node infra/scripts/codeops-release-chart.mjs infra/charts/codeops values.release.yaml .release/chart
 
+      - name: Download exact image license evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: codeops-license-*-${{ github.sha }}
+          path: .release/license-evidence
+          merge-multiple: true
+
+      - name: Verify complete image license evidence
+        run: |
+          set -euo pipefail
+          names=(acceptance-runner agent agents-ui control-gateway model-proxy orchestrator plane-controller session-control-gateway session-gateway session-runtime-worker)
+          for name in "${names[@]}"; do
+            test -s ".release/license-evidence/sbom-${name}.spdx.json"
+            test -s ".release/license-evidence/license-policy-${name}.json"
+            jq -e --arg subject "$name" '.schema == "codeops.license-policy-report/v1" and .subject == $subject and .policy.result == "pass"' \
+              ".release/license-evidence/license-policy-${name}.json" >/dev/null
+          done
+
       - name: Package and publish OCI chart
         env:
           RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
@@ -297,13 +351,12 @@ jobs:
             release-manifest.json \
             values.release.yaml \
             .release/evidence/
+          cp .release/license-evidence/* .release/evidence/
           (
             cd .release/evidence
-            sha256sum \
-              "codeops-${RELEASE_VERSION}.tgz" \
-              image-plan.json \
-              release-manifest.json \
-              values.release.yaml \
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' \
+              | sort -z \
+              | xargs -0 sha256sum \
               > SHA256SUMS
           )
 
@@ -508,8 +561,4 @@ jobs:
             --title "CodeOps ${tag}" \
             --prerelease \
             --generate-notes \
-            "release/codeops-${RELEASE_VERSION}.tgz" \
-            release/image-plan.json \
-            release/release-manifest.json \
-            release/values.release.yaml \
-            release/SHA256SUMS
+            release/*
