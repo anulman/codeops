@@ -61,6 +61,7 @@ test("packages the Agents UI from the frozen standalone workspace", async () => 
     "utf8",
   );
   assert.match(source, /nub install --frozen-lockfile/);
+  assert.match(source, /services\/codeops-acceptance-runner\/package\.json/);
   assert.match(source, /nub run --filter @codeops\/agents-ui build/);
   assert.match(source, /sites\/agents-ui\/\.output\/server\/index\.mjs/);
   assert.match(dockerignore, /^!lock\.yaml$/m);

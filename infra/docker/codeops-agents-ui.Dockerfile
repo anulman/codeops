@@ -8,6 +8,7 @@ RUN apt-get update \
   && curl -fsSL https://nubjs.com/install.sh | bash -s -- 0.1.11
 COPY package.json lock.yaml .npmrc ./
 COPY packages/codeops-contracts/package.json ./packages/codeops-contracts/package.json
+COPY services/codeops-acceptance-runner/package.json ./services/codeops-acceptance-runner/package.json
 COPY services/codeops-agent/package.json ./services/codeops-agent/package.json
 COPY services/codeops-control-gateway/package.json ./services/codeops-control-gateway/package.json
 COPY services/codeops-model-proxy/package.json ./services/codeops-model-proxy/package.json
