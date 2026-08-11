@@ -45,7 +45,33 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 {{- end -}}
 
-{{- define "codeops.quickstart.registry" -}}
+{{- define "codeops.quickstart.runtimeRegistry" -}}
+{{- $fullname := include "codeops.fullname" . -}}
+{{- $repository := .Values.quickstart.repository -}}
+{{- $runtimeRoot := printf "/var/run/secrets/%s-runtime-repositories" $fullname -}}
+{{- $entry := dict
+  "repository" $repository.identity
+  "repositoryUrl" (printf "https://github.com/%s.git" $repository.identity)
+  "readTokenFile" (printf "%s/github-read-token" $runtimeRoot)
+  "writeTokenFile" (printf "%s/github-write-token" $runtimeRoot) -}}
+{{- dict "version" "codeops.repository-registry/v1" "repositories" (list $entry) | toJson -}}
+{{- end -}}
+
+{{- define "codeops.quickstart.steeringRegistry" -}}
+{{- $fullname := include "codeops.fullname" . -}}
+{{- $repository := .Values.quickstart.repository -}}
+{{- $runtimeRoot := printf "/var/run/secrets/%s-runtime-repositories" $fullname -}}
+{{- $steeringRoot := printf "/var/run/secrets/%s-steering" $fullname -}}
+{{- $entry := dict
+  "repository" $repository.identity
+  "repositoryUrl" (printf "https://github.com/%s.git" $repository.identity)
+  "readTokenFile" (printf "%s/github-read-token" $runtimeRoot)
+  "writeTokenFile" (printf "%s/github-write-token" $runtimeRoot)
+  "githubSteeringTokenFile" (printf "%s/github-steering-token" $steeringRoot) -}}
+{{- dict "version" "codeops.repository-registry/v1" "repositories" (list $entry) | toJson -}}
+{{- end -}}
+
+{{- define "codeops.quickstart.controllerRegistry" -}}
 {{- $fullname := include "codeops.fullname" . -}}
 {{- $repository := .Values.quickstart.repository -}}
 {{- $runtimeRoot := printf "/var/run/secrets/%s-runtime-repositories" $fullname -}}

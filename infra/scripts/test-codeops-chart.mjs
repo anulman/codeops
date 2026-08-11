@@ -94,7 +94,7 @@ test("renders one portable CodeOps package with immutable images", () => {
     ...(candidate.spec?.template?.spec?.containers ?? []),
     ...(candidate.spec?.template?.spec?.initContainers ?? []),
   ]).map((container) => container.image).filter(Boolean);
-  assert.equal(images.length, 8);
+  assert.equal(images.length, 9);
   assert.ok(images.every((image) => /@sha256:[0-9a-f]{64}$/.test(image)));
 
   resource(resources, "StatefulSet", "team-a-codeops-postgresql");
@@ -123,6 +123,14 @@ test("renders one portable CodeOps package with immutable images", () => {
   assert.equal(migration.metadata.annotations["helm.sh/hook-delete-policy"], "before-hook-creation");
   assert.equal(migration.spec.backoffLimit, 0);
   assert.equal(migration.spec.template.spec.automountServiceAccountToken, false);
+  assert.equal(
+    migration.spec.template.spec.initContainers[0].image,
+    "postgres@sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+  );
+  assert.match(
+    migration.spec.template.spec.initContainers[0].command.at(-1),
+    /until pg_isready -h team-a-codeops-postgresql -p 5432 -U agents/,
+  );
   assert.deepEqual(migration.spec.template.spec.containers[0].command, [
     "node",
     "services/codeops-control-gateway/dist/session-migrate-main.js",
@@ -304,7 +312,7 @@ test("defaults to deny and opens only explicit component paths", () => {
 test("creates a complete one-repository quickstart from one values file", () => {
   const resources = renderQuickstart();
   const secrets = resources.filter(({ kind }) => kind === "Secret");
-  assert.equal(secrets.length, 11);
+  assert.equal(secrets.length, 12);
   assert.equal(
     secrets.every((secret) => secret.metadata.annotations["helm.sh/resource-policy"] === "keep"),
     true,
@@ -334,6 +342,12 @@ test("creates a complete one-repository quickstart from one values file", () => 
   const runtime = resource(resources, "Secret", "codeops-repository-runtime-authority");
   const controller = resource(resources, "Secret", "codeops-repository-controller-authority");
   const steering = resource(resources, "Secret", "codeops-repository-steering");
+  const controllerConfig = resource(resources, "Secret", "codeops-controller-config");
+  assert.deepEqual(controllerConfig.stringData, {
+    CODEOPS_TEMPORAL_ADDRESS: "temporal.engineering.svc:7233",
+    CODEOPS_TEMPORAL_NAMESPACE: "codeops",
+    CODEOPS_TEMPORAL_TASK_QUEUE: "codeops",
+  });
   assert.deepEqual(Object.keys(runtime.stringData).sort(), [
     "github-read-token", "github-write-token", "registry.json",
   ]);
@@ -347,18 +361,28 @@ test("creates a complete one-repository quickstart from one values file", () => 
     "plane-webhook-secret",
     "registry.json",
   ]);
-  assert.equal(runtime.stringData["registry.json"], controller.stringData["registry.json"]);
-  assert.equal(runtime.stringData["registry.json"], steering.stringData["registry.json"]);
-  const registry = JSON.parse(runtime.stringData["registry.json"]);
-  assert.equal(registry.version, "codeops.repository-registry/v1");
-  assert.equal(registry.repositories.length, 1);
-  assert.equal(registry.repositories[0].repository, "example/codeops-demo");
-  assert.deepEqual(registry.repositories[0].policy.githubReviewerIds, [12345678]);
+  const runtimeRegistry = JSON.parse(runtime.stringData["registry.json"]);
+  const controllerRegistry = JSON.parse(controller.stringData["registry.json"]);
+  const steeringRegistry = JSON.parse(steering.stringData["registry.json"]);
+  assert.equal(runtimeRegistry.version, "codeops.repository-registry/v1");
+  assert.equal(runtimeRegistry.repositories.length, 1);
+  assert.equal(runtimeRegistry.repositories[0].repository, "example/codeops-demo");
+  assert.deepEqual(Object.keys(runtimeRegistry.repositories[0]).sort(), [
+    "readTokenFile", "repository", "repositoryUrl", "writeTokenFile",
+  ]);
   assert.equal(
-    registry.repositories[0].policy.projectContextRoot,
+    steeringRegistry.repositories[0].githubSteeringTokenFile,
+    "/var/run/secrets/codeops-steering/github-steering-token",
+  );
+  assert.equal(steeringRegistry.repositories[0].plane, undefined);
+  assert.equal(controllerRegistry.repositories[0].githubWebhookSecretFile.endsWith("/github-webhook-secret"), true);
+  assert.equal(controllerRegistry.repositories[0].githubSteeringTokenFile.endsWith("/github-steering-token"), true);
+  assert.deepEqual(controllerRegistry.repositories[0].policy.githubReviewerIds, [12345678]);
+  assert.equal(
+    controllerRegistry.repositories[0].policy.projectContextRoot,
     "/var/run/secrets/codeops-contexts/codeops-demo",
   );
-  assert.equal(registry.repositories[0].policy.planePersonas.length, 7);
+  assert.equal(controllerRegistry.repositories[0].policy.planePersonas.length, 7);
 
   const context = resource(resources, "Secret", "codeops-context");
   assert.deepEqual(Object.keys(context.stringData).sort(), [
