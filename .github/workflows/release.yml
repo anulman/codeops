@@ -274,6 +274,7 @@ jobs:
           '
 
       - name: Attest packaged chart
+        if: ${{ !github.event.repository.private }}
         uses: actions/attest-build-provenance@v3
         with:
           subject-path: .release/codeops-${{ needs.validate.outputs.release_version }}.tgz

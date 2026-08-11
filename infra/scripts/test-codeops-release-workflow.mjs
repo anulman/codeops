@@ -27,6 +27,10 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
     ({ name }) => name === "Authenticate Docker to GHCR",
   );
   assert.equal(chartDockerLogin.uses, "docker/login-action@v3");
+  const chartAttestation = workflow.jobs.chart.steps.find(
+    ({ name }) => name === "Attest packaged chart",
+  );
+  assert.equal(chartAttestation.if, "${{ !github.event.repository.private }}");
   const serialized = JSON.stringify(workflow);
   assert.match(serialized, /Reject artifact identity reuse/);
   assert.match(serialized, /refs\/remotes\/origin\/main/);
