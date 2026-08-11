@@ -104,3 +104,22 @@ test("permits the unauthenticated browser harness only on loopback", async () =>
   assert.match(source, /localHost === "::1"/);
   assert.match(source, /process\.env\.NODE_ENV === "production"/);
 });
+
+test("rejects unauthenticated requests before SSR serialization", async () => {
+  const authSource = await readFile(
+    new URL("../src/lib/agentsAuth.ts", import.meta.url),
+    "utf8",
+  );
+  const startSource = await readFile(
+    new URL("../src/start.ts", import.meta.url),
+    "utf8",
+  );
+
+  assert.match(authSource, /createMiddleware\(\)\.server/);
+  assert.doesNotMatch(authSource, /throw new Response\("Unauthorized"/);
+  assert.equal(
+    (authSource.match(/return new Response\("Unauthorized", \{ status: 401 \}\)/g) ?? []).length,
+    2,
+  );
+  assert.match(startSource, /requestMiddleware: \[agentsAuthMiddleware\]/);
+});

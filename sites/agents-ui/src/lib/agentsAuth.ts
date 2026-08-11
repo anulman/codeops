@@ -38,16 +38,16 @@ async function accessPrincipal(): Promise<string | null> {
   });
 }
 
-export const agentsAuthMiddleware = createMiddleware({ type: "function" }).server(
+export const agentsAuthMiddleware = createMiddleware().server(
   async ({ next }) => {
     let principal: string | null = null;
     try {
       principal = await accessPrincipal();
     } catch {
-      throw new Response("Unauthorized", { status: 401 });
+      return new Response("Unauthorized", { status: 401 });
     }
     if (accessRequired() && !principal) {
-      throw new Response("Unauthorized", { status: 401 });
+      return new Response("Unauthorized", { status: 401 });
     }
     return next({ context: { agentsPrincipal: principal } });
   },

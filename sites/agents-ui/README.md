@@ -1,15 +1,16 @@
 # Agent Sessions UI
 
-Internal TanStack Start command center for live and archived CodeOps
-CodeOps sessions.
+Internal TanStack Start command center for live and archived CodeOps sessions.
 
 The fleet and cockpit load strict session snapshots and ordered event pages
 through server functions. The server reads its broker token from a mounted
 file, validates every upstream response, and never includes that credential in
-the browser bundle. Production server functions verify Cloudflare Access's
-signed JWT assertion. They validate its issuer, audience, RS256 signature,
-expiry, and allowlisted email identity. The forgeable authenticated-user email
-header grants no authority. The cockpit always renders the complete action set
+the browser bundle. Global request middleware verifies Cloudflare Access's
+signed JWT assertion before SSR or server-function serialization. It validates
+the issuer, audience, RS256 signature, expiry, and allowlisted email identity.
+An unauthenticated or invalid request returns HTTP 401. The forgeable
+authenticated-user email header grants no authority. The cockpit always
+renders the complete action set
 on desktop and mobile; availability comes only from the broker capability
 snapshot, unavailable actions stay visible, and the browser never simulates
 completion.
