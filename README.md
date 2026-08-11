@@ -33,6 +33,19 @@ nub install
 nub run verify
 ```
 
+Validate one complete repository authority manifest before you create or
+update Kubernetes Secrets:
+
+```sh
+nub run build
+npm run validate:registry -- /absolute/path/to/registry.json
+```
+
+The command reads the manifest and every referenced authority file from one
+local snapshot. It performs no Kubernetes effect or network write. It prints
+only the manifest digest, exact repository identities, and admitted authority
+classes. It never prints credential values or Secret file paths.
+
 ## Release boundary
 
 `.github/workflows/release.yml` is the only package publication boundary.
