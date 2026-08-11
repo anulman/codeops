@@ -5,7 +5,11 @@ on:
     branches: [main]
     paths:
       - .github/workflows/release.yml
+      - infra/charts/codeops/**
       - infra/scripts/codeops-release-images.mjs
+      - infra/scripts/codeops-release-chart.mjs
+      - infra/scripts/test-codeops-release-chart.mjs
+      - infra/scripts/test-codeops-quickstart-docs.mjs
       - infra/scripts/test-codeops-release-images.mjs
       - infra/scripts/test-codeops-release-workflow.mjs
   workflow_dispatch:
@@ -206,13 +210,16 @@ jobs:
           '
           node infra/scripts/codeops-release-images.mjs image-plan.json release-manifest.json values.release.yaml
 
+      - name: Embed immutable release identity in chart
+        run: node infra/scripts/codeops-release-chart.mjs infra/charts/codeops values.release.yaml .release/chart
+
       - name: Package and publish OCI chart
         env:
           RELEASE_VERSION: ${{ inputs.version }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          helm package infra/charts/codeops --version "$RELEASE_VERSION" --app-version "$SOURCE_SHA" --destination .release
+          helm package .release/chart --version "$RELEASE_VERSION" --app-version "$SOURCE_SHA" --destination .release
           push_output=$(helm push ".release/codeops-${RELEASE_VERSION}.tgz" oci://ghcr.io/anulman/codeops/charts 2>&1)
           printf '%s\n' "$push_output"
           chart_digest=$(printf '%s\n' "$push_output" | sed -n 's/^Digest: \(sha256:[0-9a-f]\{64\}\)$/\1/p')

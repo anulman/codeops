@@ -26,6 +26,23 @@ PostgreSQL. It provides immutable image references for the Agent Job, session
 gateway sidecar, and session runtime worker. Temporal remains an external
 dependency and must be configured with an exact `host:port` address.
 
+## Install
+
+The primary onboarding path uses one values file and one Helm install command.
+Released OCI charts embed their exact immutable image set. Quickstart mode
+creates the internal credentials and least-authority Secret projections for
+one repository:
+
+```sh
+helm install codeops oci://ghcr.io/anulman/codeops/charts/codeops \
+  --version <version> --namespace codeops --create-namespace \
+  --values values.yaml
+```
+
+Start from `infra/charts/codeops/examples/quickstart-values.yaml`. See the
+chart README for prerequisites, required external values, webhook endpoints,
+credential storage, and the advanced existing-Secret mode.
+
 ## Local validation
 
 ```sh
@@ -53,7 +70,8 @@ Release-contract changes run it in validation-only mode. An operator must use
 manual dispatch, select `main`, enter one exact SemVer version, and set
 `publish=true` before it writes to GHCR. A publishing run builds all nine
 images from one source SHA, resolves
-their registry digests, publishes the Helm chart to
+their registry digests, embeds those digests and the source SHA into the
+packaged values, publishes the Helm chart to
 `oci://ghcr.io/anulman/codeops/charts/codeops`, and retains the exact image,
 chart, source, and release-values evidence. Ordinary pushes and CI runs do not
 publish artifacts.

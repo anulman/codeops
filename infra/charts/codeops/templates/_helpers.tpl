@@ -31,3 +31,58 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 {{- printf "%s@%s" $repository $digest -}}
 {{- end -}}
+
+{{- define "codeops.quickstart.stableSecret" -}}
+{{- $root := index . 0 -}}
+{{- $name := index . 1 -}}
+{{- $key := index . 2 -}}
+{{- $length := index . 3 -}}
+{{- $existing := lookup "v1" "Secret" $root.Release.Namespace $name -}}
+{{- if and $existing $existing.data (hasKey $existing.data $key) -}}
+{{- index $existing.data $key | b64dec -}}
+{{- else -}}
+{{- randAlphaNum $length -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "codeops.quickstart.registry" -}}
+{{- $fullname := include "codeops.fullname" . -}}
+{{- $repository := .Values.quickstart.repository -}}
+{{- $runtimeRoot := printf "/var/run/secrets/%s-runtime-repositories" $fullname -}}
+{{- $controllerRoot := printf "/var/run/secrets/%s-repositories" $fullname -}}
+{{- $steeringRoot := printf "/var/run/secrets/%s-steering" $fullname -}}
+{{- $contextRoot := printf "/var/run/secrets/%s-contexts/%s" $fullname $repository.context.directory -}}
+{{- $githubReviewerIds := list -}}
+{{- range $repository.github.reviewerIds -}}
+{{- $githubReviewerIds = append $githubReviewerIds (int64 .) -}}
+{{- end -}}
+{{- $entry := dict
+  "repository" $repository.identity
+  "repositoryUrl" (printf "https://github.com/%s.git" $repository.identity)
+  "readTokenFile" (printf "%s/github-read-token" $runtimeRoot)
+  "writeTokenFile" (printf "%s/github-write-token" $runtimeRoot)
+  "githubWebhookSecretFile" (printf "%s/github-webhook-secret" $controllerRoot)
+  "githubSteeringTokenFile" (printf "%s/github-steering-token" $steeringRoot)
+  "plane" (dict
+    "apiOrigin" $repository.plane.apiOrigin
+    "workspaceSlug" $repository.plane.workspaceSlug
+    "workspaceId" $repository.plane.workspaceId
+    "projectId" $repository.plane.projectId
+    "apiKeyFile" (printf "%s/plane-api-key" $controllerRoot)
+    "webhookSecretFile" (printf "%s/plane-webhook-secret" $controllerRoot)
+    "stateIds" $repository.plane.stateIds)
+  "policy" (dict
+    "githubReviewerIds" $githubReviewerIds
+    "planeHumanActorIds" $repository.plane.humanActorIds
+    "planePersonas" $repository.plane.personas
+    "projectContextRoot" $contextRoot) -}}
+{{- dict "version" "codeops.repository-registry/v1" "repositories" (list $entry) | toJson -}}
+{{- end -}}
+
+{{- define "codeops.imagePullSecrets" -}}
+{{- if and .Values.quickstart.enabled .Values.quickstart.registry.enabled -}}
+{{- toYaml (list (dict "name" .Values.quickstart.registry.secretName)) -}}
+{{- else -}}
+{{- toYaml .Values.imagePullSecrets -}}
+{{- end -}}
+{{- end -}}

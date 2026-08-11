@@ -17,8 +17,55 @@ The chart contains:
 - a pre-upgrade, non-retrying schema migration Job;
 - a namespace-wide default deny plus explicit component NetworkPolicies.
 
-The chart does not create credentials. Before installation, the internal
-release boundary must create these Secrets:
+## Quickstart
+
+The released OCI chart contains the exact immutable image digests and
+control-plane source SHA for its version. Pull the chart once to copy its
+values example:
+
+```sh
+helm registry login ghcr.io
+helm pull oci://ghcr.io/anulman/codeops/charts/codeops \
+  --version <version> --untar
+cp codeops/examples/quickstart-values.yaml values.yaml
+```
+
+Replace every empty or angle-bracket value in `values.yaml`. Then install one
+single-repository control plane:
+
+```sh
+helm install codeops oci://ghcr.io/anulman/codeops/charts/codeops \
+  --version <version> \
+  --namespace codeops \
+  --create-namespace \
+  --values values.yaml
+```
+
+Quickstart mode creates the required Kubernetes Secrets. It generates internal
+database passwords, service tokens, the model-proxy signing key, and the
+session steering token. It keeps those values stable during upgrade and
+rollback by reading the installed Secret before it renders a replacement.
+Quickstart supports exactly one repository. Use the existing-Secret mode below
+for multiple repositories or externally managed credentials.
+
+The values file contains external credentials. Helm also stores supplied
+values and rendered Secret manifests in the release record. Use dedicated
+sandbox credentials. Keep the file out of source control. Use the
+existing-Secret mode with an external Secret controller for production.
+
+After installation, configure the GitHub webhook at
+`https://<host>/webhooks/github` and the Plane webhook at
+`https://<host>/webhooks/plane/<owner>/<repository>`. Use the distinct webhook
+Secrets from the same values file.
+
+Helm uninstall retains the quickstart Secrets and PostgreSQL data PVC. Delete
+them explicitly only when you intend to destroy the installation identity and
+stored data.
+
+## Existing-Secret mode
+
+When `quickstart.enabled=false`, the chart does not create credentials. Before
+installation, the operator must create these Secrets:
 
 - `codeops-postgres`: `password`;
 - `codeops-session-secrets`: `database-url`, `read-token`, `write-token`,

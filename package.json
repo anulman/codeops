@@ -12,7 +12,7 @@
     "build": "nub run --filter @renoconcierge/codeops-contracts build && nub run -r --filter './sites/*' --filter './services/*' --if-present build",
     "typecheck": "nub run -r --filter './packages/*' --filter './sites/*' --filter './services/*' --if-present typecheck",
     "test": "nub run --filter @renoconcierge/codeops-contracts build && nub run -r --filter './packages/*' --filter './sites/*' --filter './services/*' --if-present --workspace-concurrency 4 test",
-    "check:chart": "node --test infra/scripts/test-codeops-chart.mjs infra/scripts/test-agents-system-root-session.mjs infra/scripts/test-codeops-release-images.mjs infra/scripts/test-codeops-release-workflow.mjs infra/scripts/test-codeops-repository-registry-validator.mjs infra/scripts/test-standalone-image-packaging.mjs",
+    "check:chart": "node --test infra/scripts/test-codeops-chart.mjs infra/scripts/test-agents-system-root-session.mjs infra/scripts/test-codeops-quickstart-docs.mjs infra/scripts/test-codeops-release-chart.mjs infra/scripts/test-codeops-release-images.mjs infra/scripts/test-codeops-release-workflow.mjs infra/scripts/test-codeops-repository-registry-validator.mjs infra/scripts/test-standalone-image-packaging.mjs",
     "validate:registry": "node infra/scripts/validate-codeops-repository-registry.mjs",
     "verify": "nub run build && nub run typecheck && nub run test && nub run check:chart"
   },

@@ -70,7 +70,7 @@ export async function resolveCodeOpsReleaseImages(plan, inspect) {
     };
     setPath(values, valuePaths[name], { repository, digest: descriptor.digest });
   }
-  values.postgresql = plan.upstream.postgresql;
+  values.postgresql = { image: plan.upstream.postgresql };
   values.githubController ??= {};
   values.githubController.controlPlaneSha = plan.sourceSha;
   return { version: "codeops.release-images/v1", sourceSha: plan.sourceSha, images, values };

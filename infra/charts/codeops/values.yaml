@@ -122,3 +122,57 @@ ingress:
 
 networkPolicy:
   ingressNamespace: ingress-nginx
+
+# Quickstart creates the required Secret projections for one repository. It is
+# intentionally disabled for existing installations that manage Secrets
+# outside Helm or admit multiple repositories.
+quickstart:
+  enabled: false
+  openaiApiKey: ""
+  registry:
+    enabled: false
+    server: ghcr.io
+    username: ""
+    token: ""
+    email: ""
+    secretName: codeops-registry
+  access:
+    audience: ""
+    allowedEmails: []
+  repository:
+    identity: ""
+    github:
+      readToken: ""
+      writeToken: ""
+      webhookSecret: ""
+      reviewerIds: []
+    plane:
+      apiOrigin: ""
+      workspaceSlug: ""
+      workspaceId: ""
+      projectId: ""
+      apiKey: ""
+      webhookSecret: ""
+      humanActorIds: []
+      stateIds:
+        ready: ""
+        inProgress: ""
+        needsAttention: ""
+        complete: ""
+      personas:
+        - { handle: "@ai-web", userId: "" }
+        - { handle: "@ai-security", userId: "" }
+        - { handle: "@ai-database", userId: "" }
+        - { handle: "@ai-infra", userId: "" }
+        - { handle: "@ai-design", userId: "" }
+        - { handle: "@ai-product", userId: "" }
+        - { handle: "@ai-ml", userId: "" }
+    context:
+      directory: repository
+      agents: ""
+      currentState: ""
+      decisions: ""
+      domain: ""
+      product: ""
+      sourceMap: ""
+      soul: ""

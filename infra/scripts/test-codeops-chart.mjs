@@ -35,6 +35,11 @@ const digestSets = [
   "postgresql.secretName=team-a-codeops-postgres",
   "temporal.address=temporal.engineering.svc:7233",
 ];
+const quickstartSets = digestSets.filter(
+  (value) =>
+    !value.toLowerCase().includes("secretname=") &&
+    !value.includes("repositoryContexts["),
+);
 
 function helm(args) {
   const result = spawnSync("helm", args, { encoding: "utf8" });
@@ -50,6 +55,19 @@ function render() {
     "template", "team-a", chart,
     "--namespace", "engineering",
     ...digestSets.flatMap((value) => ["--set", value]),
+  ]);
+  return parseAllDocuments(output)
+    .map((document) => document.toJSON())
+    .filter(Boolean);
+}
+
+function renderQuickstart(extra = []) {
+  const output = helm([
+    "template", "codeops", chart,
+    "--namespace", "codeops",
+    "--values", "infra/fixtures/helm/quickstart-values.yaml",
+    ...quickstartSets.flatMap((value) => ["--set", value]),
+    ...extra,
   ]);
   return parseAllDocuments(output)
     .map((document) => document.toJSON())
@@ -277,6 +295,118 @@ test("defaults to deny and opens only explicit component paths", () => {
   assert.deepEqual(
     modelProxy.spec.ingress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)),
     ["TCP:8080"],
+  );
+});
+
+test("creates a complete one-repository quickstart from one values file", () => {
+  const resources = renderQuickstart();
+  const secrets = resources.filter(({ kind }) => kind === "Secret");
+  assert.equal(secrets.length, 11);
+  assert.equal(
+    secrets.every((secret) => secret.metadata.annotations["helm.sh/resource-policy"] === "keep"),
+    true,
+  );
+
+  const postgresql = resource(resources, "Secret", "codeops-postgres");
+  assert.match(postgresql.stringData.password, /^[A-Za-z0-9]{48}$/);
+  const session = resource(resources, "Secret", "codeops-session-secrets");
+  assert.match(
+    session.stringData["database-url"],
+    /^postgresql:\/\/agents:[A-Za-z0-9]{48}@codeops-postgresql:5432\/agents$/,
+  );
+  assert.match(
+    session.stringData["runtime-database-url"],
+    /^postgresql:\/\/codeops_runtime_receipts:[A-Za-z0-9]{48}@codeops-postgresql:5432\/agents$/,
+  );
+  assert.equal(session.stringData["runtime-database-role"], "codeops_runtime_receipts");
+  const registryPull = resource(resources, "Secret", "codeops-registry");
+  assert.equal(registryPull.type, "kubernetes.io/dockerconfigjson");
+  const dockerConfig = JSON.parse(registryPull.stringData[".dockerconfigjson"]);
+  assert.equal(dockerConfig.auths["ghcr.io"].username, "fixture-user");
+  assert.equal(
+    Buffer.from(dockerConfig.auths["ghcr.io"].auth, "base64").toString("utf8"),
+    "fixture-user:fixture-registry-token-0000000000000001",
+  );
+
+  const runtime = resource(resources, "Secret", "codeops-repository-runtime-authority");
+  const controller = resource(resources, "Secret", "codeops-repository-controller-authority");
+  const steering = resource(resources, "Secret", "codeops-repository-steering");
+  assert.deepEqual(Object.keys(runtime.stringData).sort(), [
+    "github-read-token", "github-write-token", "registry.json",
+  ]);
+  assert.deepEqual(Object.keys(steering.stringData).sort(), [
+    "github-steering-token", "registry.json",
+  ]);
+  assert.deepEqual(Object.keys(controller.stringData).sort(), [
+    "github-steering-token",
+    "github-webhook-secret",
+    "plane-api-key",
+    "plane-webhook-secret",
+    "registry.json",
+  ]);
+  assert.equal(runtime.stringData["registry.json"], controller.stringData["registry.json"]);
+  assert.equal(runtime.stringData["registry.json"], steering.stringData["registry.json"]);
+  const registry = JSON.parse(runtime.stringData["registry.json"]);
+  assert.equal(registry.version, "codeops.repository-registry/v1");
+  assert.equal(registry.repositories.length, 1);
+  assert.equal(registry.repositories[0].repository, "example/codeops-demo");
+  assert.deepEqual(registry.repositories[0].policy.githubReviewerIds, [12345678]);
+  assert.equal(
+    registry.repositories[0].policy.projectContextRoot,
+    "/var/run/secrets/codeops-contexts/codeops-demo",
+  );
+  assert.equal(registry.repositories[0].policy.planePersonas.length, 7);
+
+  const context = resource(resources, "Secret", "codeops-context");
+  assert.deepEqual(Object.keys(context.stringData).sort(), [
+    "AGENTS.md",
+    "CURRENT-STATE.md",
+    "DECISIONS.md",
+    "DOMAIN.md",
+    "PRODUCT.md",
+    "SOUL.md",
+    "SOURCE-MAP.md",
+  ]);
+  const deployment = resource(resources, "Deployment", "codeops-github-controller");
+  assert.deepEqual(deployment.spec.template.spec.imagePullSecrets, [{ name: "codeops-registry" }]);
+  const contexts = deployment.spec.template.spec.volumes.find(
+    ({ name }) => name === "repository-contexts",
+  );
+  assert.deepEqual(
+    contexts.projected.sources.map(({ secret }) => secret.name),
+    ["codeops-context"],
+  );
+});
+
+test("quickstart fails before render when required authority is missing or reused", () => {
+  assert.throws(
+    () => helm([
+      "template", "codeops", chart,
+      "--namespace", "codeops",
+      ...quickstartSets.flatMap((value) => ["--set", value]),
+      "--set", "quickstart.enabled=true",
+    ]),
+    /quickstart\.repository\.identity/,
+  );
+  assert.throws(
+    () => helm([
+      "template", "codeops", chart,
+      "--namespace", "codeops",
+      "--values", "infra/fixtures/helm/quickstart-values.yaml",
+      ...quickstartSets.flatMap((value) => ["--set", value]),
+      "--set", "quickstart.repository.plane.apiKey=fixture-github-read-token-0000000000001",
+    ]),
+    /authority-scoped and unique/,
+  );
+  assert.throws(
+    () => helm([
+      "template", "codeops", chart,
+      "--namespace", "codeops",
+      "--values", "infra/fixtures/helm/quickstart-values.yaml",
+      ...quickstartSets.flatMap((value) => ["--set", value]),
+      "--set-string", "quickstart.repository.github.reviewerIds[0]=not-a-user-id",
+    ]),
+    /positive numeric GitHub user IDs/,
   );
 });
 

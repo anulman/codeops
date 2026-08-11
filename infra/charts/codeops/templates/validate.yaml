@@ -1,6 +1,114 @@
 {{- if not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" .Values.ingress.host) -}}
 {{- fail "ingress.host must be one lowercase DNS host" -}}
 {{- end -}}
+{{- if .Values.quickstart.enabled -}}
+{{- $quickstart := .Values.quickstart -}}
+{{- $repository := $quickstart.repository -}}
+{{- if not (regexMatch "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$" $repository.identity) -}}
+{{- fail "quickstart.repository.identity must be one owner/repository identity" -}}
+{{- end -}}
+{{- if or (lt (len $quickstart.openaiApiKey) 16) (regexMatch "\\s" $quickstart.openaiApiKey) -}}
+{{- fail "quickstart.openaiApiKey must be one non-whitespace credential of at least 16 characters" -}}
+{{- end -}}
+{{- if $quickstart.registry.enabled -}}
+{{- if not (regexMatch "^[a-z0-9.-]+(:[0-9]{1,5})?$" $quickstart.registry.server) -}}
+{{- fail "quickstart.registry.server must be one registry host" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $quickstart.registry.secretName) -}}
+{{- fail "quickstart.registry.secretName must be one Kubernetes Secret name" -}}
+{{- end -}}
+{{- if or (eq (trim $quickstart.registry.username) "") (lt (len $quickstart.registry.token) 16) (regexMatch "\\s" $quickstart.registry.token) -}}
+{{- fail "quickstart.registry requires one username and one non-whitespace token of at least 16 characters" -}}
+{{- end -}}
+{{- end -}}
+{{- if or (eq $quickstart.access.audience "") (eq (len $quickstart.access.allowedEmails) 0) -}}
+{{- fail "quickstart.access must contain one audience and at least one allowed email" -}}
+{{- end -}}
+{{- range $quickstart.access.allowedEmails -}}
+{{- if not (regexMatch "^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$" .) -}}
+{{- fail "quickstart.access.allowedEmails entries must be email addresses" -}}
+{{- end -}}
+{{- end -}}
+{{- $credentials := list $repository.github.readToken $repository.github.writeToken $repository.github.webhookSecret $repository.plane.apiKey $repository.plane.webhookSecret -}}
+{{- range $credentials -}}
+{{- if or (lt (len .) 16) (regexMatch "\\s" .) -}}
+{{- fail "quickstart repository credentials must be non-whitespace values of at least 16 characters" -}}
+{{- end -}}
+{{- end -}}
+{{- if ne (len ($credentials | uniq)) (len $credentials) -}}
+{{- fail "quickstart repository credentials must be authority-scoped and unique" -}}
+{{- end -}}
+{{- if eq (len $repository.github.reviewerIds) 0 -}}
+{{- fail "quickstart.repository.github.reviewerIds must contain at least one GitHub user ID" -}}
+{{- end -}}
+{{- $reviewerIds := list -}}
+{{- range $repository.github.reviewerIds -}}
+{{- $reviewerId := int64 . -}}
+{{- if or (le $reviewerId 0) (and (kindIs "string" .) (not (regexMatch "^[1-9][0-9]{0,15}$" .))) -}}
+{{- fail "quickstart.repository.github.reviewerIds must contain positive numeric GitHub user IDs" -}}
+{{- end -}}
+{{- $reviewerIds = append $reviewerIds (toString $reviewerId) -}}
+{{- end -}}
+{{- if ne (len ($reviewerIds | uniq)) (len $reviewerIds) -}}
+{{- fail "quickstart.repository.github.reviewerIds must be unique" -}}
+{{- end -}}
+{{- if not (regexMatch "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$" $repository.plane.apiOrigin) -}}
+{{- fail "quickstart.repository.plane.apiOrigin must be one credential-free HTTPS origin" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9][a-z0-9-]{0,62}$" $repository.plane.workspaceSlug) -}}
+{{- fail "quickstart.repository.plane.workspaceSlug must be one Plane workspace slug" -}}
+{{- end -}}
+{{- $uuidValues := list $repository.plane.workspaceId $repository.plane.projectId $repository.plane.stateIds.ready $repository.plane.stateIds.inProgress $repository.plane.stateIds.needsAttention $repository.plane.stateIds.complete -}}
+{{- $uuidValues = concat $uuidValues $repository.plane.humanActorIds -}}
+{{- range $repository.plane.personas -}}
+{{- $uuidValues = append $uuidValues .userId -}}
+{{- end -}}
+{{- range $uuidValues -}}
+{{- if not (regexMatch "^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$" .) -}}
+{{- fail "quickstart Plane identities and lifecycle states must be lowercase UUIDs" -}}
+{{- end -}}
+{{- end -}}
+{{- $stateIds := list $repository.plane.stateIds.ready $repository.plane.stateIds.inProgress $repository.plane.stateIds.needsAttention $repository.plane.stateIds.complete -}}
+{{- if ne (len ($stateIds | uniq)) 4 -}}
+{{- fail "quickstart repository Plane lifecycle state IDs must be unique" -}}
+{{- end -}}
+{{- if eq (len $repository.plane.humanActorIds) 0 -}}
+{{- fail "quickstart.repository.plane.humanActorIds must contain at least one Plane user ID" -}}
+{{- end -}}
+{{- if ne (len ($repository.plane.humanActorIds | uniq)) (len $repository.plane.humanActorIds) -}}
+{{- fail "quickstart.repository.plane.humanActorIds must be unique" -}}
+{{- end -}}
+{{- if ne (len $repository.plane.personas) 7 -}}
+{{- fail "quickstart.repository.plane.personas must contain all seven CodeOps personas" -}}
+{{- end -}}
+{{- $personaHandles := list -}}
+{{- range $repository.plane.personas -}}
+{{- $personaHandles = append $personaHandles .handle -}}
+{{- end -}}
+{{- range (list "@ai-web" "@ai-security" "@ai-database" "@ai-infra" "@ai-design" "@ai-product" "@ai-ml") -}}
+{{- if not (has . $personaHandles) -}}
+{{- fail "quickstart.repository.plane.personas must contain every supported persona handle exactly once" -}}
+{{- end -}}
+{{- end -}}
+{{- if ne (len ($personaHandles | uniq)) 7 -}}
+{{- fail "quickstart.repository.plane.personas handles must be unique" -}}
+{{- end -}}
+{{- $personaUserIds := list -}}
+{{- range $repository.plane.personas -}}
+{{- $personaUserIds = append $personaUserIds .userId -}}
+{{- end -}}
+{{- if ne (len ($personaUserIds | uniq)) 7 -}}
+{{- fail "quickstart.repository.plane.personas user IDs must be unique" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" $repository.context.directory) -}}
+{{- fail "quickstart.repository.context.directory must be one lowercase path component" -}}
+{{- end -}}
+{{- range (list $repository.context.agents $repository.context.currentState $repository.context.decisions $repository.context.domain $repository.context.product $repository.context.sourceMap $repository.context.soul) -}}
+{{- if or (eq (trim .) "") (gt (len .) 100000) -}}
+{{- fail "quickstart repository context documents must contain 1 to 100000 bytes" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if not (regexMatch "^https://[a-z0-9-]+\\.cloudflareaccess\\.com/?$" .Values.agentsUi.access.issuer) -}}
 {{- fail "agentsUi.access.issuer must be one Cloudflare Access team-domain origin" -}}
 {{- end -}}

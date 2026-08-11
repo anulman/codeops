@@ -1,3 +1,7 @@
+{{- $repositoryContexts := .Values.githubController.repositoryContexts }}
+{{- if .Values.quickstart.enabled }}
+{{- $repositoryContexts = list (dict "directory" .Values.quickstart.repository.context.directory "secretName" (printf "%s-context" (include "codeops.fullname" .))) }}
+{{- end }}
 apiVersion: v1
 kind: PersistentVolumeClaim
 metadata:
@@ -38,7 +42,7 @@ spec:
       automountServiceAccountToken: false
       enableServiceLinks: false
       imagePullSecrets:
-        {{- toYaml .Values.imagePullSecrets | nindent 8 }}
+        {{- include "codeops.imagePullSecrets" . | nindent 8 }}
       nodeSelector:
         {{- toYaml .Values.nodeSelector | nindent 8 }}
       securityContext:
@@ -88,7 +92,7 @@ spec:
             - { name: controller-secrets, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-controller, readOnly: true }
             - { name: control-gateway-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway, readOnly: true }
             - { name: repository-registry, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-repositories, readOnly: true }
-            {{- if .Values.githubController.repositoryContexts }}
+            {{- if $repositoryContexts }}
             - { name: repository-contexts, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-contexts, readOnly: true }
             {{- end }}
             - { name: temp, mountPath: /tmp }
@@ -110,12 +114,12 @@ spec:
           secret:
             secretName: {{ .Values.githubController.repositoryAuthoritySecretName }}
             defaultMode: 256
-        {{- if .Values.githubController.repositoryContexts }}
+        {{- if $repositoryContexts }}
         - name: repository-contexts
           projected:
             defaultMode: 256
             sources:
-              {{- range .Values.githubController.repositoryContexts }}
+              {{- range $repositoryContexts }}
               - secret:
                   name: {{ .secretName }}
                   items:

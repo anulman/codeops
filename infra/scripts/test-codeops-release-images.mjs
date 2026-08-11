@@ -30,7 +30,7 @@ test("resolves all nine CodeOps operands and release values to immutable digests
   assert.equal(seen.length, 9);
   assert.deepEqual(Object.keys(result.images), names);
   assert.equal(result.values.githubController.controlPlaneSha, sourceSha);
-  assert.equal(result.values.postgresql.digest, `sha256:${"c".repeat(64)}`);
+  assert.equal(result.values.postgresql.image.digest, `sha256:${"c".repeat(64)}`);
   assert.ok(Object.values(result.images).every(({ immutableRef }) => immutableRef.endsWith(`@sha256:${"b".repeat(64)}`)));
 });
 

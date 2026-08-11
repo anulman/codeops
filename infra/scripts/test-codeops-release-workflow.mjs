@@ -14,6 +14,7 @@ test("release stays manual and publishes one exact immutable bundle", async () =
   const workflow = parse(source);
   assert.deepEqual(Object.keys(workflow.on), ["push", "workflow_dispatch"]);
   assert.deepEqual(workflow.on.push.branches, ["main"]);
+  assert.ok(workflow.on.push.paths.includes("infra/charts/codeops/**"));
   assert.equal(workflow.on.workflow_dispatch.inputs.publish.default, false);
   assert.deepEqual(workflow.jobs.images.strategy.matrix.image, expectedImages);
   const build = workflow.jobs.images.steps.find(({ name }) => name === "Build exact image");
@@ -26,6 +27,8 @@ test("release stays manual and publishes one exact immutable bundle", async () =
   assert.match(serialized, /refusing to overwrite existing chart version/);
   assert.match(serialized, /oci:\/\/ghcr\.io\/anulman\/codeops\/charts/);
   assert.match(serialized, /codeops-release-images\.mjs/);
+  assert.match(serialized, /codeops-release-chart\.mjs/);
+  assert.match(serialized, /helm package \.release\/chart/);
   assert.match(serialized, /release-manifest\.json/);
   assert.match(serialized, /values\.release\.yaml/);
   assert.doesNotMatch(serialized, /renoconcierge\/renoconcierge-codeops/);
