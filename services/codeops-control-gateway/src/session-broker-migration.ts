@@ -27,6 +27,10 @@ const migrations = [
     name: "session-runtime-permission-relay-v1",
     url: new URL("../sql/session-runtime-permission-relay.sql", import.meta.url),
   },
+  {
+    name: "work-item-lifecycle-journal-v1",
+    url: new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url),
+  },
 ] as const;
 
 function migrationDigest(sql: string): string {

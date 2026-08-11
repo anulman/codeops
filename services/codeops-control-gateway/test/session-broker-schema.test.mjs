@@ -12,6 +12,8 @@ const jobInitializationUrl = new URL("../sql/session-job-initialization.sql", im
 const jobInitializationRevertUrl = new URL("../sql/session-job-initialization-revert.sql", import.meta.url);
 const permissionRelayUrl = new URL("../sql/session-runtime-permission-relay.sql", import.meta.url);
 const permissionRelayRevertUrl = new URL("../sql/session-runtime-permission-relay-revert.sql", import.meta.url);
+const lifecycleJournalUrl = new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url);
+const lifecycleJournalRevertUrl = new URL("../sql/work-item-lifecycle-journal-revert.sql", import.meta.url);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");
@@ -47,6 +49,24 @@ test("defines an immutable lease-claimed runtime outbox", async () => {
   assert.match(sql, /CREATE INDEX session_runtime_outbox_claim_idx/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*DROP TABLE codeops\.session_runtime_outbox;[\s\S]*COMMIT;\n$/);
+});
+
+test("defines an immutable lifecycle journal and one JetStream relay lease", async () => {
+  const sql = await readFile(lifecycleJournalUrl, "utf8");
+  const revert = await readFile(lifecycleJournalRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.work_item_lifecycle \(/);
+  assert.match(sql, /UNIQUE \(workflow_id, run_id\)/);
+  assert.match(sql, /CREATE TABLE codeops\.work_item_lifecycle_events/);
+  assert.match(sql, /UNIQUE \(repository, provider, workspace_id, project_id, work_item_id, sequence\)/);
+  assert.match(sql, /work item lifecycle events are immutable/);
+  assert.match(sql, /CREATE TABLE codeops\.work_item_lifecycle_publications/);
+  assert.match(sql, /status IN \('pending', 'claimed', 'published'\)/);
+  assert.match(sql, /jetstream_stream text/);
+  assert.match(sql, /jetstream_sequence bigint/);
+  assert.match(sql, /CREATE INDEX work_item_lifecycle_publication_claim_idx/);
+  assert.doesNotMatch(sql, /consumer_id|projector_id|plane_delivery/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*DROP TABLE codeops\.work_item_lifecycle;[\s\S]*COMMIT;\n$/);
 });
 
 test("defines immutable digest-bound runtime execution receipts", async () => {
