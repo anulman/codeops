@@ -421,10 +421,16 @@ jobs:
             --timeout 20m
           [[ "$(helm status codeops --namespace codeops --output json | jq -r .info.status)" == "deployed" ]]
           kubectl wait --namespace codeops --for=condition=Available deployment --all --timeout=5m
-          kubectl get deployment --namespace codeops --output json | jq -e --arg sha "$SOURCE_SHA" '
+          kubectl get deployment --namespace codeops --output json | jq -e --argjson expected '[
+            "ghcr.io/anulman/codeops/agents-ui",
+            "ghcr.io/anulman/codeops/control-gateway",
+            "ghcr.io/anulman/codeops/model-proxy",
+            "ghcr.io/anulman/codeops/session-control-gateway"
+          ]' '
             [.items[].spec.template.spec.containers[].image]
-            | map(select(startswith("ghcr.io/anulman/codeops/")))
-            | length == 7 and all(test("@sha256:[0-9a-f]{64}$"))
+            | map(select(startswith("ghcr.io/anulman/codeops/"))) as $images
+            | ($images | all(test("@sha256:[0-9a-f]{64}$")))
+              and (($images | map(sub("@sha256:[0-9a-f]{64}$"; "")) | unique | sort) == $expected)
           '
           jq -n --arg version "$RELEASE_VERSION" --arg sourceSha "$SOURCE_SHA" --arg chartDigest "$pulled_digest" \
             '{version:$version,sourceSha:$sourceSha,chartDigest:$chartDigest,installStatus:"deployed",sourceCheckout:false}' \
