@@ -1,0 +1,48 @@
+quickstart:
+  enabled: true
+  openaiApiKey: fixture-openai-key-00000000000000000001
+  registry:
+    enabled: true
+    username: fixture-user
+    token: fixture-registry-token-0000000000000001
+    email: operator@example.com
+  access:
+    audience: fixture-cloudflare-access-audience
+    allowedEmails: [operator@example.com]
+  repository:
+    identity: example/codeops-demo
+    github:
+      readToken: fixture-github-read-token-0000000000001
+      writeToken: fixture-github-write-token-000000000001
+      webhookSecret: fixture-github-webhook-secret-00000001
+      reviewerIds: [12345678]
+    plane:
+      apiOrigin: https://plane.example.com
+      workspaceSlug: engineering
+      workspaceId: aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa
+      projectId: bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb
+      apiKey: fixture-plane-api-key-00000000000000001
+      webhookSecret: fixture-plane-webhook-secret-0000000001
+      humanActorIds: [cccccccc-cccc-4ccc-8ccc-cccccccccccc]
+      stateIds:
+        ready: dddddddd-dddd-4ddd-8ddd-dddddddddddd
+        inProgress: eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee
+        needsAttention: ffffffff-ffff-4fff-8fff-ffffffffffff
+        complete: 11111111-1111-4111-8111-111111111111
+      personas:
+        - { handle: "@ai-web", userId: 20000000-0000-4000-8000-000000000001 }
+        - { handle: "@ai-security", userId: 20000000-0000-4000-8000-000000000002 }
+        - { handle: "@ai-database", userId: 20000000-0000-4000-8000-000000000003 }
+        - { handle: "@ai-infra", userId: 20000000-0000-4000-8000-000000000004 }
+        - { handle: "@ai-design", userId: 20000000-0000-4000-8000-000000000005 }
+        - { handle: "@ai-product", userId: 20000000-0000-4000-8000-000000000006 }
+        - { handle: "@ai-ml", userId: 20000000-0000-4000-8000-000000000007 }
+    context:
+      directory: codeops-demo
+      agents: "# Agent instructions\nUse the repository instructions."
+      currentState: "# Current state\nThis fixture repository is active."
+      decisions: "# Decisions\nKeep authority fail closed."
+      domain: "# Domain\nThe repository contains one demonstration service."
+      product: "# Product\nThe fixture validates CodeOps onboarding."
+      sourceMap: "# Source map\nApplication sources are under src/."
+      soul: "# Soul\nUse short, direct technical language."

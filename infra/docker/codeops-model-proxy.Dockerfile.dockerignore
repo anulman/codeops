@@ -1,0 +1,10 @@
+**
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+!services/
+!services/codeops-model-proxy/
+!services/codeops-model-proxy/package.json
+!services/codeops-model-proxy/package-lock.json
+!services/codeops-model-proxy/.env.schema
+!services/codeops-model-proxy/src/
+!services/codeops-model-proxy/src/**

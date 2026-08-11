@@ -1,0 +1,66 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "codeops.fullname" . }}-model-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: model-proxy
+spec:
+  replicas: {{ .Values.modelProxy.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-model-proxy }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "codeops.fullname" . }}-model-proxy
+        app.kubernetes.io/component: model-proxy
+        app.kubernetes.io/part-of: codeops
+    spec:
+      serviceAccountName: {{ include "codeops.fullname" . }}-model-proxy
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        {{- include "codeops.imagePullSecrets" . | nindent 8 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: model-proxy
+          image: {{ include "codeops.image" .Values.modelProxy.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.modelProxy.secretName }}, key: openai-api-key }
+            - name: CODEOPS_MODEL_PROXY_SIGNING_KEY
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.modelProxy.secretName }}, key: signing-key }
+            - { name: CODEOPS_MODEL_PROXY_HOST, value: 0.0.0.0 }
+            - { name: CODEOPS_MODEL_PROXY_PORT, value: "8080" }
+          ports: [{ name: http, containerPort: 8080 }]
+          startupProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 2, failureThreshold: 60 }
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10, failureThreshold: 6 }
+          resources:
+            {{- toYaml .Values.modelProxy.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "codeops.fullname" . }}-model-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: model-proxy
+spec:
+  selector: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-model-proxy }
+  ports: [{ name: http, protocol: TCP, port: 8080, targetPort: http }]

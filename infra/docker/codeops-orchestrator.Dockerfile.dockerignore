@@ -1,0 +1,17 @@
+**
+!LICENSE
+!THIRD_PARTY_NOTICES.md
+!tsconfig.json
+!packages/codeops-contracts/package.json
+!packages/codeops-contracts/tsconfig.json
+!packages/codeops-contracts/tsconfig.build.json
+!packages/codeops-contracts/src/
+!packages/codeops-contracts/src/**
+!services/codeops-orchestrator/
+!services/codeops-orchestrator/package.json
+!services/codeops-orchestrator/package-lock.json
+!services/codeops-orchestrator/tsconfig.json
+!services/codeops-orchestrator/tsconfig.build.json
+!services/codeops-orchestrator/src/
+!services/codeops-orchestrator/src/**
+!infra/scripts/rewrite-workspace-dependency-for-npm.mjs

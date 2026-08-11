@@ -1,0 +1,109 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codeops-session-proof-grants
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: codeops-session-proof-grants
+data:
+  grants.sql: |
+    \set ON_ERROR_STOP on
+    BEGIN;
+    REVOKE ALL ON SCHEMA codeops FROM :"worker_role";
+    REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM :"worker_role";
+    REVOKE ALL ON ALL SEQUENCES IN SCHEMA codeops FROM :"worker_role";
+    GRANT USAGE ON SCHEMA codeops TO :"worker_role";
+    GRANT SELECT (dispatch_id, dispatch_digest, status, result_json)
+      ON codeops.session_runtime_execution_receipts TO :"worker_role";
+    GRANT INSERT (dispatch_id, dispatch_digest, status)
+      ON codeops.session_runtime_execution_receipts TO :"worker_role";
+    GRANT UPDATE (status, result_json, completed_at)
+      ON codeops.session_runtime_execution_receipts TO :"worker_role";
+    COMMIT;
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: codeops-session-proof-grants
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: codeops-session-proof-grants
+        app.kubernetes.io/part-of: codeops-session-proof
+    spec:
+      restartPolicy: Never
+      serviceAccountName: codeops-session-proof-grants
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets: [{ name: codeops-registry }]
+      nodeSelector: { codeops.example/codeops: "true" }
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 999
+        runAsGroup: 999
+        fsGroup: 999
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: grant
+          image: postgres@__CODEOPS_SESSION_PROOF_POSTGRES_DIGEST__
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+            - |
+              export PGHOST=codeops-session-proof-database
+              export PGPORT=5432
+              export PGUSER="$(cat /var/run/secrets/codeops-session-proof-owner/username)"
+              export PGPASSWORD="$(cat /var/run/secrets/codeops-session-proof-owner/password)"
+              export PGDATABASE="$(cat /var/run/secrets/codeops-session-proof-owner/database)"
+              attempts=0
+              until [ "$(psql -Atqc "SELECT to_regclass('codeops.session_runtime_execution_receipts') IS NOT NULL")" = t ]; do
+                attempts=$((attempts + 1))
+                [ "$attempts" -lt 60 ] || exit 1
+                sleep 2
+              done
+              psql --set=worker_role=codeops_session_runtime_worker --file=/grants/grants.sql
+              unset PGPASSWORD
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: owner, mountPath: /var/run/secrets/codeops-session-proof-owner, readOnly: true }
+            - { name: grants, mountPath: /grants, readOnly: true }
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - name: owner
+          secret:
+            secretName: codeops-session-proof-database-owner
+            defaultMode: 256
+            items: [{ key: username, path: username }, { key: password, path: password }, { key: database, path: database }]
+        - name: grants
+          configMap: { name: codeops-session-proof-grants, defaultMode: 256 }
+        - { name: temp, emptyDir: { sizeLimit: 16Mi } }
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codeops-session-proof-grants
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: codeops-session-proof-grants }
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector: { matchLabels: { app.kubernetes.io/name: codeops-session-proof-database } }
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - namespaceSelector: { matchLabels: { kubernetes.io/metadata.name: kube-system } }
+      ports: [{ protocol: UDP, port: 53 }, { protocol: TCP, port: 53 }]

@@ -1,0 +1,110 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "codeops.fullname" . }}-session-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-gateway
+spec:
+  replicas: {{ .Values.gateway.replicas }}
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway
+        app.kubernetes.io/component: session-gateway
+        app.kubernetes.io/part-of: codeops
+    spec:
+      serviceAccountName: {{ include "codeops.fullname" . }}-session-gateway
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        {{- include "codeops.imagePullSecrets" . | nindent 8 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: session-gateway
+          image: {{ include "codeops.image" .Values.gateway.image | quote }}
+          imagePullPolicy: IfNotPresent
+          env:
+            - { name: CODEOPS_HTTP_HOST, value: 0.0.0.0 }
+            - { name: CODEOPS_HTTP_PORT, value: "8080" }
+            - { name: CODEOPS_SESSION_RUNTIME_WORKER_ID, value: {{ .Values.gateway.workerId | quote }} }
+            - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/codeops/database-url }
+            - { name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE, value: /var/run/secrets/codeops/read-token }
+            - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/codeops/write-token }
+            - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/codeops/runtime-worker-token }
+            - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/codeops/initialization-token }
+            - { name: CODEOPS_REPOSITORY_STEERING_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-steering/registry.json }
+            - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy/signing-key }
+          ports:
+            - { name: http, containerPort: 8080 }
+          startupProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 5
+          livenessProbe:
+            httpGet: { path: /healthz, port: http }
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            {{- toYaml .Values.gateway.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
+            - { name: repository-steering, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-steering, readOnly: true }
+            - { name: model-proxy-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy, readOnly: true }
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ .Values.gateway.secretName }}
+            defaultMode: 256
+            items:
+              - { key: database-url, path: database-url }
+              - { key: read-token, path: read-token }
+              - { key: write-token, path: write-token }
+              - { key: runtime-worker-token, path: runtime-worker-token }
+              - { key: initialization-token, path: initialization-token }
+        - name: repository-steering
+          secret:
+            secretName: {{ .Values.gateway.repositorySteeringRegistrySecretName }}
+            defaultMode: 256
+        - name: model-proxy-auth
+          secret:
+            secretName: {{ .Values.modelProxy.secretName }}
+            defaultMode: 256
+            items:
+              - { key: signing-key, path: signing-key }
+        - name: temp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "codeops.fullname" . }}-session-control-gateway
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway
+  ports:
+    - { name: http, protocol: TCP, port: 8080, targetPort: http }

@@ -1,0 +1,13 @@
+{
+  "artifacts.plane.so/makeplane/plane-admin:v1.3.1": "artifacts.plane.so/makeplane/plane-admin@sha256:ff9219127a2c2c4a4bb066d6a0e25a5fc6a11204cf8484b521dada53d696fe43",
+  "artifacts.plane.so/makeplane/plane-backend:v1.3.1": "artifacts.plane.so/makeplane/plane-backend@sha256:2cdcb5f778c6ccacebce0e5a751d39fac4a549a44e049a5b110a7623cfdad139",
+  "artifacts.plane.so/makeplane/plane-frontend:v1.3.1": "artifacts.plane.so/makeplane/plane-frontend@sha256:c178fd85c4588165262cfe748bd103fdeccebbbab827c53e71b9ce32fff84f86",
+  "artifacts.plane.so/makeplane/plane-live:v1.3.1": "artifacts.plane.so/makeplane/plane-live@sha256:2073b6950a394545ea1db6ed4157e951ad5a6e1881e74f4f9238ace6c35bbf3d",
+  "artifacts.plane.so/makeplane/plane-space:v1.3.1": "artifacts.plane.so/makeplane/plane-space@sha256:e08c2c8741ae6f81a9326dc9201e7e09c0c411b87a20198f9ea9e5cf2fae3488",
+  "busybox": "docker.io/library/busybox@sha256:fd8d9aa63ba2f0982b5304e1ee8d3b90a210bc1ffb5314d980eb6962f1a9715d",
+  "minio/mc:latest": "docker.io/minio/mc@sha256:a7fe349ef4bd8521fb8497f55c6042871b2ae640607cf99d9bede5e9bdf11727",
+  "minio/minio:latest": "docker.io/minio/minio@sha256:14cea493d9a34af32f524e538b8346cf79f3321eff8e708c1e2960462bd8936e",
+  "postgres:15.7-alpine": "docker.io/library/postgres@sha256:468d34fefd6338031787c7b8e94078975b3aaf4d66c7ead25c39cd3ba46a15c6",
+  "rabbitmq:3.13.6-management-alpine": "docker.io/library/rabbitmq@sha256:611107e29cce05c2acd968325d5dcbde7e2fee404970f1ead75fdb22be2821b3",
+  "valkey/valkey:7.2.11-alpine": "docker.io/valkey/valkey@sha256:10328d00120dc14fbc87b2ed61b7677ddbb0d011e705361b4788329a0ec69a93"
+}

@@ -1,0 +1,44 @@
+profile: full-external
+
+postgresql:
+  deployment: external
+  external:
+    host: postgres.database.svc
+    port: 5432
+    namespace: database
+
+temporal:
+  enabled: false
+  driver: temporal
+  deployment: external
+  address: temporal-frontend.temporal.svc:7233
+  namespace: codeops
+  taskQueue: codeops
+  external:
+    namespace: temporal
+
+jetstream:
+  enabled: false
+  driver: jetstream
+  deployment: external
+  url: nats://nats.messaging.svc:4222
+  stream: CODEOPS_LIFECYCLE
+  subject: codeops.lifecycle.v1.events
+  external:
+    namespace: messaging
+
+plane:
+  enabled: false
+  deployment: external
+  adapter:
+    enabled: true
+    onboardingRequired: false
+  apiOrigin: https://plane.example.com
+  external:
+    namespace: plane
+
+# Production and multi-repository installations use existing Kubernetes
+# Secrets or an external Secret controller. See the chart README for the exact
+# Secret names and keys.
+quickstart:
+  enabled: false

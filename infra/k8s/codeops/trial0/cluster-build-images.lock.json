@@ -1,0 +1,18 @@
+{
+  "platform": "linux/amd64",
+  "registry": {
+    "repository": "docker.io/library/registry",
+    "tag": "2.8.3",
+    "digest": "sha256:46faa9a1ae6813194b53921a370f2f4f8c5e1aae228a89bceafef5847a6a3278"
+  },
+  "buildkit": {
+    "repository": "docker.io/moby/buildkit",
+    "tag": "v0.25.2-rootless",
+    "digest": "sha256:d947144c3dc4f827f8dacaaf98d622f0143465740075fa9790991bc381761dc9"
+  },
+  "git": {
+    "repository": "docker.io/alpine/git",
+    "tag": "v2.49.1",
+    "digest": "sha256:53a6239398162098fed2f49a46512f9cbba9e3f31b9f2cea4fa90129ee069a99"
+  }
+}
