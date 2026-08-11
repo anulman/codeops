@@ -63,6 +63,7 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(serialized, /refs\/remotes\/origin\/main/);
   assert.match(serialized, /refusing to overwrite existing image identity/);
   assert.match(serialized, /refusing to overwrite existing chart version/);
+  assert.match(serialized, /refusing to overwrite existing GitHub Release/);
   assert.match(serialized, /oci:\/\/ghcr\.io\/anulman\/codeops\/charts/);
   assert.match(serialized, /codeops-release-images\.mjs/);
   assert.match(serialized, /codeops-release-chart\.mjs/);
@@ -70,5 +71,23 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(serialized, /helm package \.release\/chart/);
   assert.match(serialized, /release-manifest\.json/);
   assert.match(serialized, /values\.release\.yaml/);
+  assert.match(serialized, /sha256sum/);
+  const githubRelease = workflow.jobs["github-release"];
+  assert.equal(githubRelease.if, "needs.validate.outputs.publish == 'true'");
+  assert.deepEqual(githubRelease.needs, ["validate", "registry-install"]);
+  assert.equal(githubRelease.permissions.contents, "write");
+  assert.equal(githubRelease.permissions.actions, "read");
+  const downloadRelease = githubRelease.steps.find(
+    ({ name }) => name === "Download exact release evidence",
+  );
+  assert.equal(downloadRelease.uses, "actions/download-artifact@v4");
+  const publishRelease = githubRelease.steps.find(
+    ({ name }) => name === "Publish durable GitHub Release",
+  );
+  assert.match(publishRelease.run, /gh release create/);
+  assert.match(publishRelease.run, /--target "\$SOURCE_SHA"/);
+  assert.match(publishRelease.run, /codeops-\$\{RELEASE_VERSION\}\.tgz/);
+  assert.match(publishRelease.run, /release-manifest\.json/);
+  assert.match(publishRelease.run, /SHA256SUMS/);
   assert.doesNotMatch(serialized, /example-repository\/example-repository-codeops/);
 });

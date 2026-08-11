@@ -124,10 +124,15 @@ jobs:
       - name: Reject artifact identity reuse
         if: steps.release_identity.outputs.publish == 'true'
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
+          if gh release view "v${RELEASE_VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            printf 'refusing to overwrite existing GitHub Release v%s\n' "$RELEASE_VERSION" >&2
+            exit 1
+          fi
           names=(acceptance-runner agent agents-ui control-gateway model-proxy orchestrator plane-controller session-control-gateway session-gateway session-runtime-worker)
           for name in "${names[@]}"; do
             ref="ghcr.io/anulman/codeops/${name}:sha-${SOURCE_SHA}"
@@ -280,17 +285,35 @@ jobs:
         with:
           subject-path: .release/codeops-${{ needs.validate.outputs.release_version }}.tgz
 
+      - name: Write release checksums
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p .release/evidence
+          cp \
+            ".release/codeops-${RELEASE_VERSION}.tgz" \
+            image-plan.json \
+            release-manifest.json \
+            values.release.yaml \
+            .release/evidence/
+          (
+            cd .release/evidence
+            sha256sum \
+              "codeops-${RELEASE_VERSION}.tgz" \
+              image-plan.json \
+              release-manifest.json \
+              values.release.yaml \
+              > SHA256SUMS
+          )
+
       - name: Retain exact release evidence
         uses: actions/upload-artifact@v4
         with:
           name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
           if-no-files-found: error
           retention-days: 90
-          path: |
-            .release/codeops-${{ needs.validate.outputs.release_version }}.tgz
-            image-plan.json
-            release-manifest.json
-            values.release.yaml
+          path: .release/evidence/*
 
   registry-install:
     if: needs.validate.outputs.publish == 'true'
@@ -451,3 +474,42 @@ jobs:
       - name: Delete disposable cluster
         if: always()
         run: kind delete cluster --name codeops-registry
+
+  github-release:
+    if: needs.validate.outputs.publish == 'true'
+    needs: [validate, registry-install]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download exact release evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
+          path: release
+
+      - name: Verify release checksums
+        working-directory: release
+        run: sha256sum --check SHA256SUMS
+
+      - name: Publish durable GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tag="v${RELEASE_VERSION}"
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title "CodeOps ${tag}" \
+            --prerelease \
+            --generate-notes \
+            "release/codeops-${RELEASE_VERSION}.tgz" \
+            release/image-plan.json \
+            release/release-manifest.json \
+            release/values.release.yaml \
+            release/SHA256SUMS

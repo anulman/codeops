@@ -78,8 +78,12 @@ images from one source SHA, resolves
 their registry digests, embeds those digests and the source SHA into the
 packaged values, publishes the Helm chart to
 `oci://ghcr.io/anulman/codeops/charts/codeops`, and retains the exact image,
-chart, source, and release-values evidence. Ordinary pushes and CI runs do not
-publish artifacts.
+chart, source, and release-values evidence. After the registry-only install
+proof passes, the workflow creates an immutable prerelease in GitHub Releases
+with the chart archive, image plan, release manifest, release values, and
+checksums. GHCR remains the canonical Helm registry. GitHub Releases is the
+durable human-facing release record. Ordinary pushes and CI runs do not publish
+artifacts.
 
 ## Safety boundary
 
