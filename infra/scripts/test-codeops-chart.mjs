@@ -116,7 +116,10 @@ test("renders one portable CodeOps package with immutable images", () => {
   assert.match(proxySource, /openai-api-key/);
   assert.match(proxySource, /signing-key/);
   const migration = resource(resources, "Job", "team-a-codeops-session-migrate");
-  assert.equal(migration.metadata.annotations["helm.sh/hook"], "pre-upgrade");
+  assert.equal(
+    migration.metadata.annotations["helm.sh/hook"],
+    "post-install,pre-upgrade",
+  );
   assert.equal(migration.metadata.annotations["helm.sh/hook-delete-policy"], "before-hook-creation");
   assert.equal(migration.spec.backoffLimit, 0);
   assert.equal(migration.spec.template.spec.automountServiceAccountToken, false);

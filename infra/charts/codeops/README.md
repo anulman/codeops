@@ -14,7 +14,7 @@ The chart contains:
 - the Agents UI with signed Cloudflare Access JWT verification;
 - scoped ServiceAccounts and RBAC for each fixed operand and per-session runtime;
 - a Varlock-backed model proxy and immutable runtime image inputs;
-- a pre-upgrade, non-retrying schema migration Job;
+- a post-install and pre-upgrade, non-retrying schema migration Job;
 - a namespace-wide default deny plus explicit component NetworkPolicies.
 
 ## Quickstart
@@ -144,14 +144,12 @@ high stop-loss limits of 20 MiB per request, 8 concurrent requests per token,
 and 16 concurrent requests globally. These limits are incident controls, not
 normal operating targets.
 
-The main-only `internal` release first installs PostgreSQL with application
-replicas at zero when the Helm release does not exist. The next Helm revision
-runs the forward-compatible schema migration as a `pre-upgrade` hook. The
-migration creates or rotates the receipt-only runtime role from the exact
-runtime DSN, removes all broad schema/table/sequence authority, and grants only
-the execution-receipt columns. It then
-rolls out all application workloads with `--atomic --wait`. Later releases run
-the same migration hook before each rollout.
+The quickstart runs the forward-compatible schema migration as a
+`post-install` hook during the first installation and as a `pre-upgrade` hook
+for later revisions. The migration creates or rotates the receipt-only runtime
+role from the exact runtime DSN, removes all broad schema/table/sequence
+authority, and grants only the execution-receipt columns. The hook is
+non-retrying and blocks Helm completion if the database contract is not ready.
 
 Helm uninstall removes the workloads, Services, RBAC, NetworkPolicies, and
 migration hook. Kubernetes retains the PostgreSQL StatefulSet data PVC so an
