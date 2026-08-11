@@ -123,6 +123,7 @@ spec:
     - host: {{ .Values.ingress.host | quote }}
       http:
         paths:
+          {{- if .Values.plane.adapter.enabled }}
           - path: /webhooks/github
             pathType: Exact
             backend:
@@ -135,6 +136,7 @@ spec:
               service:
                 name: {{ include "codeops.fullname" . }}-github-controller
                 port: { name: http }
+          {{- end }}
           - path: /
             pathType: Prefix
             backend:

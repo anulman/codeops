@@ -43,7 +43,7 @@ spec:
           command:
             - sh
             - -ec
-            - until pg_isready -h {{ include "codeops.fullname" . }}-postgresql -p 5432 -U agents; do sleep 2; done
+            - until pg_isready -h {{ ternary .Values.postgresql.serviceName .Values.postgresql.external.host (eq .Values.postgresql.deployment "managed") }} -p {{ ternary 5432 .Values.postgresql.external.port (eq .Values.postgresql.deployment "managed") }} -U agents; do sleep 2; done
           resources:
             requests: { cpu: 10m, memory: 16Mi }
             limits: { cpu: 100m, memory: 64Mi }
@@ -60,6 +60,10 @@ spec:
             - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/codeops/database-url }
             - { name: CODEOPS_RUNTIME_DATABASE_URL_FILE, value: /var/run/secrets/codeops/runtime-database-url }
             - { name: CODEOPS_RUNTIME_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops/runtime-database-role }
+            {{- if eq .Values.jetstream.driver "jetstream" }}
+            - { name: CODEOPS_LIFECYCLE_RELAY_DATABASE_URL_FILE, value: /var/run/secrets/codeops-relay/database-url }
+            - { name: CODEOPS_LIFECYCLE_RELAY_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops-relay/database-role }
+            {{- end }}
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { cpu: 250m, memory: 256Mi }
@@ -69,6 +73,9 @@ spec:
             capabilities: { drop: [ALL] }
           volumeMounts:
             - { name: secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
+            {{- if eq .Values.jetstream.driver "jetstream" }}
+            - { name: relay-authority, mountPath: /var/run/secrets/codeops-relay, readOnly: true }
+            {{- end }}
             - { name: temp, mountPath: /tmp }
       volumes:
         - name: secrets
@@ -79,6 +86,15 @@ spec:
               - { key: database-url, path: database-url }
               - { key: runtime-database-url, path: runtime-database-url }
               - { key: runtime-database-role, path: runtime-database-role }
+        {{- if eq .Values.jetstream.driver "jetstream" }}
+        - name: relay-authority
+          secret:
+            secretName: {{ .Values.lifecycleRelay.secretName }}
+            defaultMode: 256
+            items:
+              - { key: {{ .Values.lifecycleRelay.databaseUrlKey }}, path: database-url }
+              - { key: {{ .Values.lifecycleRelay.databaseRoleKey }}, path: database-role }
+        {{- end }}
         - name: temp
           emptyDir: { sizeLimit: 32Mi }
 {{- end }}

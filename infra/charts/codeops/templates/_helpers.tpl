@@ -76,7 +76,7 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- $repository := .Values.quickstart.repository -}}
 {{- $runtimeRoot := printf "/var/run/secrets/%s-runtime-repositories" $fullname -}}
 {{- $controllerRoot := printf "/var/run/secrets/%s-repositories" $fullname -}}
-{{- $steeringRoot := printf "/var/run/secrets/%s-steering" $fullname -}}
+{{- $steeringRoot := $controllerRoot -}}
 {{- $contextRoot := printf "/var/run/secrets/%s-contexts/%s" $fullname $repository.context.directory -}}
 {{- $githubReviewerIds := list -}}
 {{- range $repository.github.reviewerIds -}}
@@ -110,5 +110,25 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- toYaml (list (dict "name" .Values.quickstart.registry.secretName)) -}}
 {{- else -}}
 {{- toYaml .Values.imagePullSecrets -}}
+{{- end -}}
+{{- end -}}
+
+{{- define "codeops.postgresqlEgressTarget" -}}
+{{- if eq .Values.postgresql.deployment "managed" -}}
+podSelector:
+  matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-postgresql }
+{{- else -}}
+namespaceSelector:
+  matchLabels: { kubernetes.io/metadata.name: {{ .Values.postgresql.external.namespace }} }
+{{- end -}}
+{{- end -}}
+
+{{- define "codeops.jetstreamEgressTarget" -}}
+{{- if eq .Values.jetstream.deployment "managed" -}}
+podSelector:
+  matchLabels: { app.kubernetes.io/instance: {{ .Release.Name }} }
+{{- else -}}
+namespaceSelector:
+  matchLabels: { kubernetes.io/metadata.name: {{ .Values.jetstream.external.namespace }} }
 {{- end -}}
 {{- end -}}

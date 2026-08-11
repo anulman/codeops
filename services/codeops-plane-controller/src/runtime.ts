@@ -35,6 +35,31 @@ import { z } from "zod";
 const MAX_WEBHOOK_BYTES = 1024 * 1024;
 const GIT_SHA = /^[0-9a-f]{40}$/;
 const REPOSITORY_IDENTITY = /^[A-Za-z0-9_.-]{1,100}\/([A-Za-z0-9_.-]{1,100})$/;
+const KUBERNETES_SERVICE_NAME =
+  /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/;
+
+function internalServiceOrigin(
+  value: string,
+  component: "control-gateway" | "session-control-gateway",
+  message: string,
+): URL {
+  const origin = new URL(value);
+  if (
+    origin.protocol !== "http:" ||
+    !KUBERNETES_SERVICE_NAME.test(origin.hostname) ||
+    !origin.hostname.endsWith(`-${component}`) ||
+    origin.hostname.length <= component.length + 1 ||
+    origin.port !== "8080" ||
+    origin.pathname !== "/" ||
+    origin.username !== "" ||
+    origin.password !== "" ||
+    origin.search !== "" ||
+    origin.hash !== ""
+  ) {
+    throw new Error(message);
+  }
+  return origin;
+}
 
 function repositoryRoute(repository: string, suffix: string): string {
   if (!REPOSITORY_IDENTITY.test(repository) || !suffix.startsWith("/")) {
@@ -49,21 +74,11 @@ export function createRepositoryHeadResolver(input: {
   repository: string;
   fetch?: typeof fetch;
 }): () => Promise<string> {
-  const origin = new URL(input.origin);
-  if (
-    origin.protocol !== "http:" ||
-    origin.hostname !== "codeops-control-gateway" ||
-    origin.port !== "8080" ||
-    origin.username !== "" ||
-    origin.password !== "" ||
-    origin.pathname !== "/" ||
-    origin.search !== "" ||
-    origin.hash !== ""
-  ) {
-    throw new Error(
-      "repository head origin must be the internal control gateway",
-    );
-  }
+  const origin = internalServiceOrigin(
+    input.origin,
+    "control-gateway",
+    "repository head origin must be the internal control gateway",
+  );
   if (input.token.length < 32 || input.token.length > 4_096) {
     throw new Error("repository head token is invalid");
   }
@@ -117,21 +132,11 @@ export function createGitHubReviewCommentsLoader(input: {
   number: number;
   reviewId: number;
 }) => Promise<readonly GitHubReviewComment[]> {
-  const origin = new URL(input.origin);
-  if (
-    origin.protocol !== "http:" ||
-    origin.hostname !== "codeops-control-gateway" ||
-    origin.port !== "8080" ||
-    origin.username !== "" ||
-    origin.password !== "" ||
-    origin.pathname !== "/" ||
-    origin.search !== "" ||
-    origin.hash !== ""
-  ) {
-    throw new Error(
-      "GitHub review origin must be the internal control gateway",
-    );
-  }
+  const origin = internalServiceOrigin(
+    input.origin,
+    "control-gateway",
+    "GitHub review origin must be the internal control gateway",
+  );
   if (input.token.length < 32 || input.token.length > 4_096) {
     throw new Error("GitHub review reader token is invalid");
   }
@@ -200,21 +205,11 @@ export function createGitHubHeadQualifier(input: {
   pullRequestNumber: number;
   headSha: string;
 }) => Promise<boolean> {
-  const origin = new URL(input.origin);
-  if (
-    origin.protocol !== "http:" ||
-    origin.hostname !== "codeops-control-gateway" ||
-    origin.port !== "8080" ||
-    origin.pathname !== "/" ||
-    origin.username !== "" ||
-    origin.password !== "" ||
-    origin.search !== "" ||
-    origin.hash !== ""
-  ) {
-    throw new Error(
-      "GitHub qualification origin must be the internal control gateway",
-    );
-  }
+  const origin = internalServiceOrigin(
+    input.origin,
+    "control-gateway",
+    "GitHub qualification origin must be the internal control gateway",
+  );
   if (input.token.length < 32 || input.token.length > 4_096) {
     throw new Error("GitHub qualification token is invalid");
   }
@@ -349,22 +344,11 @@ export function createGitHubCurrentPullRequestResolver(input: {
 }
 
 function internalControlGatewayOrigin(value: string, capability: string): URL {
-  const origin = new URL(value);
-  if (
-    origin.protocol !== "http:" ||
-    origin.hostname !== "codeops-control-gateway" ||
-    origin.port !== "8080" ||
-    origin.pathname !== "/" ||
-    origin.username !== "" ||
-    origin.password !== "" ||
-    origin.search !== "" ||
-    origin.hash !== ""
-  ) {
-    throw new Error(
-      `${capability} origin must be the internal control gateway`,
-    );
-  }
-  return origin;
+  return internalServiceOrigin(
+    value,
+    "control-gateway",
+    `${capability} origin must be the internal control gateway`,
+  );
 }
 
 function internalCapabilityToken(value: string, capability: string): string {
@@ -467,24 +451,11 @@ export function createGitHubSessionSteeringClient(input: {
   resolveToken(repository: string): string;
   fetch?: typeof fetch;
 }): (request: GitHubSessionSteeringRequest) => Promise<{ sessionId: string }> {
-  const origin = new URL(input.origin);
-  if (
-    origin.protocol !== "http:" ||
-    !new Set([
-      "codeops-session-control-gateway",
-      "agents-session-control-gateway",
-    ]).has(origin.hostname) ||
-    origin.port !== "8080" ||
-    origin.pathname !== "/" ||
-    origin.username !== "" ||
-    origin.password !== "" ||
-    origin.search !== "" ||
-    origin.hash !== ""
-  ) {
-    throw new Error(
-      "GitHub session steering origin must be the internal session gateway",
-    );
-  }
+  const origin = internalServiceOrigin(
+    input.origin,
+    "session-control-gateway",
+    "GitHub session steering origin must be the internal session gateway",
+  );
   return async (request) => {
     const token = internalCapabilityToken(
       input.resolveToken(request.binding.repository),

@@ -20,7 +20,7 @@ import {
 test("resolves one repository head through an exact repository-qualified route", async () => {
   const calls = [];
   const resolve = createRepositoryHeadResolver({
-    origin: "http://codeops-control-gateway:8080",
+    origin: "http://codeops-external-control-gateway:8080",
     token: "r".repeat(64),
     repository: "anulman/codeops",
     fetch: async (url, init) => {
@@ -36,7 +36,7 @@ test("resolves one repository head through an exact repository-qualified route",
   assert.equal(await resolve(), "a".repeat(40));
   assert.equal(
     calls[0].url,
-    "http://codeops-control-gateway:8080/v1/repositories/anulman/codeops/heads/main",
+    "http://codeops-external-control-gateway:8080/v1/repositories/anulman/codeops/heads/main",
   );
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
 
@@ -53,6 +53,20 @@ test("resolves one repository head through an exact repository-qualified route",
       }),
   });
   await assert.rejects(drifted(), /response is invalid/);
+  for (const origin of [
+    "http://codeops-external-control-gateway.default.svc:8080",
+    "http://control-gateway:8080",
+  ]) {
+    assert.throws(
+      () =>
+        createRepositoryHeadResolver({
+          origin,
+          token: "r".repeat(64),
+          repository: "anulman/codeops",
+        }),
+      /internal control gateway/,
+    );
+  }
 });
 
 test("resolves the current pull-request head only through the bounded reader", async () => {
@@ -107,7 +121,7 @@ test("resolves the current pull-request head only through the bounded reader", a
 test("projects one normalized GitHub event only through the internal session gateway", async () => {
   const seen = [];
   const steer = createGitHubSessionSteeringClient({
-    origin: "http://agents-session-control-gateway:8080",
+    origin: "http://codeops-external-session-control-gateway:8080",
     resolveToken: (repository) =>
       repository === "anulman/renoconcierge" ? "s".repeat(64) : "c".repeat(64),
     fetch: async (url, init) => {
@@ -163,7 +177,7 @@ test("projects one normalized GitHub event only through the internal session gat
   assert.deepEqual(result, { sessionId: "session-159" });
   assert.equal(
     seen[0].url,
-    "http://agents-session-control-gateway:8080/v1/repositories/anulman/renoconcierge/github-session-events",
+    "http://codeops-external-session-control-gateway:8080/v1/repositories/anulman/renoconcierge/github-session-events",
   );
   assert.equal(seen[0].init.headers.Authorization, `Bearer ${"s".repeat(64)}`);
   await steer({
@@ -185,6 +199,20 @@ test("projects one normalized GitHub event only through the internal session gat
       }),
     /internal session gateway/,
   );
+  for (const origin of [
+    "http://codeops-external-session-control-gateway.default.svc:8080",
+    "http://codeops-external-control-gateway:8080",
+    "http://session-control-gateway:8080",
+  ]) {
+    assert.throws(
+      () =>
+        createGitHubSessionSteeringClient({
+          origin,
+          resolveToken: () => "s".repeat(64),
+        }),
+      /internal session gateway/,
+    );
+  }
 });
 
 test("reads and links native stacks only through bounded internal capabilities", async () => {

@@ -6,7 +6,8 @@ metadata:
   labels:
     {{- include "codeops.labels" . | nindent 4 }}
 spec:
-  podSelector: {}
+  podSelector:
+    matchLabels: { app.kubernetes.io/part-of: codeops }
   policyTypes: [Ingress, Egress]
 ---
 apiVersion: networking.k8s.io/v1
@@ -59,8 +60,7 @@ spec:
       ports: [{ protocol: TCP, port: 8080 }]
   egress:
     - to:
-        - podSelector:
-            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-postgresql }
+        - {{ include "codeops.postgresqlEgressTarget" . | nindent 10 | trim }}
       ports: [{ protocol: TCP, port: 5432 }]
     - to:
         - namespaceSelector:
@@ -81,8 +81,7 @@ spec:
   ingress: []
   egress:
     - to:
-        - podSelector:
-            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-postgresql }
+        - {{ include "codeops.postgresqlEgressTarget" . | nindent 10 | trim }}
       ports: [{ protocol: TCP, port: 5432 }]
     - to:
         - namespaceSelector:
@@ -90,6 +89,7 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
+{{ if .Values.plane.adapter.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -128,6 +128,7 @@ spec:
             cidr: 0.0.0.0/0
             except: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4]
       ports: [{ protocol: TCP, port: 443 }]
+{{ end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -154,8 +155,7 @@ spec:
         - { protocol: TCP, port: 6443 }
     {{- end }}
     - to:
-        - podSelector:
-            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-postgresql }
+        - {{ include "codeops.postgresqlEgressTarget" . | nindent 10 | trim }}
       ports: [{ protocol: TCP, port: 5432 }]
     - to:
         - namespaceSelector:
@@ -168,6 +168,7 @@ spec:
             cidr: 0.0.0.0/0
             except: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4]
       ports: [{ protocol: TCP, port: 443 }]
+{{ if and (eq .Values.temporal.driver "temporal") .Values.plane.adapter.enabled }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -197,6 +198,7 @@ spec:
       ports:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
+{{ end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -224,6 +226,7 @@ spec:
             cidr: 0.0.0.0/0
             except: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4]
       ports: [{ protocol: TCP, port: 443 }]
+{{ if eq .Values.postgresql.deployment "managed" }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -237,12 +240,21 @@ spec:
   ingress:
     - from:
         - podSelector:
+            matchLabels:
+              app.kubernetes.io/part-of: codeops
             matchExpressions:
               - key: app.kubernetes.io/component
                 operator: In
-                values: [session-gateway, session-migration, control-gateway, runtime]
+                values: [session-gateway, session-migration, control-gateway, runtime, lifecycle-relay]
+        {{- if eq .Values.temporal.deployment "managed" }}
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/instance: {{ .Release.Name }}
+              app.kubernetes.io/name: temporal
+        {{- end }}
       ports: [{ protocol: TCP, port: 5432 }]
   egress: []
+{{ end }}
 ---
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
@@ -260,8 +272,7 @@ spec:
             matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway }
       ports: [{ protocol: TCP, port: 8080 }]
     - to:
-        - podSelector:
-            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-postgresql }
+        - {{ include "codeops.postgresqlEgressTarget" . | nindent 10 | trim }}
       ports: [{ protocol: TCP, port: 5432 }]
     - to:
         - podSelector:
@@ -278,3 +289,29 @@ spec:
             cidr: 0.0.0.0/0
             except: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16, 224.0.0.0/4, 240.0.0.0/4]
       ports: [{ protocol: TCP, port: 443 }]
+{{ if eq .Values.jetstream.driver "jetstream" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "codeops.fullname" . }}-lifecycle-relay
+  namespace: {{ .Release.Namespace }}
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-lifecycle-relay }
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - {{ include "codeops.postgresqlEgressTarget" . | nindent 10 | trim }}
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
+        - {{ include "codeops.jetstreamEgressTarget" . | nindent 10 | trim }}
+      ports: [{ protocol: TCP, port: 4222 }]
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+{{ end }}

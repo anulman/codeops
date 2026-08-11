@@ -69,6 +69,12 @@ export async function resolveCodeOpsReleaseImages(plan, inspect) {
       immutableRef: `${repository}@${descriptor.digest}`,
     };
     setPath(values, valuePaths[name], { repository, digest: descriptor.digest });
+    if (name === "control-gateway") {
+      setPath(values, ["lifecycleRelay", "image"], {
+        repository,
+        digest: descriptor.digest,
+      });
+    }
   }
   values.postgresql = { image: plan.upstream.postgresql };
   values.githubController ??= {};

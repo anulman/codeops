@@ -2,8 +2,7 @@ BEGIN;
 
 CREATE TABLE codeops.work_item_lifecycle (
   repository text NOT NULL,
-  provider text NOT NULL
-    CHECK (provider IN ('plane', 'github_issues', 'github_projects', 'custom')),
+  provider text NOT NULL CHECK (provider = 'plane'),
   workspace_id text NOT NULL,
   project_id text NOT NULL,
   work_item_id text NOT NULL,

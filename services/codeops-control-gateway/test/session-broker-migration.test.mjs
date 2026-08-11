@@ -3,8 +3,10 @@ import test from "node:test";
 
 import {
   applySessionBrokerMigration,
+  grantLifecycleRelayAccess,
   grantSessionRuntimeReceiptAccess,
   migrateSessionBroker,
+  lifecycleRelayDatabaseCredentials,
   sessionRuntimeDatabaseCredentials,
   stripTransactionEnvelope,
 } from "../dist/session-broker-migration.js";
@@ -40,6 +42,23 @@ test("strips only the migration's outer transaction envelope", () => {
     "CREATE TABLE example (id bigint);",
   );
   assert.throws(() => stripTransactionEnvelope("SELECT 1;"), /BEGIN\/COMMIT/);
+});
+
+test("grants the lifecycle relay only claim and acknowledgment access", async () => {
+  const client = fakeClient();
+  await grantLifecycleRelayAccess(
+    client,
+    "codeops_lifecycle_relay",
+    "relay_password_0123456789abcdefghi",
+  );
+  const sql = client.calls.map(({ text }) => text).join("\n");
+  assert.match(sql, /CREATE ROLE "codeops_lifecycle_relay" LOGIN PASSWORD/);
+  assert.match(sql, /GRANT SELECT \(event_id, event_json\) ON codeops\.work_item_lifecycle_events/);
+  assert.match(sql, /GRANT SELECT \(event_id, status, available_at, claim_token, claim_expires_at, claim_count, delivery_receipt_digest, delivery_receipt_json\)/);
+  assert.match(sql, /GRANT UPDATE \(status, claim_token, claimed_by, claimed_at, claim_expires_at, claim_count, delivery_driver/);
+  assert.doesNotMatch(sql, /GRANT (INSERT|DELETE)/);
+  assert.doesNotMatch(sql, /session_runtime_execution_receipts TO/);
+  assert.equal(client.calls.at(-1).text, "COMMIT");
 });
 
 test("serializes and records a first migration in one transaction", async () => {
@@ -178,4 +197,26 @@ test("binds the receipt-only role to one in-cluster runtime database URL", () =>
       /receipt-only boundary|password is invalid/,
     );
   }
+});
+
+test("binds the relay-only role to the authoritative database", () => {
+  assert.deepEqual(
+    lifecycleRelayDatabaseCredentials(
+      "postgres://codeops_lifecycle_relay:relay_password_0123456789abcdefghi@qualification-codeops-postgresql:5432/agents",
+      "codeops_lifecycle_relay",
+      "postgresql://agents:control_password@qualification-codeops-postgresql:5432/agents",
+    ),
+    {
+      role: "codeops_lifecycle_relay",
+      password: "relay_password_0123456789abcdefghi",
+    },
+  );
+  assert.throws(
+    () => lifecycleRelayDatabaseCredentials(
+      "postgres://other:relay_password_0123456789abcdefghi@example.com:5432/agents",
+      "codeops_lifecycle_relay",
+      "postgresql://agents:control_password@qualification-codeops-postgresql:5432/agents",
+    ),
+    /relay-only boundary/,
+  );
 });

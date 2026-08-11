@@ -1,0 +1,16 @@
+agentsUi: { image: { digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, access: { issuer: "https://example.cloudflareaccess.com" } }
+gateway: { image: { digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } }
+controlGateway:
+  image: { digest: "sha256:1212121212121212121212121212121212121212121212121212121212121212" }
+  kubernetesApiCidrs: [10.43.0.1/32]
+lifecycleRelay: { image: { digest: "sha256:1212121212121212121212121212121212121212121212121212121212121212" } }
+orchestrator: { image: { digest: "sha256:3434343434343434343434343434343434343434343434343434343434343434" } }
+githubController:
+  image: { digest: "sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff" }
+  controlPlaneSha: "1111111111111111111111111111111111111111"
+postgresql: { image: { digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } }
+runtime:
+  workerImage: { digest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
+  agentImage: { digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
+  sessionGatewayImage: { digest: "sha256:5656565656565656565656565656565656565656565656565656565656565656" }
+modelProxy: { image: { digest: "sha256:9999999999999999999999999999999999999999999999999999999999999999" } }

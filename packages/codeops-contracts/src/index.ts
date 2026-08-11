@@ -719,7 +719,7 @@ export const providerLifecycleStateSchema = z.union([
 export const providerLifecycleBindingSchema = z
   .object({
     version: z.literal(VERSION.providerLifecycleBinding),
-    provider: z.enum(["plane", "github_issues", "github_projects", "custom"]),
+    provider: z.literal("plane"),
     workspaceId: providerOpaqueId,
     projectId: providerOpaqueId,
     states: z
@@ -778,7 +778,7 @@ export const workItemLifecycleEventSchema = z
     repository,
     provider: z
       .object({
-        kind: z.enum(["plane", "github_issues", "github_projects", "custom"]),
+        kind: z.literal("plane"),
         workspaceId: providerOpaqueId,
         projectId: providerOpaqueId,
       })

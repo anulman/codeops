@@ -1,3 +1,4 @@
+{{- if and (eq .Values.temporal.driver "temporal") .Values.plane.adapter.enabled }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -67,3 +68,4 @@ spec:
             defaultMode: 256
             items:
               - { key: research-projection-token, path: research-projection-token }
+{{- end }}

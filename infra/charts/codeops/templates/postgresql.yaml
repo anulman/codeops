@@ -1,13 +1,13 @@
+{{- if eq .Values.postgresql.deployment "managed" }}
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ include "codeops.fullname" . }}-postgresql
+  name: {{ .Values.postgresql.serviceName }}
   namespace: {{ .Release.Namespace }}
   labels:
     {{- include "codeops.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgresql
 spec:
-  clusterIP: None
   selector:
     app.kubernetes.io/name: {{ include "codeops.fullname" . }}-postgresql
   ports:
@@ -22,7 +22,7 @@ metadata:
     {{- include "codeops.labels" . | nindent 4 }}
     app.kubernetes.io/component: postgresql
 spec:
-  serviceName: {{ include "codeops.fullname" . }}-postgresql
+  serviceName: {{ .Values.postgresql.serviceName }}
   replicas: 1
   selector:
     matchLabels:
@@ -95,3 +95,4 @@ spec:
         {{- end }}
         resources:
           requests: { storage: {{ .Values.postgresql.storage }} }
+{{- end }}

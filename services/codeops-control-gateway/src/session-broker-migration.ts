@@ -133,7 +133,9 @@ export async function grantSessionRuntimeReceiptAccess(
       [role],
     );
     const verb = existing.rows[0] ? "ALTER" : "CREATE";
-    await client.query(`${verb} ROLE ${identifier} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`);
+    await client.query(
+      `${verb} ROLE ${identifier} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+    );
     await client.query(`REVOKE ALL ON SCHEMA codeops FROM ${identifier}`);
     await client.query(`REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM ${identifier}`);
     await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA codeops FROM ${identifier}`);
@@ -141,6 +143,49 @@ export async function grantSessionRuntimeReceiptAccess(
     await client.query(`GRANT SELECT (dispatch_id, dispatch_digest, status, result_json) ON codeops.session_runtime_execution_receipts TO ${identifier}`);
     await client.query(`GRANT INSERT (dispatch_id, dispatch_digest, status) ON codeops.session_runtime_execution_receipts TO ${identifier}`);
     await client.query(`GRANT UPDATE (status, result_json, completed_at) ON codeops.session_runtime_execution_receipts TO ${identifier}`);
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function grantLifecycleRelayAccess(
+  client: TransactionClient,
+  role: string,
+  password: string,
+): Promise<void> {
+  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(role)) {
+    throw new Error("lifecycle relay database role is invalid");
+  }
+  if (!/^[A-Za-z0-9._~-]{32,256}$/.test(password)) {
+    throw new Error("lifecycle relay database password is invalid");
+  }
+  const identifier = `"${role}"`;
+  await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('codeops.lifecycle-relay-role', 0))",
+    );
+    const existing = await client.query(
+      "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $1",
+      [role],
+    );
+    const verb = existing.rows[0] ? "ALTER" : "CREATE";
+    await client.query(`${verb} ROLE ${identifier} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`);
+    await client.query(`REVOKE ALL ON SCHEMA codeops FROM ${identifier}`);
+    await client.query(`REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM ${identifier}`);
+    await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA codeops FROM ${identifier}`);
+    await client.query(`GRANT USAGE ON SCHEMA codeops TO ${identifier}`);
+    await client.query(
+      `GRANT SELECT (event_id, event_json) ON codeops.work_item_lifecycle_events TO ${identifier}`,
+    );
+    await client.query(
+      `GRANT SELECT (event_id, status, available_at, claim_token, claim_expires_at, claim_count, delivery_receipt_digest, delivery_receipt_json) ON codeops.work_item_lifecycle_publications TO ${identifier}`,
+    );
+    await client.query(
+      `GRANT UPDATE (status, claim_token, claimed_by, claimed_at, claim_expires_at, claim_count, delivery_driver, delivery_destination, delivery_position, delivery_receipt_digest, delivery_receipt_json, published_at) ON codeops.work_item_lifecycle_publications TO ${identifier}`,
+    );
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");
@@ -190,4 +235,23 @@ export function sessionRuntimeDatabaseCredentials(
     throw new Error("session runtime database password is invalid");
   }
   return { role, password };
+}
+
+export function lifecycleRelayDatabaseCredentials(
+  databaseUrl: string,
+  role: string,
+  controlPlaneDatabaseUrl: string,
+): { readonly role: string; readonly password: string } {
+  try {
+    return sessionRuntimeDatabaseCredentials(
+      databaseUrl,
+      role,
+      controlPlaneDatabaseUrl,
+    );
+  } catch (error) {
+    throw new Error(
+      "lifecycle relay database URL is outside the relay-only boundary",
+      { cause: error },
+    );
+  }
 }

@@ -1,3 +1,4 @@
+{{- if .Values.plane.adapter.enabled }}
 {{- $repositoryContexts := .Values.githubController.repositoryContexts }}
 {{- if .Values.quickstart.enabled }}
 {{- $repositoryContexts = list (dict "directory" .Values.quickstart.repository.context.directory "secretName" (printf "%s-context" (include "codeops.fullname" .))) }}
@@ -147,3 +148,4 @@ spec:
   selector: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-github-controller }
   ports:
     - { name: http, protocol: TCP, port: 8080, targetPort: http }
+{{- end }}

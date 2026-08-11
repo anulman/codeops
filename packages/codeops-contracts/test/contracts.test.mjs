@@ -704,8 +704,8 @@ test("defines one fixed lifecycle profile with review separate from attention", 
 test("maps many provider states to one CodeOps state without ambiguity", () => {
   const binding = {
     version: contractVersions.providerLifecycleBinding,
-    provider: "github_projects",
-    workspaceId: "organization_123",
+    provider: "plane",
+    workspaceId: "workspace_123",
     projectId: "project_456",
     states: [
       {
@@ -731,6 +731,11 @@ test("maps many provider states to one CodeOps state without ambiguity", () => {
     ],
   };
   assert.deepEqual(providerLifecycleBindingSchema.parse(binding), binding);
+  for (const provider of ["github_issues", "github_projects", "custom"]) {
+    assert.throws(() =>
+      providerLifecycleBindingSchema.parse({ ...binding, provider }),
+    );
+  }
   assert.throws(() =>
     providerLifecycleBindingSchema.parse({
       ...binding,
@@ -846,8 +851,8 @@ test("keeps normal review transitions separate from the attention condition", ()
       command,
       repository: { owner: "anulman", name: "codeops" },
       provider: {
-        kind: "github_projects",
-        workspaceId: "organization_123",
+        kind: "plane",
+        workspaceId: "workspace_123",
         projectId: "project_456",
       },
       workItemId: "work_item_review",

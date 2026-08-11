@@ -14,6 +14,7 @@ function releaseValues() {
     agentsUi: { image: { repository: "ghcr.io/anulman/codeops/agents-ui", digest: digest("a") } },
     gateway: { image: { repository: "ghcr.io/anulman/codeops/session-control-gateway", digest: digest("b") } },
     controlGateway: { image: { repository: "ghcr.io/anulman/codeops/control-gateway", digest: digest("c") } },
+    lifecycleRelay: { image: { repository: "ghcr.io/anulman/codeops/control-gateway", digest: digest("c") } },
     modelProxy: { image: { repository: "ghcr.io/anulman/codeops/model-proxy", digest: digest("d") } },
     orchestrator: { image: { repository: "ghcr.io/anulman/codeops/orchestrator", digest: digest("e") } },
     githubController: {
@@ -42,7 +43,7 @@ test("stages a release chart with the exact immutable image identity embedded", 
     releaseValuesPath,
     outputRoot,
   });
-  assert.equal(result.embeddedPaths.length, 21);
+  assert.equal(result.embeddedPaths.length, 23);
   const staged = parse(await readFile(path.join(outputRoot, "values.yaml"), "utf8"));
   assert.equal(staged.agentsUi.image.digest, digest("a"));
   assert.equal(staged.githubController.controlPlaneSha, "1".repeat(40));

@@ -8,6 +8,7 @@ const digestSets = [
   "agentsUi.image.digest=sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
   "gateway.image.digest=sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
   "controlGateway.image.digest=sha256:1212121212121212121212121212121212121212121212121212121212121212",
+  "lifecycleRelay.image.digest=sha256:1212121212121212121212121212121212121212121212121212121212121212",
   "orchestrator.image.digest=sha256:3434343434343434343434343434343434343434343434343434343434343434",
   "githubController.image.digest=sha256:ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff",
   "githubController.controlPlaneSha=1111111111111111111111111111111111111111",
@@ -33,7 +34,9 @@ const digestSets = [
   "githubController.repositoryContexts[1].directory=codeops",
   "githubController.repositoryContexts[1].secretName=team-a-codeops-context",
   "postgresql.secretName=team-a-codeops-postgres",
-  "temporal.address=temporal.engineering.svc:7233",
+  "temporal.address=codeops-temporal-frontend:7233",
+  "plane.adapter.enabled=true",
+  "plane.adapter.onboardingRequired=false",
 ];
 const quickstartSets = digestSets.filter(
   (value) =>
@@ -85,16 +88,19 @@ function resource(resources, kind, name) {
 test("renders one portable CodeOps package with immutable images", () => {
   const resources = render();
   assert.ok(resources.length >= 30);
-  for (const candidate of resources) {
+  const codeopsResources = resources.filter(
+    (candidate) => candidate.metadata?.labels?.["app.kubernetes.io/part-of"] === "codeops",
+  );
+  for (const candidate of codeopsResources) {
     assert.equal(candidate.metadata?.namespace, "engineering");
     assert.notEqual(candidate.kind, "Secret");
   }
-
-  const images = resources.flatMap((candidate) => [
+  const images = codeopsResources.flatMap((candidate) => [
     ...(candidate.spec?.template?.spec?.containers ?? []),
     ...(candidate.spec?.template?.spec?.initContainers ?? []),
   ]).map((container) => container.image).filter(Boolean);
-  assert.equal(images.length, 9);
+  assert.equal(images.length, 11);
+  assert.equal(new Set(images).size, 7);
   assert.ok(images.every((image) => /@sha256:[0-9a-f]{64}$/.test(image)));
 
   resource(resources, "StatefulSet", "team-a-codeops-postgresql");
@@ -109,7 +115,7 @@ test("renders one portable CodeOps package with immutable images", () => {
   resource(resources, "RoleBinding", "team-a-codeops-control-gateway");
   assert.match(JSON.stringify(controlGateway), /team-a-codeops-repository-runtime-authority/);
   assert.doesNotMatch(JSON.stringify(controlGateway), /CODEOPS_REPOSITORY_(URL|READ_TOKEN|WRITE_TOKEN)/);
-  assert.match(JSON.stringify(orchestrator), /temporal\.engineering\.svc:7233/);
+  assert.match(JSON.stringify(orchestrator), /codeops-temporal-frontend:7233/);
   const modelProxy = resource(resources, "Deployment", "team-a-codeops-model-proxy");
   const proxySource = JSON.stringify(modelProxy);
   assert.match(proxySource, /team-a-codeops-model-proxy-credentials/);
@@ -132,7 +138,7 @@ test("renders one portable CodeOps package with immutable images", () => {
   );
   assert.match(
     migration.spec.template.spec.initContainers[0].command.at(-1),
-    /until pg_isready -h team-a-codeops-postgresql -p 5432 -U agents/,
+    /until pg_isready -h codeops-database -p 5432 -U agents/,
   );
   assert.deepEqual(migration.spec.template.spec.containers[0].command, [
     "node",
@@ -142,6 +148,29 @@ test("renders one portable CodeOps package with immutable images", () => {
     migration.spec.template.spec.volumes.find(({ name }) => name === "secrets").secret.items.map(({ key }) => key).sort(),
     ["database-url", "runtime-database-role", "runtime-database-url"],
   );
+  assert.deepEqual(
+    migration.spec.template.spec.volumes.find(({ name }) => name === "relay-authority").secret.items.map(({ key }) => key).sort(),
+    ["database-role", "database-url"],
+  );
+  const relay = resource(resources, "Deployment", "team-a-codeops-lifecycle-relay");
+  assert.equal(relay.spec.template.spec.containers[0].image, controlGateway.spec.template.spec.containers[0].image);
+  assert.equal(
+    relay.spec.template.spec.initContainers[0].image,
+    "ghcr.io/anulman/codeops/session-control-gateway@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  );
+  assert.deepEqual(
+    relay.spec.template.spec.volumes.find(({ name }) => name === "migration-authority").secret.items.map(({ key }) => key).sort(),
+    ["database-url", "runtime-database-role", "runtime-database-url"],
+  );
+  assert.deepEqual(
+    relay.spec.template.spec.volumes.find(({ name }) => name === "relay-authority").secret.items.map(({ key }) => key).sort(),
+    ["database-role", "database-url", "nats-token"],
+  );
+  assert.equal(
+    relay.spec.template.spec.containers[0].volumeMounts.some(({ name }) => name === "migration-authority"),
+    false,
+  );
+  assert.match(JSON.stringify(relay), /CODEOPS_JETSTREAM_MANAGE_STREAM/);
   assert.equal(resources.some(({ metadata }) => metadata?.name === "team-a-codeops-codex-auth"), false);
   resource(resources, "PersistentVolumeClaim", "team-a-codeops-controller-state");
   const runtimeImages = resource(resources, "ConfigMap", "team-a-codeops-runtime-images");
@@ -158,7 +187,10 @@ test("renders one portable CodeOps package with immutable images", () => {
 
 test("exposes only the Agents UI and requires signed Access configuration", () => {
   const resources = render();
-  const ingresses = resources.filter(({ kind }) => kind === "Ingress");
+  const ingresses = resources.filter(
+    ({ kind, metadata }) =>
+      kind === "Ingress" && metadata?.labels?.["app.kubernetes.io/part-of"] === "codeops",
+  );
   assert.equal(ingresses.length, 1);
   assert.deepEqual(ingresses[0].spec.rules.map(({ host }) => host), [
     "codeops.example.net",
@@ -279,9 +311,11 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
 test("defaults to deny and opens only explicit component paths", () => {
   const resources = render();
   const policies = resources.filter(({ kind }) => kind === "NetworkPolicy");
-  assert.equal(policies.length, 10);
+  assert.equal(policies.length, 11);
   const deny = resource(resources, "NetworkPolicy", "team-a-codeops-default-deny");
-  assert.deepEqual(deny.spec.podSelector, {});
+  assert.deepEqual(deny.spec.podSelector, {
+    matchLabels: { "app.kubernetes.io/part-of": "codeops" },
+  });
   assert.deepEqual(deny.spec.policyTypes, ["Ingress", "Egress"]);
 
   const postgresql = resource(resources, "NetworkPolicy", "team-a-codeops-postgresql");
@@ -310,12 +344,14 @@ test("defaults to deny and opens only explicit component paths", () => {
     modelProxy.spec.ingress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)),
     ["TCP:8080"],
   );
+  const relay = resource(resources, "NetworkPolicy", "team-a-codeops-lifecycle-relay");
+  assert.match(JSON.stringify(relay), /TCP.*4222/);
 });
 
 test("creates a complete one-repository quickstart from one values file", () => {
   const resources = renderQuickstart();
   const secrets = resources.filter(({ kind }) => kind === "Secret");
-  assert.equal(secrets.length, 12);
+  assert.equal(secrets.length, 18);
   assert.equal(
     secrets.every((secret) => secret.metadata.annotations["helm.sh/resource-policy"] === "keep"),
     true,
@@ -326,11 +362,11 @@ test("creates a complete one-repository quickstart from one values file", () => 
   const session = resource(resources, "Secret", "codeops-session-secrets");
   assert.match(
     session.stringData["database-url"],
-    /^postgresql:\/\/agents:[A-Za-z0-9]{48}@codeops-postgresql:5432\/agents$/,
+    /^postgresql:\/\/agents:[A-Za-z0-9]{48}@codeops-database:5432\/agents$/,
   );
   assert.match(
     session.stringData["runtime-database-url"],
-    /^postgresql:\/\/codeops_runtime_receipts:[A-Za-z0-9]{48}@codeops-postgresql:5432\/agents$/,
+    /^postgresql:\/\/codeops_runtime_receipts:[A-Za-z0-9]{48}@codeops-database:5432\/agents$/,
   );
   assert.equal(session.stringData["runtime-database-role"], "codeops_runtime_receipts");
   const registryPull = resource(resources, "Secret", "codeops-registry");
@@ -347,7 +383,7 @@ test("creates a complete one-repository quickstart from one values file", () => 
   const steering = resource(resources, "Secret", "codeops-repository-steering");
   const controllerConfig = resource(resources, "Secret", "codeops-controller-config");
   assert.deepEqual(controllerConfig.stringData, {
-    CODEOPS_TEMPORAL_ADDRESS: "temporal.engineering.svc:7233",
+    CODEOPS_TEMPORAL_ADDRESS: "codeops-temporal-frontend:7233",
     CODEOPS_TEMPORAL_NAMESPACE: "codeops",
     CODEOPS_TEMPORAL_TASK_QUEUE: "codeops",
   });
@@ -378,8 +414,14 @@ test("creates a complete one-repository quickstart from one values file", () => 
     "/var/run/secrets/codeops-steering/github-steering-token",
   );
   assert.equal(steeringRegistry.repositories[0].plane, undefined);
-  assert.equal(controllerRegistry.repositories[0].githubWebhookSecretFile.endsWith("/github-webhook-secret"), true);
-  assert.equal(controllerRegistry.repositories[0].githubSteeringTokenFile.endsWith("/github-steering-token"), true);
+  assert.equal(
+    controllerRegistry.repositories[0].githubWebhookSecretFile,
+    "/var/run/secrets/codeops-repositories/github-webhook-secret",
+  );
+  assert.equal(
+    controllerRegistry.repositories[0].githubSteeringTokenFile,
+    "/var/run/secrets/codeops-repositories/github-steering-token",
+  );
   assert.deepEqual(controllerRegistry.repositories[0].policy.githubReviewerIds, [12345678]);
   assert.equal(
     controllerRegistry.repositories[0].policy.projectContextRoot,

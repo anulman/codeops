@@ -12,6 +12,8 @@ const allowedLeafPaths = new Set([
   "gateway.image.digest",
   "controlGateway.image.repository",
   "controlGateway.image.digest",
+  "lifecycleRelay.image.repository",
+  "lifecycleRelay.image.digest",
   "modelProxy.image.repository",
   "modelProxy.image.digest",
   "orchestrator.image.repository",

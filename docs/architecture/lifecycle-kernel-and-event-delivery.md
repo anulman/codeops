@@ -12,7 +12,7 @@ PostgreSQL stores the authoritative WorkItem aggregate and its immutable
 canonical lifecycle event in one transaction. A relay claims unpublished
 events through one lease and publishes them through one delivery driver. The
 relay records publication only after the driver acknowledgment. JetStream is
-the default delivery driver. Its durable consumers isolate Plane, GitHub,
+the default delivery driver. Its durable consumers isolate Plane,
 notification, and installer-owned projectors.
 
 Do not create PostgreSQL delivery state for each external consumer. Keep the
@@ -39,21 +39,23 @@ The chart renders no dependency resources in `external` mode.
 - JetStream is the default delivery driver. Support `managed`, `external`, and
   `none`. The `none` driver creates a journal-only installation and disables
   outbound projectors.
-- Plane is a default-on work-tracker adapter. Support `managed`, `external`,
-  and disabled operation. Disabling Plane does not change lifecycle behavior.
-  An installer can enable GitHub Issues, GitHub Projects, or another adapter.
+- Plane is the only work-tracker adapter in the first release. Support
+  `managed`, `external`, and disabled operation. Disabling Plane does not
+  change lifecycle behavior.
 
-Qualify four named profiles instead of every dependency permutation:
+Qualify two named profiles before accepting additional permutations:
 
 - `full-managed`
 - `full-external`
-- `github-native`
-- `sessions-only`
 
 Reject incompatible values at render time. Require a capability handshake
 before a workload becomes Ready. An alternative delivery or orchestration
 component must implement the applicable versioned driver contract. Do not
 treat an arbitrary endpoint as a compatible replacement.
+
+Kafka and GitHub Projects or GitHub Issues work-tracker adapters are outside
+the first-release boundary. GitHub repository, pull-request, webhook, and
+session authority remain supported and are not work-tracker adapters.
 
 ## Lifecycle profile v1
 
