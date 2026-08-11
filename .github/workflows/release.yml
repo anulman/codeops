@@ -3,6 +3,8 @@ name: Release
 on:
   push:
     branches: [main]
+    tags:
+      - "v*.*.*"
     paths:
       - .github/workflows/release.yml
       - infra/charts/codeops/**
@@ -35,12 +37,16 @@ jobs:
   validate:
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    outputs:
+      publish: ${{ steps.release_identity.outputs.publish }}
+      release_version: ${{ steps.release_identity.outputs.release_version }}
     permissions:
       contents: read
       packages: read
     steps:
       - uses: actions/checkout@v4
         with:
+          fetch-depth: 0
           persist-credentials: false
 
       - uses: actions/setup-node@v4
@@ -48,15 +54,40 @@ jobs:
           node-version: "24"
 
       - name: Validate release identity
+        id: release_identity
         env:
-          RELEASE_VERSION: ${{ inputs.version || '0.0.0' }}
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_VERSION: ${{ inputs.version }}
           SOURCE_REF: ${{ github.ref }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
-          [[ "$SOURCE_REF" == "refs/heads/main" ]]
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
-          [[ "$RELEASE_VERSION" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          release_version=0.0.0
+          publish=false
+          case "$EVENT_NAME" in
+            workflow_dispatch)
+              [[ "$SOURCE_REF" == "refs/heads/main" ]]
+              release_version="$INPUT_VERSION"
+              publish="$INPUT_PUBLISH"
+              ;;
+            push)
+              case "$SOURCE_REF" in
+                refs/heads/main) ;;
+                refs/tags/v*)
+                  release_version="${SOURCE_REF#refs/tags/v}"
+                  publish=true
+                  [[ "$SOURCE_SHA" == "$(git rev-parse refs/remotes/origin/main)" ]]
+                  ;;
+                *) exit 1 ;;
+              esac
+              ;;
+            *) exit 1 ;;
+          esac
+          [[ "$release_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$publish" == "true" || "$publish" == "false" ]]
+          printf 'release_version=%s\npublish=%s\n' "$release_version" "$publish" >> "$GITHUB_OUTPUT"
 
       - name: Install Nub
         run: |
@@ -71,15 +102,15 @@ jobs:
         run: nub run verify
 
       - uses: docker/setup-buildx-action@v3
-        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        if: steps.release_identity.outputs.publish == 'true'
 
       - uses: azure/setup-helm@v4
-        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        if: steps.release_identity.outputs.publish == 'true'
         with:
           version: v3.19.2
 
       - name: Authenticate image publication preflight
-        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        if: steps.release_identity.outputs.publish == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -87,13 +118,13 @@ jobs:
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Authenticate chart publication preflight
-        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        if: steps.release_identity.outputs.publish == 'true'
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
 
       - name: Reject artifact identity reuse
-        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        if: steps.release_identity.outputs.publish == 'true'
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -140,7 +171,7 @@ jobs:
       - uses: docker/setup-buildx-action@v3
 
       - name: Authenticate to GHCR
-        if: github.event_name == 'workflow_dispatch' && inputs.publish
+        if: needs.validate.outputs.publish == 'true'
         uses: docker/login-action@v3
         with:
           registry: ghcr.io
@@ -153,13 +184,13 @@ jobs:
           context: .
           file: infra/docker/codeops-${{ matrix.image }}.Dockerfile
           platforms: linux/amd64
-          push: ${{ github.event_name == 'workflow_dispatch' && inputs.publish }}
+          push: ${{ needs.validate.outputs.publish == 'true' }}
           tags: ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}
           provenance: mode=max
           sbom: true
 
   chart:
-    if: github.event_name == 'workflow_dispatch' && inputs.publish
+    if: needs.validate.outputs.publish == 'true'
     needs: images
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -218,7 +249,7 @@ jobs:
 
       - name: Package and publish OCI chart
         env:
-          RELEASE_VERSION: ${{ inputs.version }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
           SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
@@ -238,16 +269,16 @@ jobs:
       - name: Attest packaged chart
         uses: actions/attest-build-provenance@v3
         with:
-          subject-path: .release/codeops-${{ inputs.version }}.tgz
+          subject-path: .release/codeops-${{ needs.validate.outputs.release_version }}.tgz
 
       - name: Retain exact release evidence
         uses: actions/upload-artifact@v4
         with:
-          name: codeops-release-${{ inputs.version }}-${{ github.sha }}
+          name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
           if-no-files-found: error
           retention-days: 90
           path: |
-            .release/codeops-${{ inputs.version }}.tgz
+            .release/codeops-${{ needs.validate.outputs.release_version }}.tgz
             image-plan.json
             release-manifest.json
             values.release.yaml
