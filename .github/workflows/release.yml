@@ -226,6 +226,13 @@ jobs:
       - name: Authenticate Helm to GHCR
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
 
+      - name: Authenticate Docker to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
       - name: Resolve immutable release image manifest
         env:
           SOURCE_SHA: ${{ github.sha }}
