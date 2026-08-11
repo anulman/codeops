@@ -1,0 +1,23 @@
+{
+  "name": "@codeops/codeops-orchestrator",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "tsc -p tsconfig.build.json && node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@codeops/codeops-contracts": "workspace:*",
+    "@temporalio/activity": "1.21.1",
+    "@temporalio/worker": "1.21.1",
+    "@temporalio/workflow": "1.21.1",
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "25.7.0",
+    "typescript": "6.0.3"
+  }
+}

@@ -1,0 +1,564 @@
+name: Release
+
+on:
+  push:
+    branches: [main]
+    tags:
+      - "v*.*.*"
+    paths:
+      - .github/workflows/release.yml
+      - LICENSE
+      - THIRD_PARTY_NOTICES.md
+      - CONTRIBUTING.md
+      - infra/charts/codeops/**
+      - infra/scripts/check-codeops-license-policy.mjs
+      - infra/license-policy/npm-license-overrides.json
+      - infra/scripts/codeops-release-images.mjs
+      - infra/scripts/codeops-release-chart.mjs
+      - infra/scripts/test-codeops-release-chart.mjs
+      - infra/scripts/test-codeops-quickstart-docs.mjs
+      - infra/scripts/test-codeops-release-images.mjs
+      - infra/scripts/test-codeops-release-workflow.mjs
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Exact SemVer release version without a v prefix
+        required: true
+        type: string
+      publish:
+        description: Publish ten images and the OCI Helm chart
+        required: true
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    outputs:
+      publish: ${{ steps.release_identity.outputs.publish }}
+      release_version: ${{ steps.release_identity.outputs.release_version }}
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Validate release identity
+        id: release_identity
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_PUBLISH: ${{ inputs.publish }}
+          INPUT_VERSION: ${{ inputs.version }}
+          SOURCE_REF: ${{ github.ref }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          release_version=0.0.0
+          publish=false
+          case "$EVENT_NAME" in
+            workflow_dispatch)
+              [[ "$SOURCE_REF" == "refs/heads/main" ]]
+              release_version="$INPUT_VERSION"
+              publish="$INPUT_PUBLISH"
+              ;;
+            push)
+              case "$SOURCE_REF" in
+                refs/heads/main) ;;
+                refs/tags/v*)
+                  release_version="${SOURCE_REF#refs/tags/v}"
+                  publish=true
+                  [[ "$SOURCE_SHA" == "$(git rev-parse refs/remotes/origin/main)" ]]
+                  ;;
+                *) exit 1 ;;
+              esac
+              ;;
+            *) exit 1 ;;
+          esac
+          [[ "$release_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$publish" == "true" || "$publish" == "false" ]]
+          printf 'release_version=%s\npublish=%s\n' "$release_version" "$publish" >> "$GITHUB_OUTPUT"
+
+      - name: Install Nub
+        run: |
+          set -euo pipefail
+          curl -fsSL https://nubjs.com/install.sh | bash -s -- 0.1.11
+          echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
+
+      - name: Install frozen dependencies
+        run: nub install --frozen-lockfile
+
+      - name: Verify exact source tree
+        run: nub run verify
+
+      - uses: docker/setup-buildx-action@v3
+        if: steps.release_identity.outputs.publish == 'true'
+
+      - uses: azure/setup-helm@v4
+        if: steps.release_identity.outputs.publish == 'true'
+        with:
+          version: v3.19.2
+
+      - name: Authenticate image publication preflight
+        if: steps.release_identity.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Authenticate chart publication preflight
+        if: steps.release_identity.outputs.publish == 'true'
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Reject artifact identity reuse
+        if: steps.release_identity.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ steps.release_identity.outputs.release_version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          if gh release view "v${RELEASE_VERSION}" --repo "${GITHUB_REPOSITORY}" >/dev/null 2>&1; then
+            printf 'refusing to overwrite existing GitHub Release v%s\n' "$RELEASE_VERSION" >&2
+            exit 1
+          fi
+          names=(acceptance-runner agent agents-ui control-gateway model-proxy orchestrator plane-controller session-control-gateway session-gateway session-runtime-worker)
+          for name in "${names[@]}"; do
+            ref="ghcr.io/anulman/codeops/${name}:sha-${SOURCE_SHA}"
+            if docker buildx imagetools inspect "$ref" >/dev/null 2>&1; then
+              printf 'refusing to overwrite existing image identity %s\n' "$ref" >&2
+              exit 1
+            fi
+          done
+          if helm show chart oci://ghcr.io/anulman/codeops/charts/codeops --version "$RELEASE_VERSION" >/dev/null 2>&1; then
+            printf 'refusing to overwrite existing chart version %s\n' "$RELEASE_VERSION" >&2
+            exit 1
+          fi
+
+  images:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - acceptance-runner
+          - agent
+          - agents-ui
+          - control-gateway
+          - model-proxy
+          - orchestrator
+          - plane-controller
+          - session-control-gateway
+          - session-gateway
+          - session-runtime-worker
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Authenticate to GHCR
+        if: needs.validate.outputs.publish == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build exact image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: infra/docker/codeops-${{ matrix.image }}.Dockerfile
+          platforms: linux/amd64
+          push: ${{ needs.validate.outputs.publish == 'true' }}
+          load: ${{ needs.validate.outputs.publish != 'true' }}
+          tags: ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}
+          provenance: ${{ needs.validate.outputs.publish == 'true' && 'mode=max' || 'false' }}
+          sbom: ${{ needs.validate.outputs.publish == 'true' }}
+
+      - name: Generate exact image SPDX SBOM
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}
+          registry-username: ${{ github.actor }}
+          registry-password: ${{ secrets.GITHUB_TOKEN }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.image }}.spdx.json
+          syft-version: v1.50.0
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Enforce exact image license policy
+        run: >-
+          node infra/scripts/check-codeops-license-policy.mjs
+          --sbom sbom-${{ matrix.image }}.spdx.json
+          --report license-policy-${{ matrix.image }}.json
+          --subject ${{ matrix.image }}
+
+      - name: Retain exact image license evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeops-license-${{ matrix.image }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 90
+          path: |
+            sbom-${{ matrix.image }}.spdx.json
+            license-policy-${{ matrix.image }}.json
+
+  chart:
+    if: needs.validate.outputs.publish == 'true'
+    needs: [validate, images]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+      packages: write
+      id-token: write
+      attestations: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.2
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Install Nub
+        run: |
+          set -euo pipefail
+          curl -fsSL https://nubjs.com/install.sh | bash -s -- 0.1.11
+          echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
+
+      - name: Install frozen dependencies
+        run: nub install --frozen-lockfile
+
+      - name: Authenticate Helm to GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Authenticate Docker to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Resolve immutable release image manifest
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+          POSTGRES_DIGEST: sha256:9b18b78397054fce88a9552e9d5a3ad5bb7fd258c5b3cc1c5028e46373d6ea8f
+        run: |
+          set -euo pipefail
+          node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const names = ["acceptance-runner","agent","agents-ui","control-gateway","model-proxy","orchestrator","plane-controller","session-control-gateway","session-gateway","session-runtime-worker"];
+            const sourceSha = process.env.SOURCE_SHA;
+            const services = names.map((name) => ({ name, repository: `ghcr.io/anulman/codeops/${name}`, sourceRef: `ghcr.io/anulman/codeops/${name}:sha-${sourceSha}` }));
+            writeFileSync("image-plan.json", JSON.stringify({ version: "codeops.image-publication-plan/v1", sourceSha, upstream: { postgresql: { repository: "postgres", digest: process.env.POSTGRES_DIGEST } }, services }, null, 2));
+          '
+          node infra/scripts/codeops-release-images.mjs image-plan.json release-manifest.json values.release.yaml
+
+      - name: Resolve locked chart dependencies
+        run: nub run prepare:chart
+
+      - name: Embed immutable release identity in chart
+        run: node infra/scripts/codeops-release-chart.mjs infra/charts/codeops values.release.yaml .release/chart
+
+      - name: Download exact image license evidence
+        uses: actions/download-artifact@v4
+        with:
+          pattern: codeops-license-*-${{ github.sha }}
+          path: .release/license-evidence
+          merge-multiple: true
+
+      - name: Verify complete image license evidence
+        run: |
+          set -euo pipefail
+          names=(acceptance-runner agent agents-ui control-gateway model-proxy orchestrator plane-controller session-control-gateway session-gateway session-runtime-worker)
+          for name in "${names[@]}"; do
+            test -s ".release/license-evidence/sbom-${name}.spdx.json"
+            test -s ".release/license-evidence/license-policy-${name}.json"
+            jq -e --arg subject "$name" '.schema == "codeops.license-policy-report/v1" and .subject == $subject and .policy.result == "pass"' \
+              ".release/license-evidence/license-policy-${name}.json" >/dev/null
+          done
+
+      - name: Package and publish OCI chart
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          helm package .release/chart --version "$RELEASE_VERSION" --app-version "$SOURCE_SHA" --destination .release
+          push_output=$(helm push ".release/codeops-${RELEASE_VERSION}.tgz" oci://ghcr.io/anulman/codeops/charts 2>&1)
+          printf '%s\n' "$push_output"
+          chart_digest=$(printf '%s\n' "$push_output" | sed -n 's/^Digest: \(sha256:[0-9a-f]\{64\}\)$/\1/p')
+          [[ "$chart_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          CHART_DIGEST="$chart_digest" node --input-type=module -e '
+            import { readFileSync, writeFileSync } from "node:fs";
+            const path = "release-manifest.json";
+            const manifest = JSON.parse(readFileSync(path, "utf8"));
+            manifest.chart = { repository: "oci://ghcr.io/anulman/codeops/charts/codeops", version: process.env.RELEASE_VERSION, digest: process.env.CHART_DIGEST, immutableRef: `oci://ghcr.io/anulman/codeops/charts/codeops@${process.env.CHART_DIGEST}` };
+            writeFileSync(path, `${JSON.stringify(manifest, null, 2)}\n`);
+          '
+
+      - name: Attest packaged chart
+        if: ${{ !github.event.repository.private }}
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: .release/codeops-${{ needs.validate.outputs.release_version }}.tgz
+
+      - name: Write release checksums
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          mkdir -p .release/evidence
+          cp \
+            ".release/codeops-${RELEASE_VERSION}.tgz" \
+            image-plan.json \
+            release-manifest.json \
+            values.release.yaml \
+            .release/evidence/
+          cp .release/license-evidence/* .release/evidence/
+          (
+            cd .release/evidence
+            find . -maxdepth 1 -type f ! -name SHA256SUMS -printf '%f\0' \
+              | sort -z \
+              | xargs -0 sha256sum \
+              > SHA256SUMS
+          )
+
+      - name: Retain exact release evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 90
+          path: .release/evidence/*
+
+  registry-install:
+    if: needs.validate.outputs.publish == 'true'
+    needs: [validate, chart]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.2
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.1
+
+      - name: Install kind
+        env:
+          KIND_VERSION: v0.32.0
+        run: |
+          set -euo pipefail
+          curl -fsSLo /tmp/kind-linux-amd64 "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLo /tmp/kind.sha256sum "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          (cd /tmp && sha256sum --check kind.sha256sum)
+          sudo install /tmp/kind-linux-amd64 /usr/local/bin/kind
+
+      - name: Create disposable cluster
+        run: kind create cluster --name codeops-registry --image kindest/node:v1.36.1 --wait 120s
+
+      - name: Authenticate to private GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Create isolated quickstart values
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          api_ip=$(kubectl get service kubernetes --output jsonpath='{.spec.clusterIP}')
+          API_IP="$api_ip" node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const values = {
+              agentsUi: { access: { issuer: "https://example.cloudflareaccess.com" } },
+              controlGateway: { kubernetesApiCidrs: [`${process.env.API_IP}/32`] },
+              quickstart: {
+                enabled: true,
+                openaiApiKey: "proof-openai-key-00000000000000000001",
+                registry: {
+                  enabled: true,
+                  server: "ghcr.io",
+                  username: process.env.GHCR_USERNAME,
+                  token: process.env.GHCR_TOKEN,
+                  email: "operator@example.com",
+                  secretName: "codeops-registry",
+                },
+                access: {
+                  audience: "proof-cloudflare-access-audience",
+                  allowedEmails: ["operator@example.com"],
+                },
+                repository: {
+                  identity: "example/codeops-proof",
+                  github: {
+                    readToken: "proof-github-read-token-000000000000001",
+                    writeToken: "proof-github-write-token-00000000000001",
+                    webhookSecret: "proof-github-webhook-secret-00000000001",
+                    reviewerIds: [12345678],
+                  },
+                  plane: {
+                    apiOrigin: "https://plane.example.com",
+                    workspaceSlug: "engineering",
+                    workspaceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    projectId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                    apiKey: "proof-plane-api-key-000000000000000001",
+                    webhookSecret: "proof-plane-webhook-secret-00000000001",
+                    humanActorIds: ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"],
+                    stateIds: {
+                      ready: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                      inProgress: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                      needsAttention: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                      complete: "11111111-1111-4111-8111-111111111111",
+                    },
+                    personas: [
+                      { handle: "@ai-web", userId: "20000000-0000-4000-8000-000000000001" },
+                      { handle: "@ai-security", userId: "20000000-0000-4000-8000-000000000002" },
+                      { handle: "@ai-database", userId: "20000000-0000-4000-8000-000000000003" },
+                      { handle: "@ai-infra", userId: "20000000-0000-4000-8000-000000000004" },
+                      { handle: "@ai-design", userId: "20000000-0000-4000-8000-000000000005" },
+                      { handle: "@ai-product", userId: "20000000-0000-4000-8000-000000000006" },
+                      { handle: "@ai-ml", userId: "20000000-0000-4000-8000-000000000007" },
+                    ],
+                  },
+                  context: {
+                    directory: "codeops-proof",
+                    agents: "# Agent instructions\nUse the repository instructions.",
+                    currentState: "# Current state\nThis proof repository is active.",
+                    decisions: "# Decisions\nKeep authority fail closed.",
+                    domain: "# Domain\nThe repository contains one proof service.",
+                    product: "# Product\nThe fixture validates registry onboarding.",
+                    sourceMap: "# Source map\nApplication sources are under src/.",
+                    soul: "# Soul\nUse short, direct technical language.",
+                  },
+                },
+              },
+            };
+            writeFileSync("/tmp/codeops-quickstart.json", `${JSON.stringify(values)}\n`, { mode: 0o600 });
+          '
+
+      - name: Install only from the OCI registry
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/codeops-registry-proof
+          pull_output=$(helm pull oci://ghcr.io/anulman/codeops/charts/codeops --version "$RELEASE_VERSION" --destination /tmp/codeops-registry-proof 2>&1)
+          printf '%s\n' "$pull_output"
+          pulled_digest=$(printf '%s\n' "$pull_output" | sed -n 's/^Digest: \(sha256:[0-9a-f]\{64\}\)$/\1/p')
+          [[ "$pulled_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$(helm show chart "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" | sed -n 's/^version: //p')" == "$RELEASE_VERSION" ]]
+          [[ "$(helm show chart "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" | sed -n 's/^appVersion: //p')" == "$SOURCE_SHA" ]]
+          helm install codeops oci://ghcr.io/anulman/codeops/charts/codeops \
+            --version "$RELEASE_VERSION" \
+            --namespace codeops \
+            --create-namespace \
+            --values /tmp/codeops-quickstart.json \
+            --wait \
+            --timeout 20m
+          [[ "$(helm status codeops --namespace codeops --output json | jq -r .info.status)" == "deployed" ]]
+          kubectl wait --namespace codeops --for=condition=Available deployment --all --timeout=5m
+          kubectl get deployment --namespace codeops --output json | jq -e --argjson expected '[
+            "ghcr.io/anulman/codeops/agents-ui",
+            "ghcr.io/anulman/codeops/control-gateway",
+            "ghcr.io/anulman/codeops/model-proxy",
+            "ghcr.io/anulman/codeops/session-control-gateway"
+          ]' '
+            [.items[].spec.template.spec.containers[].image]
+            | map(select(startswith("ghcr.io/anulman/codeops/"))) as $images
+            | ($images | all(test("@sha256:[0-9a-f]{64}$")))
+              and (($images | map(sub("@sha256:[0-9a-f]{64}$"; "")) | unique | sort) == $expected)
+          '
+          jq -n --arg version "$RELEASE_VERSION" --arg sourceSha "$SOURCE_SHA" --arg chartDigest "$pulled_digest" \
+            '{version:$version,sourceSha:$sourceSha,chartDigest:$chartDigest,installStatus:"deployed",sourceCheckout:false}' \
+            > /tmp/codeops-registry-proof/registry-install-evidence.json
+          helm uninstall codeops --namespace codeops --wait --timeout 5m
+          test -z "$(kubectl get deployment,statefulset,daemonset,job --namespace codeops --output name)"
+
+      - name: Retain registry-install evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeops-registry-install-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 90
+          path: /tmp/codeops-registry-proof/registry-install-evidence.json
+
+      - name: Delete disposable cluster
+        if: always()
+        run: kind delete cluster --name codeops-registry
+
+  github-release:
+    if: needs.validate.outputs.publish == 'true'
+    needs: [validate, registry-install]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download exact release evidence
+        uses: actions/download-artifact@v4
+        with:
+          name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
+          path: release
+
+      - name: Verify release checksums
+        working-directory: release
+        run: sha256sum --check SHA256SUMS
+
+      - name: Publish durable GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          tag="v${RELEASE_VERSION}"
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title "CodeOps ${tag}" \
+            --prerelease \
+            --generate-notes \
+            release/*

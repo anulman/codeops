@@ -1,0 +1,26 @@
+{
+  "schema": "codeops.npm-license-overrides/v1",
+  "packages": {
+    "@mapbox/node-pre-gyp@2.0.3": { "license": "BSD-3-Clause", "evidence": "npm registry metadata" },
+    "@rollup/pluginutils@5.4.0": { "license": "MIT", "evidence": "npm registry metadata" },
+    "@vercel/nft@1.10.2": { "license": "MIT", "evidence": "npm registry metadata" },
+    "abbrev@3.0.1": { "license": "ISC", "evidence": "npm registry metadata" },
+    "acorn-import-attributes@1.9.5": { "license": "MIT", "evidence": "npm registry metadata" },
+    "acorn@8.17.0": { "license": "MIT", "evidence": "npm registry metadata" },
+    "async-sema@3.1.1": { "license": "MIT", "evidence": "npm registry metadata" },
+    "bindings@1.5.0": { "license": "MIT", "evidence": "npm registry metadata" },
+    "consola@3.4.2": { "license": "MIT", "evidence": "npm registry metadata" },
+    "detect-libc@2.1.2": { "license": "Apache-2.0", "evidence": "npm registry metadata" },
+    "estree-walker@2.0.2": { "license": "MIT", "evidence": "npm registry metadata" },
+    "file-uri-to-path@1.0.0": { "license": "MIT", "evidence": "npm registry metadata" },
+    "glob@13.0.6": { "license": "BlueOak-1.0.0", "evidence": "npm registry metadata" },
+    "graceful-fs@4.2.11": { "license": "ISC", "evidence": "npm registry metadata" },
+    "node-gyp-build@4.8.4": { "license": "MIT", "evidence": "npm registry metadata" },
+    "nopt@8.1.0": { "license": "ISC", "evidence": "npm registry metadata" },
+    "nw-pre-gyp-module-test@0.0.1": { "license": "BSD-3-Clause", "evidence": "test fixture distributed inside @mapbox/node-pre-gyp@2.0.3" },
+    "picomatch@4.0.5": { "license": "MIT", "evidence": "npm registry metadata" },
+    "resolve-from@5.0.0": { "license": "MIT", "evidence": "npm registry metadata" },
+    "semver@7.8.5": { "license": "ISC", "evidence": "npm registry metadata" },
+    "unionfs@4.6.0": { "license": "Unlicense", "evidence": "LICENSE file in the distributed package" }
+  }
+}

@@ -1,0 +1,90 @@
+# Replace every empty or angle-bracket value. The released chart already
+# contains its exact image digests and control-plane source SHA.
+
+agentsUi:
+  access:
+    issuer: https://<cloudflare-team>.cloudflareaccess.com
+
+ingress:
+  className: nginx
+  host: <codeops-hostname>
+  tlsSecretName: codeops-tls
+  annotations:
+    cert-manager.io/cluster-issuer: <cluster-issuer>
+    nginx.ingress.kubernetes.io/proxy-body-size: 2m
+
+networkPolicy:
+  ingressNamespace: ingress-nginx
+
+controlGateway:
+  kubernetesApiCidrs:
+    - <kubernetes-api-service-ip>/32
+
+temporal:
+  address: <temporal-host>:7233
+  namespace: codeops
+  taskQueue: codeops
+
+quickstart:
+  enabled: true
+  openaiApiKey: ""
+
+  # Enable this block while CodeOps images are private in GHCR. The token needs
+  # read:packages. The chart creates and uses the image-pull Secret.
+  registry:
+    enabled: true
+    server: ghcr.io
+    username: ""
+    token: ""
+    email: ""
+    secretName: codeops-registry
+
+  access:
+    audience: ""
+    allowedEmails:
+      - <operator-email>
+
+  repository:
+    identity: <github-owner>/<github-repository>
+    github:
+      readToken: ""
+      writeToken: ""
+      webhookSecret: ""
+      reviewerIds:
+        - <numeric-github-user-id>
+
+    plane:
+      apiOrigin: https://<plane-host>
+      workspaceSlug: <workspace-slug>
+      workspaceId: ""
+      projectId: ""
+      apiKey: ""
+      webhookSecret: ""
+      humanActorIds:
+        - ""
+      stateIds:
+        ready: ""
+        inProgress: ""
+        needsAttention: ""
+        complete: ""
+      personas:
+        - { handle: "@ai-web", userId: "" }
+        - { handle: "@ai-security", userId: "" }
+        - { handle: "@ai-database", userId: "" }
+        - { handle: "@ai-infra", userId: "" }
+        - { handle: "@ai-design", userId: "" }
+        - { handle: "@ai-product", userId: "" }
+        - { handle: "@ai-ml", userId: "" }
+
+    # Paste the repository's exact context documents. CodeOps supplies generic
+    # AGENTS.md and SOUL.md baselines when those two values remain empty. The
+    # other five documents are repository-specific and must not be empty.
+    context:
+      directory: repository
+      agents: ""
+      currentState: ""
+      decisions: ""
+      domain: ""
+      product: ""
+      sourceMap: ""
+      soul: ""

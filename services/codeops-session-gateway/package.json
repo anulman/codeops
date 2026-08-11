@@ -1,0 +1,19 @@
+{
+  "name": "@codeops/codeops-session-gateway",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "tsc -p tsconfig.build.json && node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "@agentclientprotocol/sdk": "1.3.0"
+  },
+  "devDependencies": {
+    "@types/node": "25.7.0",
+    "typescript": "6.0.3"
+  }
+}

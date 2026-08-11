@@ -1,0 +1,248 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codeops-agent-__CODEOPS_RUN_SUFFIX__
+  labels:
+    codeops.example/run-id: __CODEOPS_RUN_ID__
+    codeops.example/agent-role: __CODEOPS_AGENT_ROLE__
+automountServiceAccountToken: false
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: codeops-agent-__CODEOPS_RUN_SUFFIX__
+  labels:
+    app.kubernetes.io/name: codeops-agent
+    app.kubernetes.io/part-of: codeops-trial0
+    codeops.example/run-id: __CODEOPS_RUN_ID__
+    codeops.example/agent-role: __CODEOPS_AGENT_ROLE__
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 3600
+  ttlSecondsAfterFinished: 3600
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: codeops-agent
+        app.kubernetes.io/part-of: codeops-trial0
+        codeops.example/run-id: __CODEOPS_RUN_ID__
+        codeops.example/agent-role: __CODEOPS_AGENT_ROLE__
+    spec:
+      restartPolicy: Never
+      serviceAccountName: codeops-agent-__CODEOPS_RUN_SUFFIX__
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        - name: codeops-registry
+      nodeSelector:
+        codeops.example/codeops: "true"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: workspace-builder
+          image: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -ceu
+            - |
+              auth="$(printf 'x-access-token:%s' "$CODEOPS_REPOSITORY_READ_TOKEN" | base64 | tr -d '\n')"
+              git init /workspace
+              git -c safe.directory=/workspace -C /workspace remote add origin "$CODEOPS_REPOSITORY"
+              git -c safe.directory=/workspace -C /workspace \
+                -c "http.extraHeader=Authorization: Basic $auth" \
+                fetch --depth=1 origin "$CODEOPS_BASE_SHA"
+              unset auth CODEOPS_REPOSITORY_READ_TOKEN
+              git -c safe.directory=/workspace -C /workspace checkout --detach FETCH_HEAD
+              git -c safe.directory=/workspace -C /workspace remote remove origin
+              test "$(git -c safe.directory=/workspace -C /workspace rev-parse HEAD)" = "$CODEOPS_BASE_SHA"
+          env:
+            - name: CODEOPS_BASE_SHA
+              value: __CODEOPS_BASE_SHA__
+            - name: CODEOPS_AGENT_ROLE
+              value: __CODEOPS_AGENT_ROLE__
+            - name: CODEOPS_REPOSITORY
+              value: __CODEOPS_REPOSITORY_URL__
+            - name: CODEOPS_REPOSITORY_READ_TOKEN
+              valueFrom:
+                secretKeyRef:
+                  name: codeops-run-__CODEOPS_RUN_SUFFIX__
+                  key: repository-read-token
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+            - name: run-input
+              mountPath: /input
+              readOnly: true
+      containers:
+        - name: session-gateway
+          image: ghcr.io/anulman/codeops/session-gateway@__CODEOPS_SESSION_GATEWAY_DIGEST__
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CODEOPS_RUN_ID
+              value: __CODEOPS_RUN_ID__
+            - name: CODEOPS_BASE_SHA
+              value: __CODEOPS_BASE_SHA__
+            - name: CODEOPS_AGENT_ROLE
+              value: __CODEOPS_AGENT_ROLE__
+            - name: CODEOPS_ACP_SOCKET
+              value: /run/codeops/agent.sock
+            - name: CODEOPS_CHECKPOINT_DIR
+              value: /checkpoint
+            - name: CODEOPS_WORKSPACE
+              value: /workspace
+            - name: CODEOPS_PROMPT_FILE
+              value: /input/agent-prompt.txt
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+              readOnly: __CODEOPS_WORKSPACE_READ_ONLY__
+            - name: session
+              mountPath: /run/codeops
+            - name: checkpoint
+              mountPath: /checkpoint
+            - name: temp
+              mountPath: /tmp
+            - name: run-input
+              mountPath: /input
+              readOnly: true
+        - name: coding-agent
+          image: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CODEOPS_RUN_ID
+              value: __CODEOPS_RUN_ID__
+            - name: CODEOPS_BASE_SHA
+              value: __CODEOPS_BASE_SHA__
+            - name: CODEOPS_AGENT_ROLE
+              value: __CODEOPS_AGENT_ROLE__
+            - name: CODEOPS_REPOSITORY
+              value: __CODEOPS_REPOSITORY_URL__
+            - name: CODEX_HOME
+              value: /tmp/codex-home
+            - name: CODEX_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codeops-run-__CODEOPS_RUN_SUFFIX__
+                  key: model-proxy-token
+            - name: DEFAULT_AUTH_REQUEST
+              value: '{"methodId":"api-key"}'
+            - name: CODEX_CONFIG
+              value: '{"model":"gpt-5.6-sol","model_reasoning_effort":"high","approvals_reviewer":"auto_review","web_search":"cached","model_provider":"codeops_proxy","model_providers":{"codeops_proxy":{"name":"CodeOps model proxy","base_url":"http://codeops-model-proxy:8080/v1","env_key":"CODEX_API_KEY","wire_api":"responses"}}}'
+            - name: CODEOPS_ACP_SOCKET
+              value: /run/codeops/agent.sock
+          resources:
+            requests:
+              cpu: 500m
+              memory: 1Gi
+            limits:
+              cpu: "2"
+              memory: 6Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: workspace
+              mountPath: /workspace
+              readOnly: __CODEOPS_WORKSPACE_READ_ONLY__
+            - name: session
+              mountPath: /run/codeops
+            - name: checkpoint
+              mountPath: /checkpoint
+            - name: temp
+              mountPath: /tmp
+      volumes:
+        - name: workspace
+          emptyDir: {}
+        - name: session
+          emptyDir:
+            medium: Memory
+            sizeLimit: 16Mi
+        - name: checkpoint
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: temp
+          emptyDir:
+            sizeLimit: 256Mi
+        - name: run-input
+          secret:
+            secretName: codeops-run-__CODEOPS_RUN_SUFFIX__
+            items:
+              - key: agent-prompt
+                path: agent-prompt.txt
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codeops-agent-__CODEOPS_RUN_SUFFIX__
+  labels:
+    codeops.example/run-id: __CODEOPS_RUN_ID__
+    codeops.example/agent-role: __CODEOPS_AGENT_ROLE__
+spec:
+  podSelector:
+    matchLabels:
+      codeops.example/run-id: __CODEOPS_RUN_ID__
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-model-proxy
+      ports:
+        - { protocol: TCP, port: 8080 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+      ports:
+        - { protocol: TCP, port: 443 }

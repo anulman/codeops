@@ -1,0 +1,41 @@
+{
+  "name": "@codeops/codeops-contracts",
+  "version": "0.1.0",
+  "license": "AGPL-3.0-only",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./managed-content": {
+      "types": "./dist/managed-content.d.ts",
+      "default": "./dist/managed-content.js"
+    },
+    "./adversarial-review": {
+      "types": "./dist/adversarial-review.d.ts",
+      "default": "./dist/adversarial-review.js"
+    },
+    "./session-broker": {
+      "types": "./dist/session-broker.d.ts",
+      "default": "./dist/session-broker.js"
+    },
+    "./session-runtime": {
+      "types": "./dist/session-runtime.d.ts",
+      "default": "./dist/session-runtime.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "test": "tsc -p tsconfig.build.json && node --test test/*.test.mjs",
+    "typecheck": "tsc -p tsconfig.json"
+  },
+  "dependencies": {
+    "zod": "3.25.76"
+  },
+  "devDependencies": {
+    "@types/node": "25.7.0",
+    "typescript": "6.0.3"
+  }
+}

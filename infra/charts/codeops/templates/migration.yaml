@@ -1,0 +1,100 @@
+{{- if .Values.migration.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ include "codeops.fullname" . }}-session-migrate
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-migration
+  annotations:
+    helm.sh/hook: post-install,pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-weight: "-10"
+spec:
+  backoffLimit: 0
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-migrate
+        app.kubernetes.io/component: session-migration
+        app.kubernetes.io/part-of: codeops
+    spec:
+      restartPolicy: Never
+      serviceAccountName: {{ include "codeops.fullname" . }}-session-gateway
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        {{- include "codeops.imagePullSecrets" . | nindent 8 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      initContainers:
+        - name: wait-for-postgresql
+          image: {{ include "codeops.image" .Values.postgresql.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command:
+            - sh
+            - -ec
+            - until pg_isready -h {{ ternary .Values.postgresql.serviceName .Values.postgresql.external.host (eq .Values.postgresql.deployment "managed") }} -p {{ ternary 5432 .Values.postgresql.external.port (eq .Values.postgresql.deployment "managed") }} -U agents; do sleep 2; done
+          resources:
+            requests: { cpu: 10m, memory: 16Mi }
+            limits: { cpu: 100m, memory: 64Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+      containers:
+        - name: migrate
+          image: {{ include "codeops.image" .Values.gateway.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [node, services/codeops-control-gateway/dist/session-migrate-main.js]
+          env:
+            - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/codeops/database-url }
+            - { name: CODEOPS_RUNTIME_DATABASE_URL_FILE, value: /var/run/secrets/codeops/runtime-database-url }
+            - { name: CODEOPS_RUNTIME_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops/runtime-database-role }
+            {{- if eq .Values.jetstream.driver "jetstream" }}
+            - { name: CODEOPS_LIFECYCLE_RELAY_DATABASE_URL_FILE, value: /var/run/secrets/codeops-relay/database-url }
+            - { name: CODEOPS_LIFECYCLE_RELAY_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops-relay/database-role }
+            {{- end }}
+          resources:
+            requests: { cpu: 25m, memory: 64Mi }
+            limits: { cpu: 250m, memory: 256Mi }
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
+            {{- if eq .Values.jetstream.driver "jetstream" }}
+            - { name: relay-authority, mountPath: /var/run/secrets/codeops-relay, readOnly: true }
+            {{- end }}
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - name: secrets
+          secret:
+            secretName: {{ .Values.gateway.secretName }}
+            defaultMode: 256
+            items:
+              - { key: database-url, path: database-url }
+              - { key: runtime-database-url, path: runtime-database-url }
+              - { key: runtime-database-role, path: runtime-database-role }
+        {{- if eq .Values.jetstream.driver "jetstream" }}
+        - name: relay-authority
+          secret:
+            secretName: {{ .Values.lifecycleRelay.secretName }}
+            defaultMode: 256
+            items:
+              - { key: {{ .Values.lifecycleRelay.databaseUrlKey }}, path: database-url }
+              - { key: {{ .Values.lifecycleRelay.databaseRoleKey }}, path: database-role }
+        {{- end }}
+        - name: temp
+          emptyDir: { sizeLimit: 32Mi }
+{{- end }}

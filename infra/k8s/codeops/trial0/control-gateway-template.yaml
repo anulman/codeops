@@ -1,0 +1,505 @@
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codeops-control-gateway
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: codeops-control-gateway
+rules:
+  - apiGroups: [""]
+    resources: [serviceaccounts]
+    verbs: [create, get, delete]
+  - apiGroups: [""]
+    resources: [secrets]
+    verbs: [create, delete]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+  - apiGroups: [""]
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get, delete]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [create, get, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: codeops-control-gateway
+subjects:
+  - kind: ServiceAccount
+    name: codeops-control-gateway
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: codeops-control-gateway
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: codeops-control-gateway-evidence
+spec:
+  accessModes: [ReadWriteOnce]
+  storageClassName: csi-cinder-high-speed
+  resources:
+    requests:
+      storage: 2Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codeops-control-gateway
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: codeops-control-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: codeops-control-gateway
+        app.kubernetes.io/part-of: codeops-trial0
+    spec:
+      serviceAccountName: codeops-control-gateway
+      enableServiceLinks: false
+      imagePullSecrets:
+        - name: codeops-registry
+      nodeSelector:
+        codeops.example/codeops: "true"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: gateway
+          image: ghcr.io/anulman/codeops/control-gateway@__CODEOPS_CONTROL_GATEWAY_DIGEST__
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: CODEOPS_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
+            - name: CODEOPS_REPOSITORY_URL
+              value: https://github.com/example-org/example-repository
+            - name: CODEOPS_AGENT_IMAGE
+              value: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
+            - name: CODEOPS_SESSION_GATEWAY_IMAGE
+              value: ghcr.io/anulman/codeops/session-gateway@__CODEOPS_SESSION_GATEWAY_DIGEST__
+            - name: CODEOPS_DISPATCH_TOKEN_FILE
+              value: /var/run/secrets/codeops-dispatch/token
+            - name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE
+              value: /var/run/secrets/codeops-repository-head/token
+            - name: CODEOPS_REPOSITORY_READ_TOKEN_FILE
+              value: /var/run/secrets/codeops-runtime/repository-read-token
+            - name: CODEOPS_PUBLICATION_TOKEN_FILE
+              value: /var/run/secrets/codeops-publication/token
+            - name: CODEOPS_REPOSITORY_WRITE_TOKEN_FILE
+              value: /var/run/secrets/codeops-publisher/repository-write-token
+            - name: CODEOPS_REQUIRED_REVIEW_CHECK_NAMES
+              value: Acceptance Runner Guardrails,PR Guardrails,Release
+            - name: CODEOPS_MODEL_PROXY_ORIGIN
+              value: http://codeops-model-proxy:8080
+            - name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE
+              value: /var/run/secrets/codeops-model-proxy/signing-key
+            - name: CODEOPS_EVIDENCE_ROOT
+              value: /var/lib/codeops
+            - name: CODEOPS_DATABASE_URL_FILE
+              value: /var/run/secrets/codeops-session-broker/database-url
+            - name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE
+              value: /var/run/secrets/codeops-session-read/token
+            - name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE
+              value: /var/run/secrets/codeops-session-write/token
+            - name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE
+              value: /var/run/secrets/codeops-session-runtime-worker/token
+            - name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE
+              value: /var/run/secrets/codeops-session-job-initialization/token
+            - name: CODEOPS_SESSION_RUNTIME_WORKER_ID
+              value: acp-worker:primary
+            - name: CODEOPS_HTTP_HOST
+              value: 0.0.0.0
+            - name: CODEOPS_HTTP_PORT
+              value: "8080"
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 256Mi
+            limits:
+              cpu: 500m
+              memory: 1Gi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+          volumeMounts:
+            - name: evidence
+              mountPath: /var/lib/codeops
+            - name: dispatch-auth
+              mountPath: /var/run/secrets/codeops-dispatch
+              readOnly: true
+            - name: repository-head-auth
+              mountPath: /var/run/secrets/codeops-repository-head
+              readOnly: true
+            - name: runtime-credentials
+              mountPath: /var/run/secrets/codeops-runtime
+              readOnly: true
+            - name: publication-auth
+              mountPath: /var/run/secrets/codeops-publication
+              readOnly: true
+            - name: publisher-credentials
+              mountPath: /var/run/secrets/codeops-publisher
+              readOnly: true
+            - name: model-proxy-auth
+              mountPath: /var/run/secrets/codeops-model-proxy
+              readOnly: true
+            - name: session-broker-database
+              mountPath: /var/run/secrets/codeops-session-broker
+              readOnly: true
+            - name: session-broker-read-auth
+              mountPath: /var/run/secrets/codeops-session-read
+              readOnly: true
+            - name: session-broker-write-auth
+              mountPath: /var/run/secrets/codeops-session-write
+              readOnly: true
+            - name: session-runtime-worker-auth
+              mountPath: /var/run/secrets/codeops-session-runtime-worker
+              readOnly: true
+            - name: session-job-initialization-auth
+              mountPath: /var/run/secrets/codeops-session-job-initialization
+              readOnly: true
+            - name: temp
+              mountPath: /tmp
+      volumes:
+        - name: evidence
+          persistentVolumeClaim:
+            claimName: codeops-control-gateway-evidence
+        - name: dispatch-auth
+          secret:
+            secretName: codeops-agent-dispatch-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: repository-head-auth
+          secret:
+            secretName: codeops-repository-head-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: runtime-credentials
+          secret:
+            secretName: codeops-agent-source-credentials
+            defaultMode: 256
+            items:
+              - key: repository-read-token
+                path: repository-read-token
+        - name: publication-auth
+          secret:
+            secretName: codeops-publication-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: publisher-credentials
+          secret:
+            secretName: codeops-publisher-credentials
+            defaultMode: 256
+            items:
+              - key: repository-write-token
+                path: repository-write-token
+        - name: model-proxy-auth
+          secret:
+            secretName: codeops-model-proxy-credentials
+            defaultMode: 256
+            items:
+              - key: signing-key
+                path: signing-key
+        - name: session-broker-database
+          secret:
+            secretName: codeops-session-broker-database
+            defaultMode: 256
+            items:
+              - key: database-url
+                path: database-url
+        - name: session-broker-read-auth
+          secret:
+            secretName: codeops-session-broker-read-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: session-broker-write-auth
+          secret:
+            secretName: codeops-session-broker-write-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: session-runtime-worker-auth
+          secret:
+            secretName: codeops-session-runtime-worker-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: session-job-initialization-auth
+          secret:
+            secretName: codeops-session-job-initialization-auth
+            defaultMode: 256
+            items:
+              - key: token
+                path: token
+        - name: temp
+          emptyDir:
+            sizeLimit: 64Mi
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: codeops-control-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: codeops-control-gateway
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codeops-control-gateway
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: codeops-control-gateway
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-orchestrator
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-plane-controller
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-agents-ui
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-session-runtime-worker
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    - to:
+        - ipBlock:
+            cidr: __CODEOPS_KUBERNETES_API_CIDR__
+      ports:
+        - { protocol: TCP, port: 443 }
+        # OVH's kubernetes Service DNATs 443 to the same exact /32 on 6443.
+        # CNIs may enforce egress after that translation.
+        - { protocol: TCP, port: 6443 }
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/poolerName: codeops-postgres-cnpg-pgbouncer
+      ports:
+        - { protocol: TCP, port: 5432 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+      ports:
+        - { protocol: TCP, port: 443 }
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codeops-model-proxy
+automountServiceAccountToken: false
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: codeops-model-proxy
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: codeops-model-proxy
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: codeops-model-proxy
+        app.kubernetes.io/part-of: codeops-trial0
+    spec:
+      serviceAccountName: codeops-model-proxy
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        - name: codeops-registry
+      nodeSelector:
+        codeops.example/codeops: "true"
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: proxy
+          image: ghcr.io/anulman/codeops/model-proxy@__CODEOPS_MODEL_PROXY_DIGEST__
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: OPENAI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codeops-model-proxy-credentials
+                  key: openai-api-key
+            - name: CODEOPS_MODEL_PROXY_SIGNING_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: codeops-model-proxy-credentials
+                  key: signing-key
+            - name: CODEOPS_MODEL_PROXY_HOST
+              value: 0.0.0.0
+            - name: CODEOPS_MODEL_PROXY_PORT
+              value: "8080"
+          ports:
+            - name: http
+              containerPort: 8080
+          startupProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 2
+            failureThreshold: 60
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 10
+            failureThreshold: 6
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: 500m
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: [ALL]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: codeops-model-proxy
+spec:
+  selector:
+    app.kubernetes.io/name: codeops-model-proxy
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: codeops-model-proxy
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: codeops-model-proxy
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [codeops-agent, codeops-session-runtime-worker]
+      ports:
+        - { protocol: TCP, port: 8080 }
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+      ports:
+        - { protocol: TCP, port: 443 }
