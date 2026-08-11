@@ -31,6 +31,22 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
     ({ name }) => name === "Attest packaged chart",
   );
   assert.equal(chartAttestation.if, "${{ !github.event.repository.private }}");
+  const registryInstall = workflow.jobs["registry-install"];
+  assert.equal(registryInstall.if, "needs.validate.outputs.publish == 'true'");
+  assert.deepEqual(registryInstall.needs, ["validate", "chart"]);
+  assert.equal(registryInstall.permissions.packages, "read");
+  assert.equal(
+    registryInstall.steps.some(({ uses }) => uses === "actions/checkout@v4"),
+    false,
+  );
+  const install = registryInstall.steps.find(
+    ({ name }) => name === "Install only from the OCI registry",
+  );
+  assert.match(install.run, /helm pull oci:\/\/ghcr\.io\/anulman\/codeops\/charts\/codeops/);
+  assert.match(install.run, /helm install codeops oci:\/\/ghcr\.io\/anulman\/codeops\/charts\/codeops/);
+  assert.match(install.run, /sourceCheckout:false/);
+  assert.match(install.run, /kubectl wait --namespace codeops --for=condition=Available deployment --all/);
+  assert.match(install.run, /helm uninstall codeops/);
   const serialized = JSON.stringify(workflow);
   assert.match(serialized, /Reject artifact identity reuse/);
   assert.match(serialized, /refs\/remotes\/origin\/main/);

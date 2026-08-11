@@ -290,3 +290,157 @@ jobs:
             image-plan.json
             release-manifest.json
             values.release.yaml
+
+  registry-install:
+    if: needs.validate.outputs.publish == 'true'
+    needs: [validate, chart]
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      packages: read
+    steps:
+      - uses: azure/setup-helm@v4
+        with:
+          version: v3.19.2
+
+      - uses: azure/setup-kubectl@v4
+        with:
+          version: v1.36.1
+
+      - name: Install kind
+        env:
+          KIND_VERSION: v0.32.0
+        run: |
+          set -euo pipefail
+          curl -fsSLo /tmp/kind "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLo /tmp/kind.sha256sum "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          (cd /tmp && sha256sum --check kind.sha256sum)
+          sudo install /tmp/kind /usr/local/bin/kind
+
+      - name: Create disposable cluster
+        run: kind create cluster --name codeops-registry --image kindest/node:v1.36.1 --wait 120s
+
+      - name: Authenticate to private GHCR
+        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+
+      - name: Create isolated quickstart values
+        env:
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GHCR_USERNAME: ${{ github.actor }}
+        run: |
+          set -euo pipefail
+          api_ip=$(kubectl get service kubernetes --output jsonpath='{.spec.clusterIP}')
+          API_IP="$api_ip" node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const values = {
+              agentsUi: { access: { issuer: "https://example.cloudflareaccess.com" } },
+              controlGateway: { kubernetesApiCidrs: [`${process.env.API_IP}/32`] },
+              quickstart: {
+                enabled: true,
+                openaiApiKey: "proof-openai-key-00000000000000000001",
+                registry: {
+                  enabled: true,
+                  server: "ghcr.io",
+                  username: process.env.GHCR_USERNAME,
+                  token: process.env.GHCR_TOKEN,
+                  email: "operator@example.com",
+                  secretName: "codeops-registry",
+                },
+                access: {
+                  audience: "proof-cloudflare-access-audience",
+                  allowedEmails: ["operator@example.com"],
+                },
+                repository: {
+                  identity: "example/codeops-proof",
+                  github: {
+                    readToken: "proof-github-read-token-000000000000001",
+                    writeToken: "proof-github-write-token-00000000000001",
+                    webhookSecret: "proof-github-webhook-secret-00000000001",
+                    reviewerIds: [12345678],
+                  },
+                  plane: {
+                    apiOrigin: "https://plane.example.com",
+                    workspaceSlug: "engineering",
+                    workspaceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    projectId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                    apiKey: "proof-plane-api-key-000000000000000001",
+                    webhookSecret: "proof-plane-webhook-secret-00000000001",
+                    humanActorIds: ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"],
+                    stateIds: {
+                      ready: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                      inProgress: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                      needsAttention: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                      complete: "11111111-1111-4111-8111-111111111111",
+                    },
+                    personas: [
+                      { handle: "@ai-web", userId: "20000000-0000-4000-8000-000000000001" },
+                      { handle: "@ai-security", userId: "20000000-0000-4000-8000-000000000002" },
+                      { handle: "@ai-database", userId: "20000000-0000-4000-8000-000000000003" },
+                      { handle: "@ai-infra", userId: "20000000-0000-4000-8000-000000000004" },
+                      { handle: "@ai-design", userId: "20000000-0000-4000-8000-000000000005" },
+                      { handle: "@ai-product", userId: "20000000-0000-4000-8000-000000000006" },
+                      { handle: "@ai-ml", userId: "20000000-0000-4000-8000-000000000007" },
+                    ],
+                  },
+                  context: {
+                    directory: "codeops-proof",
+                    agents: "# Agent instructions\nUse the repository instructions.",
+                    currentState: "# Current state\nThis proof repository is active.",
+                    decisions: "# Decisions\nKeep authority fail closed.",
+                    domain: "# Domain\nThe repository contains one proof service.",
+                    product: "# Product\nThe fixture validates registry onboarding.",
+                    sourceMap: "# Source map\nApplication sources are under src/.",
+                    soul: "# Soul\nUse short, direct technical language.",
+                  },
+                },
+              },
+            };
+            writeFileSync("/tmp/codeops-quickstart.json", `${JSON.stringify(values)}\n`, { mode: 0o600 });
+          '
+
+      - name: Install only from the OCI registry
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/codeops-registry-proof
+          pull_output=$(helm pull oci://ghcr.io/anulman/codeops/charts/codeops --version "$RELEASE_VERSION" --destination /tmp/codeops-registry-proof 2>&1)
+          printf '%s\n' "$pull_output"
+          pulled_digest=$(printf '%s\n' "$pull_output" | sed -n 's/^Digest: \(sha256:[0-9a-f]\{64\}\)$/\1/p')
+          [[ "$pulled_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$(helm show chart "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" | sed -n 's/^version: //p')" == "$RELEASE_VERSION" ]]
+          [[ "$(helm show chart "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" | sed -n 's/^appVersion: //p')" == "$SOURCE_SHA" ]]
+          helm install codeops oci://ghcr.io/anulman/codeops/charts/codeops \
+            --version "$RELEASE_VERSION" \
+            --namespace codeops \
+            --create-namespace \
+            --values /tmp/codeops-quickstart.json \
+            --wait \
+            --timeout 20m
+          [[ "$(helm status codeops --namespace codeops --output json | jq -r .info.status)" == "deployed" ]]
+          kubectl wait --namespace codeops --for=condition=Available deployment --all --timeout=5m
+          kubectl get deployment --namespace codeops --output json | jq -e --arg sha "$SOURCE_SHA" '
+            [.items[].spec.template.spec.containers[].image]
+            | map(select(startswith("ghcr.io/anulman/codeops/")))
+            | length == 7 and all(test("@sha256:[0-9a-f]{64}$"))
+          '
+          jq -n --arg version "$RELEASE_VERSION" --arg sourceSha "$SOURCE_SHA" --arg chartDigest "$pulled_digest" \
+            '{version:$version,sourceSha:$sourceSha,chartDigest:$chartDigest,installStatus:"deployed",sourceCheckout:false}' \
+            > /tmp/codeops-registry-proof/registry-install-evidence.json
+          helm uninstall codeops --namespace codeops --wait --timeout 5m
+          test -z "$(kubectl get deployment,statefulset,daemonset,job --namespace codeops --output name)"
+
+      - name: Retain registry-install evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeops-registry-install-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
+          if-no-files-found: warn
+          retention-days: 90
+          path: /tmp/codeops-registry-proof/registry-install-evidence.json
+
+      - name: Delete disposable cluster
+        if: always()
+        run: kind delete cluster --name codeops-registry
