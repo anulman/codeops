@@ -191,7 +191,7 @@ jobs:
 
   chart:
     if: needs.validate.outputs.publish == 'true'
-    needs: images
+    needs: [validate, images]
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:

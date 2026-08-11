@@ -22,6 +22,7 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.equal(build.with.push, "${{ needs.validate.outputs.publish == 'true' }}");
   assert.equal(build.with.tags, "ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}");
   assert.equal(workflow.jobs.chart.if, "needs.validate.outputs.publish == 'true'");
+  assert.deepEqual(workflow.jobs.chart.needs, ["validate", "images"]);
   const chartDockerLogin = workflow.jobs.chart.steps.find(
     ({ name }) => name === "Authenticate Docker to GHCR",
   );
