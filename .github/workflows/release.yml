@@ -210,6 +210,9 @@ jobs:
           '
           node infra/scripts/codeops-release-images.mjs image-plan.json release-manifest.json values.release.yaml
 
+      - name: Resolve locked chart dependencies
+        run: nub run prepare:chart
+
       - name: Embed immutable release identity in chart
         run: node infra/scripts/codeops-release-chart.mjs infra/charts/codeops values.release.yaml .release/chart
 

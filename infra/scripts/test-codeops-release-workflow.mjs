@@ -28,6 +28,7 @@ test("release stays manual and publishes one exact immutable bundle", async () =
   assert.match(serialized, /oci:\/\/ghcr\.io\/anulman\/codeops\/charts/);
   assert.match(serialized, /codeops-release-images\.mjs/);
   assert.match(serialized, /codeops-release-chart\.mjs/);
+  assert.match(serialized, /nub run prepare:chart/);
   assert.match(serialized, /helm package \.release\/chart/);
   assert.match(serialized, /release-manifest\.json/);
   assert.match(serialized, /values\.release\.yaml/);
