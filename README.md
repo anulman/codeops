@@ -20,6 +20,9 @@ multi-repository acceptance suites pass.
 - `services/codeops-orchestrator`: Temporal workflow worker
 - `infra/charts/codeops`: CodeOps Helm chart
 
+The accepted lifecycle-kernel and event-delivery boundary is documented in
+[`docs/architecture/lifecycle-kernel-and-event-delivery.md`](docs/architecture/lifecycle-kernel-and-event-delivery.md).
+
 The Helm package deploys the Agents UI, session control gateway, trusted
 control gateway, Plane controller, Temporal orchestrator, model proxy, and
 PostgreSQL. It provides immutable image references for the Agent Job, session

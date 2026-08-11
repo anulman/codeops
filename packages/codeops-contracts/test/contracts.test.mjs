@@ -20,7 +20,10 @@ import {
   githubPullRequestStackLinkSchema,
   githubPullRequestStackPositionSchema,
   githubPullRequestStackSnapshotSchema,
+  lifecycleProfileSchema,
+  lifecycleStateSchema,
   planeCommentEventSchema,
+  providerLifecycleBindingSchema,
   qaContractResearcherPolicy,
   readinessGateSchema,
   researchMutationBatchSchema,
@@ -30,6 +33,7 @@ import {
   verifyPlaneWebhookSignature,
   workflowEventSchema,
   workflowStateSchema,
+  workItemLifecycleEventSchema,
   workItemRequestSchema,
 } from "../dist/index.js";
 
@@ -666,6 +670,240 @@ test("accepts every workflow state with deterministic logical IDs", () => {
     };
     assert.equal(workflowEventSchema.parse(event).state, state);
   }
+});
+
+test("defines one fixed lifecycle profile with review separate from attention", () => {
+  const profile = {
+    version: contractVersions.lifecycleProfile,
+    phases: [
+      "backlog",
+      "ready",
+      "in_progress",
+      "in_review",
+      "done",
+      "cancelled",
+    ],
+    reviewRequired: true,
+  };
+  assert.deepEqual(lifecycleProfileSchema.parse(profile), profile);
+  assert.deepEqual(
+    lifecycleStateSchema.parse({ phase: "in_review", attention: "needed" }),
+    { phase: "in_review", attention: "needed" },
+  );
+  assert.throws(() =>
+    lifecycleStateSchema.parse({ phase: "done", attention: "needed" }),
+  );
+  assert.throws(() =>
+    lifecycleProfileSchema.parse({
+      ...profile,
+      phases: profile.phases.filter((phase) => phase !== "in_review"),
+    }),
+  );
+});
+
+test("maps many provider states to one CodeOps state without ambiguity", () => {
+  const binding = {
+    version: contractVersions.providerLifecycleBinding,
+    provider: "github_projects",
+    workspaceId: "organization_123",
+    projectId: "project_456",
+    states: [
+      {
+        providerStateId: "review",
+        codeopsState: "in_review",
+        preferredForProjection: true,
+      },
+      {
+        providerStateId: "qa",
+        codeopsState: "in_review",
+        preferredForProjection: false,
+      },
+      {
+        providerStateId: "security_review",
+        codeopsState: "in_review",
+        preferredForProjection: false,
+      },
+      {
+        providerStateId: "blocked",
+        codeopsState: "needs_attention",
+        preferredForProjection: true,
+      },
+    ],
+  };
+  assert.deepEqual(providerLifecycleBindingSchema.parse(binding), binding);
+  assert.throws(() =>
+    providerLifecycleBindingSchema.parse({
+      ...binding,
+      states: [
+        ...binding.states,
+        {
+          providerStateId: "qa",
+          codeopsState: "needs_attention",
+          preferredForProjection: false,
+        },
+      ],
+    }),
+  );
+  assert.throws(() =>
+    providerLifecycleBindingSchema.parse({
+      ...binding,
+      states: binding.states.map((state) => ({
+        ...state,
+        preferredForProjection: false,
+      })),
+    }),
+  );
+  assert.throws(() =>
+    providerLifecycleBindingSchema.parse({
+      ...binding,
+      states: binding.states.map((state) => ({
+        ...state,
+        preferredForProjection:
+          state.codeopsState === "in_review" ? true : state.preferredForProjection,
+      })),
+    }),
+  );
+});
+
+test("binds a deterministic immutable event to one lifecycle aggregate revision", () => {
+  const transitionId = createTransitionId({
+    version: contractVersions.workItemLifecycleEvent,
+    workflowId: "workflow-123",
+    transitionKey: "lifecycle-ready",
+  });
+  const event = {
+    version: contractVersions.workItemLifecycleEvent,
+    eventId: createEventId({
+      version: contractVersions.workItemLifecycleEvent,
+      workflowId: "workflow-123",
+      transitionId,
+    }),
+    transitionId,
+    transitionKey: "lifecycle-ready",
+    command: "register",
+    repository: { owner: "anulman", name: "codeops" },
+    provider: {
+      kind: "plane",
+      workspaceId: "workspace_123",
+      projectId: "project_456",
+    },
+    workItemId: "work_item_789",
+    workflowId: "workflow-123",
+    runId: "run-123",
+    sequence: 1,
+    previousState: null,
+    state: { phase: "ready", attention: "clear" },
+    sourceSha: sha,
+    occurredAt: now,
+    summary: "The admitted work item is ready.",
+    evidence: [],
+  };
+  assert.deepEqual(workItemLifecycleEventSchema.parse(event), event);
+  assert.throws(() =>
+    workItemLifecycleEventSchema.parse({ ...event, sequence: 2 }),
+  );
+  assert.throws(() =>
+    workItemLifecycleEventSchema.parse({
+      ...event,
+      sequence: 2,
+      previousState: event.state,
+    }),
+  );
+  assert.throws(() =>
+    workItemLifecycleEventSchema.parse({
+      ...event,
+      eventId: createEventId({
+        version: contractVersions.workItemLifecycleEvent,
+        workflowId: "workflow-123",
+        transitionId: "transition:wrong",
+      }),
+    }),
+  );
+  assert.throws(() =>
+    workItemLifecycleEventSchema.parse({
+      ...event,
+      command: "approve_review",
+    }),
+  );
+});
+
+test("keeps normal review transitions separate from the attention condition", () => {
+  function eventFor({ command, transitionKey, sequence, previousState, state }) {
+    const transitionId = createTransitionId({
+      version: contractVersions.workItemLifecycleEvent,
+      workflowId: "workflow-review",
+      transitionKey,
+    });
+    return {
+      version: contractVersions.workItemLifecycleEvent,
+      eventId: createEventId({
+        version: contractVersions.workItemLifecycleEvent,
+        workflowId: "workflow-review",
+        transitionId,
+      }),
+      transitionId,
+      transitionKey,
+      command,
+      repository: { owner: "anulman", name: "codeops" },
+      provider: {
+        kind: "github_projects",
+        workspaceId: "organization_123",
+        projectId: "project_456",
+      },
+      workItemId: "work_item_review",
+      workflowId: "workflow-review",
+      runId: "run-review",
+      sequence,
+      previousState,
+      state,
+      sourceSha: sha,
+      occurredAt: now,
+      summary: `Applied ${command}.`,
+      evidence: [],
+    };
+  }
+  const inProgress = { phase: "in_progress", attention: "clear" };
+  const inReview = { phase: "in_review", attention: "clear" };
+  assert.equal(
+    workItemLifecycleEventSchema.parse(eventFor({
+      command: "request_review",
+      transitionKey: "request-review",
+      sequence: 2,
+      previousState: inProgress,
+      state: inReview,
+    })).state.phase,
+    "in_review",
+  );
+  const attention = { phase: "in_review", attention: "needed" };
+  assert.equal(
+    workItemLifecycleEventSchema.parse(eventFor({
+      command: "request_attention",
+      transitionKey: "request-attention",
+      sequence: 3,
+      previousState: inReview,
+      state: attention,
+    })).state.attention,
+    "needed",
+  );
+  assert.equal(
+    workItemLifecycleEventSchema.parse(eventFor({
+      command: "resolve_attention",
+      transitionKey: "resolve-attention",
+      sequence: 4,
+      previousState: attention,
+      state: inReview,
+    })).state.phase,
+    "in_review",
+  );
+  assert.throws(() =>
+    workItemLifecycleEventSchema.parse(eventFor({
+      command: "request_changes",
+      transitionKey: "invalid-attention-as-review",
+      sequence: 3,
+      previousState: inReview,
+      state: attention,
+    })),
+  );
 });
 
 test("accepts every control command and all result states", () => {

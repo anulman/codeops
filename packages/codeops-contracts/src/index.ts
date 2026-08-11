@@ -85,6 +85,9 @@ export {
 
 const VERSION = {
   workItem: "codeops.work-item/v1",
+  lifecycleProfile: "codeops.lifecycle-profile/v1",
+  providerLifecycleBinding: "codeops.provider-lifecycle-binding/v1",
+  workItemLifecycleEvent: "codeops.work-item-lifecycle-event/v1",
   event: "codeops.workflow-event/v1",
   controlCommand: "codeops.control-command/v1",
   controlResult: "codeops.control-result/v1",
@@ -621,7 +624,7 @@ function logicalId(namespace: string, parts: Readonly<Record<string, string>>): 
 export function createTransitionId(input: {
   workflowId: string;
   transitionKey: string;
-  version?: typeof VERSION.event;
+  version?: typeof VERSION.event | typeof VERSION.workItemLifecycleEvent;
 }): string {
   return logicalId("transition", {
     version: input.version ?? VERSION.event,
@@ -633,7 +636,7 @@ export function createTransitionId(input: {
 export function createEventId(input: {
   workflowId: string;
   transitionId: string;
-  version?: typeof VERSION.event;
+  version?: typeof VERSION.event | typeof VERSION.workItemLifecycleEvent;
 }): string {
   return logicalId("event", {
     version: input.version ?? VERSION.event,
@@ -641,6 +644,232 @@ export function createEventId(input: {
     transitionId: identifier.parse(input.transitionId),
   });
 }
+
+export const lifecyclePhaseSchema = z.enum([
+  "backlog",
+  "ready",
+  "in_progress",
+  "in_review",
+  "done",
+  "cancelled",
+]);
+
+export const lifecycleAttentionSchema = z.enum(["clear", "needed"]);
+
+export const lifecycleCommandSchema = z.enum([
+  "register",
+  "move_to_backlog",
+  "mark_ready",
+  "start_work",
+  "request_review",
+  "approve_review",
+  "request_changes",
+  "complete",
+  "cancel",
+  "reopen",
+  "request_attention",
+  "resolve_attention",
+]);
+
+export const lifecycleStateSchema = z
+  .object({
+    phase: lifecyclePhaseSchema,
+    attention: lifecycleAttentionSchema,
+  })
+  .strict()
+  .superRefine((state, context) => {
+    if (
+      state.attention === "needed" &&
+      (state.phase === "done" || state.phase === "cancelled")
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["attention"],
+        message: "a terminal lifecycle phase cannot need attention",
+      });
+    }
+  });
+
+export const lifecycleProfileSchema = z
+  .object({
+    version: z.literal(VERSION.lifecycleProfile),
+    phases: z.tuple([
+      z.literal("backlog"),
+      z.literal("ready"),
+      z.literal("in_progress"),
+      z.literal("in_review"),
+      z.literal("done"),
+      z.literal("cancelled"),
+    ]),
+    reviewRequired: z.boolean(),
+  })
+  .strict();
+
+const providerOpaqueId = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:~=\/+\-]{0,255}$/);
+
+export const providerLifecycleStateSchema = z.union([
+  lifecyclePhaseSchema,
+  z.literal("needs_attention"),
+]);
+
+export const providerLifecycleBindingSchema = z
+  .object({
+    version: z.literal(VERSION.providerLifecycleBinding),
+    provider: z.enum(["plane", "github_issues", "github_projects", "custom"]),
+    workspaceId: providerOpaqueId,
+    projectId: providerOpaqueId,
+    states: z
+      .array(
+        z
+          .object({
+            providerStateId: providerOpaqueId,
+            codeopsState: providerLifecycleStateSchema,
+            preferredForProjection: z.boolean(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(100),
+  })
+  .strict()
+  .superRefine((binding, context) => {
+    const providerStateIds = new Set<string>();
+    const preferred = new Map<string, number>();
+    const configured = new Set<string>();
+    for (const [index, state] of binding.states.entries()) {
+      if (providerStateIds.has(state.providerStateId)) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["states", index, "providerStateId"],
+          message: "one provider state must map to exactly one CodeOps state",
+        });
+      }
+      providerStateIds.add(state.providerStateId);
+      configured.add(state.codeopsState);
+      if (state.preferredForProjection) {
+        preferred.set(
+          state.codeopsState,
+          (preferred.get(state.codeopsState) ?? 0) + 1,
+        );
+      }
+    }
+    for (const codeopsState of configured) {
+      if ((preferred.get(codeopsState) ?? 0) !== 1) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["states"],
+          message: `CodeOps state ${codeopsState} requires exactly one preferred provider projection`,
+        });
+      }
+    }
+  });
+
+export const workItemLifecycleEventSchema = z
+  .object({
+    version: z.literal(VERSION.workItemLifecycleEvent),
+    eventId: identifier,
+    transitionId: identifier,
+    transitionKey: identifier,
+    command: lifecycleCommandSchema,
+    repository,
+    provider: z
+      .object({
+        kind: z.enum(["plane", "github_issues", "github_projects", "custom"]),
+        workspaceId: providerOpaqueId,
+        projectId: providerOpaqueId,
+      })
+      .strict(),
+    workItemId: providerOpaqueId,
+    workflowId: workflowRunIdentifier,
+    runId: workflowRunIdentifier,
+    sequence: z.number().int().positive().max(1_000_000_000),
+    previousState: lifecycleStateSchema.nullable(),
+    state: lifecycleStateSchema,
+    sourceSha: gitSha,
+    occurredAt: isoDateTime,
+    summary: safeText(1_000),
+    evidence: z.array(evidenceReferenceSchema).max(32).default([]),
+  })
+  .strict()
+  .superRefine((event, context) => {
+    if ((event.sequence === 1) !== (event.previousState === null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["previousState"],
+        message: "only the first lifecycle event can omit its previous state",
+      });
+    }
+    if (
+      event.previousState !== null &&
+      canonicalSerialize(event.previousState) === canonicalSerialize(event.state)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["state"],
+        message: "a lifecycle event must change phase or attention",
+      });
+    }
+    const transitionId = createTransitionId(event);
+    if (event.transitionId !== transitionId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["transitionId"],
+        message: "transitionId does not match the logical lifecycle transition",
+      });
+    }
+    const eventId = createEventId(event);
+    if (event.eventId !== eventId) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["eventId"],
+        message: "eventId does not match the logical lifecycle event",
+      });
+    }
+    const previous = event.previousState;
+    const next = event.state;
+    const clear = next.attention === "clear";
+    const previousClear = previous?.attention === "clear";
+    const legal =
+      (event.command === "register" && previous === null && clear) ||
+      (event.command === "move_to_backlog" && previous !== null &&
+        previous.phase !== "done" && previous.phase !== "cancelled" &&
+        next.phase === "backlog" && clear) ||
+      (event.command === "mark_ready" && previous?.phase === "backlog" &&
+        previousClear && next.phase === "ready" && clear) ||
+      (event.command === "start_work" && previous?.phase === "ready" &&
+        previousClear && next.phase === "in_progress" && clear) ||
+      (event.command === "request_review" && previous?.phase === "in_progress" &&
+        previousClear && next.phase === "in_review" && clear) ||
+      (event.command === "approve_review" && previous?.phase === "in_review" &&
+        previousClear && next.phase === "done" && clear) ||
+      (event.command === "request_changes" && previous?.phase === "in_review" &&
+        previousClear && next.phase === "in_progress" && clear) ||
+      (event.command === "complete" && previous?.phase === "in_progress" &&
+        previousClear && next.phase === "done" && clear) ||
+      (event.command === "cancel" && previous !== null &&
+        previous.phase !== "done" && previous.phase !== "cancelled" &&
+        next.phase === "cancelled" && clear) ||
+      (event.command === "reopen" &&
+        (previous?.phase === "done" || previous?.phase === "cancelled") &&
+        next.phase === "backlog" && clear) ||
+      (event.command === "request_attention" && previous !== null &&
+        previous.attention === "clear" && next.attention === "needed" &&
+        next.phase === previous.phase) ||
+      (event.command === "resolve_attention" && previous !== null &&
+        previous.attention === "needed" && next.attention === "clear" &&
+        next.phase === previous.phase);
+    if (!legal) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["command"],
+        message: "lifecycle command does not authorize this state transition",
+      });
+    }
+  });
 
 export const workflowEventSchema = z
   .object({
@@ -1936,6 +2165,20 @@ export type GitHubPullRequestStackLink = z.infer<
 >;
 export type WorkflowTransitionNotice = z.infer<
   typeof workflowTransitionNoticeSchema
+>;
+export type LifecyclePhase = z.infer<typeof lifecyclePhaseSchema>;
+export type LifecycleAttention = z.infer<typeof lifecycleAttentionSchema>;
+export type LifecycleCommand = z.infer<typeof lifecycleCommandSchema>;
+export type LifecycleState = z.infer<typeof lifecycleStateSchema>;
+export type LifecycleProfile = z.infer<typeof lifecycleProfileSchema>;
+export type ProviderLifecycleState = z.infer<
+  typeof providerLifecycleStateSchema
+>;
+export type ProviderLifecycleBinding = z.infer<
+  typeof providerLifecycleBindingSchema
+>;
+export type WorkItemLifecycleEvent = z.infer<
+  typeof workItemLifecycleEventSchema
 >;
 export type WorkflowEvent = z.infer<typeof workflowEventSchema>;
 export type ControlCommand = z.infer<typeof controlCommandSchema>;
