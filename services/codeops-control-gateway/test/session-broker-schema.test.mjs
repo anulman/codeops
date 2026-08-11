@@ -61,8 +61,11 @@ test("defines an immutable lifecycle journal and one JetStream relay lease", asy
   assert.match(sql, /work item lifecycle events are immutable/);
   assert.match(sql, /CREATE TABLE codeops\.work_item_lifecycle_publications/);
   assert.match(sql, /status IN \('pending', 'claimed', 'published'\)/);
-  assert.match(sql, /jetstream_stream text/);
-  assert.match(sql, /jetstream_sequence bigint/);
+  assert.match(sql, /delivery_driver text/);
+  assert.match(sql, /delivery_destination text/);
+  assert.match(sql, /delivery_position text/);
+  assert.match(sql, /delivery_receipt_digest text/);
+  assert.match(sql, /delivery_receipt_json jsonb/);
   assert.match(sql, /CREATE INDEX work_item_lifecycle_publication_claim_idx/);
   assert.doesNotMatch(sql, /consumer_id|projector_id|plane_delivery/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);

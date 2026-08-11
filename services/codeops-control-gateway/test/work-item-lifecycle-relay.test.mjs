@@ -8,7 +8,7 @@ import {
   createTransitionId,
 } from "@renoconcierge/codeops-contracts";
 import {
-  WORK_ITEM_LIFECYCLE_SUBJECT,
+  WORK_ITEM_LIFECYCLE_ROUTE,
   relayOneWorkItemLifecycleEvent,
 } from "../dist/work-item-lifecycle-relay.js";
 
@@ -70,7 +70,14 @@ test("publishes canonical event bytes with the immutable event ID and fences the
     },
     async publish(input) {
       calls.push({ type: "publish", input });
-      return { stream: "CODEOPS_LIFECYCLE", streamSequence: 42, duplicate: false };
+      return {
+        receipt: {
+          driver: "jetstream",
+          destination: "CODEOPS_LIFECYCLE",
+          position: "42",
+          metadata: { duplicate: false },
+        },
+      };
     },
     async acknowledge(input) {
       calls.push({ type: "acknowledge", input });
@@ -85,9 +92,12 @@ test("publishes canonical event bytes with the immutable event ID and fences the
   assert.deepEqual(result, {
     status: "published",
     eventId: event.eventId,
-    stream: "CODEOPS_LIFECYCLE",
-    streamSequence: 42,
-    jetStreamDuplicate: false,
+    receipt: {
+      driver: "jetstream",
+      destination: "CODEOPS_LIFECYCLE",
+      position: "42",
+      metadata: { duplicate: false },
+    },
     journalResult: "published",
   });
   assert.deepEqual(calls[0].input, {
@@ -95,14 +105,18 @@ test("publishes canonical event bytes with the immutable event ID and fences the
     now: firstNow,
     leaseMs: 30_000,
   });
-  assert.equal(calls[1].input.subject, WORK_ITEM_LIFECYCLE_SUBJECT);
+  assert.equal(calls[1].input.route, WORK_ITEM_LIFECYCLE_ROUTE);
   assert.equal(calls[1].input.messageId, event.eventId);
   assert.equal(new TextDecoder().decode(calls[1].input.payload), canonicalSerialize(event));
   assert.deepEqual(calls[2].input, {
     eventId: event.eventId,
     claimToken: "55555555-5555-4555-8555-555555555555",
-    stream: "CODEOPS_LIFECYCLE",
-    streamSequence: 42,
+    receipt: {
+      driver: "jetstream",
+      destination: "CODEOPS_LIFECYCLE",
+      position: "42",
+      metadata: { duplicate: false },
+    },
     publishedAt: secondNow,
   });
 });
@@ -143,10 +157,17 @@ test("accepts JetStream deduplication after crash recovery and records the origi
       };
     },
     async publish() {
-      return { stream: "CODEOPS_LIFECYCLE", streamSequence: 42, duplicate: true };
+      return {
+        receipt: {
+          driver: "jetstream",
+          destination: "CODEOPS_LIFECYCLE",
+          position: "42",
+          metadata: { duplicate: true },
+        },
+      };
     },
     async acknowledge(input) {
-      assert.equal(input.streamSequence, 42);
+      assert.equal(input.receipt.position, "42");
       return "published";
     },
   }, {
@@ -154,7 +175,7 @@ test("accepts JetStream deduplication after crash recovery and records the origi
     leaseMs: 30_000,
     now: () => new Date(secondNow),
   });
-  assert.equal(result.jetStreamDuplicate, true);
+  assert.equal(result.receipt.metadata.duplicate, true);
   assert.equal(result.journalResult, "published");
 });
 

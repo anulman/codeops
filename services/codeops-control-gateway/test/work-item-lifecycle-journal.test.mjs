@@ -194,13 +194,17 @@ test("claims one pending or expired publication with a fenced relay lease", asyn
   assert.match(calls[0].text, /claim_count = publication\.claim_count \+ 1/);
 });
 
-test("acknowledges only the fenced JetStream publication and replays its exact result", async () => {
+test("acknowledges only the fenced transport-neutral publication and replays its exact receipt", async () => {
   const claimToken = "55555555-5555-4555-8555-555555555555";
   const input = {
     eventId: lifecycleEvent().eventId,
     claimToken,
-    stream: "CODEOPS_LIFECYCLE",
-    streamSequence: 42,
+    receipt: {
+      driver: "jetstream",
+      destination: "CODEOPS_LIFECYCLE",
+      position: "42",
+      metadata: { duplicate: false },
+    },
     publishedAt: now,
   };
   const published = {
@@ -221,8 +225,10 @@ test("acknowledges only the fenced JetStream publication and replays its exact r
         rowCount: 1,
         rows: [{
           status: "published",
-          jetstream_stream: input.stream,
-          jetstream_sequence: "42",
+          delivery_receipt_digest: createHash("sha256")
+            .update(canonicalSerialize(input.receipt))
+            .digest("hex"),
+          delivery_receipt_json: input.receipt,
         }],
       };
     },

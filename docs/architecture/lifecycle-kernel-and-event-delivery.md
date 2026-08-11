@@ -10,12 +10,50 @@ define lifecycle behavior.
 
 PostgreSQL stores the authoritative WorkItem aggregate and its immutable
 canonical lifecycle event in one transaction. A relay claims unpublished
-events through one lease and publishes them to JetStream. The relay records
-publication only after the JetStream publish acknowledgment. JetStream durable
-consumers isolate Plane, GitHub, notification, and installer-owned projectors.
+events through one lease and publishes them through one delivery driver. The
+relay records publication only after the driver acknowledgment. JetStream is
+the default delivery driver. Its durable consumers isolate Plane, GitHub,
+notification, and installer-owned projectors.
 
 Do not create PostgreSQL delivery state for each external consumer. Keep the
-immutable event journal separate from transient relay state.
+immutable event journal separate from transient relay state. Store one
+transport-neutral publication receipt with the delivery driver, destination,
+position, receipt digest, receipt JSON, and publication time. Do not add
+JetStream-specific columns to the lifecycle journal.
+
+The relay publishes canonical event bytes to the stable
+`codeops.lifecycle.v1.events` route. A delivery driver maps that route to its
+native subject, topic, or stream binding.
+
+## Dependency ownership and supported profiles
+
+The user-facing `codeops` chart is an umbrella chart. It installs
+`codeops-core` and default-on managed dependencies. Each capability selects a
+driver. Each selected driver uses a `managed` or `external` deployment mode.
+The chart renders no dependency resources in `external` mode.
+
+- PostgreSQL is required in v1. Support `managed` and `external` deployment.
+- Temporal is the default orchestration driver. Support `managed`, `external`,
+  and `none`. The `none` driver creates a session-only installation and
+  disables automated WorkItem workflows.
+- JetStream is the default delivery driver. Support `managed`, `external`, and
+  `none`. The `none` driver creates a journal-only installation and disables
+  outbound projectors.
+- Plane is a default-on work-tracker adapter. Support `managed`, `external`,
+  and disabled operation. Disabling Plane does not change lifecycle behavior.
+  An installer can enable GitHub Issues, GitHub Projects, or another adapter.
+
+Qualify four named profiles instead of every dependency permutation:
+
+- `full-managed`
+- `full-external`
+- `github-native`
+- `sessions-only`
+
+Reject incompatible values at render time. Require a capability handshake
+before a workload becomes Ready. An alternative delivery or orchestration
+component must implement the applicable versioned driver contract. Do not
+treat an arbitrary endpoint as a compatible replacement.
 
 ## Lifecycle profile v1
 
@@ -69,14 +107,15 @@ targets, and active transitions that use unmapped provider states.
 
 The execution path is:
 
-`provider adapter -> external fact -> provider binding -> canonical command -> lifecycle kernel -> PostgreSQL transaction -> JetStream relay -> projector`
+`provider adapter -> external fact -> provider binding -> canonical command -> lifecycle kernel -> PostgreSQL transaction -> delivery relay -> projector`
 
 - Adapters translate provider shape.
 - Bindings map provider identity to canonical identity.
 - The lifecycle kernel validates legal transitions, actor capability,
   repository authority, expected revision, evidence, and idempotency.
 - PostgreSQL commits authoritative state and the immutable event.
-- JetStream distributes committed events.
+- The selected delivery driver distributes committed events. JetStream is the
+  default driver.
 - Projectors render canonical state in provider-native form.
 
 Keep WorkItem lifecycle events separate from Temporal workflow-run events.
@@ -93,3 +132,5 @@ portable product contract.
   policy hooks.
 - Do not infer outbound provider mappings by reversing an inbound many-to-one
   mapping. Configure one preferred outbound target explicitly.
+- Do not couple dependency ownership to capability behavior. `external` means
+  that the installer owns deployment. `none` disables the capability.

@@ -3,14 +3,15 @@ import {
   type WorkItemLifecycleEvent,
 } from "@renoconcierge/codeops-contracts";
 
-import type { LifecyclePublicationClaim } from "./work-item-lifecycle-journal.js";
+import type {
+  LifecyclePublicationClaim,
+  LifecyclePublicationReceipt,
+} from "./work-item-lifecycle-journal.js";
 
-export const WORK_ITEM_LIFECYCLE_SUBJECT = "codeops.lifecycle.v1.events";
+export const WORK_ITEM_LIFECYCLE_ROUTE = "codeops.lifecycle.v1.events";
 
 export interface LifecycleRelayPublicationAck {
-  readonly stream: string;
-  readonly streamSequence: number;
-  readonly duplicate: boolean;
+  readonly receipt: LifecyclePublicationReceipt;
 }
 
 export interface LifecycleRelayPorts {
@@ -20,15 +21,14 @@ export interface LifecycleRelayPorts {
     readonly leaseMs: number;
   }) => Promise<LifecyclePublicationClaim | null>;
   readonly publish: (input: {
-    readonly subject: string;
+    readonly route: string;
     readonly payload: Uint8Array;
     readonly messageId: string;
   }) => Promise<LifecycleRelayPublicationAck>;
   readonly acknowledge: (input: {
     readonly eventId: string;
     readonly claimToken: string;
-    readonly stream: string;
-    readonly streamSequence: number;
+    readonly receipt: LifecyclePublicationReceipt;
     readonly publishedAt: string;
   }) => Promise<"published" | "duplicate">;
 }
@@ -36,9 +36,7 @@ export interface LifecycleRelayPorts {
 export interface LifecycleRelayResult {
   readonly status: "idle" | "published";
   readonly eventId?: string;
-  readonly stream?: string;
-  readonly streamSequence?: number;
-  readonly jetStreamDuplicate?: boolean;
+  readonly receipt?: LifecyclePublicationReceipt;
   readonly journalResult?: "published" | "duplicate";
 }
 
@@ -63,7 +61,7 @@ export async function relayOneWorkItemLifecycleEvent(
   if (!claim) return { status: "idle" };
 
   const publication = await ports.publish({
-    subject: WORK_ITEM_LIFECYCLE_SUBJECT,
+    route: WORK_ITEM_LIFECYCLE_ROUTE,
     payload: canonicalEventBytes(claim.event),
     messageId: claim.event.eventId,
   });
@@ -71,16 +69,13 @@ export async function relayOneWorkItemLifecycleEvent(
   const journalResult = await ports.acknowledge({
     eventId: claim.event.eventId,
     claimToken: claim.claimToken,
-    stream: publication.stream,
-    streamSequence: publication.streamSequence,
+    receipt: publication.receipt,
     publishedAt,
   });
   return {
     status: "published",
     eventId: claim.event.eventId,
-    stream: publication.stream,
-    streamSequence: publication.streamSequence,
-    jetStreamDuplicate: publication.duplicate,
+    receipt: publication.receipt,
     journalResult,
   };
 }

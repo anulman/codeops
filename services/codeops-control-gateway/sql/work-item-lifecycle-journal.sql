@@ -84,23 +84,41 @@ CREATE TABLE codeops.work_item_lifecycle_publications (
   claimed_at timestamptz,
   claim_expires_at timestamptz,
   claim_count integer NOT NULL DEFAULT 0 CHECK (claim_count >= 0),
-  jetstream_stream text,
-  jetstream_sequence bigint,
+  delivery_driver text
+    CHECK (delivery_driver IS NULL OR delivery_driver ~ '^[a-z][a-z0-9_-]{0,63}$'),
+  delivery_destination text
+    CHECK (delivery_destination IS NULL OR length(delivery_destination) BETWEEN 1 AND 512),
+  delivery_position text
+    CHECK (delivery_position IS NULL OR length(delivery_position) BETWEEN 1 AND 256),
+  delivery_receipt_digest text
+    CHECK (delivery_receipt_digest IS NULL OR delivery_receipt_digest ~ '^[0-9a-f]{64}$'),
+  delivery_receipt_json jsonb,
   published_at timestamptz,
   CHECK (
     (status = 'pending' AND claim_token IS NULL AND claimed_by IS NULL
       AND claimed_at IS NULL AND claim_expires_at IS NULL
-      AND jetstream_stream IS NULL AND jetstream_sequence IS NULL
+      AND delivery_driver IS NULL AND delivery_destination IS NULL
+      AND delivery_position IS NULL AND delivery_receipt_digest IS NULL
+      AND delivery_receipt_json IS NULL
       AND published_at IS NULL)
     OR
     (status = 'claimed' AND claim_token IS NOT NULL AND claimed_by IS NOT NULL
       AND claimed_at IS NOT NULL AND claim_expires_at > claimed_at
-      AND jetstream_stream IS NULL AND jetstream_sequence IS NULL
+      AND delivery_driver IS NULL AND delivery_destination IS NULL
+      AND delivery_position IS NULL AND delivery_receipt_digest IS NULL
+      AND delivery_receipt_json IS NULL
       AND published_at IS NULL)
     OR
     (status = 'published' AND claim_token IS NULL AND claimed_by IS NULL
       AND claimed_at IS NULL AND claim_expires_at IS NULL
-      AND jetstream_stream IS NOT NULL AND jetstream_sequence > 0
+      AND delivery_driver IS NOT NULL AND delivery_destination IS NOT NULL
+      AND delivery_position IS NOT NULL
+      AND delivery_receipt_digest IS NOT NULL
+      AND delivery_receipt_json IS NOT NULL
+      AND delivery_receipt_json->>'driver' = delivery_driver
+      AND delivery_receipt_json->>'destination' = delivery_destination
+      AND delivery_receipt_json->>'position' = delivery_position
+      AND jsonb_typeof(delivery_receipt_json->'metadata') = 'object'
       AND published_at IS NOT NULL)
   )
 );

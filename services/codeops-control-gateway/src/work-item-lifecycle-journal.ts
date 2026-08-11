@@ -30,8 +30,8 @@ interface ClaimedPublicationRow extends Record<string, unknown> {
 
 interface PublishedRow extends Record<string, unknown> {
   readonly status: unknown;
-  readonly jetstream_stream: unknown;
-  readonly jetstream_sequence: unknown;
+  readonly delivery_receipt_digest: unknown;
+  readonly delivery_receipt_json: unknown;
 }
 
 export class ImmutableLifecycleEventConflictError extends Error {}
@@ -45,12 +45,38 @@ export interface LifecyclePublicationClaim {
   readonly claimCount: number;
 }
 
+export interface LifecyclePublicationReceipt {
+  readonly driver: string;
+  readonly destination: string;
+  readonly position: string;
+  readonly metadata: Readonly<Record<string, unknown>>;
+}
+
 const relayIdentity = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
-const jetStreamName = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+const deliveryDriver = /^[a-z][a-z0-9_-]{0,63}$/;
 const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 
 function eventDigest(event: WorkItemLifecycleEvent): string {
   return createHash("sha256").update(canonicalSerialize(event)).digest("hex");
+}
+
+function requirePublicationReceipt(
+  input: LifecyclePublicationReceipt,
+): LifecyclePublicationReceipt {
+  if (
+    !deliveryDriver.test(input.driver) ||
+    input.destination.length < 1 ||
+    input.destination.length > 512 ||
+    input.position.length < 1 ||
+    input.position.length > 256 ||
+    input.metadata === null ||
+    Array.isArray(input.metadata) ||
+    typeof input.metadata !== "object"
+  ) {
+    throw new Error("delivery publication receipt is invalid");
+  }
+  canonicalSerialize(input);
+  return input;
 }
 
 function repositoryIdentity(event: WorkItemLifecycleEvent): string {
@@ -275,40 +301,41 @@ export async function acknowledgeWorkItemLifecyclePublication(
   input: {
     readonly eventId: string;
     readonly claimToken: string;
-    readonly stream: string;
-    readonly streamSequence: number;
+    readonly receipt: LifecyclePublicationReceipt;
     readonly publishedAt: string;
   },
 ): Promise<"published" | "duplicate"> {
   if (!uuid.test(input.claimToken)) {
     throw new Error("lifecycle publication claim token is invalid");
   }
-  if (
-    !jetStreamName.test(input.stream) ||
-    !Number.isSafeInteger(input.streamSequence) ||
-    input.streamSequence < 1 ||
-    Number.isNaN(new Date(input.publishedAt).valueOf())
-  ) {
-    throw new Error("JetStream publication acknowledgment is invalid");
+  const receipt = requirePublicationReceipt(input.receipt);
+  if (Number.isNaN(new Date(input.publishedAt).valueOf())) {
+    throw new Error("delivery publication acknowledgment is invalid");
   }
+  const receiptJson = canonicalSerialize(receipt);
+  const receiptDigest = createHash("sha256").update(receiptJson).digest("hex");
   const updated = await client.query(
     `UPDATE codeops.work_item_lifecycle_publications
         SET status = 'published', claim_token = NULL, claimed_by = NULL,
             claimed_at = NULL, claim_expires_at = NULL,
-            jetstream_stream = $3, jetstream_sequence = $4,
-            published_at = $5::timestamptz
+            delivery_driver = $3, delivery_destination = $4,
+            delivery_position = $5, delivery_receipt_digest = $6,
+            delivery_receipt_json = $7::jsonb, published_at = $8::timestamptz
       WHERE event_id = $1 AND status = 'claimed' AND claim_token = $2::uuid`,
     [
       input.eventId,
       input.claimToken,
-      input.stream,
-      input.streamSequence,
+      receipt.driver,
+      receipt.destination,
+      receipt.position,
+      receiptDigest,
+      receiptJson,
       input.publishedAt,
     ],
   );
   if (updated.rowCount === 1) return "published";
   const existing = await client.query<PublishedRow>(
-    `SELECT status, jetstream_stream, jetstream_sequence
+    `SELECT status, delivery_receipt_digest, delivery_receipt_json
        FROM codeops.work_item_lifecycle_publications
       WHERE event_id = $1`,
     [input.eventId],
@@ -316,8 +343,8 @@ export async function acknowledgeWorkItemLifecyclePublication(
   const row = existing.rows[0];
   if (
     row?.status === "published" &&
-    row.jetstream_stream === input.stream &&
-    Number(row.jetstream_sequence) === input.streamSequence
+    row.delivery_receipt_digest === receiptDigest &&
+    canonicalSerialize(row.delivery_receipt_json) === receiptJson
   ) {
     return "duplicate";
   }
