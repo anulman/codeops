@@ -201,7 +201,19 @@ jobs:
           provenance: ${{ needs.validate.outputs.publish == 'true' && 'mode=max' || 'false' }}
           sbom: ${{ needs.validate.outputs.publish == 'true' }}
 
-      - name: Generate exact image SPDX SBOM
+      - name: Generate local image SPDX SBOM
+        if: needs.validate.outputs.publish != 'true'
+        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
+        with:
+          image: ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}
+          format: spdx-json
+          output-file: sbom-${{ matrix.image }}.spdx.json
+          syft-version: v1.50.0
+          upload-artifact: false
+          upload-release-assets: false
+
+      - name: Generate published image SPDX SBOM
+        if: needs.validate.outputs.publish == 'true'
         uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
         with:
           image: ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}
