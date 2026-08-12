@@ -34,6 +34,33 @@ gateway sidecar, and session runtime worker. The default `full-managed` profile
 installs PostgreSQL, Temporal, JetStream, and Plane. Production profiles can
 connect to external services or disable optional capabilities.
 
+## System requirements
+
+CodeOps requires a working Kubernetes cluster, Helm, `kubectl`, dynamic
+persistent-volume provisioning, and an ingress controller. Release 0.2.0 is
+qualified with Kubernetes 1.36.1, Helm 3.19.2, and `kubectl` 1.36.1.
+
+Use these capacity baselines before an installation:
+
+- The default `full-managed` profile requires at least 2.5 available vCPUs,
+  8 GiB of available memory, and 40 GiB of free persistent-storage capacity.
+  Use a node with at least 16 GiB total RAM so the operating system,
+  Kubernetes, and workload spikes do not consume the required 8 GiB.
+- [Managed Plane](https://developers.plane.so/self-hosting/methods/docker-compose)
+  alone requires at least 2 vCPUs and 4 GB RAM. Plane recommends 8 GB RAM. The
+  `full-managed` CodeOps profile also runs PostgreSQL, Temporal, JetStream, and
+  the CodeOps services, so Plane's minimum is not sufficient for the complete
+  profile.
+- If the cluster cannot meet the `full-managed` baseline, use external Plane,
+  PostgreSQL, Temporal, or JetStream services and set the matching deployment
+  modes in the values file.
+- Each active coding-agent session can request 1 GiB and use up to 6 GiB of
+  additional memory. Add session capacity above the control-plane baseline.
+
+Run `nub run doctor -- --cluster` before installation. The doctor rejects a
+cluster that does not have the required current capacity or Kubernetes
+configuration.
+
 ## Install
 
 The primary onboarding path uses one values file and one Helm install command.

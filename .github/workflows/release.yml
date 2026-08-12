@@ -397,8 +397,8 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     permissions:
+      actions: read
       contents: read
-      packages: read
     steps:
       - uses: azure/setup-helm@v4
         with:
@@ -421,13 +421,54 @@ jobs:
       - name: Create disposable cluster
         run: kind create cluster --name codeops-registry --image kindest/node:v1.36.1 --wait 120s
 
-      - name: Authenticate to private GHCR
-        run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
+      - name: Download exact release manifest
+        uses: actions/download-artifact@v4
+        with:
+          name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
+          path: /tmp/codeops-release
+
+      - name: Verify anonymous registry access
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+        run: |
+          set -euo pipefail
+          anonymous_root=$(mktemp -d)
+          mkdir -p \
+            "${anonymous_root}/home/.config/helm/registry" \
+            "${anonymous_root}/docker"
+          printf '{"auths":{}}\n' \
+            > "${anonymous_root}/home/.config/helm/registry/config.json"
+          printf '{"auths":{}}\n' > "${anonymous_root}/docker/config.json"
+          export HOME="${anonymous_root}/home"
+          export DOCKER_CONFIG="${anonymous_root}/docker"
+          export HELM_REGISTRY_CONFIG="${anonymous_root}/home/.config/helm/registry/config.json"
+
+          mkdir -p /tmp/codeops-registry-proof
+          pull_output=$(helm pull \
+            oci://ghcr.io/anulman/codeops/charts/codeops \
+            --version "$RELEASE_VERSION" \
+            --destination /tmp/codeops-registry-proof 2>&1)
+          printf '%s\n' "$pull_output"
+
+          jq -r '.images | to_entries[] | [.key, .value.repository, .value.digest] | @tsv' \
+            /tmp/codeops-release/release-manifest.json |
+            while IFS=$'\t' read -r name repository digest; do
+              registry_path="${repository#ghcr.io/}"
+              token=$(curl --fail --silent --show-error \
+                "https://ghcr.io/token?service=ghcr.io&scope=repository:${registry_path}:pull" |
+                jq -er '.token')
+              status=$(curl --silent --show-error --output /dev/null \
+                --write-out '%{http_code}' \
+                --header "Authorization: Bearer ${token}" \
+                --header 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+                "https://ghcr.io/v2/${registry_path}/manifests/${digest}")
+              [[ "$status" == "200" ]] || {
+                printf '%s is not anonymously pullable: HTTP %s\n' "$name" "$status" >&2
+                exit 1
+              }
+            done
 
       - name: Create isolated quickstart values
-        env:
-          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GHCR_USERNAME: ${{ github.actor }}
         run: |
           set -euo pipefail
           api_ip=$(kubectl get service kubernetes --output jsonpath='{.spec.clusterIP}')
@@ -447,14 +488,6 @@ jobs:
               quickstart: {
                 enabled: true,
                 openaiApiKey: "proof-openai-key-00000000000000000001",
-                registry: {
-                  enabled: true,
-                  server: "ghcr.io",
-                  username: process.env.GHCR_USERNAME,
-                  token: process.env.GHCR_TOKEN,
-                  email: "operator@example.com",
-                  secretName: "codeops-registry",
-                },
                 access: {
                   audience: "proof-cloudflare-access-audience",
                   allowedEmails: ["operator@example.com"],
@@ -511,8 +544,14 @@ jobs:
         env:
           RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
           SOURCE_SHA: ${{ github.sha }}
+          HOME: /tmp/codeops-anonymous-home
+          DOCKER_CONFIG: /tmp/codeops-anonymous-docker
+          HELM_REGISTRY_CONFIG: /tmp/codeops-anonymous-home/.config/helm/registry/config.json
         run: |
           set -euo pipefail
+          mkdir -p "$HOME/.config/helm/registry" "$DOCKER_CONFIG"
+          printf '{"auths":{}}\n' > "$HELM_REGISTRY_CONFIG"
+          printf '{"auths":{}}\n' > "$DOCKER_CONFIG/config.json"
           mkdir -p /tmp/codeops-registry-proof
           pull_output=$(helm pull oci://ghcr.io/anulman/codeops/charts/codeops --version "$RELEASE_VERSION" --destination /tmp/codeops-registry-proof 2>&1)
           printf '%s\n' "$pull_output"

@@ -62,11 +62,24 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   const registryInstall = workflow.jobs["registry-install"];
   assert.equal(registryInstall.if, "needs.validate.outputs.publish == 'true'");
   assert.deepEqual(registryInstall.needs, ["validate", "chart"]);
-  assert.equal(registryInstall.permissions.packages, "read");
+  assert.equal(registryInstall.permissions.actions, "read");
+  assert.equal(registryInstall.permissions.packages, undefined);
   assert.equal(
     registryInstall.steps.some(({ uses }) => uses === "actions/checkout@v4"),
     false,
   );
+  assert.equal(
+    registryInstall.steps.some(({ name }) => name === "Authenticate to private GHCR"),
+    false,
+  );
+  const anonymousAccess = registryInstall.steps.find(
+    ({ name }) => name === "Verify anonymous registry access",
+  );
+  assert.match(anonymousAccess.run, /HELM_REGISTRY_CONFIG/);
+  assert.match(anonymousAccess.run, /DOCKER_CONFIG/);
+  assert.match(anonymousAccess.run, /release-manifest\.json/);
+  assert.match(anonymousAccess.run, /ghcr\.io\/token/);
+  assert.match(anonymousAccess.run, /\.images \| to_entries/);
   const install = registryInstall.steps.find(
     ({ name }) => name === "Install only from the OCI registry",
   );
@@ -78,6 +91,8 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(kindInstall.run, /sha256sum --check kind\.sha256sum/);
   assert.match(install.run, /helm pull oci:\/\/ghcr\.io\/anulman\/codeops\/charts\/codeops/);
   assert.match(install.run, /helm install codeops oci:\/\/ghcr\.io\/anulman\/codeops\/charts\/codeops/);
+  assert.match(install.env.HELM_REGISTRY_CONFIG, /codeops-anonymous-home/);
+  assert.match(install.env.DOCKER_CONFIG, /codeops-anonymous-docker/);
   assert.match(install.run, /--wait-for-jobs/);
   assert.match(install.run, /sourceCheckout:false/);
   assert.match(install.run, /kubectl wait --namespace codeops --for=condition=Available deployment --all/);
@@ -85,6 +100,8 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(install.run, /map\(sub\("@sha256:/);
   assert.match(install.run, /helm uninstall codeops/);
   assert.match(quickstartValues.run, /profile: "custom"/);
+  assert.doesNotMatch(quickstartValues.run, /GHCR_TOKEN/);
+  assert.doesNotMatch(quickstartValues.run, /registry:/);
   assert.match(quickstartValues.run, /temporal: \{ enabled: false, driver: "none", deployment: "none" \}/);
   assert.match(quickstartValues.run, /jetstream: \{ enabled: false, driver: "none", deployment: "none" \}/);
   assert.match(quickstartValues.run, /deployment: "none"/);
