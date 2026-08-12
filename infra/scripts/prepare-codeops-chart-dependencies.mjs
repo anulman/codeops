@@ -2,6 +2,7 @@ import { mkdtemp, mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
+import { setTimeout as delay } from "node:timers/promises";
 
 const repositories = [
   ["codeops-nats", "https://nats-io.github.io/k8s/helm/charts/"],
@@ -15,6 +16,20 @@ function helm(args, env) {
   if (result.status !== 0) {
     throw new Error(`helm ${args[0]} failed with exit code ${result.status}`);
   }
+}
+
+async function helmWithRetry(args, env, attempts = 5) {
+  let failure;
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      helm(args, env);
+      return;
+    } catch (error) {
+      failure = error;
+      if (attempt < attempts) await delay(attempt * 2_000);
+    }
+  }
+  throw failure;
 }
 
 const helmRoot = await mkdtemp(path.join(os.tmpdir(), "codeops-helm-"));
@@ -34,7 +49,7 @@ try {
   for (const [name, repository] of repositories) {
     helm(["repo", "add", name, repository], env);
   }
-  helm([
+  await helmWithRetry([
     "dependency",
     "build",
     "--skip-refresh",

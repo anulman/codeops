@@ -105,6 +105,12 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(serialized, /codeops-release-images\.mjs/);
   assert.match(serialized, /codeops-release-chart\.mjs/);
   assert.match(serialized, /nub run prepare:chart/);
+  const dependencyResolver = await readFile(
+    new URL("./prepare-codeops-chart-dependencies.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(dependencyResolver, /helmWithRetry/);
+  assert.match(dependencyResolver, /attempts = 5/);
   assert.match(serialized, /helm package \.release\/chart/);
   assert.match(serialized, /release-manifest\.json/);
   assert.match(serialized, /values\.release\.yaml/);
