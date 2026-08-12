@@ -1,0 +1,52 @@
+name: Release recovery
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - .github/release-recovery.json
+      - .github/workflows/release-recovery.yml
+
+permissions:
+  contents: read
+
+jobs:
+  rerun-failed-release-jobs:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Validate immutable release recovery request
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          request=.github/release-recovery.json
+          run_id="$(jq -er '.runId | select(type == "number" and . > 0)' "$request")"
+          tag="$(jq -er '.tag | select(test("^v(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)\\.(0|[1-9][0-9]*)$"))' "$request")"
+          source_sha="$(jq -er '.sourceSha | select(test("^[0-9a-f]{40}$"))' "$request")"
+          [[ "$(git rev-parse "refs/tags/${tag}")" == "$source_sha" ]]
+
+          run="$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}")"
+          [[ "$(jq -r .event <<<"$run")" == push ]]
+          [[ "$(jq -r .status <<<"$run")" == completed ]]
+          [[ "$(jq -r .conclusion <<<"$run")" == failure ]]
+          [[ "$(jq -r .head_branch <<<"$run")" == "$tag" ]]
+          [[ "$(jq -r .head_sha <<<"$run")" == "$source_sha" ]]
+          [[ "$(jq -r .path <<<"$run")" == .github/workflows/release.yml ]]
+
+      - name: Retry only failed release jobs
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          run_id="$(jq -er .runId .github/release-recovery.json)"
+          gh api --method POST \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${run_id}/rerun-failed-jobs"
