@@ -103,20 +103,20 @@ classes. It never prints credential values or Secret file paths.
 ## Release boundary
 
 `.github/workflows/release.yml` is the only package publication boundary.
-Release-contract changes run it in validation-only mode. An operator must use
-manual dispatch, select `main`, enter one exact SemVer version, and set
-`publish=true` before it writes to GHCR. A publishing run builds all ten
-images from one source SHA, resolves
+Release-contract changes run it in validation-only mode. Publication requires
+an immutable `v<SemVer>` tag at the current `main` source SHA or an explicit
+manual dispatch from `main` with one exact SemVer version and `publish=true`.
+A publishing run builds all ten images from one source SHA, resolves
 their registry digests, embeds those digests and the source SHA into the
 packaged values, publishes the Helm chart to
 `oci://ghcr.io/anulman/codeops/charts/codeops`, and retains the exact image,
 chart, source, and release-values evidence. After the registry-only install
-proof passes, the workflow creates an immutable prerelease in GitHub Releases
-with the chart archive, image plan, release manifest, release values, and
+proof passes, the workflow creates an immutable public release in GitHub
+Releases with the chart archive, image plan, release manifest, release values, and
 checksums. GHCR remains the canonical Helm registry. GitHub Releases is the
-durable human-facing release record. Ordinary pushes and CI runs do not publish
-artifacts. Each release also retains an SPDX SBOM and a license-policy report
-for every published CodeOps image.
+durable human-facing release record. Ordinary branch pushes and CI runs do not
+publish artifacts. Each release also retains an SPDX SBOM and a license-policy
+report for every published CodeOps image.
 
 ## License
 
