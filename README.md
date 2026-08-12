@@ -71,6 +71,13 @@ stable `codeops.smoke/v1` schema with `schemaVersion`, `ok`, `release`,
 An external or disabled dependency has a skipped health check because it has
 no managed Kubernetes resource.
 
+Run the released Agents UI acceptance runner after a deployment. Pin the
+runner image from the same `release-manifest.json` as the chart. The consumer
+owns only the target URL, the Cloudflare Access Secret projection, and the
+time at which it creates the ephemeral Job. Do not copy the browser test into
+the consumer repository. See the
+[acceptance runner operation](docs/operations/acceptance-runner.md).
+
 To evaluate the source without a cluster, Plane, Cloudflare Access, or persona
 accounts, run:
 

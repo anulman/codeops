@@ -9,6 +9,11 @@ The chart supports managed, external, or disabled Plane, Temporal, and
 JetStream capabilities. PostgreSQL is required and can be managed or external.
 The complete source gate is `nub run verify`.
 
+CodeOps owns the generic Agents UI acceptance runner and publishes it with
+each release. A consumer pins that runner from the same release manifest as
+the chart and creates the ephemeral post-deploy invocation. Product-specific
+acceptance remains in the product repository.
+
 Current limitations:
 
 - Production onboarding requires repository-scoped GitHub and Plane authority.
