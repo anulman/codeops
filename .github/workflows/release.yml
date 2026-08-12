@@ -201,29 +201,30 @@ jobs:
           provenance: ${{ needs.validate.outputs.publish == 'true' && 'mode=max' || 'false' }}
           sbom: ${{ needs.validate.outputs.publish == 'true' }}
 
-      - name: Generate local image SPDX SBOM
-        if: needs.validate.outputs.publish != 'true'
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          image: ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}
-          format: spdx-json
-          output-file: sbom-${{ matrix.image }}.spdx.json
-          syft-version: v1.50.0
-          upload-artifact: false
-          upload-release-assets: false
+      - name: Install checksum-verified Syft
+        env:
+          SYFT_VERSION: 1.50.0
+        run: |
+          set -euo pipefail
+          archive="syft_${SYFT_VERSION}_linux_amd64.tar.gz"
+          base="https://github.com/anchore/syft/releases/download/v${SYFT_VERSION}"
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+            --output /tmp/syft-checksums.txt "${base}/syft_${SYFT_VERSION}_checksums.txt"
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+            --output "/tmp/${archive}" "${base}/${archive}"
+          (cd /tmp && grep "  ${archive}$" syft-checksums.txt | sha256sum --check --strict)
+          tar --extract --gzip --file "/tmp/${archive}" --directory /tmp syft
+          sudo install --mode 0755 /tmp/syft /usr/local/bin/syft
+          [[ "$(syft version -o json | jq -r .version)" == "$SYFT_VERSION" ]]
 
-      - name: Generate published image SPDX SBOM
-        if: needs.validate.outputs.publish == 'true'
-        uses: anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610 # v0.24.0
-        with:
-          image: ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}
-          registry-username: ${{ github.actor }}
-          registry-password: ${{ secrets.GITHUB_TOKEN }}
-          format: spdx-json
-          output-file: sbom-${{ matrix.image }}.spdx.json
-          syft-version: v1.50.0
-          upload-artifact: false
-          upload-release-assets: false
+      - name: Generate exact image SPDX SBOM
+        env:
+          IMAGE_SOURCE: ${{ needs.validate.outputs.publish == 'true' && 'registry' || 'docker' }}
+        run: |
+          set -euo pipefail
+          image="ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}"
+          syft scan "${IMAGE_SOURCE}:${image}" \
+            --output "spdx-json=sbom-${{ matrix.image }}.spdx.json"
 
       - name: Enforce exact image license policy
         run: >-

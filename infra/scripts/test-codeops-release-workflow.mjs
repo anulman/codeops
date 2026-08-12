@@ -30,26 +30,20 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.equal(build.with.provenance, "${{ needs.validate.outputs.publish == 'true' && 'mode=max' || 'false' }}");
   assert.equal(build.with.sbom, "${{ needs.validate.outputs.publish == 'true' }}");
   assert.equal(build.with.tags, "ghcr.io/anulman/codeops/${{ matrix.image }}:sha-${{ github.sha }}");
-  const localImageSbom = workflow.jobs.images.steps.find(
-    ({ name }) => name === "Generate local image SPDX SBOM",
+  const syftInstall = workflow.jobs.images.steps.find(
+    ({ name }) => name === "Install checksum-verified Syft",
   );
-  const publishedImageSbom = workflow.jobs.images.steps.find(
-    ({ name }) => name === "Generate published image SPDX SBOM",
+  assert.match(syftInstall.run, /SYFT_VERSION/);
+  assert.match(syftInstall.run, /--retry 5 --retry-all-errors/);
+  assert.match(syftInstall.run, /sha256sum --check --strict/);
+  const imageSbom = workflow.jobs.images.steps.find(
+    ({ name }) => name === "Generate exact image SPDX SBOM",
   );
-  for (const imageSbom of [localImageSbom, publishedImageSbom]) {
-    assert.equal(
-      imageSbom.uses,
-      "anchore/sbom-action@e22c389904149dbc22b58101806040fa8d37a610",
-    );
-    assert.equal(imageSbom.with.format, "spdx-json");
-    assert.equal(imageSbom.with["syft-version"], "v1.50.0");
-  }
-  assert.equal(localImageSbom.if, "needs.validate.outputs.publish != 'true'");
-  assert.equal(localImageSbom.with["registry-username"], undefined);
-  assert.equal(localImageSbom.with["registry-password"], undefined);
-  assert.equal(publishedImageSbom.if, "needs.validate.outputs.publish == 'true'");
-  assert.equal(publishedImageSbom.with["registry-username"], "${{ github.actor }}");
-  assert.equal(publishedImageSbom.with["registry-password"], "${{ secrets.GITHUB_TOKEN }}");
+  assert.equal(
+    imageSbom.env.IMAGE_SOURCE,
+    "${{ needs.validate.outputs.publish == 'true' && 'registry' || 'docker' }}",
+  );
+  assert.match(imageSbom.run, /syft scan "\$\{IMAGE_SOURCE\}:\$\{image\}"/);
   const imageLicensePolicy = workflow.jobs.images.steps.find(
     ({ name }) => name === "Enforce exact image license policy",
   );
