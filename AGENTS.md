@@ -55,6 +55,21 @@ decision, and source context.
 5. Build each affected image for Docker or packaging changes.
 6. Review the complete diff for credential, identity, and fail-open behavior.
 
+## Commit messages
+
+- Write a short, capitalized imperative subject. Aim for 50 characters and do
+  not exceed 72. Do not end the subject with a period.
+- Prefer a plain subject such as `Reject mutable release tags`. Do not add a
+  type prefix such as `fix:` or `feat:` unless release tooling requires it.
+- If the change needs context, add a blank line and a body. Wrap body text at
+  72 characters.
+- Use the body to explain the problem, the reason for the change, the prior
+  behavior, the new behavior, and non-obvious consequences. Do not narrate the
+  diff or use chat history as the source of truth.
+- Put issue and pull request references after the explanatory body.
+- Read the staged diff before you write or amend the message. Make sure the
+  message describes the complete commit and nothing outside it.
+
 ## Test selection
 
 - Contract change: `nub run --filter @codeops/codeops-contracts test`
@@ -65,5 +80,7 @@ decision, and source context.
 - Complete gate: `nub run verify`
 
 Keep technical product text short and direct. Follow ASD-STE100 as the writing
-standard. Preserve exact API, schema, environment-variable, and Kubernetes
+standard. For developer documentation, also use the Google developer
+documentation style guide. Project-specific terminology and rules take
+precedence. Preserve exact API, schema, environment-variable, and Kubernetes
 identifiers.
