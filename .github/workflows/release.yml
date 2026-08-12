@@ -97,7 +97,12 @@ jobs:
       - name: Install Nub
         run: |
           set -euo pipefail
-          curl -fsSL https://nubjs.com/install.sh | bash -s -- 0.1.11
+          for attempt in 1 2 3 4 5; do
+            curl --fail --silent --show-error --location --retry 5 --retry-all-errors https://nubjs.com/install.sh \
+              | bash -s -- 0.1.11 && break
+            [[ "$attempt" == 5 ]] && exit 1
+            sleep $((attempt * 2))
+          done
           echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
 
       - name: Install frozen dependencies
@@ -272,7 +277,12 @@ jobs:
       - name: Install Nub
         run: |
           set -euo pipefail
-          curl -fsSL https://nubjs.com/install.sh | bash -s -- 0.1.11
+          for attempt in 1 2 3 4 5; do
+            curl --fail --silent --show-error --location --retry 5 --retry-all-errors https://nubjs.com/install.sh \
+              | bash -s -- 0.1.11 && break
+            [[ "$attempt" == 5 ]] && exit 1
+            sleep $((attempt * 2))
+          done
           echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
 
       - name: Install frozen dependencies

@@ -5,7 +5,12 @@ WORKDIR /repo
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends ca-certificates curl g++ make python3 \
   && rm -rf /var/lib/apt/lists/* \
-  && curl -fsSL https://nubjs.com/install.sh | bash -s -- 0.1.11
+  && for attempt in 1 2 3 4 5; do \
+       curl --fail --silent --show-error --location --retry 5 --retry-all-errors https://nubjs.com/install.sh \
+         | bash -s -- 0.1.11 && break; \
+       [ "$attempt" = 5 ] && exit 1; \
+       sleep $((attempt * 2)); \
+     done
 COPY package.json lock.yaml .npmrc ./
 COPY packages/codeops-contracts/package.json ./packages/codeops-contracts/package.json
 COPY services/codeops-acceptance-runner/package.json ./services/codeops-acceptance-runner/package.json
