@@ -60,9 +60,10 @@ This lane proves source behavior. It does not prove a live provider or cluster.
      --values /absolute/path/codeops-values.yaml --wait --timeout 30m
    ```
 
-8. Verify Deployment and StatefulSet readiness. Verify the migration Job.
-9. Configure the GitHub and Plane webhooks documented in the chart README.
-10. Run one inert work-item lifecycle smoke test before real repository work.
+8. Run `nub run smoke -- --release <release> --namespace <namespace>`.
+9. Verify the migration Job.
+10. Configure the GitHub and Plane webhooks documented in the chart README.
+11. Run one inert work-item lifecycle smoke test before real repository work.
 
 The initializer discovers the GitHub repository, current GitHub user ID, and
 Kubernetes API service CIDR when the input omits them and the required local

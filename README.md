@@ -54,6 +54,22 @@ mode `0600` and contains credentials. Do not commit it. See the
 [operator lane](docs/agent-quickstart.md#operate-a-release) for the complete
 sequence.
 
+After installation, run the credential-safe cluster smoke command:
+
+```sh
+nub run smoke -- --release codeops --namespace codeops
+nub run smoke -- --release codeops --namespace codeops --json
+```
+
+The command queries only Helm release metadata and the readiness state of
+labeled Deployments, StatefulSets, and persistent volume claims. It does not
+query Secrets, Pod environment variables, logs, or rendered Helm manifests.
+It returns a nonzero status if a required check fails. JSON output uses the
+stable `codeops.smoke/v1` schema with `schemaVersion`, `ok`, `release`,
+`summary`, and `checks` fields. A managed dependency has a `health.*` check.
+An external or disabled dependency has a skipped health check because it has
+no managed Kubernetes resource.
+
 To evaluate the source without a cluster, Plane, Cloudflare Access, or persona
 accounts, run:
 

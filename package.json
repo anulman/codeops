@@ -15,11 +15,12 @@
     "test": "nub run --filter @codeops/codeops-contracts test && nub run --filter @codeops/agents-ui test && nub run -r --filter './services/*' --if-present --workspace-concurrency 4 test",
     "acceptance:agents-ui": "nub run --filter @codeops/codeops-contracts build && nub run --filter @codeops/agents-ui build && nub run --filter @codeops/acceptance-runner test:browser",
     "prepare:chart": "node infra/scripts/prepare-codeops-chart-dependencies.mjs",
-    "check:chart": "nub run prepare:chart && node --test infra/scripts/test-codeops-agent-onboarding.mjs infra/scripts/test-codeops-chart.mjs infra/scripts/test-agents-system-root-session.mjs infra/scripts/test-codeops-license-policy.mjs infra/scripts/test-codeops-quickstart-docs.mjs infra/scripts/test-codeops-release-chart.mjs infra/scripts/test-codeops-release-images.mjs infra/scripts/test-codeops-release-workflow.mjs infra/scripts/test-codeops-repository-registry-validator.mjs infra/scripts/test-codeops-vps-k3s.mjs infra/scripts/test-standalone-image-packaging.mjs",
+    "check:chart": "nub run prepare:chart && node --test infra/scripts/test-codeops-agent-onboarding.mjs infra/scripts/test-codeops-chart.mjs infra/scripts/test-codeops-smoke.mjs infra/scripts/test-agents-system-root-session.mjs infra/scripts/test-codeops-license-policy.mjs infra/scripts/test-codeops-quickstart-docs.mjs infra/scripts/test-codeops-release-chart.mjs infra/scripts/test-codeops-release-images.mjs infra/scripts/test-codeops-release-workflow.mjs infra/scripts/test-codeops-repository-registry-validator.mjs infra/scripts/test-codeops-vps-k3s.mjs infra/scripts/test-standalone-image-packaging.mjs",
     "prove:lifecycle-relay": "nub run --filter @codeops/codeops-contracts build && nub run --filter @codeops/codeops-control-gateway build && node infra/scripts/prove-lifecycle-jetstream-relay.mjs",
     "validate:registry": "node infra/scripts/validate-codeops-repository-registry.mjs",
     "check:licenses": "node infra/scripts/check-codeops-license-policy.mjs --workspace",
     "doctor": "node infra/scripts/codeops-doctor.mjs",
+    "smoke": "node infra/scripts/codeops-smoke.mjs",
     "init:quickstart": "node infra/scripts/init-codeops-quickstart.mjs",
     "evaluate": "nub run prepare:chart && nub run build && nub run test && node --test infra/scripts/test-codeops-chart.mjs infra/scripts/test-codeops-quickstart-docs.mjs infra/scripts/test-codeops-agent-onboarding.mjs",
     "verify": "nub run check:licenses && nub run build && nub run typecheck && nub run test && nub run check:chart"
