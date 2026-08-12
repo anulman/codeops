@@ -4,9 +4,10 @@ CodeOps is an open-source Kubernetes control plane for durable coding-agent
 sessions. One control plane is designed to manage multiple allowlisted
 repositories.
 
-The project is in alpha. The chart and configuration can change before the
-first stable release. The portability, multi-repository, browser, image, and
-registry-install acceptance suites qualify each published release.
+The project is in alpha. Version 0 releases are public development releases.
+The chart and configuration can change before version 1.0. The portability,
+multi-repository, browser, image, and registry-install acceptance suites
+qualify each published release.
 
 ## Components
 

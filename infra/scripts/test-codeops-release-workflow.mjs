@@ -122,6 +122,7 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   );
   assert.match(publishRelease.run, /gh release create/);
   assert.match(publishRelease.run, /--target "\$SOURCE_SHA"/);
+  assert.doesNotMatch(publishRelease.run, /--prerelease/);
   assert.match(publishRelease.run, /release\/\*/);
   assert.doesNotMatch(serialized, /example-repository\/example-repository-codeops/);
 });

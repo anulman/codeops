@@ -580,6 +580,5 @@ jobs:
             --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_SHA" \
             --title "CodeOps ${tag}" \
-            --prerelease \
             --generate-notes \
             release/*
