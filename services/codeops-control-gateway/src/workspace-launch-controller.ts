@@ -5,6 +5,7 @@ import type {
   WorkspaceLaunch,
   WorkspaceLaunchRequest,
 } from "@codeops/codeops-contracts";
+import { workspaceLaunchSessionId } from "@codeops/codeops-contracts/workspace-launch";
 import {
   failWorkspaceLaunch,
   materializedWorkspaceLaunch,
@@ -30,12 +31,10 @@ export function workspaceLaunchRuntimeIdentity(launch: WorkspaceLaunch): {
   readonly leaseId: string;
   readonly promptIdempotencyKey: string;
 } {
-  const suffix = launch.launchId.replace(/^launch-/, "");
-  if (!/^[0-9a-f]{24}$/.test(suffix)) {
-    throw new Error("workspace launch identity is invalid");
-  }
+  const sessionId = workspaceLaunchSessionId(launch.launchId);
+  const suffix = sessionId.slice("ses_".length);
   return {
-    sessionId: `ses_${suffix}`,
+    sessionId,
     workflowId: "workspace-launch",
     runId: launch.launchId,
     leaseId: deterministicUuid(`${launch.launchId}:lease`),

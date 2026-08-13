@@ -5,11 +5,22 @@ import {
   workspaceCheckpointSchema,
   workspaceLaunchRequestSchema,
   workspaceLaunchSchema,
+  workspaceLaunchSessionId,
   workspaceManifestSchema,
+  workspaceSessionLaunchId,
 } from "../dist/workspace-launch.js";
 
 const sha = "a".repeat(40);
 const digest = `sha256:${"b".repeat(64)}`;
+
+test("maps one workspace launch to its optimistic session route", () => {
+  const launchId = "launch-0123456789abcdef01234567";
+  const sessionId = "ses_0123456789abcdef01234567";
+  assert.equal(workspaceLaunchSessionId(launchId), sessionId);
+  assert.equal(workspaceSessionLaunchId(sessionId), launchId);
+  assert.equal(workspaceSessionLaunchId("ses_regular-session"), null);
+  assert.throws(() => workspaceLaunchSessionId("launch-invalid"));
+});
 
 test("accepts a first-class scratch workspace launch", () => {
   assert.deepEqual(

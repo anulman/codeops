@@ -24,6 +24,10 @@
     "./session-runtime": {
       "types": "./dist/session-runtime.d.ts",
       "default": "./dist/session-runtime.js"
+    },
+    "./workspace-launch": {
+      "types": "./dist/workspace-launch.d.ts",
+      "default": "./dist/workspace-launch.js"
     }
   },
   "scripts": {

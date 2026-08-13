@@ -1,12 +1,11 @@
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { Link, createFileRoute, useNavigate } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import {
   createWorkspaceLaunch,
   getWorkspaceCatalog,
-  getWorkspaceLaunch,
 } from "@/lib/workspaceLaunch.data";
-import type { WorkspaceLaunch } from "@codeops/codeops-contracts";
+import { workspaceLaunchSessionId } from "@codeops/codeops-contracts/workspace-launch";
 
 export const Route = createFileRoute("/new")({
   loader: () => getWorkspaceCatalog(),
@@ -19,7 +18,6 @@ function NewSessionPage() {
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
   const [selected, setSelected] = useState<readonly string[]>([]);
-  const [launch, setLaunch] = useState<WorkspaceLaunch | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const valid = prompt.trim().length > 0 && prompt.length <= 100_000 &&
@@ -29,41 +27,8 @@ function NewSessionPage() {
     [catalog.repositories, selected],
   );
 
-  useEffect(() => {
-    if (!launch || launch.state === "ready" || launch.state === "failed") return;
-    let disposed = false;
-    let polling = false;
-    const poll = async () => {
-      if (polling) return;
-      polling = true;
-      try {
-        const next = await getWorkspaceLaunch({ data: { launchId: launch.launchId } });
-        if (!disposed && next) setLaunch(next);
-      } catch (cause) {
-        if (!disposed) setError(errorMessage(cause));
-      } finally {
-        polling = false;
-      }
-    };
-    const timer = window.setInterval(() => void poll(), 1_000);
-    void poll();
-    return () => {
-      disposed = true;
-      window.clearInterval(timer);
-    };
-  }, [launch?.launchId, launch?.state]);
-
-  useEffect(() => {
-    if (launch?.state !== "ready") return;
-    void navigate({
-      to: "/sessions/$sessionId",
-      params: { sessionId: launch.sessionId },
-      replace: true,
-    });
-  }, [launch, navigate]);
-
   const toggleRepository = (key: string) => {
-    if (submitting || launch) return;
+    if (submitting) return;
     setSelected((current) =>
       current.includes(key)
         ? current.filter((item) => item !== key)
@@ -74,11 +39,11 @@ function NewSessionPage() {
   };
 
   const submit = async () => {
-    if (!valid || submitting || launch) return;
+    if (!valid || submitting) return;
     setSubmitting(true);
     setError(null);
     try {
-      setLaunch(await createWorkspaceLaunch({
+      const launch = await createWorkspaceLaunch({
         data: {
           version: "codeops.workspace-launch-request/v1",
           idempotencyKey: crypto.randomUUID(),
@@ -86,7 +51,12 @@ function NewSessionPage() {
           ...(title.trim() ? { title: title.trim() } : {}),
           sources: selected.map((catalogKey) => ({ catalogKey })),
         },
-      }));
+      });
+      await navigate({
+        to: "/sessions/$sessionId",
+        params: { sessionId: workspaceLaunchSessionId(launch.launchId) },
+        replace: true,
+      });
     } catch (cause) {
       setError(errorMessage(cause));
     } finally {
@@ -94,7 +64,7 @@ function NewSessionPage() {
     }
   };
 
-  const locked = submitting || launch !== null;
+  const locked = submitting;
   return (
     <AppShell>
       <main className="min-h-[calc(100dvh-52px)] bg-[#111113] px-4 py-8 lg:min-h-dvh lg:px-8 lg:py-12">
@@ -145,11 +115,11 @@ function NewSessionPage() {
 
             <div className="flex flex-col gap-3 border-t border-white/[0.07] bg-black/10 px-5 py-4 sm:flex-row sm:items-center sm:justify-between sm:px-7">
               <div aria-live="polite" className="min-h-5 text-[11px] text-white/34">
-                {error ? <span role="alert" className="text-[#ff989d]">{error}</span> : launch ? <span className="flex items-center gap-2"><span className="size-1.5 animate-pulse rounded-full bg-[#6da8ff]" />{launch.state === "failed" ? `Launch failed: ${launch.failureCode}` : "Provisioning the workspace and starting the agent…"}</span> : "The initial prompt is delivered exactly once after the session is ready."}
+                {error ? <span role="alert" className="text-[#ff989d]">{error}</span> : submitting ? <span className="flex items-center gap-2"><span className="size-1.5 animate-pulse rounded-full bg-[#6da8ff]" />Creating the session…</span> : "The initial prompt is delivered exactly once after the session is ready."}
               </div>
               <div className="flex shrink-0 gap-2">
                 <Link to="/" className="grid h-11 place-items-center rounded-lg px-4 text-xs font-medium text-white/40 transition hover:bg-white/[0.04] hover:text-white/68">Cancel</Link>
-                <button type="button" disabled={!valid || locked} onClick={() => void submit()} className="h-11 rounded-lg bg-[#6d6af7] px-5 text-xs font-semibold text-white shadow-[0_8px_24px_rgba(73,69,225,.2)] transition hover:bg-[#7c79ff] disabled:cursor-not-allowed disabled:opacity-35">{submitting ? "Creating…" : launch ? "Provisioning…" : "Create session"}</button>
+                <button type="button" disabled={!valid || locked} onClick={() => void submit()} className="h-11 rounded-lg bg-[#6d6af7] px-5 text-xs font-semibold text-white shadow-[0_8px_24px_rgba(73,69,225,.2)] transition hover:bg-[#7c79ff] disabled:cursor-not-allowed disabled:opacity-35">{submitting ? "Creating…" : "Create session"}</button>
               </div>
             </div>
           </section>
