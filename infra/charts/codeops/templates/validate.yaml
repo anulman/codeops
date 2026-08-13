@@ -65,9 +65,6 @@
 {{- if and .Values.plane.adapter.enabled (not (regexMatch "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$" .Values.plane.apiOrigin)) -}}
 {{- fail "Plane adapter requires one credential-free HTTPS API origin" -}}
 {{- end -}}
-{{- if not (regexMatch "^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$" .Values.ingress.host) -}}
-{{- fail "ingress.host must be one lowercase DNS host" -}}
-{{- end -}}
 {{- if .Values.quickstart.enabled -}}
 {{- $quickstart := .Values.quickstart -}}
 {{- $repository := $quickstart.repository -}}
@@ -86,14 +83,6 @@
 {{- end -}}
 {{- if or (eq (trim $quickstart.registry.username) "") (lt (len $quickstart.registry.token) 16) (regexMatch "\\s" $quickstart.registry.token) -}}
 {{- fail "quickstart.registry requires one username and one non-whitespace token of at least 16 characters" -}}
-{{- end -}}
-{{- end -}}
-{{- if or (eq $quickstart.access.audience "") (eq (len $quickstart.access.allowedEmails) 0) -}}
-{{- fail "quickstart.access must contain one audience and at least one allowed email" -}}
-{{- end -}}
-{{- range $quickstart.access.allowedEmails -}}
-{{- if not (regexMatch "^[^@[:space:]]+@[^@[:space:]]+\\.[^@[:space:]]+$" .) -}}
-{{- fail "quickstart.access.allowedEmails entries must be email addresses" -}}
 {{- end -}}
 {{- end -}}
 {{- $credentials := list $repository.github.readToken $repository.github.writeToken -}}
@@ -185,9 +174,6 @@
 {{- fail "quickstart baseline context overrides must contain at most 100000 bytes" -}}
 {{- end -}}
 {{- end -}}
-{{- end -}}
-{{- if not (regexMatch "^https://[a-z0-9-]+\\.cloudflareaccess\\.com/?$" .Values.agentsUi.access.issuer) -}}
-{{- fail "agentsUi.access.issuer must be one Cloudflare Access team-domain origin" -}}
 {{- end -}}
 {{- if not (regexMatch "^[0-9a-f]{40}$" .Values.githubController.controlPlaneSha) -}}
 {{- fail "githubController.controlPlaneSha must be one exact lowercase Git SHA" -}}

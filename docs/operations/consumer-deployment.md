@@ -22,7 +22,7 @@ The policy uses schema `codeops.consumer-policy/v1`:
   "schemaVersion": "codeops.consumer-policy/v1",
   "helmTimeout": "20m",
   "httpTimeoutMs": 15000,
-  "requiredSecrets": ["codeops-postgres", "codeops-access"],
+  "requiredSecrets": ["codeops-postgres", "codeops-session-secrets"],
   "cluster": {
     "kubernetesServiceCidrs": ["10.43.0.1/32"],
     "readyNodeSelector": "example.com/codeops=true"

@@ -45,8 +45,6 @@ spec:
               value: 0.0.0.0
             - name: PORT
               value: "3000"
-            - name: AGENTS_UI_ACCESS_REQUIRED
-              value: "true"
             - name: CODEOPS_SESSION_BROKER_URL
               value: http://codeops-control-gateway:8080
             - name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE

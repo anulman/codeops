@@ -41,7 +41,6 @@ test("initializer writes one private file and never prints credentials", async (
     CODEOPS_GITHUB_WEBHOOK_SECRET: "fixture-github-webhook-credential-0001",
     CODEOPS_PLANE_API_KEY: "fixture-plane-api-credential-0001",
     CODEOPS_PLANE_WEBHOOK_SECRET: "fixture-plane-webhook-credential-0001",
-    CODEOPS_ACCESS_AUDIENCE: "fixture-access-audience-0001",
   };
   const input = JSON.parse(await readFile("infra/charts/codeops/examples/onboarding.example.json", "utf8"));
   input.contextRoot = new URL("../../docs/context", import.meta.url).pathname;

@@ -211,8 +211,7 @@ target and runs with a tokenless ServiceAccount, a read-only root filesystem,
 and only the distinct session-broker read/write bearer capabilities. Its
 NetworkPolicy admits HTTP only from `ingress-nginx` and allows egress only to
 the control gateway and cluster DNS. The checked-in manifest intentionally has
-no Ingress: `HARDEN-13` owns the Cloudflare Access policy and public hostname,
-and that boundary must be completed before an ingress is added.
+no Ingress. A deployment consumer owns any public edge.
 
 ```bash
 CODEOPS_AGENTS_UI_DIGEST=sha256:<64-lowercase-hex> \
@@ -223,8 +222,8 @@ CODEOPS_AGENTS_UI_DIGEST=sha256:<64-lowercase-hex> \
 The standalone acceptance runner owns the browser contract. The local command
 builds the real UI, starts a deterministic broker fixture, and validates the
 desktop and mobile surfaces with Chromium. A deployment workflow can run the
-published acceptance-runner image against the external HTTPS origin with a
-Cloudflare Access service token.
+published acceptance-runner image against the private Service or a
+consumer-owned HTTPS origin.
 
 ```bash
 nub run acceptance:agents-ui

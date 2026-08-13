@@ -1,4 +1,4 @@
-agentsUi: { image: { digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" }, access: { issuer: "https://example.cloudflareaccess.com" } }
+agentsUi: { image: { digest: "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa" } }
 gateway: { image: { digest: "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb" } }
 controlGateway:
   image: { digest: "sha256:1212121212121212121212121212121212121212121212121212121212121212" }

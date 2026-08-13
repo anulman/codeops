@@ -128,10 +128,9 @@ export function workspaceLaunchClient(): Promise<WorkspaceLaunchClient> {
       baseUrl: parseSessionBrokerBaseUrl(
         baseUrl,
         process.env.NODE_ENV,
-        process.env.AGENTS_UI_ACCESS_REQUIRED === "false" &&
-          ["127.0.0.1", "localhost", "::1"].includes(
-            process.env.HOST?.trim() ?? "",
-          ),
+        ["127.0.0.1", "localhost", "::1"].includes(
+          process.env.HOST?.trim() ?? "",
+        ),
       ),
       token,
     });

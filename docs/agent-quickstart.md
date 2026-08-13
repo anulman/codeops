@@ -17,15 +17,15 @@ nub run verify
 ```
 
 Use the test-selection map in `AGENTS.md` while editing. Run browser acceptance
-for UI or authentication changes. Do not publish, merge, or deploy without
+for UI changes. Do not publish, merge, or deploy without
 explicit authority.
 
 ## Evaluate locally
 
 `nub run evaluate` builds the shared contracts, runs the service and UI tests,
 and renders the supported Helm profiles with fixture authority. It makes no
-network write and needs no Kubernetes cluster, Plane installation, Cloudflare
-Access application, GitHub token, OpenAI key, or Plane persona account.
+network write and needs no Kubernetes cluster, Plane installation, GitHub
+token, OpenAI key, or Plane persona account.
 
 This lane proves source behavior. It does not prove a live provider or cluster.
 

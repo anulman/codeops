@@ -9,10 +9,7 @@ the VPS. It is separate from the OVH RenoConcierge cluster.
 - Kubeconfig: `~/.kube/codeops-vps.yaml`
 - Pod CIDR: `10.52.0.0/16`
 - Service CIDR: `10.53.0.0/16`
-- Public edge: Caddy on ports 80 and 443
 - Cluster ingress: ingress-nginx on NodePorts 32080 and 32443
-- Plane host: `work.aidans.computer`
-- Agents UI host: `agents.aidans.computer`
 
 The separate CIDRs prevent the new cluster from reusing retired RenoConcierge
 ClusterIP addresses that remain in historical Caddy routes. The host firewall
@@ -53,7 +50,6 @@ Before a full installation, verify:
 - at least 8 GiB RAM;
 - at least 40 GiB free disk;
 - the required credential and identity values;
-- DNS and Cloudflare Access for both public hosts;
 - verified backup and rollback procedures.
 
 ## Host installation
@@ -61,10 +57,5 @@ Before a full installation, verify:
 Use the exact versions in `versions.env`. Install the pinned k3s release with
 `config.yaml` copied to
 `/etc/rancher/k3s/config.yaml`. Install ingress-nginx with
-`ingress-nginx-values.yaml`. Install `firewall.nft` under `/etc/nftables.d/`
-before public DNS points to the host. Append the repository Caddy block to the
-host Caddyfile only after `caddy validate` passes.
-
-Keep `work.aidans.computer` and `agents.aidans.computer` proxied through
-Cloudflare to the VPS. Caddy terminates TLS and forwards the original host to
-ingress-nginx.
+`ingress-nginx-values.yaml`. Install `firewall.nft` under `/etc/nftables.d/`.
+Keep the Kubernetes API and ingress NodePorts private.

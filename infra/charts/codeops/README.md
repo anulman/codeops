@@ -1,8 +1,8 @@
 # CodeOps Helm chart
 
 This chart packages the CodeOps control plane. The release name, namespace,
-host, ingress class, node selector, storage class, image registry, and Secret
-names are configurable. All CodeOps images must use exact SHA-256 digests.
+node selector, storage class, image registry, and Secret names are
+configurable. All CodeOps images must use exact SHA-256 digests.
 
 The chart contains:
 
@@ -11,7 +11,7 @@ The chart contains:
 - the authenticated session control gateway;
 - the HMAC-authenticated Plane and GitHub webhook controller;
 - the Temporal workflow orchestrator;
-- the Agents UI with signed Cloudflare Access JWT verification;
+- the Agents UI on a private ClusterIP Service;
 - scoped ServiceAccounts and RBAC for each fixed operand and per-session runtime;
 - a Varlock-backed model proxy and immutable runtime image inputs;
 - a post-install and pre-upgrade, non-retrying schema migration Job;
@@ -64,10 +64,10 @@ values and rendered Secret manifests in the release record. Use dedicated
 sandbox credentials. Keep the file out of source control. Use the
 existing-Secret mode with an external Secret controller for production.
 
-After installation, configure the GitHub webhook at
-`https://<host>/webhooks/github` and the Plane webhook at
-`https://<host>/webhooks/plane/<owner>/<repository>`. Use the distinct webhook
-Secrets from the same values file.
+The chart creates no Ingress. Use `kubectl port-forward` for local operator
+access. If the installation needs public UI or webhook routes, the deployment
+consumer must create the Ingress, TLS, and edge authentication resources. Use
+the distinct webhook Secrets from the same values file.
 
 Helm uninstall retains the quickstart Secrets and PostgreSQL data PVC. Delete
 them explicitly only when you intend to destroy the installation identity and
@@ -94,7 +94,6 @@ installation, the operator must create these Secrets:
   port, and database must match `database-url`; it must not use the gateway
   database role;
 - `codeops-model-proxy-credentials`: `openai-api-key`, `signing-key`;
-- `codeops-access`: `audience`, `allowed-emails`.
 - `codeops-control-gateway-secrets`: `dispatch-token`,
   `repository-head-token`, `publication-token`.
 - `codeops-controller-secrets`: `research-projection-token`.
@@ -232,7 +231,7 @@ The runtime worker calls the gateway's dedicated initialization endpoint. The
 request is authenticated and idempotent for the exact root identity. The
 Agents UI does not receive the initialization token or Kubernetes authority.
 
-Render with exact digests and the Access team domain:
+Render with exact digests:
 
 ```sh
 helm template codeops infra/charts/codeops \
@@ -248,7 +247,6 @@ helm template codeops infra/charts/codeops \
   --set runtime.agentImage.digest=sha256:<digest> \
   --set runtime.sessionGatewayImage.digest=sha256:<digest> \
   --set modelProxy.image.digest=sha256:<digest> \
-  --set agentsUi.access.issuer=https://<team>.cloudflareaccess.com \
   --set temporal.address=temporal.codeops.svc:7233 \
   --set 'controlGateway.kubernetesApiCidrs[0]=<api-service-ip>/32'
 ```

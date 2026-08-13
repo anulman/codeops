@@ -114,7 +114,6 @@ try {
       NODE_ENV: "development",
       HOST: "127.0.0.1",
       PORT: String(uiPort),
-      AGENTS_UI_ACCESS_REQUIRED: "false",
       CODEOPS_SESSION_BROKER_URL: `http://127.0.0.1:${brokerPort}`,
       CODEOPS_SESSION_BROKER_READ_TOKEN_FILE: readTokenPath,
       CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE: writeTokenPath,

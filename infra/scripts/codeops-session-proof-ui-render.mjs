@@ -67,7 +67,6 @@ export function renderSessionProofUiManifest(template, input) {
   if (
     pod.automountServiceAccountToken !== false ||
     pod.containers.length !== 1 ||
-    env.AGENTS_UI_ACCESS_REQUIRED !== "true" ||
     env.CODEOPS_SESSION_BROKER_URL !== "http://codeops-control-gateway:8080" ||
     JSON.stringify(secretNames) !==
       JSON.stringify([
