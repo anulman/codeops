@@ -47,7 +47,7 @@ spec:
               valueFrom:
                 secretKeyRef: { name: {{ .Values.agentsUi.access.secretName }}, key: {{ .Values.agentsUi.access.audienceKey }} }
             - { name: AGENTS_UI_ACCESS_ALLOWED_EMAILS_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-access/allowed-emails }
-            - { name: CODEOPS_SESSION_BROKER_URL, value: http://{{ include "codeops.fullname" . }}-session-control-gateway:8080 }
+            - { name: CODEOPS_SESSION_BROKER_URL, value: http://{{ include "codeops.fullname" . }}-session-control-gateway.{{ .Release.Namespace }}.svc.cluster.local:8080 }
             - { name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE, value: /var/run/secrets/codeops/read-token }
             - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/codeops/write-token }
           ports:
