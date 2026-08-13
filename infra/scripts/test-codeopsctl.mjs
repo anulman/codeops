@@ -114,7 +114,7 @@ test("rejects unsafe policy drift", () => {
   assert.throws(() => validatePolicy({ ...policy(), extra: true }), /unsupported fields/);
 });
 
-test("plans a compensating rollback for upgrades and fresh installs", () => {
+test("plans a hook-free compensating rollback for upgrades and cleans fresh installs", () => {
   assert.deepEqual(
     buildCompensatingRollbackPlan({
       release: "agents-system",
@@ -123,7 +123,7 @@ test("plans a compensating rollback for upgrades and fresh installs", () => {
       namespaceExisted: true,
       helmTimeout: "20m",
     }),
-    [["helm", ["rollback", "agents-system", "7", "--namespace", "agents-system", "--wait", "--wait-for-jobs", "--timeout", "20m"]]],
+    [["helm", ["rollback", "agents-system", "7", "--namespace", "agents-system", "--no-hooks", "--wait", "--wait-for-jobs", "--timeout", "20m"]]],
   );
   assert.equal(
     buildCompensatingRollbackPlan({

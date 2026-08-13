@@ -622,6 +622,7 @@ export function buildCompensatingRollbackPlan({
         String(previousRelease.revision),
         "--namespace",
         namespace,
+        "--no-hooks",
         "--wait",
         "--wait-for-jobs",
         "--timeout",
