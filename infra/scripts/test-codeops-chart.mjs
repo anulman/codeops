@@ -262,6 +262,10 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
     env.get("AGENTS_UI_ACCESS_ALLOWED_EMAILS_FILE").value,
     "/var/run/secrets/team-a-codeops-access/allowed-emails",
   );
+  assert.equal(
+    env.get("CODEOPS_SESSION_BROKER_URL").value,
+    "http://team-a-codeops-session-control-gateway.engineering.svc.cluster.local:8080",
+  );
   assert.equal(JSON.stringify(deployment).includes("cf-access-authenticated-user-email"), false);
 
   const gateway = resource(resources, "Deployment", "team-a-codeops-session-gateway");
