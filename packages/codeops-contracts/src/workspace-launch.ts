@@ -27,6 +27,19 @@ const identifier = z
 const safeText = (maximum: number) => z.string().trim().min(1).max(maximum);
 const isoDateTime = z.string().datetime({ offset: true });
 const sha256Digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const workspaceLaunchIdPattern = /^launch-([0-9a-f]{24})$/;
+const workspaceSessionIdPattern = /^ses_([0-9a-f]{24})$/;
+
+export function workspaceLaunchSessionId(launchId: string): string {
+  const match = launchId.match(workspaceLaunchIdPattern);
+  if (match === null) throw new Error("workspace launch identity is invalid");
+  return `ses_${match[1]}`;
+}
+
+export function workspaceSessionLaunchId(sessionId: string): string | null {
+  const match = sessionId.match(workspaceSessionIdPattern);
+  return match === null ? null : `launch-${match[1]}`;
+}
 
 export const workspaceSourceSelectionSchema = z
   .object({

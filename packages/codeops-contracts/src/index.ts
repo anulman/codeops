@@ -94,6 +94,8 @@ export {
   type SessionRuntimePermissionSubmission,
 } from "./session-runtime.js";
 export {
+  workspaceLaunchSessionId,
+  workspaceSessionLaunchId,
   workspaceCatalogEntrySchema,
   workspaceCatalogSchema,
   workspaceCheckpointSchema,

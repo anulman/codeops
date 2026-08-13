@@ -3,20 +3,30 @@ import { useEffect, useMemo, useRef, useState, type ReactNode, type Ref } from "
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { executeSessionCommand, getSessionDetail, getSessionEvents, getSessionFleet } from "@/lib/sessionBroker.data";
+import { getWorkspaceLaunch } from "@/lib/workspaceLaunch.data";
 import { checkpointPatchLabel, isWorkspaceIdentity, sessionWorkspaceDetail } from "@/lib/sessionIdentity";
+import { workspaceLaunchSessionId, workspaceSessionLaunchId, type WorkspaceLaunch } from "@codeops/codeops-contracts/workspace-launch";
 import type { SessionCommand, SessionActionType, SessionCapability, SessionContentBlock, SessionEvent, SessionSnapshot, SessionTimelineUpdate, SessionUserAction } from "@codeops/codeops-contracts/session-broker";
 
 export const Route = createFileRoute("/sessions/$sessionId")({
   loader: async ({ params }) => {
     const [session, fleet] = await Promise.all([getSessionDetail({ data: { sessionId: params.sessionId } }), getSessionFleet()]);
-    const events = await getSessionEvents({ data: { sessionId: params.sessionId, afterCursor: Math.max(0, (session?.eventCursor ?? 0) - 500), limit: 500 } });
-    return { session, events, fleet };
+    const launchId = workspaceSessionLaunchId(params.sessionId);
+    const [events, launch] = await Promise.all([
+      session
+        ? getSessionEvents({ data: { sessionId: params.sessionId, afterCursor: Math.max(0, session.eventCursor - 500), limit: 500 } })
+        : Promise.resolve({ sessionId: params.sessionId, afterCursor: 0, nextCursor: 0, events: [] }),
+      launchId
+        ? getWorkspaceLaunch({ data: { launchId } })
+        : Promise.resolve(null),
+    ]);
+    return { session, events, fleet, launch };
   },
   component: SessionCockpit,
 });
 
 function SessionCockpit() {
-  const { session, events, fleet } = Route.useLoaderData();
+  const { session, events, fleet, launch } = Route.useLoaderData();
   const router = useRouter();
   const [optimisticPrompt, setOptimisticPrompt] = useState<{
     readonly idempotencyKey: string;
@@ -25,7 +35,7 @@ function SessionCockpit() {
   } | null>(null);
   const optimisticPromptRef = useRef<HTMLElement | null>(null);
   useEffect(() => {
-    if (!session) return;
+    if (!session && (!launch || launch.state === "failed")) return;
     let invalidating = false;
     const timer = window.setInterval(() => {
       if (invalidating) return;
@@ -33,7 +43,7 @@ function SessionCockpit() {
       void router.invalidate().finally(() => { invalidating = false; });
     }, 1_000);
     return () => window.clearInterval(timer);
-  }, [router, session?.sessionId, session?.state]);
+  }, [router, session?.sessionId, session?.state, launch?.state]);
   useEffect(() => {
     if (
       optimisticPrompt !== null &&
@@ -51,6 +61,7 @@ function SessionCockpit() {
     if (!optimisticPrompt) return;
     optimisticPromptRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [optimisticPrompt?.idempotencyKey]);
+  if (!session && launch) return <ProvisioningSession launch={launch} sessions={fleet} />;
   if (!session) return <AppShell sessions={fleet}><main className="grid min-h-[calc(100dvh-52px)] place-items-center px-4 text-sm text-white/42 lg:min-h-dvh">Session not found.</main></AppShell>;
   const relatedSessions = fleet.filter((item) => item.identity.workflowId === session.identity.workflowId && item.sessionId !== session.sessionId).slice(0, 6);
   const permissionCapability = session.capabilities.find((item) => item.action === "respond_permission");
@@ -95,6 +106,32 @@ function SessionCockpit() {
         <aside className="hidden h-dvh min-h-0 overflow-y-auto border-l border-white/[0.07] bg-[#151517] px-4 py-5 xl:block">
           <Inspector session={session} relatedSessions={relatedSessions} />
         </aside>
+      </main>
+    </AppShell>
+  );
+}
+
+function ProvisioningSession({ launch, sessions }: Readonly<{ launch: WorkspaceLaunch; sessions: readonly SessionSnapshot[] }>) {
+  const failed = launch.state === "failed";
+  return (
+    <AppShell sessions={sessions} activeSessionId={workspaceLaunchSessionId(launch.launchId)}>
+      <main className="min-h-[calc(100dvh-52px)] bg-[#111113] lg:min-h-dvh">
+        <header className="sticky top-13 z-2 flex min-h-14 items-center gap-3 border-b border-white/[0.07] bg-[#151517]/95 px-3 backdrop-blur-xl sm:px-5 lg:top-0">
+          <Link to="/" className="grid size-8 shrink-0 place-items-center rounded-lg text-white/35 transition hover:bg-white/[0.05] hover:text-white/72 lg:hidden" aria-label="All sessions">←</Link>
+          <div className="min-w-0 flex-1">
+            <h1 className="truncate text-sm font-semibold tracking-[-0.01em] text-white/88">{launch.title ?? "New session"}</h1>
+            <p className="mt-0.5 truncate font-mono text-[10px] text-white/27">{launch.workspace.sources.length === 0 ? "scratch workspace" : `${launch.workspace.sources.length} source ${launch.workspace.sources.length === 1 ? "repository" : "repositories"}`}</p>
+          </div>
+          <span className={`rounded-full px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.08em] ${failed ? "bg-[#ff7278]/10 text-[#ff989d]" : "bg-[#6da8ff]/10 text-[#8dbbff]"}`}>{failed ? "Failed" : "Provisioning"}</span>
+        </header>
+        <section className="mx-auto max-w-3xl px-4 py-10 sm:px-8 sm:py-14">
+          <div className={`rounded-2xl border p-6 sm:p-8 ${failed ? "border-[#ff7278]/18 bg-[#ff7278]/[0.045]" : "border-white/[0.07] bg-[#171719]"}`} aria-live="polite">
+            <div className={`grid size-10 place-items-center rounded-xl ${failed ? "bg-[#ff7278]/10 text-[#ff989d]" : "bg-[#6da8ff]/10 text-[#8dbbff]"}`}>{failed ? "!" : <span className="size-2 animate-pulse rounded-full bg-current" />}</div>
+            <h2 className="mt-5 text-base font-semibold text-white/82">{failed ? "Workspace provisioning failed" : "Preparing your workspace"}</h2>
+            <p className="mt-2 max-w-xl text-sm leading-6 text-white/38">{failed ? `The launcher stopped with ${launch.failureCode.replaceAll("-", " ")}. No prompt was sent.` : "CodeOps is resolving the workspace, starting the runtime, and delivering your initial prompt. This page will update automatically."}</p>
+            {failed ? <Link to="/new" className="mt-5 inline-grid h-10 place-items-center rounded-lg bg-white/[0.07] px-4 text-xs font-semibold text-white/72 transition hover:bg-white/[0.1]">Create another session</Link> : null}
+          </div>
+        </section>
       </main>
     </AppShell>
   );

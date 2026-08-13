@@ -93,9 +93,10 @@ test("catalog and launch reads validate responses and exact identities", async (
 });
 
 test("launch server functions bind the private UI context and no browser token", async () => {
-  const [dataSource, routeSource] = await Promise.all([
+  const [dataSource, routeSource, sessionRouteSource] = await Promise.all([
     readFile(new URL("../src/lib/workspaceLaunch.data.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/new.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/routes/sessions.$sessionId.tsx", import.meta.url), "utf8"),
   ]);
   assert.equal(
     (dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length,
@@ -105,5 +106,10 @@ test("launch server functions bind the private UI context and no browser token",
   assert.match(routeSource, /Scratch workspace/);
   assert.match(routeSource, /Create session/);
   assert.match(routeSource, /crypto\.randomUUID\(\)/);
+  assert.match(routeSource, /workspaceLaunchSessionId\(launch\.launchId\)/);
+  assert.doesNotMatch(routeSource, /launch\.state === "ready"/);
+  assert.match(sessionRouteSource, /Preparing your workspace/);
+  assert.match(sessionRouteSource, /getWorkspaceLaunch/);
+  assert.match(sessionRouteSource, /router\.invalidate\(\)/);
   assert.doesNotMatch(routeSource, /cloneUrl|image|serviceAccount|token/i);
 });
