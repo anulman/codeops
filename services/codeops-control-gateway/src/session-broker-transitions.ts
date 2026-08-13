@@ -562,6 +562,7 @@ export function applyForkSessionTransition(
       ...(workspaceIdentity ? {} : { branch: material.branch }),
       workflowId: material.workflowId,
       runId: material.runId,
+      displayName: command.title,
       parentSessionId: snapshot.sessionId,
       forkedAtCursor: snapshot.eventCursor,
     },

@@ -17,6 +17,7 @@ function config(sources = []) {
     sessionId: "ses_0123456789abcdef01234567",
     workflowId: "workspace-launch",
     runId: "launch-0123456789abcdef01234567",
+    displayName: "Investigate the estimator",
     leaseId: "11111111-1111-4111-8111-111111111111",
     workspace: {
       version: "codeops.workspace/v1",
@@ -61,6 +62,11 @@ test("builds isolated materializer and runtime Jobs on bounded persistent storag
   assert.equal(JSON.stringify(runtime).includes("https://github.com/"), false);
   assert.equal(JSON.stringify(runtime).includes("read-token-codeops"), false);
   assert.match(JSON.stringify(runtime), /ephemeral-storage/);
+  const runtimeEnvironment = runtime.spec.template.spec.containers[0].env;
+  assert.equal(
+    runtimeEnvironment.find((entry) => entry.name === "CODEOPS_SESSION_DISPLAY_NAME")?.value,
+    "Investigate the estimator",
+  );
 });
 
 test("puts exact source authority only in the init-only immutable Secret", () => {
@@ -84,6 +90,7 @@ test("puts exact source authority only in the init-only immutable Secret", () =>
 test("rejects authority drift and mutable runtime images", () => {
   assert.throws(() => buildWorkspaceResources({ ...config([{ catalogKey: "codeops", repository: "anulman/CodeOps" }]), sources: [] }), /match the manifest/);
   assert.throws(() => buildWorkspaceResources({ ...config(), agentImage: "ghcr.io/anulman/codeops/agent:latest" }), /immutable digests/);
+  assert.throws(() => buildWorkspaceResources({ ...config(), displayName: " padded " }), /display name/);
 });
 
 test("binds the immutable Secret name to principal, request, workspace, and authority", () => {

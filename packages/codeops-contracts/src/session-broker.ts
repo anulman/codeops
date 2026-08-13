@@ -217,6 +217,7 @@ export const sessionPermissionRequestSchema = z
 const sessionIdentityCommonShape = {
   workflowId: workflowRunIdentifier,
   runId: workflowRunIdentifier,
+  displayName: safeText(200).optional(),
   workItemId: uuid.optional(),
   pullRequestNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
   pullRequestHeadSha: gitSha.optional(),

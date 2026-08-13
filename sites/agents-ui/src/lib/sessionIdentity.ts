@@ -21,6 +21,10 @@ export function sessionWorkspaceLabel(identity: DisplaySessionIdentity): string 
   return `${count} repositories`;
 }
 
+export function sessionDisplayName(identity: DisplaySessionIdentity): string {
+  return identity.displayName ?? identity.runId;
+}
+
 export function sessionWorkspaceDetail(identity: DisplaySessionIdentity): string {
   if (!isWorkspaceIdentity(identity)) {
     return `${identity.branch} · ${identity.baseSha.slice(0, 7)}`;
@@ -32,7 +36,7 @@ export function sessionWorkspaceDetail(identity: DisplaySessionIdentity): string
 }
 
 export function sessionSearchText(identity: DisplaySessionIdentity): string {
-  const common = `${identity.workflowId} ${identity.runId}`;
+  const common = `${identity.workflowId} ${identity.runId} ${identity.displayName ?? ""}`;
   if (!isWorkspaceIdentity(identity)) {
     return `${common} ${identity.repository} ${identity.branch} ${identity.baseSha}`;
   }

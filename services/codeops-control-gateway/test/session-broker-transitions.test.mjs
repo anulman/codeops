@@ -343,6 +343,7 @@ test("forks one generation-one child with independent cursor lineage", () => {
   assert.equal(result.snapshot.generation, 1);
   assert.equal(result.snapshot.identity.parentSessionId, current.sessionId);
   assert.equal(result.snapshot.identity.forkedAtCursor, 184);
+  assert.equal(result.snapshot.identity.displayName, command.title);
   assert.equal(result.snapshot.eventCursor, 1);
   assert.equal(result.event.cursor, 1);
   assert.equal(result.event.type, "session_created");

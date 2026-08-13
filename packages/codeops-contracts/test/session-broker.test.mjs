@@ -138,10 +138,12 @@ test("admits a first-class scratch or multi-source workspace identity", () => {
     },
     workflowId: "workspace-launch",
     runId: "launch-123",
+    displayName: "Investigate the estimator",
     parentSessionId: null,
     forkedAtCursor: null,
   });
   assert.equal(identity.workspace.sources.length, 2);
+  assert.equal(identity.displayName, "Investigate the estimator");
   assert.equal(
     workspaceSessionIdentitySchema.parse({
       ...identity,

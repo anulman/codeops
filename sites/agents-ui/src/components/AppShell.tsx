@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import type { SessionSnapshot } from "@codeops/codeops-contracts/session-broker";
-import { sessionSearchText, sessionWorkspaceLabel } from "@/lib/sessionIdentity";
+import { sessionDisplayName, sessionSearchText, sessionWorkspaceLabel } from "@/lib/sessionIdentity";
 
 interface AppShellProps {
   readonly children: ReactNode;
@@ -103,7 +103,7 @@ function SessionGroup({ label, sessions, activeSessionId, quiet = false }: Reado
             <Link key={session.sessionId} to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} aria-current={selected ? "page" : undefined} className={`group block rounded-lg px-2.5 py-2 transition ${selected ? "bg-white/[0.075] text-white shadow-[0_1px_0_rgba(255,255,255,.06)_inset]" : "text-white/64 hover:bg-white/[0.045] hover:text-white/88"}`}>
               <div className="flex min-w-0 items-center gap-2">
                 <span className={`size-1.5 shrink-0 rounded-full ${stateDot(session)}`} />
-                <span className={`min-w-0 flex-1 truncate text-xs font-medium ${quiet && !selected ? "text-white/45" : ""}`}>{session.identity.runId}</span>
+                <span className={`min-w-0 flex-1 truncate text-xs font-medium ${quiet && !selected ? "text-white/45" : ""}`}>{sessionDisplayName(session.identity)}</span>
                 <span className={`shrink-0 font-mono text-[9px] tabular-nums ${selected ? "text-white/60" : "text-white/22"}`}>{session.updatedAt.slice(11, 16)}</span>
               </div>
               <div className={`mt-1 truncate pl-3.5 text-[10px] ${selected ? "text-white/65" : "text-white/28"}`}>{sessionWorkspaceLabel(session.identity)}</div>

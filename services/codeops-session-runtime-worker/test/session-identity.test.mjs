@@ -8,6 +8,7 @@ test("loads a bounded workspace manifest without legacy repository fields", asyn
       CODEOPS_SESSION_WORKSPACE_FILE: "/run/workspace.json",
       CODEOPS_SESSION_WORKFLOW_ID: "workspace-launch",
       CODEOPS_SESSION_RUN_ID: "launch-123",
+      CODEOPS_SESSION_DISPLAY_NAME: "Investigate the estimator",
     },
     read: async () => Buffer.from(JSON.stringify({
       version: "codeops.workspace/v1",
@@ -17,6 +18,7 @@ test("loads a bounded workspace manifest without legacy repository fields", asyn
   });
   assert.equal(identity.version, "codeops.session-workspace-identity/v1");
   assert.deepEqual(identity.workspace.sources, []);
+  assert.equal(identity.displayName, "Investigate the estimator");
   assert.equal("repository" in identity, false);
 });
 

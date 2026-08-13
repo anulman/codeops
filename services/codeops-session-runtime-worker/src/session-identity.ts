@@ -19,6 +19,9 @@ export async function loadRuntimeSessionIdentity(input: {
   const common = {
     workflowId: required("CODEOPS_SESSION_WORKFLOW_ID"),
     runId: required("CODEOPS_SESSION_RUN_ID"),
+    ...(input.env.CODEOPS_SESSION_DISPLAY_NAME?.trim()
+      ? { displayName: input.env.CODEOPS_SESSION_DISPLAY_NAME.trim() }
+      : {}),
     parentSessionId: null,
     forkedAtCursor: null,
   } as const;
