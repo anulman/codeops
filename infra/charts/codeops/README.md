@@ -137,6 +137,14 @@ repository.
 - `codeops-runtime-source`: `repository-read-token`. Only the trusted
   root-session Job uses this read-only source credential.
 
+Before upgrading an existing-Secret installation to a release with interactive
+workspace launch, add a distinct `workspace-launch-token` to
+`controlGateway.secretName`. Also include the control-gateway and runtime
+repository-authority Secret names in the consumer policy's `requiredSecrets`
+list. See
+[`docs/operations/consumer-deployment.md`](../../../docs/operations/consumer-deployment.md#upgrade-for-interactive-workspace-launch)
+for the ordered upgrade and catalog contract.
+
 The controller is a separate HMAC-authenticated process. Plane webhooks use
 `/webhooks/plane/{owner}/{repository}`. The route selects the repository's
 Plane webhook secret before payload processing. GitHub webhooks
@@ -165,6 +173,22 @@ automatic reviewer permits. Keep session repositories trusted, review the
 durable ACP timeline, and use a dedicated OpenAI project with server-side
 budget and rate limits.
 
+Interactive workspace launch uses two separate Pods. A short-lived source
+materializer receives the selected repositories' read tokens, resolves only
+the server-pinned commits, removes every Git remote, and writes the result to
+one bounded workspace PVC. The control gateway deletes the credential Secret
+and materializer Job before it creates the runtime Job. The runtime Pod never
+mounts repository credentials. It retains the established monitored public
+HTTPS policy for research and package retrieval. Therefore, admit only trusted
+catalog repositories: repository content executes with public HTTPS egress,
+but without reusable GitHub or model-provider credentials.
+
+Workspace checkpoints persist the actual bounded source patches and canonical
+scratch-file bundle in PostgreSQL before the checkpoint completion commits.
+The runtime database role can insert and verify only its execution receipts
+and checkpoint artifacts. Digest-only evidence is not a recoverability
+boundary.
+
 The model proxy records token subject, status, latency, request size, request
 count, and concurrency. It does not record request bodies. It accepts only
 `gpt-5.6-sol` Responses API requests. It adds or enforces a 32,768 output-token
@@ -179,7 +203,8 @@ The quickstart runs the forward-compatible schema migration as a
 `post-install` hook during the first installation and as a `pre-upgrade` hook
 for later revisions. The migration creates or rotates the receipt-only runtime
 role from the exact runtime DSN, removes all broad schema/table/sequence
-authority, and grants only the execution-receipt columns. The hook is
+authority, and grants only the execution-receipt and workspace-artifact
+columns. The hook is
 non-retrying and blocks Helm completion if the database contract is not ready.
 
 Helm uninstall removes the workloads, Services, RBAC, NetworkPolicies, and

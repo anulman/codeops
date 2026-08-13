@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  isWorkspaceSessionIdentity,
   SESSION_BROKER_VERSION,
   sessionCommandResultSchema,
   sessionCommandSchema,
@@ -210,13 +211,20 @@ function requireForkIdentity(
   command: Extract<SessionCommand, { readonly type: "fork" }>,
   result: SessionCommandResult,
 ): void {
+  const parentIdentity = snapshot.identity;
+  const childIdentity = result.snapshot.identity;
+  const sourceIdentityMatches = isWorkspaceSessionIdentity(parentIdentity)
+    ? isWorkspaceSessionIdentity(childIdentity) &&
+      canonical(childIdentity.workspace) === canonical(parentIdentity.workspace)
+    : !isWorkspaceSessionIdentity(childIdentity) &&
+      childIdentity.repository === parentIdentity.repository &&
+      childIdentity.baseSha === parentIdentity.baseSha;
   if (
     snapshot.checkpoint?.checkpointId !== command.checkpointId ||
     snapshot.eventCursor !== command.parentEventCursor ||
     result.snapshot.identity.parentSessionId !== snapshot.sessionId ||
     result.snapshot.identity.forkedAtCursor !== snapshot.eventCursor ||
-    result.snapshot.identity.repository !== snapshot.identity.repository ||
-    result.snapshot.identity.baseSha !== snapshot.identity.baseSha ||
+    !sourceIdentityMatches ||
     result.snapshot.generation !== 1
   ) {
     throw new Error(

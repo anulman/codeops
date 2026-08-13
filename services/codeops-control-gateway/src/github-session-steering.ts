@@ -1,5 +1,6 @@
 import type { IncomingHttpHeaders } from "node:http";
 import {
+  isWorkspaceSessionIdentity,
   SESSION_BROKER_VERSION,
   sessionSnapshotSchema,
   type SessionRuntimeDispatch,
@@ -91,6 +92,7 @@ export function resolveGitHubSessionTarget(input: {
     .filter((session) => {
       const prompt = session.capabilities.find(({ action }) => action === "prompt");
       return (
+        !isWorkspaceSessionIdentity(session.identity) &&
         session.state === "running" &&
         prompt?.availability === "enabled" &&
         session.lease?.status === "active" &&

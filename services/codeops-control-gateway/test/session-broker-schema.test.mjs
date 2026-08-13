@@ -14,6 +14,10 @@ const permissionRelayUrl = new URL("../sql/session-runtime-permission-relay.sql"
 const permissionRelayRevertUrl = new URL("../sql/session-runtime-permission-relay-revert.sql", import.meta.url);
 const lifecycleJournalUrl = new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url);
 const lifecycleJournalRevertUrl = new URL("../sql/work-item-lifecycle-journal-revert.sql", import.meta.url);
+const workspaceLaunchUrl = new URL("../sql/workspace-launch.sql", import.meta.url);
+const workspaceLaunchRevertUrl = new URL("../sql/workspace-launch-revert.sql", import.meta.url);
+const workspaceArtifactsUrl = new URL("../sql/workspace-checkpoint-artifacts.sql", import.meta.url);
+const workspaceArtifactsRevertUrl = new URL("../sql/workspace-checkpoint-artifacts-revert.sql", import.meta.url);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");
@@ -118,6 +122,31 @@ test("persists claim-bound runtime permission requests and their option map", as
   assert.match(revert, /event_type = 'session_created'/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
+});
+
+test("persists idempotent principal-bound workspace launches", async () => {
+  const sql = await readFile(workspaceLaunchUrl, "utf8");
+  const revert = await readFile(workspaceLaunchRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.workspace_launches/);
+  assert.match(sql, /UNIQUE \(principal_id, idempotency_key\)/);
+  assert.match(sql, /state IN \('queued', 'provisioning', 'ready', 'failed'\)/);
+  assert.match(sql, /request_json jsonb NOT NULL/);
+  assert.match(sql, /launch_json jsonb NOT NULL/);
+  assert.match(sql, /terminal workspace launch is immutable/);
+  assert.match(sql, /workspace_launch_active_principal_idx/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*DROP TABLE IF EXISTS codeops\.workspace_launches;[\s\S]*COMMIT;\n$/);
+});
+
+test("retains bounded checkpoint payloads instead of digest-only evidence", async () => {
+  const sql = await readFile(workspaceArtifactsUrl, "utf8");
+  const revert = await readFile(workspaceArtifactsRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.workspace_checkpoint_artifacts/);
+  assert.match(sql, /artifact_content bytea NOT NULL/);
+  assert.match(sql, /octet_length\(artifact_content\) = artifact_bytes/);
+  assert.match(sql, /artifact_bytes <= 16000000/);
+  assert.match(sql, /REFERENCES codeops\.sessions\(session_id\)/);
+  assert.match(revert, /DROP TABLE codeops\.workspace_checkpoint_artifacts/);
 });
 
 test("orders migration and reversion around foreign-key dependencies", async () => {

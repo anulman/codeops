@@ -13,6 +13,7 @@ import {
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
   sessionSnapshotSchema,
+  workspaceSessionIdentitySchema,
   temporalCodeOpsSessionIdentitySchema,
 } from "../dist/index.js";
 
@@ -110,6 +111,53 @@ test("keeps work-item identity optional for generic Agent Sessions", () => {
     holderId: "job:generic-session",
   });
   assert.equal(request.identity.workItemId, undefined);
+});
+
+test("admits a first-class scratch or multi-source workspace identity", () => {
+  const identity = workspaceSessionIdentitySchema.parse({
+    version: "codeops.session-workspace-identity/v1",
+    workspace: {
+      version: "codeops.workspace/v1",
+      sources: [
+        {
+          catalogKey: "renoconcierge",
+          repository: "anulman/RenoConcierge",
+          checkoutPath: "sources/renoconcierge",
+          requestedRef: "main",
+          resolvedSha: "c".repeat(40),
+        },
+        {
+          catalogKey: "codeops",
+          repository: "anulman/CodeOps",
+          checkoutPath: "sources/codeops",
+          requestedRef: "main",
+          resolvedSha: "d".repeat(40),
+        },
+      ],
+      scratchPath: "scratch",
+    },
+    workflowId: "workspace-launch",
+    runId: "launch-123",
+    parentSessionId: null,
+    forkedAtCursor: null,
+  });
+  assert.equal(identity.workspace.sources.length, 2);
+  assert.equal(
+    workspaceSessionIdentitySchema.parse({
+      ...identity,
+      workspace: { ...identity.workspace, sources: [] },
+    }).workspace.sources.length,
+    0,
+  );
+  assert.throws(() =>
+    sessionJobInitializationRequestSchema.parse({
+      version: "codeops.session-job-initialization/v1",
+      sessionId,
+      identity: { ...identity, repository: "example-org/escape" },
+      leaseId,
+      holderId: "job:workspace",
+    }),
+  );
 });
 
 test("requires work-item, role, and round at the Temporal CodeOps boundary", () => {

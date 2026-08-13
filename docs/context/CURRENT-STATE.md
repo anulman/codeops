@@ -22,3 +22,6 @@ Current limitations:
   Agent Sessions use the Session Broker runtime adapter. The adapters share
   authority and policy inputs but still have separate resource builders.
 - The project is alpha. Values and contracts can change before version 1.0.
+- Interactive workspace launch admits only trusted catalog repositories. The
+  source materializer is credential-isolated from the runtime Pod, but coding
+  agents retain monitored public HTTPS egress for research and package access.

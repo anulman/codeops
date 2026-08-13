@@ -1,6 +1,7 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import type { AgentJobDispatchRequest } from "@codeops/codeops-contracts";
+import type { WorkspaceCatalog, WorkspaceCatalogEntry } from "@codeops/codeops-contracts";
 import { z } from "zod";
 
 const REPOSITORY_IDENTITY = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/;
@@ -99,7 +100,9 @@ export interface RepositoryAuthority {
 
 export interface RepositoryRegistry {
   readonly repositories: readonly string[];
+  readonly workspaceCatalog: WorkspaceCatalog;
   resolve(repository: string): RepositoryAuthority;
+  resolveCatalog(catalogKey: string): RepositoryAuthority;
 }
 
 export interface ResolvedRepositoryRoute {
@@ -154,6 +157,8 @@ export function createRepositoryRegistry(
     );
   }
   const byRepository = new Map<string, RepositoryAuthority>();
+  const byCatalogKey = new Map<string, RepositoryAuthority>();
+  const catalogEntries: WorkspaceCatalogEntry[] = [];
   const credentials = new Set<string>();
   for (const entry of entries) {
     if (!REPOSITORY_IDENTITY.test(entry.repository)) {
@@ -196,23 +201,51 @@ export function createRepositoryRegistry(
       );
     }
     for (const credential of repositoryCredentials) credentials.add(credential);
-    byRepository.set(entry.repository, {
+    const authority = {
       repository: entry.repository,
       repositoryUrl: entry.repositoryUrl,
       readToken,
       writeToken,
       ...(githubWebhookSecret === undefined ? {} : { githubWebhookSecret }),
       ...(githubSteeringToken === undefined ? {} : { githubSteeringToken }),
+    };
+    const repositoryName = entry.repository.split("/")[1]!;
+    const catalogKey = repositoryName
+      .toLowerCase()
+      .replace(/[^a-z0-9-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 63);
+    if (!catalogKey || byCatalogKey.has(catalogKey)) {
+      throw new Error("repository registry workspace catalog keys must be unique");
+    }
+    byRepository.set(entry.repository, authority);
+    byCatalogKey.set(catalogKey, authority);
+    catalogEntries.push({
+      key: catalogKey,
+      label: repositoryName,
+      repository: entry.repository,
+      defaultRef: "main",
     });
   }
   return {
     repositories: [...byRepository.keys()],
+    workspaceCatalog: {
+      version: "codeops.workspace-catalog/v1",
+      repositories: catalogEntries,
+    },
     resolve(repository) {
       const authority = byRepository.get(repository);
       if (authority === undefined) {
         throw new Error(
           "repository is not admitted by the repository registry",
         );
+      }
+      return authority;
+    },
+    resolveCatalog(catalogKey) {
+      const authority = byCatalogKey.get(catalogKey);
+      if (authority === undefined) {
+        throw new Error("repository is not admitted by the workspace catalog");
       }
       return authority;
     },

@@ -279,6 +279,8 @@ postgresql:
     namespace: ""
 
 runtime:
+  workspaceStorageClassName: ""
+  workspaceStorage: 10Gi
   workerImage:
     repository: ghcr.io/anulman/codeops/session-runtime-worker
     digest: ""

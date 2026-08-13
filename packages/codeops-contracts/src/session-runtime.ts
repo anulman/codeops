@@ -107,7 +107,7 @@ const completionBase = z.object({
   completedAt: isoDateTime,
 });
 
-export const sessionRuntimeCheckpointMaterialSchema = z
+export const legacySessionRuntimeCheckpointMaterialSchema = z
   .object({
     checkpointId: uuid,
     patchDigest: sha256Digest,
@@ -115,6 +115,42 @@ export const sessionRuntimeCheckpointMaterialSchema = z
     evidenceReferences: z.array(identifier).max(100),
   })
   .strict();
+
+export const workspaceSessionRuntimeCheckpointMaterialSchema = z
+  .object({
+    version: z.literal("codeops.session-workspace-checkpoint-material/v1"),
+    checkpointId: uuid,
+    workspaceManifestDigest: sha256Digest,
+    sourcePatches: z
+      .array(
+        z
+          .object({
+            catalogKey: z.string().min(1).max(63),
+            repository: z
+              .string()
+              .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+            baseSha: z.string().regex(/^[0-9a-f]{40}$/),
+            patchDigest: sha256Digest,
+          })
+          .strict(),
+      )
+      .max(4),
+    scratchArtifactDigest: sha256Digest,
+    acpSessionId: z.string().min(1).max(500),
+    evidenceReferences: z.array(identifier).max(100),
+  })
+  .strict()
+  .refine(
+    (checkpoint) =>
+      new Set(checkpoint.sourcePatches.map(({ catalogKey }) => catalogKey)).size ===
+      checkpoint.sourcePatches.length,
+    "workspace checkpoint source patches must be unique",
+  );
+
+export const sessionRuntimeCheckpointMaterialSchema = z.union([
+  legacySessionRuntimeCheckpointMaterialSchema,
+  workspaceSessionRuntimeCheckpointMaterialSchema,
+]);
 
 const leaseFields = {
   leaseId: uuid,
@@ -131,19 +167,35 @@ export const sessionRuntimeLeaseMaterialSchema = z
     "runtime lease must expire after it is acquired",
   );
 
-export const sessionRuntimeForkMaterialSchema = z
+const sessionRuntimeForkCommon = {
+  ...leaseFields,
+  sessionId: identifier,
+  workflowId: workflowRunIdentifier,
+  runId: workflowRunIdentifier,
+} as const;
+
+export const sessionRuntimeForkMaterialSchema = z.union([
+  z
   .object({
-    ...leaseFields,
-    sessionId: identifier,
+    ...sessionRuntimeForkCommon,
     branch: z.string().min(1).max(200),
-    workflowId: workflowRunIdentifier,
-    runId: workflowRunIdentifier,
   })
   .strict()
   .refine(
     (lease) => Date.parse(lease.expiresAt) > Date.parse(lease.acquiredAt),
     "runtime lease must expire after it is acquired",
-  );
+  ),
+  z
+    .object({
+      ...sessionRuntimeForkCommon,
+      workspace: z.literal(true),
+    })
+    .strict()
+    .refine(
+      (lease) => Date.parse(lease.expiresAt) > Date.parse(lease.acquiredAt),
+      "runtime lease must expire after it is acquired",
+    ),
+]);
 
 export const sessionRuntimeCompletionSchema = z.discriminatedUnion("type", [
   completionBase

@@ -92,3 +92,38 @@ GitHub Actions consumers can pin the release source SHA:
 
 The consumer workflow still owns its kubeconfig source, environment approval,
 concurrency, provider checks, and public-edge acceptance.
+
+## Upgrade for interactive workspace launch
+
+Before a consumer upgrades from a release without interactive workspace
+launch, update the external Secrets. Do this before `codeopsctl deploy` so the
+new Deployments do not wait for a missing Secret key.
+
+1. Add one new `workspace-launch-token` key to the Secret selected by
+   `controlGateway.secretName`. Generate a URL-safe value of at least 32
+   characters. Do not reuse the dispatch, repository-head, publication,
+   session, steering, or model-proxy token.
+2. Keep every catalog repository in the Secret selected by
+   `controlGateway.repositoryAuthoritySecretName`. Its `registry.json` uses
+   `codeops.repository-registry/v1`. Each entry references distinct
+   repository-scoped `readTokenFile` and `writeTokenFile` paths in that same
+   Secret. The launch path mounts only the read token in the short-lived source
+   materializer. Publication remains a separate operation that uses write
+   authority.
+3. Add the control-gateway and repository-authority Secret names to the
+   consumer policy's `requiredSecrets` list. This makes `codeopsctl deploy`
+   verify that their identities and data hashes do not change during the Helm
+   transaction.
+4. Run `codeopsctl verify`, then deploy the immutable release. The migration
+   hook creates the workspace launch and checkpoint-artifact tables and grants
+   the receipt-only runtime role the exact artifact columns that it needs.
+
+The public catalog exposes no credential or Secret path. It derives one key
+from each repository name, converts the key to lowercase, replaces unsupported
+characters with hyphens, and selects `main`. Repository names must therefore
+produce unique keys after normalization. For example, `anulman/CodeOps`
+becomes `codeops`. Use distinct repository names when two owners have
+repositories whose names normalize to the same key.
+
+Quickstart mode creates and retains the launch token automatically. Existing-
+Secret mode never creates or changes the consumer's Secret data.

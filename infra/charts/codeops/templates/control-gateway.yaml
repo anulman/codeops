@@ -22,6 +22,9 @@ rules:
     resources: [secrets]
     verbs: [create, delete]
   - apiGroups: [""]
+    resources: [persistentvolumeclaims]
+    verbs: [create, get, delete]
+  - apiGroups: [""]
     resources: [pods]
     verbs: [get, list]
   - apiGroups: [""]
@@ -108,6 +111,7 @@ spec:
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
             - { name: CODEOPS_AGENT_IMAGE, value: {{ include "codeops.image" .Values.runtime.agentImage | quote }} }
             - { name: CODEOPS_SESSION_GATEWAY_IMAGE, value: {{ include "codeops.image" .Values.runtime.sessionGatewayImage | quote }} }
+            - { name: CODEOPS_SESSION_RUNTIME_WORKER_IMAGE, value: {{ include "codeops.image" .Values.runtime.workerImage | quote }} }
             - { name: CODEOPS_AGENT_IMAGE_PULL_SECRETS, value: {{ include "codeops.imagePullSecretsJson" . | quote }} }
             - { name: CODEOPS_AGENT_NODE_SELECTOR, value: {{ .Values.nodeSelector | toJson | quote }} }
             - { name: CODEOPS_AGENT_EVIDENCE_CLAIM_NAME, value: {{ printf "%s-control-gateway-evidence" (include "codeops.fullname" .) | quote }} }
@@ -116,6 +120,7 @@ spec:
             - { name: CODEOPS_DISPATCH_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/dispatch-token }
             - { name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/repository-head-token }
             - { name: CODEOPS_PUBLICATION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/publication-token }
+            - { name: CODEOPS_WORKSPACE_LAUNCH_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/workspace-launch-token }
             - { name: CODEOPS_REPOSITORY_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-runtime-repositories/registry.json }
             - { name: CODEOPS_REQUIRED_REVIEW_CHECK_NAMES, value: {{ .Values.controlGateway.requiredReviewCheckNames | quote }} }
             - { name: CODEOPS_MODEL_PROXY_ORIGIN, value: http://{{ include "codeops.fullname" . }}-model-proxy:8080 }
@@ -126,7 +131,12 @@ spec:
             - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/codeops/write-token }
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/codeops/runtime-worker-token }
             - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/codeops/initialization-token }
+            - { name: CODEOPS_SESSION_RUNTIME_SERVICE_ACCOUNT_NAME, value: {{ printf "%s-runtime" (include "codeops.fullname" .) | quote }} }
+            - { name: CODEOPS_SESSION_SECRETS_NAME, value: {{ .Values.gateway.secretName | quote }} }
+            - { name: CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN, value: http://{{ include "codeops.fullname" . }}-session-control-gateway:8080 }
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_ID, value: {{ .Values.controlGateway.workerId | quote }} }
+            - { name: CODEOPS_WORKSPACE_STORAGE_SIZE, value: {{ .Values.runtime.workspaceStorage | quote }} }
+            - { name: CODEOPS_WORKSPACE_STORAGE_CLASS_NAME, value: {{ .Values.runtime.workspaceStorageClassName | quote }} }
             - { name: CODEOPS_HTTP_HOST, value: 0.0.0.0 }
             - { name: CODEOPS_HTTP_PORT, value: "8080" }
           ports: [{ name: http, containerPort: 8080 }]
@@ -156,6 +166,7 @@ spec:
               - { key: dispatch-token, path: dispatch-token }
               - { key: repository-head-token, path: repository-head-token }
               - { key: publication-token, path: publication-token }
+              - { key: workspace-launch-token, path: workspace-launch-token }
         - name: session-secrets
           secret:
             secretName: {{ .Values.gateway.secretName }}
