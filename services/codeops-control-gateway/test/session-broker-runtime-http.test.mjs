@@ -48,11 +48,13 @@ function request(overrides = {}) {
   const completions = [];
   const permissionSubmissions = [];
   const permissionPolls = [];
+  const workItems = [];
   return {
     claims,
     completions,
     permissionSubmissions,
     permissionPolls,
+    workItems,
     promise: serveSessionRuntime({
       method: "POST",
       url: "/v1/session-runtime/claims",
@@ -93,6 +95,17 @@ function request(overrides = {}) {
           requestId,
           disposition: "decided",
           decision: { outcome: "denied" },
+        };
+      },
+      createWorkItem: async (input) => {
+        workItems.push(input);
+        return {
+          version: "codeops.work-item-create-result/v1",
+          provider: "plane",
+          operationId: "workitem-123",
+          repository: "example-org/example-repository",
+          workItemId: "77777777-7777-4777-8777-777777777777",
+          disposition: "created",
         };
       },
       ...overrides,
@@ -184,6 +197,30 @@ test("binds permission submission and polling to the claimed dispatch", async ()
     dispatchId,
     workerId: "acp-worker:primary",
     poll,
+  }]);
+});
+
+test("binds work-item creation to the claimed dispatch and authenticated worker", async () => {
+  const createRequest = {
+    version: "codeops.session-runtime-work-item-create-request/v1",
+    claimToken,
+    operationId: "workitem-123",
+    input: {
+      repository: "example-org/example-repository",
+      mode: "triage",
+      title: "Create one task",
+      description: "Create one provider-neutral task.",
+    },
+  };
+  const submitted = request({
+    url: `/v1/session-runtime/dispatches/${dispatchId}/work-items`,
+    readBody: async () => createRequest,
+  });
+  assert.equal((await submitted.promise).body.workItemId, "77777777-7777-4777-8777-777777777777");
+  assert.deepEqual(submitted.workItems, [{
+    dispatchId,
+    workerId: "acp-worker:primary",
+    request: createRequest,
   }]);
 });
 

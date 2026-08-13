@@ -66,6 +66,7 @@ spec:
             - { name: CODEOPS_DEDUP_ROOT, value: /var/lib/codeops/controller }
             - { name: CODEOPS_GITHUB_SESSION_STEERING_ORIGIN, value: http://{{ include "codeops.fullname" . }}-session-control-gateway:8080 }
             - { name: CODEOPS_RESEARCH_PROJECTION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/research-projection-token }
+            - { name: CODEOPS_WORK_ITEM_MUTATION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/work-item-mutation-token }
             - { name: CODEOPS_REPOSITORY_HEAD_ORIGIN, value: http://{{ include "codeops.fullname" . }}-control-gateway:8080 }
             - { name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/repository-head-token }
             - { name: CODEOPS_REPOSITORY_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-repositories/registry.json }
@@ -105,6 +106,7 @@ spec:
             defaultMode: 256
             items:
               - { key: research-projection-token, path: research-projection-token }
+              - { key: work-item-mutation-token, path: work-item-mutation-token }
         - name: control-gateway-auth
           secret:
             secretName: {{ .Values.controlGateway.secretName }}

@@ -43,6 +43,10 @@ export interface PlaneContentClient {
     projectId: string,
     input: Readonly<{ name: string; description_html: string }>,
   ): Promise<PlaneWorkItemRecord>;
+  createIntakeWorkItem(
+    projectId: string,
+    input: Readonly<{ name: string; description_html: string }>,
+  ): Promise<PlaneWorkItemRecord>;
 }
 
 export type MutationResult = Readonly<{

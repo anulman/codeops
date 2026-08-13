@@ -870,13 +870,23 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
             newSession: async (cwd) =>
               (await agent.request(acp.methods.agent.session.new, {
                 cwd,
-                mcpServers: [],
+                mcpServers: [{
+                  name: "codeops-work-items",
+                  command: "/usr/local/bin/node",
+                  args: ["/opt/codeops-agent/work-items-mcp.mjs"],
+                  env: [],
+                }],
               })).sessionId,
             loadSession: async (sessionId, cwd) => {
               await agent.request(acp.methods.agent.session.load, {
                 sessionId,
                 cwd,
-                mcpServers: [],
+                mcpServers: [{
+                  name: "codeops-work-items",
+                  command: "/usr/local/bin/node",
+                  args: ["/opt/codeops-agent/work-items-mcp.mjs"],
+                  env: [],
+                }],
               });
             },
             prompt: async (sessionId, prompt) => {
@@ -894,12 +904,22 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
                   (await agent.request(acp.methods.agent.session.fork, {
                     sessionId,
                     cwd,
-                    mcpServers: [],
+                    mcpServers: [{
+                      name: "codeops-work-items",
+                      command: "/usr/local/bin/node",
+                      args: ["/opt/codeops-agent/work-items-mcp.mjs"],
+                      env: [],
+                    }],
                   })).sessionId,
                 create: async () =>
                   (await agent.request(acp.methods.agent.session.new, {
                     cwd,
-                    mcpServers: [],
+                    mcpServers: [{
+                      name: "codeops-work-items",
+                      command: "/usr/local/bin/node",
+                      args: ["/opt/codeops-agent/work-items-mcp.mjs"],
+                      env: [],
+                    }],
                   })).sessionId,
               }),
           });

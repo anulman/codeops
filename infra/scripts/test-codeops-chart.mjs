@@ -492,6 +492,12 @@ test("creates a complete one-repository quickstart from one values file", () => 
     contexts.projected.sources.map(({ secret }) => secret.name),
     ["codeops-context"],
   );
+  const controllerSecrets = resource(resources, "Secret", "codeops-controller-secrets");
+  assert.match(controllerSecrets.stringData["work-item-mutation-token"], /^[A-Za-z0-9]{48}$/);
+  assert.notEqual(
+    controllerSecrets.stringData["work-item-mutation-token"],
+    controllerSecrets.stringData["research-projection-token"],
+  );
 });
 
 test("quickstart fails before render when required authority is missing or reused", () => {

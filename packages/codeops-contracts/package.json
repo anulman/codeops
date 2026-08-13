@@ -28,6 +28,10 @@
     "./workspace-launch": {
       "types": "./dist/workspace-launch.d.ts",
       "default": "./dist/workspace-launch.js"
+    },
+    "./work-items": {
+      "types": "./dist/work-items.d.ts",
+      "default": "./dist/work-items.js"
     }
   },
   "scripts": {

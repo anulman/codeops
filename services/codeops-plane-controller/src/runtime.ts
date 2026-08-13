@@ -16,6 +16,8 @@ import {
   type CodingRequest,
   type ResearchRequest,
   type WorkflowTransitionNotice,
+  workItemProviderCreateRequestSchema,
+  type WorkItemCreateResult,
 } from "@codeops/codeops-contracts";
 import {
   parseGitHubEvent,
@@ -683,6 +685,10 @@ export function createPlaneWebhookRequestListener(input: {
     token: string;
     process: (notice: WorkflowTransitionNotice) => Promise<void>;
   };
+  workItems?: {
+    token: string;
+    create: (request: unknown) => Promise<WorkItemCreateResult>;
+  };
   github?: {
     resolveSecret: (repository: string) => string;
     process: (input: { delivery: string; event: GitHubEvent }) => Promise<void>;
@@ -731,6 +737,33 @@ export function createPlaneWebhookRequestListener(input: {
           version: "codeops.research-projection-result/v1",
           ...result,
         });
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+    if (request.method === "POST" && request.url === "/v1/work-items") {
+      if (
+        input.workItems === undefined ||
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          input.workItems.token,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      if (!request.headers["content-type"]?.startsWith("application/json")) {
+        json(response, 415, { status: "unsupported-media-type" });
+        return;
+      }
+      try {
+        const createRequest = workItemProviderCreateRequestSchema.parse(
+          JSON.parse((await readRawBody(request)).toString("utf8")) as unknown,
+        );
+        json(response, 200, await input.workItems.create(createRequest));
       } catch {
         json(response, 503, { status: "unavailable" });
       }
