@@ -608,7 +608,8 @@ jobs:
             | ($images | all(test("@sha256:[0-9a-f]{64}$")))
               and (($images | map(sub("@sha256:[0-9a-f]{64}$"; "")) | unique | sort) == $expected)
           '
-          prior_revision=$(helm status proof-system --namespace proof-system --output json | jq -er '.version')
+          prior_revision=$(helm list --namespace proof-system --filter '^proof-system$' --output json \
+            | jq -er 'map(select(.name == "proof-system")) | if length == 1 then .[0].revision else error("expected one release") end')
           jq '.httpTimeoutMs = 1000 | .postDeployHttpChecks = [{url:"https://127.0.0.1:1",acceptedStatuses:[200]}]' \
             /tmp/codeops-consumer-policy.json > /tmp/codeops-rollback-policy.json
           if node /tmp/codeops-release/codeopsctl.mjs deploy \
@@ -622,11 +623,12 @@ jobs:
             echo "post-deploy failure proof unexpectedly passed" >&2
             exit 1
           fi
-          restored=$(helm status proof-system --namespace proof-system --output json)
-          [[ "$(jq -r .info.status <<<"$restored")" == "deployed" ]]
-          [[ "$(jq -r .chart.metadata.version <<<"$restored")" == "$RELEASE_VERSION" ]]
-          [[ "$(jq -r .chart.metadata.appVersion <<<"$restored")" == "$SOURCE_SHA" ]]
-          [[ "$(jq -r .version <<<"$restored")" -gt "$prior_revision" ]]
+          restored=$(helm list --namespace proof-system --filter '^proof-system$' --output json \
+            | jq -ec 'map(select(.name == "proof-system")) | if length == 1 then .[0] else error("expected one release") end')
+          [[ "$(jq -r .status <<<"$restored")" == "deployed" ]]
+          [[ "$(jq -r .chart <<<"$restored")" == "codeops-${RELEASE_VERSION}" ]]
+          [[ "$(jq -r .app_version <<<"$restored")" == "$SOURCE_SHA" ]]
+          [[ "$(jq -r .revision <<<"$restored")" -gt "$prior_revision" ]]
           jq -n --arg version "$RELEASE_VERSION" --arg sourceSha "$SOURCE_SHA" --arg chartDigest "$pulled_digest" \
             '{version:$version,sourceSha:$sourceSha,chartDigest:$chartDigest,installStatus:"deployed",sourceCheckout:false}' \
             > /tmp/codeops-registry-proof/registry-install-evidence.json
