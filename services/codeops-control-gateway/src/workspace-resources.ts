@@ -21,6 +21,7 @@ export interface WorkspaceResourceConfig {
   readonly sessionId: string;
   readonly workflowId: string;
   readonly runId: string;
+  readonly displayName?: string;
   readonly leaseId: string;
   readonly workspace: WorkspaceManifest;
   readonly sources: readonly WorkspaceSourceAuthority[];
@@ -92,6 +93,15 @@ export function buildWorkspaceResources(
   }
   if (!digestImage.test(raw.agentImage) || !digestImage.test(raw.runtimeWorkerImage)) {
     throw new Error("workspace runtime images must use immutable digests");
+  }
+  if (
+    raw.displayName !== undefined &&
+    (raw.displayName.length < 1 ||
+      raw.displayName.length > 200 ||
+      raw.displayName.trim() !== raw.displayName ||
+      /[\u0000-\u001f\u007f]/.test(raw.displayName))
+  ) {
+    throw new Error("workspace session display name is invalid");
   }
   const authorities = new Map(raw.sources.map((source) => [source.catalogKey, source]));
   if (authorities.size !== raw.sources.length || authorities.size !== workspace.sources.length) {
@@ -317,6 +327,7 @@ export function buildWorkspaceResources(
                 { name: "CODEOPS_SESSION_ID", value: raw.sessionId },
                 { name: "CODEOPS_SESSION_WORKFLOW_ID", value: raw.workflowId },
                 { name: "CODEOPS_SESSION_RUN_ID", value: raw.runId },
+                ...(raw.displayName === undefined ? [] : [{ name: "CODEOPS_SESSION_DISPLAY_NAME", value: raw.displayName }]),
                 { name: "CODEOPS_SESSION_LEASE_ID", value: raw.leaseId },
                 { name: "CODEOPS_SESSION_HOLDER_ID", value: `session-job:${raw.sessionId}` },
               ],

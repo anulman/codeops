@@ -4,7 +4,7 @@ import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { executeSessionCommand, getSessionDetail, getSessionEvents, getSessionFleet } from "@/lib/sessionBroker.data";
 import { getWorkspaceLaunch } from "@/lib/workspaceLaunch.data";
-import { checkpointPatchLabel, isWorkspaceIdentity, sessionWorkspaceDetail } from "@/lib/sessionIdentity";
+import { checkpointPatchLabel, isWorkspaceIdentity, sessionDisplayName, sessionWorkspaceDetail } from "@/lib/sessionIdentity";
 import { workspaceLaunchSessionId, workspaceSessionLaunchId, type WorkspaceLaunch } from "@codeops/codeops-contracts/workspace-launch";
 import type { SessionCommand, SessionActionType, SessionCapability, SessionContentBlock, SessionEvent, SessionSnapshot, SessionTimelineUpdate, SessionUserAction } from "@codeops/codeops-contracts/session-broker";
 
@@ -142,7 +142,7 @@ function CockpitHeader({ session }: Readonly<{ session: SessionSnapshot }>) {
     <header className="sticky top-13 z-2 flex min-h-14 items-center gap-3 border-b border-white/[0.07] bg-[#151517]/95 px-3 backdrop-blur-xl sm:px-5 lg:top-0">
       <Link to="/" className="grid size-8 shrink-0 place-items-center rounded-lg text-white/35 transition hover:bg-white/[0.05] hover:text-white/72 lg:hidden" aria-label="All sessions">←</Link>
       <div className="min-w-0 flex-1">
-        <div className="flex min-w-0 items-center gap-2"><h1 className="truncate text-sm font-semibold tracking-[-0.01em] text-white/88">{session.identity.runId}</h1><StatusBadge state={session.state} /></div>
+        <div className="flex min-w-0 items-center gap-2"><h1 className="truncate text-sm font-semibold tracking-[-0.01em] text-white/88">{sessionDisplayName(session.identity)}</h1><StatusBadge state={session.state} /></div>
         <p className="mt-0.5 truncate font-mono text-[10px] text-white/27">{sessionWorkspaceDetail(session.identity)}</p>
       </div>
       <div className="hidden items-center gap-2 text-[10px] text-white/25 sm:flex"><span>Generation {session.generation}</span><span>·</span><span>Cursor {session.eventCursor}</span></div>
@@ -463,7 +463,7 @@ function MobileInspector({ session }: Readonly<{ session: SessionSnapshot }>) {
 
 function InspectorSection({ title, children }: Readonly<{ title: string; children: ReactNode }>) { return <section><h2 className="mb-3 text-[9px] font-semibold uppercase tracking-[0.14em] text-white/24">{title}</h2><div className="space-y-2.5">{children}</div></section>; }
 function Fact({ label, value, mono = false, tone = "quiet" }: Readonly<{ label: string; value: string; mono?: boolean; tone?: "success" | "quiet" }>) { return <div className="flex items-start justify-between gap-4 text-[11px]"><span className="shrink-0 text-white/25">{label}</span><span className={`min-w-0 truncate text-right ${tone === "success" ? "text-[#6ee2a0]" : "text-white/48"} ${mono ? "font-mono text-[10px]" : ""}`}>{value}</span></div>; }
-function RelatedSession({ session }: Readonly<{ session: SessionSnapshot }>) { return <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="flex items-center gap-2 text-xs text-white/42 transition hover:text-white/75"><span className={`size-1.5 rounded-full ${session.state === "running" ? "bg-[#54d18b]" : "bg-white/20"}`} /><span className="min-w-0 flex-1 truncate">{session.identity.runId}</span><span className="shrink-0 text-[9px] capitalize text-white/22">{session.state.replaceAll("_", " ")}</span></Link>; }
+function RelatedSession({ session }: Readonly<{ session: SessionSnapshot }>) { return <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="flex items-center gap-2 text-xs text-white/42 transition hover:text-white/75"><span className={`size-1.5 rounded-full ${session.state === "running" ? "bg-[#54d18b]" : "bg-white/20"}`} /><span className="min-w-0 flex-1 truncate">{sessionDisplayName(session.identity)}</span><span className="shrink-0 text-[9px] capitalize text-white/22">{session.state.replaceAll("_", " ")}</span></Link>; }
 function ActivityIcon() { return <svg viewBox="0 0 20 20" className="size-4" aria-hidden="true"><path d="M3 10h3l2-5 3.2 10L14 8l1.2 2H17" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" /></svg>; }
 function EventIcon({ event }: Readonly<{ event: SessionEvent }>) { return <span className="text-[10px] font-bold">{event.type === "permission_requested" ? "?" : event.type === "state_changed" ? "↻" : event.type === "acp_update" ? "·" : "✓"}</span>; }
 function eventTone(event: SessionEvent) { if (event.type === "permission_requested") return "border-[#ff9b73]/18 bg-[#ff9b73]/8 text-[#ffae8d]"; if (event.type === "state_changed") return "border-[#54d18b]/15 bg-[#54d18b]/7 text-[#6ee2a0]"; if (event.type === "acp_update") return "border-[#6da8ff]/15 bg-[#6da8ff]/7 text-[#8dbbff]"; return "border-white/[0.06] bg-white/[0.025] text-white/34"; }

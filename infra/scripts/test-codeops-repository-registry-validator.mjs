@@ -76,6 +76,7 @@ test("rejects missing files and inline or malformed repository authority", async
   t.after(() => rm(input.root, { recursive: true, force: true }));
   await rm(input.manifest.repositories[0].readTokenFile);
   await assert.rejects(validateRepositoryRegistry(input.manifestPath), /ENOENT/);
+  await writeFile(input.manifest.repositories[0].readTokenFile, `fixture-restored-${"x".repeat(32)}`);
 
   const inline = createTwoRepositoryRegistryFixture(input.root);
   inline.repositories[0].readToken = "x".repeat(32);

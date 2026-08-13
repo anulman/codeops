@@ -364,6 +364,7 @@ function workspaceResourceConfig(
     launchId: launch.launchId,
     principalId: launch.principalId,
     requestDigest: launch.requestDigest,
+    ...(launch.title === undefined ? {} : { displayName: launch.title }),
     ...identity,
     workspace: launch.workspace,
     sources: launch.workspace.sources.map((source) => {

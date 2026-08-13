@@ -3,7 +3,7 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { getSessionFleet } from "@/lib/sessionBroker.data";
-import { sessionSearchText, sessionWorkspaceDetail, sessionWorkspaceLabel } from "@/lib/sessionIdentity";
+import { sessionDisplayName, sessionSearchText, sessionWorkspaceDetail, sessionWorkspaceLabel } from "@/lib/sessionIdentity";
 import type { SessionSnapshot } from "@codeops/codeops-contracts/session-broker";
 
 export const Route = createFileRoute("/")({
@@ -111,7 +111,7 @@ function OverviewGroup({ title, description, sessions, empty, tone = "default" }
 function DesktopSessionRow({ session }: Readonly<{ session: SessionSnapshot }>) {
   return (
     <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="group grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-5 px-4 py-3.5 transition hover:bg-white/[0.035]">
-      <div className="min-w-0"><div className="flex items-center gap-2"><span className={`size-1.5 rounded-full ${stateDot(session)}`} /><span className="truncate text-sm font-medium text-white/78 group-hover:text-white">{session.identity.runId}</span></div><p className="mt-1 truncate pl-3.5 font-mono text-[10px] text-white/26">{sessionWorkspaceDetail(session.identity)}</p></div>
+      <div className="min-w-0"><div className="flex items-center gap-2"><span className={`size-1.5 rounded-full ${stateDot(session)}`} /><span className="truncate text-sm font-medium text-white/78 group-hover:text-white">{sessionDisplayName(session.identity)}</span></div><p className="mt-1 truncate pl-3.5 font-mono text-[10px] text-white/26">{sessionWorkspaceDetail(session.identity)}</p></div>
       <StatusBadge state={session.state} />
       <span className="font-mono text-[10px] text-white/22">{session.updatedAt.slice(11, 16)}</span>
     </Link>
@@ -119,13 +119,13 @@ function DesktopSessionRow({ session }: Readonly<{ session: SessionSnapshot }>) 
 }
 
 function CompactSession({ session }: Readonly<{ session: SessionSnapshot }>) {
-  return <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="group flex items-center gap-2.5 py-3 text-xs"><span className={`size-1.5 shrink-0 rounded-full ${stateDot(session)}`} /><span className="min-w-0 flex-1 truncate text-white/52 group-hover:text-white/78">{session.identity.runId}</span><span className="font-mono text-[9px] text-white/20">{session.updatedAt.slice(11, 16)}</span></Link>;
+  return <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="group flex items-center gap-2.5 py-3 text-xs"><span className={`size-1.5 shrink-0 rounded-full ${stateDot(session)}`} /><span className="min-w-0 flex-1 truncate text-white/52 group-hover:text-white/78">{sessionDisplayName(session.identity)}</span><span className="font-mono text-[9px] text-white/20">{session.updatedAt.slice(11, 16)}</span></Link>;
 }
 
 function MobileSessionRow({ session }: Readonly<{ session: SessionSnapshot }>) {
   return (
     <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="group block py-4">
-      <div className="flex items-center gap-2"><span className={`size-1.5 shrink-0 rounded-full ${stateDot(session)}`} /><span className="min-w-0 flex-1 truncate text-[15px] font-medium text-white/82">{session.identity.runId}</span><span className="font-mono text-[10px] text-white/24">{session.updatedAt.slice(11, 16)}</span></div>
+      <div className="flex items-center gap-2"><span className={`size-1.5 shrink-0 rounded-full ${stateDot(session)}`} /><span className="min-w-0 flex-1 truncate text-[15px] font-medium text-white/82">{sessionDisplayName(session.identity)}</span><span className="font-mono text-[10px] text-white/24">{session.updatedAt.slice(11, 16)}</span></div>
       <div className="mt-1.5 flex items-center justify-between gap-3 pl-3.5"><span className="min-w-0 truncate text-xs text-white/34">{sessionWorkspaceLabel(session.identity)}</span><StatusBadge state={session.state} /></div>
     </Link>
   );

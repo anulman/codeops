@@ -198,6 +198,7 @@ export async function reconcileWorkspaceLaunch(
       session.lease?.status !== "active" ||
       session.lease.leaseId !== identity.leaseId ||
       !("version" in session.identity) ||
+      session.identity.displayName !== launch.title ||
       JSON.stringify(session.identity.workspace) !== JSON.stringify(launch.workspace)
     ) {
       throw new PermanentWorkspaceLaunchError(
