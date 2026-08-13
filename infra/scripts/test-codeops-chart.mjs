@@ -115,6 +115,15 @@ test("renders one portable CodeOps package with immutable images", () => {
   resource(resources, "Role", "team-a-codeops-control-gateway");
   resource(resources, "RoleBinding", "team-a-codeops-control-gateway");
   assert.match(JSON.stringify(controlGateway), /team-a-codeops-repository-runtime-authority/);
+  const controlGatewayEnv = Object.fromEntries(
+    controlGateway.spec.template.spec.containers[0].env.map(({ name, value }) => [name, value]),
+  );
+  assert.equal(controlGatewayEnv.CODEOPS_MODEL_PROXY_ORIGIN, "http://team-a-codeops-model-proxy:8080");
+  assert.equal(controlGatewayEnv.CODEOPS_AGENT_MODEL_PROXY_SERVICE_NAME, "team-a-codeops-model-proxy");
+  assert.equal(controlGatewayEnv.CODEOPS_AGENT_MODEL_PROXY_POD_NAME, "team-a-codeops-model-proxy");
+  assert.equal(controlGatewayEnv.CODEOPS_AGENT_EVIDENCE_CLAIM_NAME, "team-a-codeops-control-gateway-evidence");
+  assert.deepEqual(JSON.parse(controlGatewayEnv.CODEOPS_AGENT_IMAGE_PULL_SECRETS), []);
+  assert.deepEqual(JSON.parse(controlGatewayEnv.CODEOPS_AGENT_NODE_SELECTOR), {});
   assert.doesNotMatch(JSON.stringify(controlGateway), /CODEOPS_REPOSITORY_(URL|READ_TOKEN|WRITE_TOKEN)/);
   assert.match(JSON.stringify(orchestrator), /codeops-temporal-frontend:7233/);
   const modelProxy = resource(resources, "Deployment", "team-a-codeops-model-proxy");
@@ -335,12 +344,40 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
 test("defaults to deny and opens only explicit component paths", () => {
   const resources = render();
   const policies = resources.filter(({ kind }) => kind === "NetworkPolicy");
-  assert.equal(policies.length, 11);
+  assert.equal(policies.length, 15);
   const deny = resource(resources, "NetworkPolicy", "team-a-codeops-default-deny");
   assert.deepEqual(deny.spec.podSelector, {
     matchLabels: { "app.kubernetes.io/part-of": "codeops" },
   });
   assert.deepEqual(deny.spec.policyTypes, ["Ingress", "Egress"]);
+
+  for (const [name, appName] of [
+    ["managed-temporal", "temporal"],
+    ["managed-jetstream", "jetstream"],
+    ["managed-plane", "plane"],
+  ]) {
+    const dependency = resource(resources, "NetworkPolicy", `team-a-codeops-${name}`);
+    assert.equal(dependency.spec.podSelector.matchLabels["app.kubernetes.io/instance"], "team-a");
+    assert.equal(dependency.spec.podSelector.matchLabels["app.kubernetes.io/name"], appName);
+    assert.deepEqual(dependency.spec.policyTypes, ["Ingress", "Egress"]);
+    assert.ok(dependency.spec.ingress.some(({ from }) =>
+      from.some(({ podSelector }) => JSON.stringify(podSelector) === "{}")
+    ));
+  }
+  const planeBucket = resource(
+    resources,
+    "NetworkPolicy",
+    "team-a-codeops-managed-plane-minio-bucket",
+  );
+  assert.equal(
+    planeBucket.spec.podSelector.matchLabels["batch.kubernetes.io/job-name"],
+    "team-a-minio-bucket-1",
+  );
+  assert.deepEqual(planeBucket.spec.ingress, []);
+  assert.deepEqual(
+    planeBucket.spec.egress.flatMap(({ ports = [] }) => ports.map(({ port }) => port)).sort(),
+    [53, 53, 9000],
+  );
 
   const postgresql = resource(resources, "NetworkPolicy", "team-a-codeops-postgresql");
   assert.deepEqual(postgresql.spec.egress, []);

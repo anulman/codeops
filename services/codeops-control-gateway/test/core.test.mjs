@@ -1149,3 +1149,43 @@ test("builds only the fixed tokenless run resources", () => {
   assert.equal(JSON.stringify(resources).includes("codeops-codex-auth"), false);
   assert.equal(JSON.stringify(resources).includes("automountServiceAccountToken\":true"), false);
 });
+
+test("builds Agent Jobs from portable chart runtime identity", () => {
+  const identity = createRunIdentity(request);
+  const resources = buildRunResources(
+    {
+      namespace: "engineering",
+      ...identity,
+      repositoryUrl: "https://github.com/example-org/example-repository",
+      agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+      sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      repositoryReadToken: "repo-token",
+      imagePullSecrets: [{ name: "team-a-registry" }],
+      nodeSelector: { "renoconcierge.ca/codeops": "true" },
+      evidenceClaimName: "team-a-codeops-control-gateway-evidence",
+      modelProxyServiceName: "team-a-codeops-model-proxy",
+      modelProxyPodName: "team-a-codeops-model-proxy",
+      modelAuth: {
+        ...modelAuth,
+        origin: "http://team-a-codeops-model-proxy:8080",
+      },
+    },
+    request,
+  );
+  assert.doesNotThrow(() => assertRunResources(resources));
+  const pod = resources[2].spec.template.spec;
+  assert.deepEqual(pod.imagePullSecrets, [{ name: "team-a-registry" }]);
+  assert.deepEqual(pod.nodeSelector, { "renoconcierge.ca/codeops": "true" });
+  assert.equal(
+    pod.volumes.find(({ name }) => name === "candidate"),
+    undefined,
+  );
+  assert.equal(
+    resources[3].spec.egress[0].to[0].podSelector.matchLabels["app.kubernetes.io/name"],
+    "team-a-codeops-model-proxy",
+  );
+  assert.equal(
+    resources[2].spec.template.metadata.labels["app.kubernetes.io/part-of"],
+    "codeops",
+  );
+});

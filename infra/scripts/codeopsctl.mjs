@@ -164,6 +164,19 @@ export function validateLock(lock) {
 export function validatePolicy(policy) {
   assertObject(policy, "consumer policy");
   if (policy.schemaVersion !== POLICY_SCHEMA) throw new Error("consumer policy schema is not supported");
+  const policyFields = new Set([
+    "schemaVersion",
+    "helmTimeout",
+    "httpTimeoutMs",
+    "requiredSecrets",
+    "cluster",
+    "postDeployHttpChecks",
+  ]);
+  if (Object.keys(policy).some((field) => !policyFields.has(field))) {
+    throw new Error("consumer policy contains unsupported fields");
+  }
+  policy.helmTimeout ??= "20m";
+  policy.httpTimeoutMs ??= 15_000;
   if (!Array.isArray(policy.requiredSecrets) || policy.requiredSecrets.some((name) => !DNS_LABEL.test(name))) {
     throw new Error("requiredSecrets must contain Kubernetes Secret names");
   }
@@ -171,6 +184,12 @@ export function validatePolicy(policy) {
     throw new Error("requiredSecrets must not contain duplicates");
   }
   assertObject(policy.cluster, "consumer policy cluster");
+  if (
+    Object.keys(policy.cluster).sort().join(",") !==
+    "kubernetesServiceCidrs,readyNodeSelector"
+  ) {
+    throw new Error("consumer policy cluster contains unsupported fields");
+  }
   if (
     !Array.isArray(policy.cluster.kubernetesServiceCidrs) ||
     policy.cluster.kubernetesServiceCidrs.length === 0 ||
@@ -182,25 +201,85 @@ export function validatePolicy(policy) {
     throw new Error("cluster.readyNodeSelector is required");
   }
   if (
+    typeof policy.helmTimeout !== "string" ||
+    !/^[1-9][0-9]{0,2}[smh]$/.test(policy.helmTimeout) ||
+    durationMilliseconds(policy.helmTimeout) > 60 * 60_000
+  ) {
+    throw new Error("helmTimeout must be a positive duration no longer than 1h");
+  }
+  if (
+    !Number.isSafeInteger(policy.httpTimeoutMs) ||
+    policy.httpTimeoutMs < 1_000 ||
+    policy.httpTimeoutMs > 60_000
+  ) {
+    throw new Error("httpTimeoutMs must be between 1000 and 60000");
+  }
+  if (
     policy.postDeployHttpChecks !== undefined &&
     (!Array.isArray(policy.postDeployHttpChecks) ||
-      policy.postDeployHttpChecks.some(({ url }) => {
+      policy.postDeployHttpChecks.length > 20 ||
+      policy.postDeployHttpChecks.some((check) => {
+        if (check && typeof check === "object" && !Array.isArray(check)) {
+          check.acceptedStatuses ??= [200];
+        }
+        if (
+          !check ||
+          typeof check !== "object" ||
+          Array.isArray(check) ||
+          Object.keys(check).sort().join(",") !== "acceptedStatuses,url" ||
+          !Array.isArray(check.acceptedStatuses) ||
+          check.acceptedStatuses.length === 0 ||
+          new Set(check.acceptedStatuses).size !== check.acceptedStatuses.length ||
+          check.acceptedStatuses.some(
+            (status) => !Number.isSafeInteger(status) || status < 100 || status > 599,
+          )
+        ) {
+          return true;
+        }
         try {
-          return new URL(url).protocol !== "https:";
+          const url = new URL(check.url);
+          return url.protocol !== "https:" || url.username !== "" || url.password !== "";
         } catch {
           return true;
         }
       }))
   ) {
-    throw new Error("postDeployHttpChecks must contain HTTPS URLs");
+    throw new Error("postDeployHttpChecks must contain strict HTTPS checks and statuses");
   }
   return policy;
 }
 
-async function download(url, outputPath) {
-  const response = await fetch(url, { redirect: "follow" });
+function durationMilliseconds(value) {
+  const units = { s: 1_000, m: 60_000, h: 60 * 60_000 };
+  return Number(value.slice(0, -1)) * units[value.at(-1)];
+}
+
+async function boundedResponseBytes(response, url, maximumBytes) {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > maximumBytes) {
+    throw new Error(`download exceeds ${maximumBytes} bytes: ${url}`);
+  }
+  if (!response.body) throw new Error(`download body is missing: ${url}`);
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of response.body) {
+    const buffer = Buffer.from(chunk);
+    bytes += buffer.length;
+    if (bytes > maximumBytes) {
+      throw new Error(`download exceeds ${maximumBytes} bytes: ${url}`);
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks, bytes);
+}
+
+async function download(url, outputPath, maximumBytes = 64 * 1024 * 1024) {
+  const response = await fetch(url, {
+    redirect: "follow",
+    signal: AbortSignal.timeout(60_000),
+  });
   if (!response.ok) throw new Error(`download failed with HTTP ${response.status}: ${url}`);
-  await writeFile(outputPath, Buffer.from(await response.arrayBuffer()), { flag: "wx" });
+  await writeFile(outputPath, await boundedResponseBytes(response, url, maximumBytes), { flag: "wx" });
 }
 
 async function downloadReleaseAsset(lock, asset, outputPath) {
@@ -210,18 +289,28 @@ async function downloadReleaseAsset(lock, asset, outputPath) {
   } catch (directError) {
     const releaseResponse = await fetch(
       `https://api.github.com/repos/${lock.release.repository}/releases/tags/${lock.release.tag}`,
-      { headers: { Accept: "application/vnd.github+json", "User-Agent": "codeopsctl" } },
+      {
+        headers: { Accept: "application/vnd.github+json", "User-Agent": "codeopsctl" },
+        signal: AbortSignal.timeout(30_000),
+      },
     );
     if (!releaseResponse.ok) throw directError;
-    const release = await releaseResponse.json();
+    const release = JSON.parse(
+      (await boundedResponseBytes(releaseResponse, releaseResponse.url, 1024 * 1024)).toString("utf8"),
+    );
     const match = release.assets?.find(({ name }) => name === asset);
     if (!match) throw directError;
     const assetResponse = await fetch(match.url, {
       redirect: "follow",
       headers: { Accept: "application/octet-stream", "User-Agent": "codeopsctl" },
+      signal: AbortSignal.timeout(60_000),
     });
     if (!assetResponse.ok) throw directError;
-    await writeFile(outputPath, Buffer.from(await assetResponse.arrayBuffer()), { flag: "wx" });
+    await writeFile(
+      outputPath,
+      await boundedResponseBytes(assetResponse, match.url, 64 * 1024 * 1024),
+      { flag: "wx" },
+    );
   }
 }
 
@@ -230,9 +319,12 @@ async function anonymousImageCheck(image) {
   if (registryPath === image.repository) throw new Error(`unsupported image registry: ${image.repository}`);
   const tokenResponse = await fetch(
     `https://ghcr.io/token?service=ghcr.io&scope=repository:${registryPath}:pull`,
+    { signal: AbortSignal.timeout(30_000) },
   );
   if (!tokenResponse.ok) throw new Error(`anonymous token request failed for ${image.repository}`);
-  const { token } = await tokenResponse.json();
+  const { token } = JSON.parse(
+    (await boundedResponseBytes(tokenResponse, tokenResponse.url, 64 * 1024)).toString("utf8"),
+  );
   if (!token) throw new Error(`anonymous token is missing for ${image.repository}`);
   const manifestResponse = await fetch(
     `https://ghcr.io/v2/${registryPath}/manifests/${image.digest}`,
@@ -246,11 +338,13 @@ async function anonymousImageCheck(image) {
           "application/vnd.docker.distribution.manifest.list.v2+json",
         ].join(", "),
       },
+      signal: AbortSignal.timeout(30_000),
     },
   );
   if (!manifestResponse.ok) {
     throw new Error(`${image.repository}@${image.digest} is not anonymously readable`);
   }
+  await manifestResponse.body?.cancel();
 }
 
 function validateManifest(lock, bytes) {
@@ -415,18 +509,14 @@ function snapshotPvcs(resources) {
 
 function snapshotSecrets(names, namespace) {
   return names
-    .map((name) => ({
-      name,
-      uid: execute("kubectl", [
-        "get",
-        "secret",
+    .map((name) => {
+      const secret = kubectlJson(["get", "secret", name, "--namespace", namespace, "--output", "json"]);
+      return {
         name,
-        "--namespace",
-        namespace,
-        "--output",
-        "jsonpath={.metadata.uid}",
-      ]).trim(),
-    }))
+        uid: secret.metadata.uid,
+        dataSha256: sha256(JSON.stringify(Object.entries(secret.data ?? {}).sort())),
+      };
+    })
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
@@ -516,6 +606,37 @@ function kubectlHelmRelease(release, namespace) {
   return releases.find(({ name }) => name === release);
 }
 
+export function buildCompensatingRollbackPlan({
+  release,
+  namespace,
+  previousRelease,
+  namespaceExisted,
+  helmTimeout,
+}) {
+  if (previousRelease) {
+    return [[
+      "helm",
+      [
+        "rollback",
+        release,
+        String(previousRelease.revision),
+        "--namespace",
+        namespace,
+        "--wait",
+        "--wait-for-jobs",
+        "--timeout",
+        helmTimeout,
+      ],
+    ]];
+  }
+  return [
+    ["helm", ["uninstall", release, "--namespace", namespace, "--wait", "--timeout", helmTimeout]],
+    ...(!namespaceExisted
+      ? [["kubectl", ["delete", "namespace", namespace, "--wait=true", `--timeout=${helmTimeout}`]]]
+      : []),
+  ];
+}
+
 async function deploy(options, lock, policy, directory) {
   const verification = await verify(options, lock, directory);
   const apiIp = execute("kubectl", ["get", "service", "kubernetes", "--output", "jsonpath={.spec.clusterIP}"]).trim();
@@ -536,6 +657,9 @@ async function deploy(options, lock, policy, directory) {
     throw new Error("consumer namespace must exist before external Secrets can be checked");
   }
   if (namespaceExists) beforeResources = releaseResources(options.release, options.namespace);
+  const previousRelease = namespaceExists
+    ? kubectlHelmRelease(options.release, options.namespace)
+    : undefined;
   const pvcsBefore = snapshotPvcs(beforeResources);
   const secretsBefore = snapshotSecrets(policy.requiredSecrets, options.namespace);
   execute(
@@ -554,44 +678,83 @@ async function deploy(options, lock, policy, directory) {
       "--wait",
       "--wait-for-jobs",
       "--timeout",
-      policy.helmTimeout ?? "20m",
+      policy.helmTimeout,
     ],
-    { timeout: 25 * 60_000 },
+    { timeout: durationMilliseconds(policy.helmTimeout) + 5 * 60_000 },
   );
-  const afterResources = releaseResources(options.release, options.namespace);
-  const installed = kubectlHelmRelease(options.release, options.namespace);
-  if (
-    installed?.status !== "deployed" ||
-    installed?.chart !== `codeops-${lock.chart.version}` ||
-    installed?.app_version !== lock.release.sourceSha
-  ) {
-    throw new Error("deployed Helm release identity does not match the lock");
-  }
-  const smokeReport = buildSmokeReport(options.release, options.namespace, afterResources, installed);
-  if (!smokeReport.ok) throw new Error("one or more CodeOps resources are not ready");
-  sameIdentities(pvcsBefore, snapshotPvcs(afterResources), "PVC");
-  sameIdentities(secretsBefore, snapshotSecrets(policy.requiredSecrets, options.namespace), "Secret");
-  compareImageSets(new Set(verification.prepared.expectedImages), actualCodeOpsImages(afterResources));
-  for (const check of policy.postDeployHttpChecks ?? []) {
-    const response = await fetch(check.url, { redirect: "manual" });
-    const accepted = check.acceptedStatuses ?? [200];
-    if (!accepted.includes(response.status)) {
-      throw new Error(`post-deploy HTTP check failed with ${response.status}: ${check.url}`);
+  try {
+    const afterResources = releaseResources(options.release, options.namespace);
+    const installed = kubectlHelmRelease(options.release, options.namespace);
+    if (
+      installed?.status !== "deployed" ||
+      installed?.chart !== `codeops-${lock.chart.version}` ||
+      installed?.app_version !== lock.release.sourceSha
+    ) {
+      throw new Error("deployed Helm release identity does not match the lock");
     }
+    const smokeReport = buildSmokeReport(options.release, options.namespace, afterResources, installed);
+    if (!smokeReport.ok) throw new Error("one or more CodeOps resources are not ready");
+    sameIdentities(pvcsBefore, snapshotPvcs(afterResources), "PVC");
+    sameIdentities(secretsBefore, snapshotSecrets(policy.requiredSecrets, options.namespace), "Secret");
+    compareImageSets(new Set(verification.prepared.expectedImages), actualCodeOpsImages(afterResources));
+    for (const check of policy.postDeployHttpChecks ?? []) {
+      const response = await fetch(check.url, {
+        redirect: "manual",
+        signal: AbortSignal.timeout(policy.httpTimeoutMs),
+      });
+      if (!check.acceptedStatuses.includes(response.status)) {
+        throw new Error(`post-deploy HTTP check failed with ${response.status}: ${check.url}`);
+      }
+    }
+    return {
+      schemaVersion: EVIDENCE_SCHEMA,
+      command: "deploy",
+      ok: true,
+      release: verification.release,
+      preservation: {
+        persistentVolumeClaims: pvcsBefore.length,
+        externalSecrets: secretsBefore.length,
+      },
+      smoke: smokeReport,
+      exactImages: "pass",
+      postDeployHttpChecks: policy.postDeployHttpChecks?.length ?? 0,
+    };
+  } catch (deploymentError) {
+    try {
+      for (const [name, args] of buildCompensatingRollbackPlan({
+        release: options.release,
+        namespace: options.namespace,
+        previousRelease,
+        namespaceExisted,
+        helmTimeout: policy.helmTimeout,
+      })) {
+        execute(name, args, {
+          timeout: durationMilliseconds(policy.helmTimeout) + 5 * 60_000,
+        });
+      }
+      if (previousRelease) {
+        const restored = kubectlHelmRelease(options.release, options.namespace);
+        if (
+          restored?.status !== "deployed" ||
+          restored?.chart !== previousRelease.chart ||
+          restored?.app_version !== previousRelease.app_version
+        ) {
+          throw new Error("compensating rollback did not restore the prior release identity");
+        }
+        const restoredResources = releaseResources(options.release, options.namespace);
+        sameIdentities(pvcsBefore, snapshotPvcs(restoredResources), "rollback PVC");
+        sameIdentities(secretsBefore, snapshotSecrets(policy.requiredSecrets, options.namespace), "rollback Secret");
+      }
+    } catch (rollbackError) {
+      throw new AggregateError(
+        [deploymentError, rollbackError],
+        "post-deploy validation and compensating rollback both failed",
+      );
+    }
+    throw new Error("post-deploy validation failed; the prior release state was restored", {
+      cause: deploymentError,
+    });
   }
-  return {
-    schemaVersion: EVIDENCE_SCHEMA,
-    command: "deploy",
-    ok: true,
-    release: verification.release,
-    preservation: {
-      persistentVolumeClaims: pvcsBefore.length,
-      externalSecrets: secretsBefore.length,
-    },
-    smoke: smokeReport,
-    exactImages: "pass",
-    postDeployHttpChecks: policy.postDeployHttpChecks?.length ?? 0,
-  };
 }
 
 export async function run(options) {

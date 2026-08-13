@@ -55,12 +55,12 @@ jobs:
       contents: read
       packages: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           fetch-depth: 0
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
 
@@ -103,12 +103,12 @@ jobs:
       - name: Install Nub
         run: |
           set -euo pipefail
-          for attempt in 1 2 3 4 5; do
-            curl --fail --silent --show-error --location --retry 5 --retry-all-errors https://nubjs.com/install.sh \
-              | bash -s -- 0.1.11 && break
-            [[ "$attempt" == 5 ]] && exit 1
-            sleep $((attempt * 2))
-          done
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+            --connect-timeout 10 --max-time 60 --output /tmp/nub-install.sh \
+            https://nubjs.com/install.sh
+          echo "dd263aba5655a47d9e287cfff96775a856200f0ba20b916fc2919219a33db0dd  /tmp/nub-install.sh" \
+            | sha256sum --check --strict
+          NUB_NO_MODIFY_PATH=1 bash /tmp/nub-install.sh 0.1.11
           echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
 
       - name: Install frozen dependencies
@@ -117,17 +117,17 @@ jobs:
       - name: Verify exact source tree
         run: nub run verify
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         if: steps.release_identity.outputs.publish == 'true'
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
         if: steps.release_identity.outputs.publish == 'true'
         with:
           version: v3.19.2
 
       - name: Authenticate image publication preflight
         if: steps.release_identity.outputs.publish == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -186,22 +186,22 @@ jobs:
           - session-gateway
           - session-runtime-worker
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Authenticate to GHCR
         if: needs.validate.outputs.publish == 'true'
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build exact image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: infra/docker/codeops-${{ matrix.image }}.Dockerfile
@@ -245,7 +245,7 @@ jobs:
           --subject ${{ matrix.image }}
 
       - name: Retain exact image license evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codeops-license-${{ matrix.image }}-${{ github.sha }}
           if-no-files-found: error
@@ -266,29 +266,29 @@ jobs:
       id-token: write
       attestations: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
         with:
           version: v3.19.2
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
 
       - name: Install Nub
         run: |
           set -euo pipefail
-          for attempt in 1 2 3 4 5; do
-            curl --fail --silent --show-error --location --retry 5 --retry-all-errors https://nubjs.com/install.sh \
-              | bash -s -- 0.1.11 && break
-            [[ "$attempt" == 5 ]] && exit 1
-            sleep $((attempt * 2))
-          done
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+            --connect-timeout 10 --max-time 60 --output /tmp/nub-install.sh \
+            https://nubjs.com/install.sh
+          echo "dd263aba5655a47d9e287cfff96775a856200f0ba20b916fc2919219a33db0dd  /tmp/nub-install.sh" \
+            | sha256sum --check --strict
+          NUB_NO_MODIFY_PATH=1 bash /tmp/nub-install.sh 0.1.11
           echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
 
       - name: Install frozen dependencies
@@ -298,7 +298,7 @@ jobs:
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
 
       - name: Authenticate Docker to GHCR
-        uses: docker/login-action@v3
+        uses: docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9 # v3
         with:
           registry: ghcr.io
           username: ${{ github.actor }}
@@ -326,7 +326,7 @@ jobs:
         run: node infra/scripts/codeops-release-chart.mjs infra/charts/codeops values.release.yaml .release/chart
 
       - name: Download exact image license evidence
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           pattern: codeops-license-*-${{ github.sha }}
           path: .release/license-evidence
@@ -364,7 +364,7 @@ jobs:
 
       - name: Attest packaged chart
         if: ${{ !github.event.repository.private }}
-        uses: actions/attest-build-provenance@v3
+        uses: actions/attest-build-provenance@43d14bc2b83dec42d39ecae14e916627a18bb661 # v3
         with:
           subject-path: .release/codeops-${{ needs.validate.outputs.release_version }}.tgz
 
@@ -396,7 +396,7 @@ jobs:
           )
 
       - name: Retain exact release evidence
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
           if-no-files-found: error
@@ -412,11 +412,11 @@ jobs:
       actions: read
       contents: read
     steps:
-      - uses: azure/setup-helm@v4
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
         with:
           version: v3.19.2
 
-      - uses: azure/setup-kubectl@v4
+      - uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415 # v4
         with:
           version: v1.36.1
 
@@ -434,9 +434,10 @@ jobs:
         run: |
           kind create cluster --name codeops-registry --image kindest/node:v1.36.1 --wait 120s
           kubectl label node --all codeops.dev/operator=true
+          kubectl label node --all renoconcierge.ca/codeops=true
 
       - name: Download exact release manifest
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
           path: /tmp/codeops-release
@@ -490,6 +491,7 @@ jobs:
             import { writeFileSync } from "node:fs";
             const values = {
               profile: "custom",
+              nodeSelector: { "renoconcierge.ca/codeops": "true" },
               agentsUi: { access: { issuer: "https://example.cloudflareaccess.com" } },
               controlGateway: { kubernetesApiCidrs: [`${process.env.API_IP}/32`] },
               temporal: { enabled: false, driver: "none", deployment: "none" },
@@ -554,6 +556,8 @@ jobs:
             writeFileSync("/tmp/codeops-quickstart.json", `${JSON.stringify(values)}\n`, { mode: 0o600 });
             writeFileSync("/tmp/codeops-consumer-policy.json", `${JSON.stringify({
               schemaVersion: "codeops.consumer-policy/v1",
+              helmTimeout: "20m",
+              httpTimeoutMs: 15000,
               requiredSecrets: [],
               cluster: {
                 kubernetesServiceCidrs: [`${process.env.API_IP}/32`],
@@ -587,13 +591,13 @@ jobs:
             --lock /tmp/codeops-release/codeops-consumer-lock.json \
             --values /tmp/codeops-quickstart.json \
             --policy /tmp/codeops-consumer-policy.json \
-            --release codeops \
-            --namespace codeops \
+            --release proof-system \
+            --namespace proof-system \
             --chart-path "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" \
             --manifest-path /tmp/codeops-release/release-manifest.json
-          [[ "$(helm status codeops --namespace codeops --output json | jq -r .info.status)" == "deployed" ]]
-          kubectl wait --namespace codeops --for=condition=Available deployment --all --timeout=5m
-          kubectl get deployment --namespace codeops --output json | jq -e --argjson expected '[
+          [[ "$(helm status proof-system --namespace proof-system --output json | jq -r .info.status)" == "deployed" ]]
+          kubectl wait --namespace proof-system --for=condition=Available deployment --all --timeout=5m
+          kubectl get deployment --namespace proof-system --output json | jq -e --argjson expected '[
             "ghcr.io/anulman/codeops/agents-ui",
             "ghcr.io/anulman/codeops/control-gateway",
             "ghcr.io/anulman/codeops/model-proxy",
@@ -604,27 +608,46 @@ jobs:
             | ($images | all(test("@sha256:[0-9a-f]{64}$")))
               and (($images | map(sub("@sha256:[0-9a-f]{64}$"; "")) | unique | sort) == $expected)
           '
+          prior_revision=$(helm status proof-system --namespace proof-system --output json | jq -er '.version')
+          jq '.httpTimeoutMs = 1000 | .postDeployHttpChecks = [{url:"https://127.0.0.1:1",acceptedStatuses:[200]}]' \
+            /tmp/codeops-consumer-policy.json > /tmp/codeops-rollback-policy.json
+          if node /tmp/codeops-release/codeopsctl.mjs deploy \
+            --lock /tmp/codeops-release/codeops-consumer-lock.json \
+            --values /tmp/codeops-quickstart.json \
+            --policy /tmp/codeops-rollback-policy.json \
+            --release proof-system \
+            --namespace proof-system \
+            --chart-path "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" \
+            --manifest-path /tmp/codeops-release/release-manifest.json; then
+            echo "post-deploy failure proof unexpectedly passed" >&2
+            exit 1
+          fi
+          restored=$(helm status proof-system --namespace proof-system --output json)
+          [[ "$(jq -r .info.status <<<"$restored")" == "deployed" ]]
+          [[ "$(jq -r .chart.metadata.version <<<"$restored")" == "$RELEASE_VERSION" ]]
+          [[ "$(jq -r .chart.metadata.appVersion <<<"$restored")" == "$SOURCE_SHA" ]]
+          [[ "$(jq -r .version <<<"$restored")" -gt "$prior_revision" ]]
           jq -n --arg version "$RELEASE_VERSION" --arg sourceSha "$SOURCE_SHA" --arg chartDigest "$pulled_digest" \
             '{version:$version,sourceSha:$sourceSha,chartDigest:$chartDigest,installStatus:"deployed",sourceCheckout:false}' \
             > /tmp/codeops-registry-proof/registry-install-evidence.json
-          helm uninstall codeops --namespace codeops --wait --timeout 5m
-          test -z "$(kubectl get deployment,statefulset,daemonset,job --namespace codeops --output name)"
+          helm uninstall proof-system --namespace proof-system --wait --timeout 5m
+          test -z "$(kubectl get deployment,statefulset,daemonset,job --namespace proof-system --output name)"
 
       - name: Capture registry-install diagnostics
         if: failure()
         run: |
           set -euo pipefail
           mkdir -p /tmp/codeops-registry-proof
-          helm status codeops --namespace codeops \
+          helm status proof-system --namespace proof-system \
             > /tmp/codeops-registry-proof/helm-status.txt 2>&1 || true
-          kubectl get deployment,statefulset,job,pod,pvc --namespace codeops --output wide \
+          kubectl get deployment,statefulset,job,pod,pvc --namespace proof-system --output wide \
             > /tmp/codeops-registry-proof/kubernetes-resources.txt 2>&1 || true
-          kubectl get events --namespace codeops --sort-by=.lastTimestamp \
+          kubectl get events --namespace proof-system --sort-by=.lastTimestamp \
             > /tmp/codeops-registry-proof/kubernetes-events.txt 2>&1 || true
 
       - name: Retain registry-install evidence
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         with:
           name: codeops-registry-install-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
           if-no-files-found: warn
@@ -645,7 +668,7 @@ jobs:
       contents: write
     steps:
       - name: Download exact release evidence
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
         with:
           name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
           path: release

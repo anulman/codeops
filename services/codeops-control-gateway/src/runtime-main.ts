@@ -89,6 +89,53 @@ function requireDigestImage(name: string): string {
   return value;
 }
 
+function kubernetesObjectName(name: string): string {
+  const value = required(name);
+  if (!/^[a-z0-9](?:[-a-z0-9]{0,251}[a-z0-9])?$/.test(value)) {
+    throw new Error(`${name} must be a Kubernetes object name`);
+  }
+  return value;
+}
+
+function stringMap(name: string): Readonly<Record<string, string>> {
+  const value: unknown = JSON.parse(required(name));
+  if (
+    value === null ||
+    Array.isArray(value) ||
+    typeof value !== "object" ||
+    Object.entries(value).some(
+      ([key, entry]) =>
+        key.length === 0 ||
+        key.length > 253 ||
+        typeof entry !== "string" ||
+        entry.length > 63,
+    )
+  ) {
+    throw new Error(`${name} must be a JSON string map`);
+  }
+  return value as Readonly<Record<string, string>>;
+}
+
+function imagePullSecrets(name: string): readonly { readonly name: string }[] {
+  const value: unknown = JSON.parse(required(name));
+  if (
+    !Array.isArray(value) ||
+    value.some(
+      (entry) =>
+        entry === null ||
+        typeof entry !== "object" ||
+        Object.keys(entry).length !== 1 ||
+        typeof (entry as { name?: unknown }).name !== "string" ||
+        !/^[a-z0-9](?:[-a-z0-9]{0,251}[a-z0-9])?$/.test(
+          (entry as { name: string }).name,
+        ),
+    )
+  ) {
+    throw new Error(`${name} must be a JSON array of Secret names`);
+  }
+  return value as readonly { readonly name: string }[];
+}
+
 async function readJson(request: IncomingMessage): Promise<unknown> {
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -231,6 +278,15 @@ const run = createAgentJobRunner({
     repositoryRegistry,
     agentImage: requireDigestImage("CODEOPS_AGENT_IMAGE"),
     sessionGatewayImage: requireDigestImage("CODEOPS_SESSION_GATEWAY_IMAGE"),
+    imagePullSecrets: imagePullSecrets("CODEOPS_AGENT_IMAGE_PULL_SECRETS"),
+    nodeSelector: stringMap("CODEOPS_AGENT_NODE_SELECTOR"),
+    evidenceClaimName: kubernetesObjectName("CODEOPS_AGENT_EVIDENCE_CLAIM_NAME"),
+    modelProxyServiceName: kubernetesObjectName(
+      "CODEOPS_AGENT_MODEL_PROXY_SERVICE_NAME",
+    ),
+    modelProxyPodName: kubernetesObjectName(
+      "CODEOPS_AGENT_MODEL_PROXY_POD_NAME",
+    ),
     modelAuth,
     evidenceRoot: required("CODEOPS_EVIDENCE_ROOT"),
   },

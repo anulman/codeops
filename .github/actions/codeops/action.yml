@@ -26,15 +26,15 @@ inputs:
 runs:
   using: composite
   steps:
-    - uses: actions/setup-node@v4
+    - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
       with:
         node-version: "24"
 
-    - uses: azure/setup-helm@v4
+    - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
       with:
         version: v3.19.2
 
-    - uses: azure/setup-kubectl@v4
+    - uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415 # v4
       with:
         version: v1.36.3
 

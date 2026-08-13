@@ -56,7 +56,10 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   const chartDockerLogin = workflow.jobs.chart.steps.find(
     ({ name }) => name === "Authenticate Docker to GHCR",
   );
-  assert.equal(chartDockerLogin.uses, "docker/login-action@v3");
+  assert.equal(
+    chartDockerLogin.uses,
+    "docker/login-action@c94ce9fb468520275223c153574b00df6fe4bcc9",
+  );
   const chartAttestation = workflow.jobs.chart.steps.find(
     ({ name }) => name === "Attest packaged chart",
   );
@@ -67,7 +70,7 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.equal(registryInstall.permissions.actions, "read");
   assert.equal(registryInstall.permissions.packages, undefined);
   assert.equal(
-    registryInstall.steps.some(({ uses }) => uses === "actions/checkout@v4"),
+    registryInstall.steps.some(({ uses }) => uses?.startsWith("actions/checkout@")),
     false,
   );
   assert.equal(
@@ -105,11 +108,15 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(operatorSource, /--wait-for-jobs/);
   assert.match(operatorSource, /--atomic/);
   assert.match(install.run, /sourceCheckout:false/);
-  assert.match(install.run, /kubectl wait --namespace codeops --for=condition=Available deployment --all/);
+  assert.match(install.run, /kubectl wait --namespace proof-system --for=condition=Available deployment --all/);
   assert.match(install.run, /session-control-gateway/);
   assert.match(install.run, /map\(sub\("@sha256:/);
-  assert.match(install.run, /helm uninstall codeops/);
+  assert.match(install.run, /--release proof-system/);
+  assert.match(install.run, /--namespace proof-system/);
+  assert.match(install.run, /post-deploy failure proof unexpectedly passed/);
+  assert.match(install.run, /helm uninstall proof-system/);
   assert.match(quickstartValues.run, /profile: "custom"/);
+  assert.match(quickstartValues.run, /renoconcierge\.ca\/codeops/);
   assert.doesNotMatch(quickstartValues.run, /GHCR_TOKEN/);
   assert.doesNotMatch(quickstartValues.run, /registry:/);
   assert.match(quickstartValues.run, /temporal: \{ enabled: false, driver: "none", deployment: "none" \}/);
@@ -121,9 +128,16 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
     ({ name }) => name === "Capture registry-install diagnostics",
   );
   assert.equal(diagnostics.if, "failure()");
-  assert.match(diagnostics.run, /helm status codeops/);
+  assert.match(diagnostics.run, /helm status proof-system/);
   assert.match(diagnostics.run, /kubectl get deployment,statefulset,job,pod,pvc/);
   const serialized = JSON.stringify(workflow);
+  for (const job of Object.values(workflow.jobs)) {
+    for (const step of job.steps ?? []) {
+      if (step.uses) assert.match(step.uses, /@[0-9a-f]{40}$/);
+    }
+  }
+  assert.match(serialized, /dd263aba5655a47d9e287cfff96775a856200f0ba20b916fc2919219a33db0dd/);
+  assert.doesNotMatch(serialized, /install\.sh.*\|\s*bash/);
   assert.match(serialized, /Reject artifact identity reuse/);
   assert.match(serialized, /refs\/remotes\/origin\/main/);
   assert.match(serialized, /refusing to overwrite existing image identity/);
@@ -158,7 +172,10 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   const downloadRelease = githubRelease.steps.find(
     ({ name }) => name === "Download exact release evidence",
   );
-  assert.equal(downloadRelease.uses, "actions/download-artifact@v4");
+  assert.equal(
+    downloadRelease.uses,
+    "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
+  );
   const publishRelease = githubRelease.steps.find(
     ({ name }) => name === "Publish durable GitHub Release",
   );

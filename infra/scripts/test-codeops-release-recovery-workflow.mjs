@@ -8,23 +8,22 @@ test("release recovery retries only one validated immutable failed run", async (
     new URL("../../.github/workflows/release-recovery.yml", import.meta.url),
     "utf8",
   );
-  const request = JSON.parse(
-    await readFile(new URL("../../.github/release-recovery.json", import.meta.url), "utf8"),
-  );
   const workflow = parse(source);
 
-  assert.deepEqual(Object.keys(workflow.on), ["push"]);
-  assert.deepEqual(workflow.on.push.branches, ["main"]);
-  assert.deepEqual(workflow.on.push.paths, [
-    ".github/release-recovery.json",
-    ".github/workflows/release-recovery.yml",
+  assert.deepEqual(Object.keys(workflow.on), ["workflow_dispatch"]);
+  assert.deepEqual(Object.keys(workflow.on.workflow_dispatch.inputs), [
+    "runId",
+    "tag",
+    "sourceSha",
   ]);
   assert.deepEqual(workflow.permissions, { contents: "read" });
 
   const job = workflow.jobs["rerun-failed-release-jobs"];
   assert.deepEqual(job.permissions, { actions: "write", contents: "read" });
   assert.equal(job["timeout-minutes"], 5);
-  const checkout = job.steps.find(({ uses }) => uses === "actions/checkout@v4");
+  const checkout = job.steps.find(
+    ({ uses }) => uses === "actions/checkout@11d5960a326750d5838078e36cf38b85af677262",
+  );
   assert.equal(checkout.with["fetch-depth"], 0);
   assert.equal(checkout.with["persist-credentials"], false);
 
@@ -32,7 +31,7 @@ test("release recovery retries only one validated immutable failed run", async (
     ({ name }) => name === "Validate immutable release recovery request",
   );
   assert.equal(validate.env.GH_TOKEN, "${{ github.token }}");
-  assert.match(validate.run, /git rev-parse "refs\/tags\/\$\{tag\}"/);
+  assert.match(validate.run, /git rev-parse "refs\/tags\/\$\{RELEASE_TAG\}"/);
   assert.match(validate.run, /\.event/);
   assert.match(validate.run, /\.status/);
   assert.match(validate.run, /\.conclusion/);
@@ -43,10 +42,6 @@ test("release recovery retries only one validated immutable failed run", async (
   const retry = job.steps.find(({ name }) => name === "Retry only failed release jobs");
   assert.equal(retry.env.GH_TOKEN, "${{ github.token }}");
   assert.match(retry.run, /rerun-failed-jobs/);
+  assert.match(retry.run, /RUN_ID/);
   assert.doesNotMatch(source, /packages:\s*write/);
-  assert.deepEqual(request, {
-    runId: 31625101787,
-    tag: "v0.2.0",
-    sourceSha: "7c4b91db930444b3bb364967a6c7a9f790d8bc93",
-  });
 });

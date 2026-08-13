@@ -37,8 +37,8 @@ connect to external services or disable optional capabilities.
 ## System requirements
 
 CodeOps requires a working Kubernetes cluster, Helm, `kubectl`, dynamic
-persistent-volume provisioning, and an ingress controller. Release 0.2.0 is
-qualified with Kubernetes 1.36.1, Helm 3.19.2, and `kubectl` 1.36.1.
+persistent-volume provisioning, and an ingress controller. The release gate
+uses Kubernetes 1.36.1, Helm 3.19.2, and `kubectl` 1.36.1.
 
 Use these capacity baselines before an installation:
 
@@ -193,3 +193,10 @@ credentials, ambiguous paths, duplicate projects, reused Secret files, reused
 credential values, and cross-repository identity drift at startup. The legacy
 single-repository environment variables remain only as an explicit
 compatibility fallback when no registry file is configured.
+
+The Temporal WorkItem workflow and the interactive Session Broker currently
+use two execution adapters. Temporal dispatches a bounded Agent Job. The
+Session Broker dispatches the session runtime worker. Both adapters use the
+same repository registry, immutable images, model proxy, and cluster policy,
+but they do not yet share one resource builder. Treat this split as alpha
+architecture. Do not add a third execution adapter.
