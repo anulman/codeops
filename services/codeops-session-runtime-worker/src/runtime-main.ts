@@ -14,6 +14,7 @@ import { PostgresWorkspaceCheckpointArtifactStore } from "./workspace-artifacts.
 import { runSessionRuntimeWorker } from "./runner.js";
 import { SessionRuntimeTransport } from "./transport.js";
 import { loadRuntimeSessionIdentity } from "./session-identity.js";
+import { WorkItemsBroker } from "./work-items-broker.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -90,6 +91,12 @@ const socketTimeoutMs = boundedInteger(
   1_000,
   60_000,
 );
+const workItemsBrokerPort = boundedInteger(
+  "CODEOPS_WORK_ITEMS_BROKER_PORT",
+  8091,
+  1,
+  65_535,
+);
 
 const database = new Pool({ connectionString: databaseUrl, max: 1 });
 const receipts = new PostgresRuntimeExecutionReceiptStore(database);
@@ -100,6 +107,7 @@ const initializer = new SessionJobInitializer({
   requestTimeoutMs,
 });
 const cancellation = new AbortController();
+const workItemsBroker = new WorkItemsBroker();
 const shutdown = () => cancellation.abort();
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);
@@ -134,6 +142,7 @@ try {
       identity: initialization.snapshot.identity,
     },
   });
+  await workItemsBroker.listen(workItemsBrokerPort);
   await waitForAcpSocket(socketPath, socketTimeoutMs);
   await writeFile(readyPath, "", { mode: 0o600, flag: "wx" });
   await runSessionRuntimeWorker({
@@ -150,10 +159,12 @@ try {
         permissions: createAcpPermissionRelay({ context }),
         artifacts: workspaceArtifacts,
       });
-      return createSessionRuntimeLifecycleExecutor({
-        lifecycle,
-        receipts,
-      })(dispatch, context);
+      return workItemsBroker.run(dispatch, context, () =>
+        createSessionRuntimeLifecycleExecutor({
+          lifecycle,
+          receipts,
+        })(dispatch, context),
+      );
     },
     onCompleted: (result) => {
       process.stdout.write(`${JSON.stringify({
@@ -166,6 +177,7 @@ try {
     },
   });
 } finally {
+  await workItemsBroker.close().catch(() => {});
   await rm(readyPath, { force: true }).catch(() => {});
   await rm(modelProxyTokenPath, { force: true }).catch(() => {});
   await writeFile(path.join(path.dirname(socketPath), "done"), "", {

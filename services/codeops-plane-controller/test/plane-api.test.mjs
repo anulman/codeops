@@ -67,6 +67,24 @@ function recordingFetch() {
         201,
       );
     }
+    if (
+      call.method === "POST" &&
+      call.url.endsWith(`/projects/${projectId}/intake-issues/`)
+    ) {
+      return jsonResponse(
+        {
+          id: "88888888-8888-4888-8888-888888888888",
+          issue: {
+            id: "99999999-9999-4999-8999-999999999999",
+            project: projectId,
+            labels: [],
+            name: call.body.issue.name,
+            description_html: call.body.issue.description_html,
+          },
+        },
+        201,
+      );
+    }
     if (call.url.endsWith(`/projects/${projectId}/`)) {
       return jsonResponse({ id: projectId, name: "Onboarding Auth QA" });
     }
@@ -172,6 +190,15 @@ test("maps the content-only client to Plane work-item endpoints", async () => {
     ).project,
     projectId,
   );
+  assert.equal(
+    (
+      await client.createIntakeWorkItem(projectId, {
+        name: "Triage a provider request",
+        description_html: "<p>Review before project admission.</p>",
+      })
+    ).id,
+    "99999999-9999-4999-8999-999999999999",
+  );
   await client.createComment(projectId, workItemId, {
     comment_html: "<p>Research complete.</p>",
     external_source: "codeops",
@@ -187,6 +214,14 @@ test("maps the content-only client to Plane work-item endpoints", async () => {
         call.url.startsWith(
           "https://plane.example.test/api/v1/workspaces/codeops/projects/",
         ) && call.headers["x-api-key"] === apiKey,
+    ),
+  );
+  assert.ok(
+    recorder.calls.some(
+      (call) =>
+        call.method === "POST" &&
+        call.url.endsWith(`/intake-issues/`) &&
+        call.body.issue.name === "Triage a provider request",
     ),
   );
   assert.ok(

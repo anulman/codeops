@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { Client, Connection } from "@temporalio/client";
 import { z } from "zod";
+import { workItemProviderCreateRequestSchema } from "@codeops/codeops-contracts";
 import {
   createFileResearchDedupLedger,
   createFileCodingRequestStore,
@@ -35,6 +36,7 @@ import {
   createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "./runtime.js";
+import { createPlaneWorkItem } from "./work-item-provider.js";
 
 const personaHandle = z.enum([
   "@ai-web",
@@ -100,9 +102,20 @@ const projectionToken = await secretFile(
 if (projectionToken.length < 32 || projectionToken.length > 4_096) {
   throw new Error("CodeOps research projection token is invalid");
 }
+const workItemMutationToken = await secretFile(
+  "CODEOPS_WORK_ITEM_MUTATION_TOKEN_FILE",
+);
 const repositoryHeadToken = await secretFile(
   "CODEOPS_REPOSITORY_HEAD_TOKEN_FILE",
 );
+if (
+  workItemMutationToken.length < 32 ||
+  workItemMutationToken.length > 4_096 ||
+  workItemMutationToken === projectionToken ||
+  workItemMutationToken === repositoryHeadToken
+) {
+  throw new Error("CodeOps work-item mutation token is invalid or reused");
+}
 const githubSessionSteeringOrigin = required(
   "CODEOPS_GITHUB_SESSION_STEERING_ORIGIN",
 );
@@ -449,6 +462,18 @@ async function cancelDescendantWork(input: {
 }
 
 const listener = createPlaneWebhookRequestListener({
+  workItems: {
+    token: workItemMutationToken,
+    create: (request) => {
+      const parsed = workItemProviderCreateRequestSchema.parse(request);
+      const { client, authority } = planeRuntimeForRepository(parsed.repository);
+      return createPlaneWorkItem({
+        request: parsed,
+        projectId: authority.projectId,
+        client,
+      });
+    },
+  },
   projection: {
     token: projectionToken,
     process: (packet) => {

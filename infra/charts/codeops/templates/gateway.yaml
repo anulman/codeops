@@ -47,6 +47,10 @@ spec:
             - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/codeops/initialization-token }
             - { name: CODEOPS_REPOSITORY_STEERING_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-steering/registry.json }
             - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy/signing-key }
+            {{- if .Values.plane.adapter.enabled }}
+            - { name: CODEOPS_WORK_ITEM_PROVIDER_ORIGIN, value: http://{{ include "codeops.fullname" . }}-github-controller:8080 }
+            - { name: CODEOPS_WORK_ITEM_PROVIDER_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-work-items/work-item-mutation-token }
+            {{- end }}
           ports:
             - { name: http, containerPort: 8080 }
           startupProbe:
@@ -70,6 +74,9 @@ spec:
             - { name: secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
             - { name: repository-steering, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-steering, readOnly: true }
             - { name: model-proxy-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy, readOnly: true }
+            {{- if .Values.plane.adapter.enabled }}
+            - { name: work-item-provider-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-work-items, readOnly: true }
+            {{- end }}
             - { name: temp, mountPath: /tmp }
       volumes:
         - name: secrets
@@ -94,6 +101,14 @@ spec:
               - { key: signing-key, path: signing-key }
         - name: temp
           emptyDir: { sizeLimit: 64Mi }
+        {{- if .Values.plane.adapter.enabled }}
+        - name: work-item-provider-auth
+          secret:
+            secretName: {{ .Values.githubController.secretName }}
+            defaultMode: 256
+            items:
+              - { key: work-item-mutation-token, path: work-item-mutation-token }
+        {{- end }}
 ---
 apiVersion: v1
 kind: Service

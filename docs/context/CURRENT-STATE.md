@@ -14,6 +14,14 @@ each release. A consumer pins that runner from the same release manifest as
 the chart and creates the ephemeral post-deploy invocation. Product-specific
 acceptance remains in the product repository.
 
+Interactive ACP sessions can call the provider-neutral `work_items.create`
+tool for a repository in the exact workspace source set. The first provider
+adapter is Plane. Triage creation is the default and uses the Plane Intake
+queue. Direct creation uses the Plane project work-item endpoint and requires
+a durable human permission decision for the same live prompt dispatch. The
+ACP agent receives no Plane credential. The trusted controller applies the
+idempotent provider mutation.
+
 Current limitations:
 
 - Production onboarding requires repository-scoped GitHub and Plane authority.

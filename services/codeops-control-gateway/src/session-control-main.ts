@@ -53,6 +53,12 @@ import {
   SessionRuntimeClaimConflictError,
   listSessionSnapshots,
 } from "./session-broker-repository.js";
+import {
+  authorizeSessionRuntimeWorkItemCreate,
+  createWorkItemProviderClient,
+  SessionRuntimeWorkItemConflictError,
+  SessionRuntimeWorkItemNotFoundError,
+} from "./session-runtime-work-items.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -121,6 +127,38 @@ const workerId = required("CODEOPS_SESSION_RUNTIME_WORKER_ID");
 const modelProxySigningKey = await secretFile(
   "CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE",
 );
+const workItemProviderOrigin = process.env.CODEOPS_WORK_ITEM_PROVIDER_ORIGIN?.trim();
+const workItemProviderTokenFile =
+  process.env.CODEOPS_WORK_ITEM_PROVIDER_TOKEN_FILE?.trim();
+if (
+  (workItemProviderOrigin === undefined) !==
+  (workItemProviderTokenFile === undefined)
+) {
+  throw new Error("work-item provider origin and token file must be configured together");
+}
+const workItemProviderToken =
+  workItemProviderTokenFile === undefined
+    ? undefined
+    : (await readFile(workItemProviderTokenFile, "utf8")).trim();
+if (
+  workItemProviderToken !== undefined &&
+  ([
+    secrets.readToken,
+    secrets.writeToken,
+    secrets.workerToken,
+    secrets.initializationToken,
+    modelProxySigningKey,
+  ].includes(workItemProviderToken))
+) {
+  throw new Error("work-item provider token must be a distinct authority");
+}
+const configuredWorkItemProvider =
+  workItemProviderOrigin === undefined || workItemProviderToken === undefined
+    ? undefined
+    : createWorkItemProviderClient({
+        origin: workItemProviderOrigin,
+        token: workItemProviderToken,
+      });
 if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(workerId)) {
   throw new Error("session runtime worker identity is invalid");
 }
@@ -267,6 +305,20 @@ const server = createServer((request, response) => {
             client.release();
           }
         },
+        ...(configuredWorkItemProvider === undefined
+          ? {}
+          : {
+              createWorkItem: async (input) => {
+                const client = await database.connect();
+                try {
+                  const providerRequest =
+                    await authorizeSessionRuntimeWorkItemCreate(client, input);
+                  return await configuredWorkItemProvider(providerRequest);
+                } finally {
+                  client.release();
+                }
+              },
+            }),
       });
       if (result !== null) {
         json(response, result.status, result.body);
@@ -279,9 +331,12 @@ const server = createServer((request, response) => {
           : error instanceof SessionRuntimeDispatchNotFoundError ||
               error instanceof SessionRuntimePermissionNotFoundError
             ? 404
+            : error instanceof SessionRuntimeWorkItemNotFoundError
+              ? 404
             : error instanceof ImmutableSessionRuntimeDispatchConflictError ||
                 error instanceof SessionRuntimeClaimConflictError ||
                 error instanceof SessionRuntimePermissionConflictError
+                || error instanceof SessionRuntimeWorkItemConflictError
               ? 409
               : 503;
       json(response, status, {

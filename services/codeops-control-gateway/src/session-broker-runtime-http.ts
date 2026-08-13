@@ -5,7 +5,9 @@ import {
   sessionRuntimeCompletionRequestSchema,
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionSubmissionSchema,
+  sessionRuntimeWorkItemCreateRequestSchema,
   type SessionCommandResult,
+  type WorkItemCreateResult,
   type SessionRuntimePermissionResult,
 } from "@codeops/codeops-contracts";
 import { authenticateBearer } from "./bearer-auth.js";
@@ -19,6 +21,8 @@ const permissionSubmissionPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/permissions$/i;
 const permissionPollPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/permissions\/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})\/poll$/;
+const workItemCreatePath =
+  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/work-items$/i;
 
 function header(
   headers: IncomingHttpHeaders,
@@ -90,6 +94,11 @@ export async function serveSessionRuntime(input: {
     readonly workerId: string;
     readonly poll: unknown;
   }) => Promise<SessionRuntimePermissionResult>;
+  readonly createWorkItem?: (input: {
+    readonly dispatchId: string;
+    readonly workerId: string;
+    readonly request: unknown;
+  }) => Promise<WorkItemCreateResult>;
 }): Promise<SessionRuntimeHttpResult | null> {
   if (input.method !== "POST" || input.url === undefined) return null;
   const url = new URL(input.url, "http://codeops.internal");
@@ -97,11 +106,13 @@ export async function serveSessionRuntime(input: {
   const completionMatch = url.pathname.match(completionPath);
   const permissionSubmissionMatch = url.pathname.match(permissionSubmissionPath);
   const permissionPollMatch = url.pathname.match(permissionPollPath);
+  const workItemCreateMatch = url.pathname.match(workItemCreatePath);
   if (
     !isClaim &&
     completionMatch === null &&
     permissionSubmissionMatch === null &&
     permissionPollMatch === null
+    && workItemCreateMatch === null
   ) return null;
   if ([...url.searchParams].length !== 0) {
     throw new InvalidSessionRuntimeRequestError(
@@ -136,6 +147,28 @@ export async function serveSessionRuntime(input: {
         version: "codeops.session-runtime-claim-response/v1",
         claim,
       },
+    };
+  }
+
+  if (workItemCreateMatch !== null) {
+    if (input.createWorkItem === undefined) {
+      return { status: 404, body: { status: "not-found" } };
+    }
+    const createRequest = sessionRuntimeWorkItemCreateRequestSchema.safeParse(
+      await readRequestBody(input.readBody),
+    );
+    if (!createRequest.success) {
+      throw new InvalidSessionRuntimeRequestError(
+        "session runtime work-item create body is invalid",
+      );
+    }
+    return {
+      status: 200,
+      body: await input.createWorkItem({
+        dispatchId: dispatchId.parse(workItemCreateMatch[1]),
+        workerId: input.workerId,
+        request: createRequest.data,
+      }),
     };
   }
 

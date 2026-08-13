@@ -113,6 +113,17 @@ export {
   type WorkspaceSource,
   type WorkspaceSourceSelection,
 } from "./workspace-launch.js";
+export {
+  sessionRuntimeWorkItemCreateRequestSchema,
+  workItemCreateInputSchema,
+  workItemCreateModeSchema,
+  workItemCreateResultSchema,
+  workItemProviderCreateRequestSchema,
+  type SessionRuntimeWorkItemCreateRequest,
+  type WorkItemCreateInput,
+  type WorkItemCreateResult,
+  type WorkItemProviderCreateRequest,
+} from "./work-items.js";
 
 const VERSION = {
   workItem: "codeops.work-item/v1",

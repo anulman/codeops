@@ -29,6 +29,12 @@ const workItemPageSchema = z.union([
     })
     .passthrough(),
 ]);
+const intakeWorkItemSchema = z
+  .object({
+    id: uuid,
+    issue: workItemSchema,
+  })
+  .passthrough();
 const commentSchema = z
   .object({
     id: uuid,
@@ -326,6 +332,21 @@ export function createPlaneApiClient(
         labels: item.labels,
         name: item.name,
         descriptionHtml: item.description_html ?? "",
+      };
+    },
+
+    async createIntakeWorkItem(projectId, input): Promise<PlaneWorkItemRecord> {
+      const intake = intakeWorkItemSchema.parse(
+        await request("POST", `${projectPath(projectId)}/intake-issues/`, {
+          issue: input,
+        }),
+      );
+      return {
+        id: intake.issue.id,
+        project: intake.issue.project,
+        labels: intake.issue.labels,
+        name: intake.issue.name,
+        descriptionHtml: intake.issue.description_html ?? "",
       };
     },
 

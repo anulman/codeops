@@ -11,6 +11,8 @@ import {
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
   sessionTimelineUpdateSchema,
+  sessionRuntimeWorkItemCreateRequestSchema,
+  workItemCreateResultSchema,
   type SessionCommandResult,
   type SessionIdentity,
   type SessionRuntimeCompletion,
@@ -18,6 +20,8 @@ import {
   type SessionRuntimeDispatchClaim,
   type SessionRuntimePermissionResult,
   type SessionRuntimePermissionSubmission,
+  type WorkItemCreateInput,
+  type WorkItemCreateResult,
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
 import { setTimeout as delay } from "node:timers/promises";
@@ -85,6 +89,10 @@ export interface RuntimeExecutionContext {
   requestPermission(
     submission: RuntimePermissionSubmission,
   ): Promise<NonNullable<SessionRuntimePermissionResult["decision"]>>;
+  createWorkItem(input: {
+    readonly operationId: string;
+    readonly workItem: WorkItemCreateInput;
+  }): Promise<WorkItemCreateResult>;
 }
 
 export type RuntimeExecutor = (
@@ -411,6 +419,36 @@ export class SessionRuntimeTransport {
     return result.decision;
   }
 
+  async #createWorkItem(
+    claim: SessionRuntimeDispatchClaim,
+    input: {
+      readonly operationId: string;
+      readonly workItem: WorkItemCreateInput;
+    },
+    now: () => Date,
+  ): Promise<WorkItemCreateResult> {
+    if (
+      claim.dispatch.command.type !== "prompt" ||
+      now().getTime() >= Date.parse(claim.claimExpiresAt)
+    ) {
+      throw new SessionRuntimeTransportError(
+        "only one live claimed prompt may create a work item",
+      );
+    }
+    const request = sessionRuntimeWorkItemCreateRequestSchema.parse({
+      version: "codeops.session-runtime-work-item-create-request/v1",
+      claimToken: claim.claimToken,
+      operationId: input.operationId,
+      input: input.workItem,
+    });
+    return workItemCreateResultSchema.parse(
+      await this.#post(
+        `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/work-items`,
+        request,
+      ),
+    );
+  }
+
   async runOne(input: {
     readonly leaseMs: number;
     readonly execute: RuntimeExecutor;
@@ -431,6 +469,7 @@ export class SessionRuntimeTransport {
       // ACP/workspace executor receives neither bearer nor claim token.
       requestPermission: (submission) =>
         this.#requestPermission(claim, submission, now),
+      createWorkItem: (workItem) => this.#createWorkItem(claim, workItem, now),
     });
     const completedAt = now();
     if (completedAt.getTime() >= Date.parse(claim.claimExpiresAt)) {
