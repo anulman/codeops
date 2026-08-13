@@ -1,8 +1,5 @@
 {
   "repository": "owner/repository",
-  "host": "codeops.example.com",
-  "accessIssuer": "https://team.cloudflareaccess.com",
-  "operatorEmails": ["operator@example.com"],
   "kubernetesApiCidrs": [],
   "githubReviewerIds": [],
   "contextRoot": "/absolute/path/to/repository/docs/context",
@@ -34,7 +31,6 @@
     "githubWrite": "CODEOPS_GITHUB_WRITE_TOKEN",
     "githubWebhook": "CODEOPS_GITHUB_WEBHOOK_SECRET",
     "planeApi": "CODEOPS_PLANE_API_KEY",
-    "planeWebhook": "CODEOPS_PLANE_WEBHOOK_SECRET",
-    "accessAudience": "CODEOPS_ACCESS_AUDIENCE"
+    "planeWebhook": "CODEOPS_PLANE_WEBHOOK_SECRET"
   }
 }

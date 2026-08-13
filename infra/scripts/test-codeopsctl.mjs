@@ -34,7 +34,7 @@ function policy() {
     schemaVersion: "codeops.consumer-policy/v1",
     helmTimeout: "20m",
     httpTimeoutMs: 15000,
-    requiredSecrets: ["codeops-access", "codeops-postgres"],
+    requiredSecrets: ["codeops-postgres", "codeops-session-secrets"],
     cluster: {
       kubernetesServiceCidrs: ["10.3.0.1/32"],
       readyNodeSelector: "example.com/codeops=true",

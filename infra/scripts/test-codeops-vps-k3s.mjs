@@ -26,15 +26,11 @@ test("the VPS k3s contract preserves the host and retired-cluster boundaries", a
   assert.notEqual(config["service-cidr"], "10.43.0.0/16");
 });
 
-test("Caddy and ingress-nginx share only the private ingress NodePort", async () => {
+test("ingress-nginx NodePorts stay private", async () => {
   const ingress = parse(await text("infra/k3s/codeops-vps/ingress-nginx-values.yaml"));
   assert.equal(ingress.controller.service.type, "NodePort");
   assert.equal(ingress.controller.service.nodePorts.http, 32080);
   assert.equal(ingress.controller.service.nodePorts.https, 32443);
-
-  const caddy = await text("infra/k3s/codeops-vps/Caddyfile");
-  assert.match(caddy, /work\.aidans\.computer, agents\.aidans\.computer/);
-  assert.match(caddy, /reverse_proxy 127\.0\.0\.1:32080/);
 
   const firewall = await text("infra/k3s/codeops-vps/firewall.nft");
   for (const port of [6443, 10250, 32080, 32443]) {

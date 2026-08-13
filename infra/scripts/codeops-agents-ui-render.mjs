@@ -92,7 +92,6 @@ export function renderAgentsUiManifest(template, digest) {
     container.name !== "agents-ui" ||
     JSON.stringify(container.ports) !==
       JSON.stringify([{ name: "http", containerPort: 3000 }]) ||
-    env.AGENTS_UI_ACCESS_REQUIRED !== "true" ||
     env.CODEOPS_SESSION_BROKER_URL !== "http://codeops-control-gateway:8080" ||
     env.CODEOPS_SESSION_BROKER_READ_TOKEN_FILE !==
       "/var/run/secrets/codeops-session-read/token" ||

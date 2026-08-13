@@ -17,9 +17,6 @@ const digestSets = [
   "runtime.agentImage.digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
   "runtime.sessionGatewayImage.digest=sha256:5656565656565656565656565656565656565656565656565656565656565656",
   "modelProxy.image.digest=sha256:9999999999999999999999999999999999999999999999999999999999999999",
-  "agentsUi.access.issuer=https://example.cloudflareaccess.com",
-  "ingress.host=codeops.example.net",
-  "agentsUi.access.secretName=team-a-codeops-access",
   "gateway.secretName=team-a-codeops-session-secrets",
   "gateway.repositorySteeringRegistrySecretName=team-a-codeops-repository-steering",
   "controlGateway.secretName=team-a-codeops-control-gateway-secrets",
@@ -218,27 +215,9 @@ test("changes the immutable runtime image ConfigMap identity with image content"
   assert.notEqual(runtimeName(baseline), runtimeName(changed));
 });
 
-test("exposes only the Agents UI and requires signed Access configuration", () => {
+test("keeps the Agents UI private", () => {
   const resources = render();
-  const ingresses = resources.filter(
-    ({ kind, metadata }) =>
-      kind === "Ingress" && metadata?.labels?.["app.kubernetes.io/part-of"] === "codeops",
-  );
-  assert.equal(ingresses.length, 1);
-  assert.deepEqual(ingresses[0].spec.rules.map(({ host }) => host), [
-    "codeops.example.net",
-  ]);
-  assert.deepEqual(ingresses[0].spec.rules[0].http.paths.map(({ path }) => path), [
-    "/webhooks/github",
-    "/webhooks/plane",
-    "/",
-  ]);
-  assert.equal(
-    ingresses[0].spec.rules[0].http.paths.find(
-      ({ path }) => path === "/webhooks/plane",
-    ).pathType,
-    "Prefix",
-  );
+  assert.equal(resources.some(({ kind }) => kind === "Ingress"), false);
 
   const deployment = resource(
     resources,
@@ -248,25 +227,10 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
   const env = new Map(
     deployment.spec.template.spec.containers[0].env.map((entry) => [entry.name, entry]),
   );
-  assert.equal(env.get("AGENTS_UI_ACCESS_REQUIRED").value, "true");
-  assert.equal(
-    env.get("AGENTS_UI_ACCESS_ISSUER").value,
-    "https://example.cloudflareaccess.com",
-  );
-  assert.equal(env.get("AGENTS_UI_ORIGIN").value, "https://codeops.example.net");
-  assert.equal(
-    env.get("AGENTS_UI_ACCESS_AUDIENCE").valueFrom.secretKeyRef.name,
-    "team-a-codeops-access",
-  );
-  assert.equal(
-    env.get("AGENTS_UI_ACCESS_ALLOWED_EMAILS_FILE").value,
-    "/var/run/secrets/team-a-codeops-access/allowed-emails",
-  );
   assert.equal(
     env.get("CODEOPS_SESSION_BROKER_URL").value,
     "http://team-a-codeops-session-control-gateway.engineering.svc.cluster.local:8080",
   );
-  assert.equal(JSON.stringify(deployment).includes("cf-access-authenticated-user-email"), false);
 
   const gateway = resource(resources, "Deployment", "team-a-codeops-session-gateway");
   const gatewaySource = JSON.stringify(gateway);
@@ -431,7 +395,7 @@ test("defaults to deny and opens only explicit component paths", () => {
 test("creates a complete one-repository quickstart from one values file", () => {
   const resources = renderQuickstart();
   const secrets = resources.filter(({ kind }) => kind === "Secret");
-  assert.equal(secrets.length, 18);
+  assert.equal(secrets.length, 17);
   assert.equal(
     secrets.every((secret) => secret.metadata.annotations["helm.sh/resource-policy"] === "keep"),
     true,
@@ -569,8 +533,6 @@ test("accepts arbitrary namespaces and fails closed on invalid configuration", (
     ...digestSets.flatMap((value) => ["--set", value]),
   ]));
   const cases = [
-    ["--namespace", "engineering", "--set", "ingress.host=UPPER.example.com"],
-    ["--namespace", "engineering", "--set", "agentsUi.access.issuer=https://example.com"],
     ["--namespace", "engineering", "--set", "gateway.image.digest=latest"],
     ["--namespace", "engineering", "--set", "githubController.controlPlaneSha=main"],
     ["--namespace", "engineering", "--set", "githubController.repositoryAuthoritySecretName=Invalid_Name"],

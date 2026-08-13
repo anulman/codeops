@@ -21,33 +21,6 @@ const identifier = z
 const limit = (maximum: number) =>
   z.number().int().min(1).max(maximum);
 
-export function commandOriginIsAllowed(
-  origin: string | undefined,
-  enforced = process.env.NODE_ENV === "production" ||
-    process.env.AGENTS_UI_ACCESS_REQUIRED === "true",
-  allowedOrigin = process.env.AGENTS_UI_ORIGIN,
-): boolean {
-  if (!enforced) return true;
-  if (allowedOrigin === undefined) return false;
-  try {
-    const parsed = new URL(allowedOrigin);
-    if (
-      parsed.protocol !== "https:" ||
-      parsed.username !== "" ||
-      parsed.password !== "" ||
-      parsed.pathname !== "/" ||
-      parsed.search !== "" ||
-      parsed.hash !== "" ||
-      parsed.origin !== allowedOrigin
-    ) {
-      return false;
-    }
-  } catch {
-    return false;
-  }
-  return origin === allowedOrigin;
-}
-
 const fleetResponseSchema = z
   .object({
     version: z.literal("codeops.session-fleet/v1"),
@@ -288,8 +261,9 @@ export function sessionBrokerClient(): Promise<SessionBrokerClient> {
       baseUrl: parseSessionBrokerBaseUrl(
         baseUrl,
         process.env.NODE_ENV,
-        process.env.AGENTS_UI_ACCESS_REQUIRED === "false" &&
-          ["127.0.0.1", "localhost", "::1"].includes(process.env.HOST?.trim() ?? ""),
+        ["127.0.0.1", "localhost", "::1"].includes(
+          process.env.HOST?.trim() ?? "",
+        ),
       ),
       readToken,
       writeToken,

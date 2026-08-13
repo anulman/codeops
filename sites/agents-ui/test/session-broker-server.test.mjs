@@ -2,7 +2,6 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
-  commandOriginIsAllowed,
   createSessionBrokerClient,
   parseSessionBrokerBaseUrl,
 } from "../src/lib/sessionBroker.server.ts";
@@ -70,32 +69,6 @@ function json(body, status = 200) {
     headers: { "content-type": "application/json" },
   });
 }
-
-test("allows writes only from the configured exact HTTPS origin", () => {
-  const allowedOrigin = "https://codeops.example.com";
-  assert.equal(commandOriginIsAllowed(allowedOrigin, true, allowedOrigin), true);
-  for (const origin of [
-    undefined,
-    "null",
-    "https://codeops.example.com.evil.example",
-    "https://codeops.example.com/",
-    "http://codeops.example.com",
-  ]) {
-    assert.equal(commandOriginIsAllowed(origin, true, allowedOrigin), false);
-  }
-  for (const invalidAllowedOrigin of [
-    undefined,
-    "http://codeops.example.com",
-    "https://codeops.example.com/",
-    "https://user@codeops.example.com",
-  ]) {
-    assert.equal(
-      commandOriginIsAllowed(allowedOrigin, true, invalidAllowedOrigin),
-      false,
-    );
-  }
-  assert.equal(commandOriginIsAllowed(undefined, false, undefined), true);
-});
 
 test("allows an ephemeral loopback broker port only outside production", () => {
   assert.equal(
@@ -266,15 +239,11 @@ test("accepts an identity-bound asynchronous runtime command submission", async 
   assert.equal(result.type, "prompt");
 });
 
-test("server functions require Access middleware and never read the token in browser code", async () => {
+test("server functions bind the private UI service principal", async () => {
   const dataSource = await readFile(new URL("../src/lib/sessionBroker.data.ts", import.meta.url), "utf8");
-  const authSource = await readFile(new URL("../src/lib/agentsAuth.ts", import.meta.url), "utf8");
-  assert.equal((dataSource.match(/\.middleware\(\[agentsAuthMiddleware\]\)/g) ?? []).length, 4);
-  assert.match(dataSource, /getRequestHeader\("origin"\)/);
-  assert.match(dataSource, /commandOriginIsAllowed/);
-  assert.match(dataSource, /throw new Response\("Forbidden", \{ status: 403 \}\)/);
+  const contextSource = await readFile(new URL("../src/lib/agentsContext.ts", import.meta.url), "utf8");
+  assert.equal((dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length, 4);
   assert.doesNotMatch(dataSource, /TOKEN_FILE|readFile/);
-  assert.match(authSource, /NODE_ENV === "production"/);
-  assert.match(authSource, /cf-access-jwt-assertion/);
-  assert.doesNotMatch(authSource, /cf-access-authenticated-user-email/);
+  assert.match(contextSource, /codeops:agents-ui/);
+  assert.doesNotMatch(contextSource, /requestHeader|process\.env/i);
 });

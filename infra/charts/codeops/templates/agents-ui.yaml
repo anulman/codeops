@@ -40,13 +40,6 @@ spec:
             - { name: HOST, value: 0.0.0.0 }
             - { name: PORT, value: "3000" }
             - { name: NODE_ENV, value: production }
-            - { name: AGENTS_UI_ACCESS_REQUIRED, value: "true" }
-            - { name: AGENTS_UI_ACCESS_ISSUER, value: {{ .Values.agentsUi.access.issuer | trimSuffix "/" | quote }} }
-            - { name: AGENTS_UI_ORIGIN, value: {{ printf "https://%s" .Values.ingress.host | quote }} }
-            - name: AGENTS_UI_ACCESS_AUDIENCE
-              valueFrom:
-                secretKeyRef: { name: {{ .Values.agentsUi.access.secretName }}, key: {{ .Values.agentsUi.access.audienceKey }} }
-            - { name: AGENTS_UI_ACCESS_ALLOWED_EMAILS_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-access/allowed-emails }
             - { name: CODEOPS_SESSION_BROKER_URL, value: http://{{ include "codeops.fullname" . }}-session-control-gateway.{{ .Release.Namespace }}.svc.cluster.local:8080 }
             - { name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE, value: /var/run/secrets/codeops/read-token }
             - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/codeops/write-token }
@@ -74,7 +67,6 @@ spec:
           volumeMounts:
             - { name: session-secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
             - { name: workspace-launch-auth, mountPath: /var/run/secrets/codeops-launch, readOnly: true }
-            - { name: access-identity, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-access, readOnly: true }
             - { name: temp, mountPath: /tmp }
       volumes:
         - name: session-secrets
@@ -84,12 +76,6 @@ spec:
             items:
               - { key: read-token, path: read-token }
               - { key: write-token, path: write-token }
-        - name: access-identity
-          secret:
-            secretName: {{ .Values.agentsUi.access.secretName }}
-            defaultMode: 256
-            items:
-              - { key: {{ .Values.agentsUi.access.allowedEmailsKey }}, path: allowed-emails }
         - name: workspace-launch-auth
           secret:
             secretName: {{ .Values.controlGateway.secretName }}
@@ -112,43 +98,3 @@ spec:
     app.kubernetes.io/name: {{ include "codeops.fullname" . }}-agents-ui
   ports:
     - { name: http, protocol: TCP, port: 3000, targetPort: http }
----
-apiVersion: networking.k8s.io/v1
-kind: Ingress
-metadata:
-  name: {{ include "codeops.fullname" . }}-agents-ui
-  namespace: {{ .Release.Namespace }}
-  labels:
-    {{- include "codeops.labels" . | nindent 4 }}
-    app.kubernetes.io/component: agents-ui
-  annotations:
-    {{- toYaml .Values.ingress.annotations | nindent 4 }}
-spec:
-  ingressClassName: {{ .Values.ingress.className }}
-  tls:
-    - hosts: [{{ .Values.ingress.host | quote }}]
-      secretName: {{ .Values.ingress.tlsSecretName }}
-  rules:
-    - host: {{ .Values.ingress.host | quote }}
-      http:
-        paths:
-          {{- if .Values.plane.adapter.enabled }}
-          - path: /webhooks/github
-            pathType: Exact
-            backend:
-              service:
-                name: {{ include "codeops.fullname" . }}-github-controller
-                port: { name: http }
-          - path: /webhooks/plane
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "codeops.fullname" . }}-github-controller
-                port: { name: http }
-          {{- end }}
-          - path: /
-            pathType: Prefix
-            backend:
-              service:
-                name: {{ include "codeops.fullname" . }}-agents-ui
-                port: { name: http }

@@ -6,9 +6,6 @@ quickstart:
     username: fixture-user
     token: fixture-registry-token-0000000000000001
     email: operator@example.com
-  access:
-    audience: fixture-cloudflare-access-audience
-    allowedEmails: [operator@example.com]
   repository:
     identity: example/codeops-demo
     github:

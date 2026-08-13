@@ -1,10 +1,8 @@
 #!/usr/bin/env node
-import { readFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { chromium } from "playwright-core";
 
 const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_CREDENTIAL_BYTES = 4_096;
 
 export function parseAgentsUiBaseUrl(value) {
   const url = new URL(value);
@@ -29,44 +27,10 @@ export function parseAgentsUiBaseUrl(value) {
   return url;
 }
 
-async function readCredential(path, purpose) {
-  const bytes = await readFile(path);
-  if (bytes.length === 0 || bytes.length > MAX_CREDENTIAL_BYTES) {
-    throw new Error(`${purpose} credential size is invalid`);
-  }
-  const value = bytes.toString("utf8").trim();
-  if (value === "" || value.includes("\n")) {
-    throw new Error(`${purpose} credential format is invalid`);
-  }
-  return value;
-}
-
-export async function cloudflareAccessHeaders(input = process.env) {
-  const idPath = input.CODEOPS_ACCESS_CLIENT_ID_FILE?.trim();
-  const secretPath = input.CODEOPS_ACCESS_CLIENT_SECRET_FILE?.trim();
-  if (!idPath && !secretPath) return {};
-  if (!idPath || !secretPath) {
-    throw new Error("Cloudflare Access service-token configuration is incomplete");
-  }
-  const [id, secret] = await Promise.all([
-    readCredential(idPath, "Cloudflare Access client ID"),
-    readCredential(secretPath, "Cloudflare Access client secret"),
-  ]);
-  if (id === secret) {
-    throw new Error("Cloudflare Access credentials must be distinct");
-  }
-  return {
-    "CF-Access-Client-Id": id,
-    "CF-Access-Client-Secret": secret,
-  };
-}
-
 export async function runAgentsUiSmoke(input = {}) {
   const baseUrl = parseAgentsUiBaseUrl(
     input.baseUrl ?? process.env.CODEOPS_AGENTS_UI_BASE_URL ?? "",
   );
-  const extraHTTPHeaders =
-    input.extraHTTPHeaders ?? (await cloudflareAccessHeaders());
   const browser = await (input.chromium ?? chromium).launch({
     headless: true,
     args: ["--disable-dev-shm-usage", "--no-sandbox"],
@@ -92,7 +56,7 @@ export async function runAgentsUiSmoke(input = {}) {
     ]) {
       const context = await browser.newContext({
         viewport: target.viewport,
-        extraHTTPHeaders,
+        extraHTTPHeaders: input.extraHTTPHeaders,
       });
       try {
         const page = await context.newPage();

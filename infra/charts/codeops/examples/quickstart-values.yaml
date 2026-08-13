@@ -4,18 +4,6 @@
 
 profile: custom
 
-agentsUi:
-  access:
-    issuer: https://<cloudflare-team>.cloudflareaccess.com
-
-ingress:
-  className: nginx
-  host: <codeops-hostname>
-  tlsSecretName: codeops-tls
-  annotations:
-    cert-manager.io/cluster-issuer: <cluster-issuer>
-    nginx.ingress.kubernetes.io/proxy-body-size: 2m
-
 networkPolicy:
   ingressNamespace: ingress-nginx
 
@@ -43,11 +31,6 @@ quickstart:
     token: ""
     email: ""
     secretName: codeops-registry
-
-  access:
-    audience: ""
-    allowedEmails:
-      - <operator-email>
 
   repository:
     identity: <github-owner>/<github-repository>

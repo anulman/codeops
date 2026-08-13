@@ -100,13 +100,12 @@ no managed Kubernetes resource.
 
 Run the released Agents UI acceptance runner after a deployment. Pin the
 runner image from the same `release-manifest.json` as the chart. The consumer
-owns only the target URL, the Cloudflare Access Secret projection, and the
-time at which it creates the ephemeral Job. Do not copy the browser test into
-the consumer repository. See the
+owns the target URL and the time at which it creates the ephemeral Job. The
+consumer also owns any Ingress, TLS, and edge authentication. Do not copy the
+browser test into the consumer repository. See the
 [acceptance runner operation](docs/operations/acceptance-runner.md).
 
-To evaluate the source without a cluster, Plane, Cloudflare Access, or persona
-accounts, run:
+To evaluate the source without a cluster, Plane, or persona accounts, run:
 
 ```sh
 nub install --frozen-lockfile

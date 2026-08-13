@@ -1,6 +1,6 @@
 import { createStart } from "@tanstack/react-start";
-import { agentsAuthMiddleware } from "./lib/agentsAuth";
+import { agentsContextMiddleware } from "./lib/agentsContext";
 
 export const startInstance = createStart(() => ({
-  requestMiddleware: [agentsAuthMiddleware],
+  requestMiddleware: [agentsContextMiddleware],
 }));

@@ -11,3 +11,5 @@
 - Plane is the first work-item adapter. GitHub Issues and GitHub Projects are
   outside the first release.
 - Release images and charts use immutable identities and fail closed on reuse.
+- CodeOps services are private by default. Deployment consumers own any
+  Ingress, TLS, and edge authentication.

@@ -92,17 +92,15 @@ test("catalog and launch reads validate responses and exact identities", async (
   assert.equal(calls[1].init.headers["X-CodeOps-Principal"], launch.principalId);
 });
 
-test("launch server functions use Access middleware, Origin checks, and no browser token", async () => {
+test("launch server functions bind the private UI context and no browser token", async () => {
   const [dataSource, routeSource] = await Promise.all([
     readFile(new URL("../src/lib/workspaceLaunch.data.ts", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/new.tsx", import.meta.url), "utf8"),
   ]);
   assert.equal(
-    (dataSource.match(/\.middleware\(\[agentsAuthMiddleware\]\)/g) ?? []).length,
+    (dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length,
     3,
   );
-  assert.match(dataSource, /commandOriginIsAllowed/);
-  assert.match(dataSource, /getRequestHeader\("origin"\)/);
   assert.doesNotMatch(dataSource, /TOKEN_FILE|readFile/);
   assert.match(routeSource, /Scratch workspace/);
   assert.match(routeSource, /Create session/);

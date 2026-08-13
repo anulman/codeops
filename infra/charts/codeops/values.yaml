@@ -15,11 +15,6 @@ agentsUi:
   image:
     repository: ghcr.io/anulman/codeops/agents-ui
     digest: ""
-  access:
-    issuer: ""
-    secretName: codeops-access
-    audienceKey: audience
-    allowedEmailsKey: allowed-emails
   resources:
     requests: { cpu: 25m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }
@@ -224,7 +219,7 @@ plane:
     namespace: ""
   planeVersion: v1.4.1
   ingress:
-    enabled: true
+    enabled: false
     appHost: plane.example.com
     ingressClass: nginx
     ingress_annotations: {}
@@ -291,14 +286,6 @@ runtime:
     repository: ghcr.io/anulman/codeops/session-gateway
     digest: ""
 
-ingress:
-  className: nginx
-  host: codeops.example.com
-  tlsSecretName: codeops-tls
-  annotations:
-    cert-manager.io/cluster-issuer: letsencrypt-prod-dns
-    nginx.ingress.kubernetes.io/proxy-body-size: 2m
-
 networkPolicy:
   ingressNamespace: ingress-nginx
 
@@ -315,9 +302,6 @@ quickstart:
     token: ""
     email: ""
     secretName: codeops-registry
-  access:
-    audience: ""
-    allowedEmails: []
   repository:
     identity: ""
     github:

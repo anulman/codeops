@@ -16,7 +16,7 @@ decision, and source context.
 - `packages/codeops-contracts/`: versioned wire and persistence contracts.
 - `services/`: trusted gateways, workers, controllers, agent runtime, and
   acceptance runner.
-- `sites/agents-ui/`: authenticated operator interface.
+- `sites/agents-ui/`: private operator interface.
 - `infra/charts/codeops/`: public Helm installation boundary.
 - `infra/k3s/codeops-vps/`: isolated VPS development-cluster contract.
 - `infra/scripts/`: renderers, validators, proofs, and release builders.
@@ -51,7 +51,7 @@ decision, and source context.
 1. Identify the owning contract and authority boundary.
 2. Run the smallest relevant test while editing.
 3. Run `nub run verify` before a commit or handoff.
-4. Run `nub run acceptance:agents-ui` for UI or authentication changes.
+4. Run `nub run acceptance:agents-ui` for UI changes.
 5. Build each affected image for Docker or packaging changes.
 6. Review the complete diff for credential, identity, and fail-open behavior.
 

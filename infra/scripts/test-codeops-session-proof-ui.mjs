@@ -71,17 +71,11 @@ test("has no cluster ingress and reaches only proof gateway plus DNS", () => {
   assert.equal(resources().some((resource) => resource.kind === "Ingress"), false);
 });
 
-test("keeps Access enforcement and a cluster-internal Service", () => {
+test("keeps the UI on a cluster-internal Service", () => {
   const values = resources();
   const deployment = values.find((resource) => resource.kind === "Deployment");
   const service = values.find((resource) => resource.kind === "Service");
-  const env = Object.fromEntries(
-    deployment.spec.template.spec.containers[0].env.map((entry) => [
-      entry.name,
-      entry.value,
-    ]),
-  );
-  assert.equal(env.AGENTS_UI_ACCESS_REQUIRED, "true");
+  assert.ok(deployment);
   assert.equal(service.spec.type, "ClusterIP");
 });
 

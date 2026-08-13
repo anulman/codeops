@@ -1,9 +1,9 @@
 import { createServerFn } from "@tanstack/react-start";
-import { getRequestHeader, setResponseHeader } from "@tanstack/react-start/server";
+import { setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { sessionCommandSchema } from "@codeops/codeops-contracts/session-broker";
-import { agentsAuthMiddleware } from "./agentsAuth";
-import { commandOriginIsAllowed, sessionBrokerClient } from "./sessionBroker.server";
+import { agentsContextMiddleware } from "./agentsContext";
+import { sessionBrokerClient } from "./sessionBroker.server";
 
 const sessionIdSchema = z
   .string()
@@ -13,19 +13,18 @@ const sessionIdSchema = z
 function protectResponse(): void {
   setResponseHeader("Cache-Control", "private, no-store");
   setResponseHeader("Referrer-Policy", "no-referrer");
-  setResponseHeader("Vary", "CF-Access-Authenticated-User-Email, Origin");
   setResponseHeader("X-Robots-Tag", "noindex, nofollow");
 }
 
 export const getSessionFleet = createServerFn({ method: "GET" })
-  .middleware([agentsAuthMiddleware])
+  .middleware([agentsContextMiddleware])
   .handler(async () => {
     protectResponse();
     return (await sessionBrokerClient()).listSessions();
   });
 
 export const getSessionDetail = createServerFn({ method: "GET" })
-  .middleware([agentsAuthMiddleware])
+  .middleware([agentsContextMiddleware])
   .inputValidator((value: unknown) =>
     z.object({ sessionId: sessionIdSchema }).strict().parse(value),
   )
@@ -35,7 +34,7 @@ export const getSessionDetail = createServerFn({ method: "GET" })
   });
 
 export const getSessionEvents = createServerFn({ method: "GET" })
-  .middleware([agentsAuthMiddleware])
+  .middleware([agentsContextMiddleware])
   .inputValidator((value: unknown) =>
     z
       .object({
@@ -52,18 +51,12 @@ export const getSessionEvents = createServerFn({ method: "GET" })
   });
 
 export const executeSessionCommand = createServerFn({ method: "POST" })
-  .middleware([agentsAuthMiddleware])
+  .middleware([agentsContextMiddleware])
   .inputValidator((value: unknown) => sessionCommandSchema.parse(value))
   .handler(async ({ data, context }) => {
     protectResponse();
-    if (!commandOriginIsAllowed(getRequestHeader("origin")?.trim())) {
-      throw new Response("Forbidden", { status: 403 });
-    }
-    const principalId = context.agentsPrincipal ??
-      (process.env.NODE_ENV === "production" ? null : "agents-ui-local");
-    if (!principalId) throw new Response("Unauthorized", { status: 401 });
     return (await sessionBrokerClient()).executeCommand({
       command: data,
-      principalId,
+      principalId: context.agentsPrincipal,
     });
   });

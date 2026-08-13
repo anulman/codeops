@@ -5,12 +5,10 @@ Internal TanStack Start command center for live and archived CodeOps sessions.
 The fleet and cockpit load strict session snapshots and ordered event pages
 through server functions. The server reads its broker token from a mounted
 file, validates every upstream response, and never includes that credential in
-the browser bundle. Global request middleware verifies Cloudflare Access's
-signed JWT assertion before SSR or server-function serialization. It validates
-the issuer, audience, RS256 signature, expiry, and allowlisted email identity.
-An unauthenticated or invalid request returns HTTP 401. The forgeable
-authenticated-user email header grants no authority. The cockpit always
-renders the complete action set
+the browser bundle. The chart exposes the UI only through a ClusterIP Service.
+The deployment consumer owns any Ingress, TLS, and edge authentication. The UI
+uses one fixed internal service principal for downstream audit records. The
+cockpit always renders the complete action set
 on desktop and mobile; availability comes only from the broker capability
 snapshot, unavailable actions stay visible, and the browser never simulates
 completion.
@@ -21,11 +19,6 @@ Server configuration:
 - `CODEOPS_SESSION_BROKER_READ_TOKEN_FILE` — mounted read-token path.
 - `CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE` — mounted write-token path; it
   must be distinct from the read credential.
-- `AGENTS_UI_ACCESS_REQUIRED` — optional local override; production always
-  requires Access.
-- `AGENTS_UI_ACCESS_ISSUER` — exact Cloudflare Access team-domain HTTPS origin.
-- `AGENTS_UI_ACCESS_AUDIENCE` — exact Access application audience tag.
-- `AGENTS_UI_ACCESS_ALLOWED_EMAILS_FILE` — mounted newline-delimited allowlist.
 
 The shared wire boundary lives at
 `@codeops/codeops-contracts/session-broker`. Mutations must carry the
@@ -33,7 +26,7 @@ exact session generation, durable lease ID, and an idempotency key, then render
 the broker's committed command result.
 
 ACP-dependent actions cross a separate strict dispatch/completion adapter in
-the control gateway. A dispatch binds the authenticated principal, complete
+the control gateway. A dispatch binds the UI service principal, complete
 command, exact observed snapshot/cursor, generation, lease, and capability.
 The completion must echo that identity before trusted prompt, checkpoint,
 hibernate, resume, or fork material can be adapted for the existing serializable

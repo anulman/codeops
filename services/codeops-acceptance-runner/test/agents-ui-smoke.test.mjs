@@ -1,10 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
 import test from "node:test";
 import {
-  cloudflareAccessHeaders,
   parseAgentsUiBaseUrl,
   runAgentsUiSmoke,
 } from "../src/agents-ui-smoke.mjs";
@@ -67,39 +63,11 @@ test("accepts only an exact external HTTPS or bounded local origin", () => {
   }
 });
 
-test("reads a complete Cloudflare Access service token from files", async () => {
-  const directory = await mkdtemp(path.join(tmpdir(), "codeops-access-"));
-  try {
-    const idPath = path.join(directory, "id");
-    const secretPath = path.join(directory, "secret");
-    await writeFile(idPath, "client-id\n");
-    await writeFile(secretPath, "client-secret\n");
-    assert.deepEqual(
-      await cloudflareAccessHeaders({
-        CODEOPS_ACCESS_CLIENT_ID_FILE: idPath,
-        CODEOPS_ACCESS_CLIENT_SECRET_FILE: secretPath,
-      }),
-      {
-        "CF-Access-Client-Id": "client-id",
-        "CF-Access-Client-Secret": "client-secret",
-      },
-    );
-    await assert.rejects(
-      cloudflareAccessHeaders({ CODEOPS_ACCESS_CLIENT_ID_FILE: idPath }),
-      /incomplete/,
-    );
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
-});
-
 test("checks desktop and mobile fleet surfaces", async () => {
   const chromium = fakeChromium();
-  const headers = { "CF-Access-Client-Id": "id", "CF-Access-Client-Secret": "secret" };
   await runAgentsUiSmoke({
     baseUrl: "http://codeops-agents-ui:3000",
     chromium,
-    extraHTTPHeaders: headers,
   });
   assert.deepEqual(
     chromium.contexts.map(({ options }) => options.viewport),
@@ -109,7 +77,7 @@ test("checks desktop and mobile fleet surfaces", async () => {
     ],
   );
   for (const [index, context] of chromium.contexts.entries()) {
-    assert.deepEqual(context.options.extraHTTPHeaders, headers);
+    assert.equal(context.options.extraHTTPHeaders, undefined);
     assert.equal(context.url, "http://codeops-agents-ui:3000/");
     assert.deepEqual(
       context.locators,

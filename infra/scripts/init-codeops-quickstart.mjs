@@ -51,9 +51,6 @@ const input = JSON.parse(await readFile(resolve(args.input), "utf8"));
 const output = resolve(args.output);
 const repository = input.repository || repositoryFromGit();
 if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) throw new Error("repository must be owner/name");
-if (!/^https:\/\/[a-z0-9-]+\.cloudflareaccess\.com\/?$/.test(input.accessIssuer ?? "")) throw new Error("accessIssuer must be one Cloudflare Access team-domain origin");
-if (!/^[a-z0-9]([a-z0-9.-]*[a-z0-9])?$/.test(input.host ?? "")) throw new Error("host must be one lowercase DNS host");
-if (!Array.isArray(input.operatorEmails) || input.operatorEmails.length === 0 || input.operatorEmails.some((email) => !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(email))) throw new Error("operatorEmails must contain at least one email address");
 
 const reviewerIds = input.githubReviewerIds?.length
   ? input.githubReviewerIds
@@ -84,8 +81,6 @@ if (new Set(personaHandles).size !== 7 || expectedHandles.some((handle) => !pers
 
 const values = {
   profile: "custom",
-  agentsUi: { access: { issuer: input.accessIssuer } },
-  ingress: { host: input.host },
   controlGateway: { kubernetesApiCidrs: apiCidrs },
   plane: {
     enabled: false,
@@ -97,7 +92,6 @@ const values = {
     enabled: true,
     openaiApiKey: credential(input, "openai"),
     registry: { enabled: false },
-    access: { audience: credential(input, "accessAudience"), allowedEmails: input.operatorEmails },
     repository: {
       identity: repository,
       github: {
