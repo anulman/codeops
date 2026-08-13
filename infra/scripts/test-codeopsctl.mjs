@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   buildSmokeReport,
+  buildCompensatingRollbackPlan,
   parseArguments,
   validateLock,
   validatePolicy,
@@ -30,6 +31,8 @@ function lock() {
 function policy() {
   return {
     schemaVersion: "codeops.consumer-policy/v1",
+    helmTimeout: "20m",
+    httpTimeoutMs: 15000,
     requiredSecrets: ["codeops-access", "codeops-postgres"],
     cluster: {
       kubernetesServiceCidrs: ["10.3.0.1/32"],
@@ -78,6 +81,12 @@ test("parses the three stable operator commands", () => {
 test("validates the small lock and consumer-owned policy", () => {
   assert.equal(validateLock(lock()).schemaVersion, "codeops.consumer-lock/v1");
   assert.equal(validatePolicy(policy()).requiredSecrets.length, 2);
+  const compatible = policy();
+  delete compatible.helmTimeout;
+  delete compatible.httpTimeoutMs;
+  delete compatible.postDeployHttpChecks[0].acceptedStatuses;
+  assert.equal(validatePolicy(compatible).helmTimeout, "20m");
+  assert.equal(compatible.postDeployHttpChecks[0].acceptedStatuses[0], 200);
   assert.throws(
     () => validateLock({ ...lock(), images: {} }),
     /consumer lock|release|chart|schema|image|./,
@@ -96,6 +105,35 @@ test("rejects unsafe policy drift", () => {
         postDeployHttpChecks: [{ url: "http://work.example.com" }],
       }),
     /HTTPS/,
+  );
+  assert.throws(() => validatePolicy({ ...policy(), helmTimeout: "0m" }), /helmTimeout/);
+  assert.throws(
+    () => validatePolicy({ ...policy(), postDeployHttpChecks: [{ url: "https://work.example.com", acceptedStatuses: [99] }] }),
+    /statuses/,
+  );
+  assert.throws(() => validatePolicy({ ...policy(), extra: true }), /unsupported fields/);
+});
+
+test("plans a compensating rollback for upgrades and fresh installs", () => {
+  assert.deepEqual(
+    buildCompensatingRollbackPlan({
+      release: "agents-system",
+      namespace: "agents-system",
+      previousRelease: { revision: "7" },
+      namespaceExisted: true,
+      helmTimeout: "20m",
+    }),
+    [["helm", ["rollback", "agents-system", "7", "--namespace", "agents-system", "--wait", "--wait-for-jobs", "--timeout", "20m"]]],
+  );
+  assert.equal(
+    buildCompensatingRollbackPlan({
+      release: "codeops",
+      namespace: "codeops",
+      previousRelease: undefined,
+      namespaceExisted: false,
+      helmTimeout: "20m",
+    }).length,
+    2,
   );
 });
 

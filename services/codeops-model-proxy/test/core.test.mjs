@@ -105,7 +105,48 @@ test("replaces the run token with the real key only for the Responses API", asyn
     calls[0].init.headers.get("Authorization"),
     "Bearer test-openai-key-never-exposed",
   );
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    model: "gpt-5.6-sol",
+    input: "hello",
+    max_output_tokens: 32768,
+  });
   assert.equal((await new Response(calls[0].init.body).text()).includes(token()), false);
+});
+
+test("rejects model, output-token, and per-run request budget drift", async () => {
+  let upstreamCalls = 0;
+  await withProxy(
+    createModelProxyRequestListener({
+      openAiApiKey: "test-openai-key-never-exposed",
+      signingKey,
+      now: () => now,
+      maxRequestsPerRun: 2,
+      fetch: async () => {
+        upstreamCalls += 1;
+        return new Response('{"id":"resp_budget"}\n', { status: 200 });
+      },
+    }),
+    async (origin) => {
+      const request = (body) => fetch(`${origin}/v1/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token()}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      assert.equal((await request({ model: "foreign-model", input: "x" })).status, 400);
+      assert.equal(
+        (await request({ model: "gpt-5.6-sol", input: "x", max_output_tokens: 32769 })).status,
+        400,
+      );
+      assert.equal(
+        (await request({ model: "gpt-5.6-sol", input: "x" })).status,
+        429,
+      );
+    },
+  );
+  assert.equal(upstreamCalls, 0);
 });
 
 test("does not contact OpenAI for invalid authority or unsupported paths", async () => {
@@ -138,7 +179,7 @@ test("does not contact OpenAI for invalid authority or unsupported paths", async
 
 test("warns on large permitted requests without logging request bodies", async () => {
   const logs = [];
-  const body = JSON.stringify({ input: "x".repeat(4 * 1024 * 1024) });
+  const body = JSON.stringify({ model: "gpt-5.6-sol", input: "x".repeat(4 * 1024 * 1024) });
   await withProxy(
     createModelProxyRequestListener({
       openAiApiKey: "test-openai-key-never-exposed",
@@ -224,7 +265,7 @@ test("uses a high per-token concurrency stop-loss and releases capacity", async 
           Authorization: `Bearer ${token()}`,
           "Content-Type": "application/json",
         },
-        body: '{"input":"concurrent"}',
+        body: '{"model":"gpt-5.6-sol","input":"concurrent"}',
       });
       const active = Array.from({ length: 8 }, () => request());
       while (upstreamCalls < 8) await new Promise((resolve) => setTimeout(resolve, 5));

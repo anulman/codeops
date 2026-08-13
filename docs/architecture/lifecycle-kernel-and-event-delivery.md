@@ -27,10 +27,11 @@ native subject, topic, or stream binding.
 
 ## Dependency ownership and supported profiles
 
-The user-facing `codeops` chart is an umbrella chart. It installs
-`codeops-core` and default-on managed dependencies. Each capability selects a
-driver. Each selected driver uses a `managed` or `external` deployment mode.
-The chart renders no dependency resources in `external` mode.
+The user-facing `codeops` chart renders CodeOps resources directly and embeds
+default-on Temporal, NATS, and Plane dependency charts. Each capability
+selects a driver. Each selected driver uses a `managed` or `external`
+deployment mode. The chart renders no dependency resources in `external`
+mode.
 
 - PostgreSQL is required in v1. Support `managed` and `external` deployment.
 - Temporal is the default orchestration driver. Support `managed`, `external`,

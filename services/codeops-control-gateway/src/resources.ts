@@ -13,6 +13,11 @@ interface ResourceConfig {
   readonly agentImage: string;
   readonly sessionGatewayImage: string;
   readonly repositoryReadToken: string;
+  readonly imagePullSecrets?: readonly { readonly name: string }[];
+  readonly nodeSelector?: Readonly<Record<string, string>>;
+  readonly evidenceClaimName?: string;
+  readonly modelProxyServiceName?: string;
+  readonly modelProxyPodName?: string;
   readonly modelAuth: {
     readonly mode: "proxy";
     readonly origin: string;
@@ -25,7 +30,7 @@ interface ResourceConfig {
 function labels(input: ResourceConfig, request: AgentJobDispatchRequest) {
   return {
     "app.kubernetes.io/name": "codeops-agent",
-    "app.kubernetes.io/part-of": "codeops-trial0",
+    "app.kubernetes.io/part-of": "codeops",
     "codeops.example/run-id": input.runId,
     "codeops.example/agent-role": request.role,
   };
@@ -58,9 +63,14 @@ export function buildRunResources(
   const name = `codeops-agent-${input.runId}`;
   const secretName = `codeops-run-${input.runId}`;
   const modelProxyOrigin = new URL(input.modelAuth.origin);
+  const modelProxyServiceName =
+    input.modelProxyServiceName ?? "codeops-model-proxy";
+  const modelProxyPodName = input.modelProxyPodName ?? modelProxyServiceName;
+  const evidenceClaimName =
+    input.evidenceClaimName ?? "codeops-control-gateway-evidence";
   if (
     modelProxyOrigin.protocol !== "http:" ||
-    modelProxyOrigin.hostname !== "codeops-model-proxy" ||
+    modelProxyOrigin.hostname !== modelProxyServiceName ||
     modelProxyOrigin.port !== "8080" ||
     modelProxyOrigin.pathname !== "/" ||
     modelProxyOrigin.username !== "" ||
@@ -180,8 +190,12 @@ export function buildRunResources(
             serviceAccountName: name,
             automountServiceAccountToken: false,
             enableServiceLinks: false,
-            imagePullSecrets: [{ name: "codeops-registry" }],
-            nodeSelector: { "codeops.example/codeops": "true" },
+            imagePullSecrets: input.imagePullSecrets ?? [
+              { name: "codeops-registry" },
+            ],
+            nodeSelector: input.nodeSelector ?? {
+              "codeops.example/codeops": "true",
+            },
             securityContext: {
               runAsNonRoot: true,
               runAsUser: 1000,
@@ -446,7 +460,7 @@ export function buildRunResources(
                     {
                       name: "candidate",
                       persistentVolumeClaim: {
-                        claimName: "codeops-control-gateway-evidence",
+                        claimName: evidenceClaimName,
                         readOnly: true,
                       },
                     },
@@ -475,7 +489,7 @@ export function buildRunResources(
               {
                 podSelector: {
                   matchLabels: {
-                    "app.kubernetes.io/name": "codeops-model-proxy",
+                    "app.kubernetes.io/name": modelProxyPodName,
                   },
                 },
               },
@@ -607,9 +621,13 @@ export function assertRunResources(
     const mount = builder?.volumeMounts?.find(
       (candidate) => candidate.name === "candidate",
     );
+    const candidateClaimName =
+      candidateVolume.persistentVolumeClaim?.claimName ?? "";
     if (
-      candidateVolume.persistentVolumeClaim?.claimName !==
-        "codeops-control-gateway-evidence" ||
+      candidateClaimName.length > 253 ||
+      !/^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?-control-gateway-evidence$/.test(
+        candidateClaimName,
+      ) ||
       candidateVolume.persistentVolumeClaim?.readOnly !== true ||
       mount?.mountPath !== "/candidate/changes.patch" ||
       mount.readOnly !== true ||

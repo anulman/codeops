@@ -17,11 +17,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
 
@@ -29,12 +29,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in 1 2 3 4 5; do
-            curl --fail --silent --show-error --location --retry 5 --retry-all-errors https://nubjs.com/install.sh \
-              | bash -s -- 0.1.11 && break
-            [[ "$attempt" == 5 ]] && exit 1
-            sleep $((attempt * 2))
-          done
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+            --connect-timeout 10 --max-time 60 --output /tmp/nub-install.sh \
+            https://nubjs.com/install.sh
+          echo "dd263aba5655a47d9e287cfff96775a856200f0ba20b916fc2919219a33db0dd  /tmp/nub-install.sh" \
+            | sha256sum --check --strict
+          NUB_NO_MODIFY_PATH=1 bash /tmp/nub-install.sh 0.1.11
           echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
 
       - name: Install frozen dependencies
@@ -61,14 +61,14 @@ jobs:
           - session-gateway
           - session-runtime-worker
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: docker/setup-buildx-action@v3
+      - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
 
       - name: Build image
-        uses: docker/build-push-action@v6
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6
         with:
           context: .
           file: infra/docker/codeops-${{ matrix.image }}.Dockerfile
@@ -79,11 +79,11 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
 
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version: "24"
 
@@ -91,12 +91,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          for attempt in 1 2 3 4 5; do
-            curl --fail --silent --show-error --location --retry 5 --retry-all-errors https://nubjs.com/install.sh \
-              | bash -s -- 0.1.11 && break
-            [[ "$attempt" == 5 ]] && exit 1
-            sleep $((attempt * 2))
-          done
+          curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+            --connect-timeout 10 --max-time 60 --output /tmp/nub-install.sh \
+            https://nubjs.com/install.sh
+          echo "dd263aba5655a47d9e287cfff96775a856200f0ba20b916fc2919219a33db0dd  /tmp/nub-install.sh" \
+            | sha256sum --check --strict
+          NUB_NO_MODIFY_PATH=1 bash /tmp/nub-install.sh 0.1.11
           echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
 
       - name: Install frozen dependencies

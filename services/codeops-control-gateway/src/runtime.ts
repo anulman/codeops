@@ -27,6 +27,11 @@ interface RuntimeConfig {
   readonly repositoryRegistry: RepositoryRegistry;
   readonly agentImage: string;
   readonly sessionGatewayImage: string;
+  readonly imagePullSecrets?: readonly { readonly name: string }[];
+  readonly nodeSelector?: Readonly<Record<string, string>>;
+  readonly evidenceClaimName?: string;
+  readonly modelProxyServiceName?: string;
+  readonly modelProxyPodName?: string;
   readonly modelAuth: {
     readonly mode: "proxy";
     readonly origin: string;
@@ -90,6 +95,11 @@ export function createAgentJobRunner(input: {
         repositoryUrl: repository.repositoryUrl,
         agentImage: input.config.agentImage,
         sessionGatewayImage: input.config.sessionGatewayImage,
+        imagePullSecrets: input.config.imagePullSecrets,
+        nodeSelector: input.config.nodeSelector,
+        evidenceClaimName: input.config.evidenceClaimName,
+        modelProxyServiceName: input.config.modelProxyServiceName,
+        modelProxyPodName: input.config.modelProxyPodName,
         repositoryReadToken: repository.readToken,
         modelAuth: input.config.modelAuth,
         candidate: retainedCandidate?.candidate,

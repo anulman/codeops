@@ -15,7 +15,9 @@ The chart contains:
 - scoped ServiceAccounts and RBAC for each fixed operand and per-session runtime;
 - a Varlock-backed model proxy and immutable runtime image inputs;
 - a post-install and pre-upgrade, non-retrying schema migration Job;
-- a namespace-wide default deny plus explicit component NetworkPolicies.
+- default-deny selection for every CodeOps workload, each managed Temporal,
+  JetStream, and Plane workload, and the Plane MinIO setup Job, plus explicit
+  same-namespace and external paths.
 
 ## Quickstart
 
@@ -74,8 +76,9 @@ stored data.
 ## Existing-Secret mode
 
 For a production consumer repository, use the released `codeopsctl.mjs` and
-`codeops-consumer-lock.json`. The CLI owns release verification, atomic
-upgrade, readiness, preservation evidence, and exact image verification. The
+`codeops-consumer-lock.json`. The CLI owns release verification, the Helm
+upgrade and compensating rollback transaction, readiness, preservation
+evidence, and exact image verification. The
 consumer owns its values, cluster policy, kubeconfig, external Secret names,
 provider checks, and public authentication acceptance. See
 [`docs/operations/consumer-deployment.md`](../../../docs/operations/consumer-deployment.md).
@@ -162,12 +165,15 @@ automatic reviewer permits. Keep session repositories trusted, review the
 durable ACP timeline, and use a dedicated OpenAI project with server-side
 budget and rate limits.
 
-The model proxy records token subject, status, latency, request size, and
-concurrency. It does not record request bodies. It warns at 4 MiB per request,
-4 concurrent requests per token, or 8 concurrent requests globally. It uses
-high stop-loss limits of 20 MiB per request, 8 concurrent requests per token,
-and 16 concurrent requests globally. These limits are incident controls, not
-normal operating targets.
+The model proxy records token subject, status, latency, request size, request
+count, and concurrency. It does not record request bodies. It accepts only
+`gpt-5.6-sol` Responses API requests. It adds or enforces a 32,768 output-token
+ceiling and permits at most 200 requests for one short-lived run token. It
+warns at 4 MiB per request, 4 concurrent requests per token, or 8 concurrent
+requests globally. It uses high stop-loss limits of 20 MiB per request, 8
+concurrent requests per token, and 16 concurrent requests globally. These
+limits are incident controls, not normal operating targets. Keep the dedicated
+OpenAI project server-side budget as the final spend boundary.
 
 The quickstart runs the forward-compatible schema migration as a
 `post-install` hook during the first installation and as a `pre-upgrade` hook

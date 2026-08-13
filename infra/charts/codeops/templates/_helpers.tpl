@@ -122,6 +122,14 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 {{- end -}}
 
+{{- define "codeops.imagePullSecretsJson" -}}
+{{- if and .Values.quickstart.enabled .Values.quickstart.registry.enabled -}}
+{{- toJson (list (dict "name" .Values.quickstart.registry.secretName)) -}}
+{{- else -}}
+{{- toJson .Values.imagePullSecrets -}}
+{{- end -}}
+{{- end -}}
+
 {{- define "codeops.postgresqlEgressTarget" -}}
 {{- if eq .Values.postgresql.deployment "managed" -}}
 podSelector:

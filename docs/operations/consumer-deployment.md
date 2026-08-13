@@ -20,6 +20,8 @@ The policy uses schema `codeops.consumer-policy/v1`:
 ```json
 {
   "schemaVersion": "codeops.consumer-policy/v1",
+  "helmTimeout": "20m",
+  "httpTimeoutMs": 15000,
   "requiredSecrets": ["codeops-postgres", "codeops-access"],
   "cluster": {
     "kubernetesServiceCidrs": ["10.43.0.1/32"],
@@ -30,6 +32,10 @@ The policy uses schema `codeops.consumer-policy/v1`:
   ]
 }
 ```
+
+`helmTimeout` defaults to `20m`. `httpTimeoutMs` defaults to 15000.
+`acceptedStatuses` defaults to `[200]`. The CLI rejects unknown fields and
+out-of-range duration, timeout, and status values.
 
 The consumer owns these environment rules. CodeOps does not create, read,
 export, or rotate the listed Secret values.
@@ -55,11 +61,15 @@ node codeopsctl.mjs deploy \
   --namespace codeops
 ```
 
-The deploy command verifies public release artifacts, checks environment
-policy, snapshots release PVC and external Secret identities, runs one atomic
-Helm upgrade, checks readiness, rejects image drift, and emits
-`codeops.consumer-evidence/v1` JSON. It does not test a consumer's public
-authentication path or provider-specific product behavior.
+The deploy command verifies public release artifacts and environment policy.
+It snapshots release PVC identities and hashes external Secret data without
+printing it. It then runs one atomic Helm upgrade, checks release identity and
+readiness, rejects image drift, and runs bounded HTTPS checks. If a check after
+Helm fails, the command rolls an upgrade back to the exact prior revision. It
+uninstalls a failed first release. It also removes a namespace that it created
+for that failed first release. The command emits
+`codeops.consumer-evidence/v1` JSON only after the complete transaction passes.
+It does not test provider-specific product behavior.
 
 Run a credential-safe readiness check at any time:
 

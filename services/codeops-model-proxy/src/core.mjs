@@ -10,6 +10,7 @@ const WARN_GLOBAL_CONCURRENCY = 8;
 const MAX_GLOBAL_CONCURRENCY = 16;
 
 class RequestBodyLimitError extends Error {}
+class RequestPolicyError extends Error {}
 
 function json(response, status, body, headers = {}) {
   response.writeHead(status, {
@@ -92,6 +93,22 @@ export function createModelProxyRequestListener(input) {
     throw new Error("OpenAI API key is invalid");
   }
   const inFlightByRun = new Map();
+  const requestsByRun = new Map();
+  const allowedModels = new Set(input.allowedModels ?? ["gpt-5.6-sol"]);
+  const maxOutputTokens = input.maxOutputTokens ?? 32_768;
+  const maxRequestsPerRun = input.maxRequestsPerRun ?? 200;
+  if (
+    allowedModels.size === 0 ||
+    [...allowedModels].some((model) => typeof model !== "string" || model.length > 100) ||
+    !Number.isSafeInteger(maxOutputTokens) ||
+    maxOutputTokens < 1 ||
+    maxOutputTokens > 100_000 ||
+    !Number.isSafeInteger(maxRequestsPerRun) ||
+    maxRequestsPerRun < 1 ||
+    maxRequestsPerRun > 1_000
+  ) {
+    throw new Error("model proxy request policy is invalid");
+  }
   let globalInFlight = 0;
   const log = input.log ?? ((entry) => console.log(JSON.stringify(entry)));
   const acquire = (runId) => {
@@ -157,6 +174,12 @@ export function createModelProxyRequestListener(input) {
         unauthorized(response);
         return;
       }
+      if (requestsByRun.size >= 1_024) {
+        const nowSeconds = Math.floor((input.now?.() ?? Date.now()) / 1_000);
+        for (const [runId, usage] of requestsByRun) {
+          if (usage.expiresAt <= nowSeconds) requestsByRun.delete(runId);
+        }
+      }
       const url = new URL(request.url ?? "", "http://codeops-model-proxy");
       if (
         request.method !== "POST" ||
@@ -177,12 +200,57 @@ export function createModelProxyRequestListener(input) {
         );
         return;
       }
+      const priorUsage = requestsByRun.get(authority.runId);
+      const requestCount =
+        priorUsage && priorUsage.expiresAt === authority.expiresAt
+          ? priorUsage.count + 1
+          : 1;
+      if (requestCount > maxRequestsPerRun) {
+        release();
+        log({
+          event: "model_proxy_request_stop_loss",
+          subject: authority.runId,
+          requestCount: requestCount - 1,
+          maximumRequests: maxRequestsPerRun,
+        });
+        json(
+          response,
+          429,
+          { error: "model proxy request stop-loss reached" },
+          { "Retry-After": "60" },
+        );
+        return;
+      }
+      requestsByRun.set(authority.runId, {
+        count: requestCount,
+        expiresAt: authority.expiresAt,
+      });
       const startedAt = Date.now();
       let status = 502;
       let requestBytes = 0;
       try {
         const bodyResult = await readBody(request);
         requestBytes = bodyResult.bytes;
+        let body;
+        try {
+          body = JSON.parse(bodyResult.body.toString("utf8"));
+        } catch {
+          throw new RequestPolicyError("request body must be JSON");
+        }
+        if (
+          body === null ||
+          typeof body !== "object" ||
+          Array.isArray(body) ||
+          !allowedModels.has(body.model) ||
+          (body.max_output_tokens !== undefined &&
+            (!Number.isSafeInteger(body.max_output_tokens) ||
+              body.max_output_tokens < 1 ||
+              body.max_output_tokens > maxOutputTokens))
+        ) {
+          throw new RequestPolicyError("request exceeds the model policy");
+        }
+        body.max_output_tokens ??= maxOutputTokens;
+        const upstreamBody = Buffer.from(JSON.stringify(body));
         if (requestBytes >= WARN_BODY_BYTES) {
           log({
             event: "model_proxy_body_warning",
@@ -207,7 +275,7 @@ export function createModelProxyRequestListener(input) {
             method: "POST",
             redirect: "error",
             headers,
-            body: bodyResult.body,
+            body: upstreamBody,
             signal: AbortSignal.timeout(10 * 60 * 1_000),
           },
         );
@@ -230,6 +298,7 @@ export function createModelProxyRequestListener(input) {
         });
       } catch (error) {
         if (error instanceof RequestBodyLimitError) status = 413;
+        else if (error instanceof RequestPolicyError) status = 400;
         throw error;
       } finally {
         release();
@@ -243,11 +312,19 @@ export function createModelProxyRequestListener(input) {
       }
     })().catch((error) => {
       if (!response.headersSent) {
-        const status = error instanceof RequestBodyLimitError ? 413 : 502;
+        const status =
+          error instanceof RequestBodyLimitError
+            ? 413
+            : error instanceof RequestPolicyError
+              ? 400
+              : 502;
         json(response, status, {
-          error: status === 413
-            ? "model proxy request exceeds the stop-loss limit"
-            : "model proxy request failed",
+          error:
+            status === 413
+              ? "model proxy request exceeds the stop-loss limit"
+              : status === 400
+                ? "model proxy request exceeds the model policy"
+                : "model proxy request failed",
         });
         return;
       }
