@@ -570,6 +570,7 @@ jobs:
           HOME: /tmp/codeops-anonymous-home
           DOCKER_CONFIG: /tmp/codeops-anonymous-docker
           HELM_REGISTRY_CONFIG: /tmp/codeops-anonymous-home/.config/helm/registry/config.json
+          KUBECONFIG: /home/runner/.kube/config
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.config/helm/registry" "$DOCKER_CONFIG"

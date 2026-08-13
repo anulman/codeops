@@ -97,6 +97,7 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(install.run, /codeops-consumer-policy\.json/);
   assert.match(install.env.HELM_REGISTRY_CONFIG, /codeops-anonymous-home/);
   assert.match(install.env.DOCKER_CONFIG, /codeops-anonymous-docker/);
+  assert.equal(install.env.KUBECONFIG, "/home/runner/.kube/config");
   const operatorSource = await readFile(
     new URL("./codeopsctl.mjs", import.meta.url),
     "utf8",
