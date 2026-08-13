@@ -114,6 +114,10 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(install.run, /--release proof-system/);
   assert.match(install.run, /--namespace proof-system/);
   assert.match(install.run, /post-deploy failure proof unexpectedly passed/);
+  assert.match(install.run, /helm list --namespace proof-system --filter/);
+  assert.match(install.run, /\.app_version/);
+  assert.match(install.run, /codeops-\$\{RELEASE_VERSION\}/);
+  assert.doesNotMatch(install.run, /\.chart\.metadata/);
   assert.match(install.run, /helm uninstall proof-system/);
   assert.match(quickstartValues.run, /profile: "custom"/);
   assert.match(quickstartValues.run, /renoconcierge\.ca\/codeops/);
