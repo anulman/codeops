@@ -4,6 +4,7 @@ import {
   buildSmokeReport,
   buildCompensatingRollbackPlan,
   parseArguments,
+  formatError,
   validateLock,
   validatePolicy,
 } from "./codeopsctl.mjs";
@@ -137,6 +138,13 @@ test("plans a hook-free compensating rollback for upgrades and cleans fresh inst
   );
 });
 
+test("reports both deployment and rollback failures", () => {
+  assert.equal(
+    formatError(new AggregateError([new Error("deploy failed"), new Error("rollback failed")], "transaction failed")),
+    "transaction failed\ncaused by: deploy failed\ncaused by: rollback failed",
+  );
+});
+
 test("builds credential-safe smoke evidence", () => {
   const labels = {
     "app.kubernetes.io/instance": "agents-system",
@@ -184,4 +192,5 @@ test("operator source accepts Helm digest output from stderr", async () => {
   );
   assert.match(source, /executeCombined/);
   assert.match(source, /result\.stdout.*result\.stderr/);
+  assert.match(source, /namespaceExisted: namespaceExists/);
 });

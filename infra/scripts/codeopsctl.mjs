@@ -34,6 +34,24 @@ The smoke command emits ${SMOKE_SCHEMA} JSON.
 `;
 }
 
+export function formatError(error) {
+  const messages = [];
+  const visit = (current) => {
+    if (!(current instanceof Error)) {
+      messages.push(String(current));
+      return;
+    }
+    messages.push(current.message);
+    if (current instanceof AggregateError) {
+      for (const nested of current.errors) visit(nested);
+    } else if (current.cause !== undefined) {
+      visit(current.cause);
+    }
+  };
+  visit(error);
+  return [...new Set(messages)].join("\ncaused by: ");
+}
+
 export function parseArguments(argv) {
   const [command, ...rest] = argv;
   if (!command || !["verify", "deploy", "smoke"].includes(command)) {
@@ -726,7 +744,7 @@ async function deploy(options, lock, policy, directory) {
         release: options.release,
         namespace: options.namespace,
         previousRelease,
-        namespaceExisted,
+        namespaceExisted: namespaceExists,
         helmTimeout: policy.helmTimeout,
       })) {
         execute(name, args, {
@@ -793,7 +811,7 @@ async function main() {
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   main().catch((error) => {
-    process.stderr.write(`${error instanceof Error ? error.message : String(error)}\n`);
+    process.stderr.write(`${formatError(error)}\n`);
     process.exitCode = 1;
   });
 }
