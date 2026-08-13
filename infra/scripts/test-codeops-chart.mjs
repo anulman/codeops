@@ -53,11 +53,12 @@ function helm(args) {
   return result.stdout;
 }
 
-function render() {
+function render(extra = []) {
   const output = helm([
     "template", "team-a", chart,
     "--namespace", "engineering",
     ...digestSets.flatMap((value) => ["--set", value]),
+    ...extra,
   ]);
   return parseAllDocuments(output)
     .map((document) => document.toJSON())
@@ -173,7 +174,15 @@ test("renders one portable CodeOps package with immutable images", () => {
   assert.match(JSON.stringify(relay), /CODEOPS_JETSTREAM_MANAGE_STREAM/);
   assert.equal(resources.some(({ metadata }) => metadata?.name === "team-a-codeops-codex-auth"), false);
   resource(resources, "PersistentVolumeClaim", "team-a-codeops-controller-state");
-  const runtimeImages = resource(resources, "ConfigMap", "team-a-codeops-runtime-images");
+  const runtimeImages = resources.find(
+    ({ kind, metadata }) =>
+      kind === "ConfigMap" &&
+      metadata?.labels?.["app.kubernetes.io/component"] === "runtime",
+  );
+  assert.ok(runtimeImages);
+  assert.match(runtimeImages.metadata.name, /^team-a-codeops-runtime-images-[0-9a-f]{12}$/);
+  assert.ok(runtimeImages.metadata.name.length <= 63);
+  assert.equal(runtimeImages.immutable, true);
   for (const value of Object.values(runtimeImages.data)) {
     if (value.includes("ghcr.io/")) assert.match(value, /@sha256:[0-9a-f]{64}$/);
   }
@@ -183,6 +192,21 @@ test("renders one portable CodeOps package with immutable images", () => {
   }
   const controlGatewayAccount = resource(resources, "ServiceAccount", "team-a-codeops-control-gateway");
   assert.notEqual(controlGatewayAccount.automountServiceAccountToken, false);
+});
+
+test("changes the immutable runtime image ConfigMap identity with image content", () => {
+  const baseline = render();
+  const changed = render([
+    "--set",
+    `runtime.workerImage.digest=sha256:${"7".repeat(64)}`,
+  ]);
+  const runtimeName = (resources) =>
+    resources.find(
+      ({ kind, metadata }) =>
+        kind === "ConfigMap" &&
+        metadata?.labels?.["app.kubernetes.io/component"] === "runtime",
+    ).metadata.name;
+  assert.notEqual(runtimeName(baseline), runtimeName(changed));
 });
 
 test("exposes only the Agents UI and requires signed Access configuration", () => {

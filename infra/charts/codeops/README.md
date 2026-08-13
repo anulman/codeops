@@ -73,6 +73,13 @@ stored data.
 
 ## Existing-Secret mode
 
+For a production consumer repository, use the released `codeopsctl.mjs` and
+`codeops-consumer-lock.json`. The CLI owns release verification, atomic
+upgrade, readiness, preservation evidence, and exact image verification. The
+consumer owns its values, cluster policy, kubeconfig, external Secret names,
+provider checks, and public authentication acceptance. See
+[`docs/operations/consumer-deployment.md`](../../../docs/operations/consumer-deployment.md).
+
 When `quickstart.enabled=false`, the chart does not create credentials. Before
 installation, the operator must create these Secrets:
 
@@ -136,7 +143,8 @@ unknown repository or a signature from another repository fails closed. The
 controller and gateway select the same repository-specific steering token and
 reject cross-repository use. The controller has no browser,
 merge, release, or Kubernetes authority. Per-session runtime Jobs consume the immutable worker
-and coding-agent image references from `codeops-runtime-images`; the
+and coding-agent image references from a content-addressed
+`codeops-runtime-images-<digest>` ConfigMap; the
 runtime ServiceAccount does not receive a Kubernetes API token or RBAC grant.
 The gateway and model proxy mount the same `signing-key` from
 `codeops-model-proxy-credentials`. No copied key or equality check is

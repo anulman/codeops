@@ -44,26 +44,36 @@ This lane proves source behavior. It does not prove a live provider or cluster.
      --output /absolute/path/codeops-values.yaml
    ```
 
-6. Validate the exact file without installing:
+6. Download `codeopsctl.mjs` and `codeops-consumer-lock.json` from the exact
+   GitHub Release. Verify both files with that release's `SHA256SUMS`.
+7. Validate the exact file without installing:
 
    ```sh
-   helm template codeops oci://ghcr.io/anulman/codeops/charts/codeops \
-     --version <version> --namespace codeops \
-     --values /absolute/path/codeops-values.yaml >/dev/null
+   node /absolute/path/codeopsctl.mjs verify \
+     --lock /absolute/path/codeops-consumer-lock.json \
+     --values /absolute/path/codeops-values.yaml \
+     --release codeops --namespace codeops
    ```
 
-7. Install the immutable release:
+8. For an existing-Secret installation, write a non-secret
+   `codeops.consumer-policy/v1` file. Then deploy the immutable release:
 
    ```sh
-   helm install codeops oci://ghcr.io/anulman/codeops/charts/codeops \
-     --version <version> --namespace codeops --create-namespace \
-     --values /absolute/path/codeops-values.yaml --wait --timeout 30m
+   node /absolute/path/codeopsctl.mjs deploy \
+     --lock /absolute/path/codeops-consumer-lock.json \
+     --values /absolute/path/codeops-values.yaml \
+     --policy /absolute/path/codeops-policy.json \
+     --release codeops --namespace codeops
    ```
 
-8. Run `nub run smoke -- --release <release> --namespace <namespace>`.
-9. Verify the migration Job.
-10. Configure the GitHub and Plane webhooks documented in the chart README.
-11. Run one inert work-item lifecycle smoke test before real repository work.
+9. Run `node codeopsctl.mjs smoke --release codeops --namespace codeops`.
+10. Verify the migration Job.
+11. Configure the GitHub and Plane webhooks documented in the chart README.
+12. Run one inert work-item lifecycle smoke test before real repository work.
+
+See [Consumer deployment](operations/consumer-deployment.md) for the policy
+schema and the reusable GitHub Action. Quickstart mode can continue to use the
+direct Helm install because it creates its own first-install Secrets.
 
 The initializer discovers the GitHub repository, current GitHub user ID, and
 Kubernetes API service CIDR when the input omits them and the required local
