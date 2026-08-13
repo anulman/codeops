@@ -22,6 +22,8 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.deepEqual(workflow.on.push.branches, ["main"]);
   assert.deepEqual(workflow.on.push.tags, ["v*.*.*"]);
   assert.ok(workflow.on.push.paths.includes("infra/charts/codeops/**"));
+  assert.ok(workflow.on.push.paths.includes("infra/scripts/codeopsctl.mjs"));
+  assert.ok(workflow.on.push.paths.includes(".github/actions/codeops/action.yml"));
   assert.equal(workflow.on.workflow_dispatch.inputs.publish.default, false);
   assert.deepEqual(workflow.jobs.images.strategy.matrix.image, expectedImages);
   const build = workflow.jobs.images.steps.find(({ name }) => name === "Build exact image");
@@ -90,10 +92,17 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(kindInstall.run, /curl -fsSLo \/tmp\/kind-linux-amd64/);
   assert.match(kindInstall.run, /sha256sum --check kind\.sha256sum/);
   assert.match(install.run, /helm pull oci:\/\/ghcr\.io\/anulman\/codeops\/charts\/codeops/);
-  assert.match(install.run, /helm install codeops oci:\/\/ghcr\.io\/anulman\/codeops\/charts\/codeops/);
+  assert.match(install.run, /codeopsctl\.mjs deploy/);
+  assert.match(install.run, /codeops-consumer-lock\.json/);
+  assert.match(install.run, /codeops-consumer-policy\.json/);
   assert.match(install.env.HELM_REGISTRY_CONFIG, /codeops-anonymous-home/);
   assert.match(install.env.DOCKER_CONFIG, /codeops-anonymous-docker/);
-  assert.match(install.run, /--wait-for-jobs/);
+  const operatorSource = await readFile(
+    new URL("./codeopsctl.mjs", import.meta.url),
+    "utf8",
+  );
+  assert.match(operatorSource, /--wait-for-jobs/);
+  assert.match(operatorSource, /--atomic/);
   assert.match(install.run, /sourceCheckout:false/);
   assert.match(install.run, /kubectl wait --namespace codeops --for=condition=Available deployment --all/);
   assert.match(install.run, /session-control-gateway/);
@@ -106,6 +115,7 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(quickstartValues.run, /jetstream: \{ enabled: false, driver: "none", deployment: "none" \}/);
   assert.match(quickstartValues.run, /deployment: "none"/);
   assert.match(quickstartValues.run, /adapter: \{ enabled: false, onboardingRequired: false \}/);
+  assert.match(quickstartValues.run, /codeops\.consumer-policy\/v1/);
   const diagnostics = registryInstall.steps.find(
     ({ name }) => name === "Capture registry-install diagnostics",
   );
@@ -131,6 +141,9 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(serialized, /helm package \.release\/chart/);
   assert.match(serialized, /release-manifest\.json/);
   assert.match(serialized, /values\.release\.yaml/);
+  assert.match(serialized, /codeops-release-consumer-lock\.mjs/);
+  assert.match(serialized, /codeops-consumer-lock\.json/);
+  assert.match(serialized, /codeopsctl\.mjs/);
   assert.match(serialized, /Download exact image license evidence/);
   assert.match(serialized, /Verify complete image license evidence/);
   assert.match(serialized, /sbom-\$\{\{ matrix\.image \}\}\.spdx\.json/);

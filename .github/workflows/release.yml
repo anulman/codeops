@@ -15,6 +15,12 @@ on:
       - infra/license-policy/npm-license-overrides.json
       - infra/scripts/codeops-release-images.mjs
       - infra/scripts/codeops-release-chart.mjs
+      - infra/scripts/codeops-release-consumer-lock.mjs
+      - infra/scripts/codeopsctl.mjs
+      - .github/actions/codeops/action.yml
+      - infra/scripts/test-codeops-action.mjs
+      - infra/scripts/test-codeopsctl.mjs
+      - infra/scripts/test-codeops-release-consumer-lock.mjs
       - infra/scripts/test-codeops-release-chart.mjs
       - infra/scripts/test-codeops-quickstart-docs.mjs
       - infra/scripts/test-codeops-release-images.mjs
@@ -374,6 +380,12 @@ jobs:
             release-manifest.json \
             values.release.yaml \
             .release/evidence/
+          cp infra/scripts/codeopsctl.mjs .release/evidence/codeopsctl.mjs
+          RELEASE_TAG="v${RELEASE_VERSION}" \
+            node infra/scripts/codeops-release-consumer-lock.mjs \
+              ".release/codeops-${RELEASE_VERSION}.tgz" \
+              release-manifest.json \
+              .release/evidence/codeops-consumer-lock.json
           cp .release/license-evidence/* .release/evidence/
           (
             cd .release/evidence
@@ -419,7 +431,9 @@ jobs:
           sudo install /tmp/kind-linux-amd64 /usr/local/bin/kind
 
       - name: Create disposable cluster
-        run: kind create cluster --name codeops-registry --image kindest/node:v1.36.1 --wait 120s
+        run: |
+          kind create cluster --name codeops-registry --image kindest/node:v1.36.1 --wait 120s
+          kubectl label node --all codeops.dev/operator=true
 
       - name: Download exact release manifest
         uses: actions/download-artifact@v4
@@ -538,6 +552,15 @@ jobs:
               },
             };
             writeFileSync("/tmp/codeops-quickstart.json", `${JSON.stringify(values)}\n`, { mode: 0o600 });
+            writeFileSync("/tmp/codeops-consumer-policy.json", `${JSON.stringify({
+              schemaVersion: "codeops.consumer-policy/v1",
+              requiredSecrets: [],
+              cluster: {
+                kubernetesServiceCidrs: [`${process.env.API_IP}/32`],
+                readyNodeSelector: "codeops.dev/operator=true",
+              },
+              postDeployHttpChecks: [],
+            })}\n`, { mode: 0o600 });
           '
 
       - name: Install only from the OCI registry
@@ -559,14 +582,14 @@ jobs:
           [[ "$pulled_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$(helm show chart "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" | sed -n 's/^version: //p')" == "$RELEASE_VERSION" ]]
           [[ "$(helm show chart "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" | sed -n 's/^appVersion: //p')" == "$SOURCE_SHA" ]]
-          helm install codeops oci://ghcr.io/anulman/codeops/charts/codeops \
-            --version "$RELEASE_VERSION" \
-            --namespace codeops \
-            --create-namespace \
+          node /tmp/codeops-release/codeopsctl.mjs deploy \
+            --lock /tmp/codeops-release/codeops-consumer-lock.json \
             --values /tmp/codeops-quickstart.json \
-            --wait \
-            --wait-for-jobs \
-            --timeout 20m
+            --policy /tmp/codeops-consumer-policy.json \
+            --release codeops \
+            --namespace codeops \
+            --chart-path "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" \
+            --manifest-path /tmp/codeops-release/release-manifest.json
           [[ "$(helm status codeops --namespace codeops --output json | jq -r .info.status)" == "deployed" ]]
           kubectl wait --namespace codeops --for=condition=Available deployment --all --timeout=5m
           kubectl get deployment --namespace codeops --output json | jq -e --argjson expected '[

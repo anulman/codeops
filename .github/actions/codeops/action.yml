@@ -1,0 +1,60 @@
+name: CodeOps operator
+description: Verify, deploy, or smoke-test one immutable CodeOps release.
+
+inputs:
+  command:
+    description: One of verify, deploy, or smoke.
+    required: true
+  lock:
+    description: Path to codeops.consumer-lock/v1 JSON.
+    required: false
+  values:
+    description: Path to the consumer Helm values file.
+    required: false
+  policy:
+    description: Path to codeops.consumer-policy/v1 JSON.
+    required: false
+  release:
+    description: Helm release name.
+    required: false
+    default: codeops
+  namespace:
+    description: Kubernetes namespace.
+    required: false
+    default: codeops
+
+runs:
+  using: composite
+  steps:
+    - uses: actions/setup-node@v4
+      with:
+        node-version: "24"
+
+    - uses: azure/setup-helm@v4
+      with:
+        version: v3.19.2
+
+    - uses: azure/setup-kubectl@v4
+      with:
+        version: v1.36.3
+
+    - name: Run the pinned CodeOps operator
+      shell: bash
+      env:
+        CODEOPSCTL_COMMAND: ${{ inputs.command }}
+        CODEOPSCTL_LOCK: ${{ inputs.lock }}
+        CODEOPSCTL_VALUES: ${{ inputs.values }}
+        CODEOPSCTL_POLICY: ${{ inputs.policy }}
+        CODEOPSCTL_RELEASE: ${{ inputs.release }}
+        CODEOPSCTL_NAMESPACE: ${{ inputs.namespace }}
+      run: |
+        set -euo pipefail
+        args=(
+          "$CODEOPSCTL_COMMAND"
+          --release "$CODEOPSCTL_RELEASE"
+          --namespace "$CODEOPSCTL_NAMESPACE"
+        )
+        if [[ -n "$CODEOPSCTL_LOCK" ]]; then args+=(--lock "$CODEOPSCTL_LOCK"); fi
+        if [[ -n "$CODEOPSCTL_VALUES" ]]; then args+=(--values "$CODEOPSCTL_VALUES"); fi
+        if [[ -n "$CODEOPSCTL_POLICY" ]]; then args+=(--policy "$CODEOPSCTL_POLICY"); fi
+        node "$GITHUB_ACTION_PATH/../../../infra/scripts/codeopsctl.mjs" "${args[@]}"
