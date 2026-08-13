@@ -118,10 +118,10 @@ test("records a caller-supplied immutable migration identity", async () => {
   assert.equal(insert.values[0], "session-broker-runtime-outbox-v1");
 });
 
-test("applies broker runtime, lifecycle journal, and relays in order", async () => {
+test("applies broker runtime, lifecycle journal, relays, and launches in order", async () => {
   const client = fakeClient();
   const results = await migrateSessionBroker(client);
-  assert.deepEqual(results, ["applied", "applied", "applied", "applied", "applied", "applied"]);
+  assert.deepEqual(results, ["applied", "applied", "applied", "applied", "applied", "applied", "applied", "applied"]);
   const inserts = client.calls
     .filter(({ text }) => text.includes("INSERT INTO codeops.schema_migrations"))
     .map(({ values }) => values[0]);
@@ -129,13 +129,15 @@ test("applies broker runtime, lifecycle journal, and relays in order", async () 
     "session-broker-v1",
     "session-broker-runtime-outbox-v1",
     "session-runtime-execution-receipts-v1",
+    "workspace-checkpoint-artifacts-v1",
     "session-job-initialization-v1",
     "session-runtime-permission-relay-v1",
     "work-item-lifecycle-journal-v1",
+    "workspace-launch-v1",
   ]);
 });
 
-test("grants the runtime role only execution-receipt access", async () => {
+test("grants the runtime role only receipt and checkpoint-artifact access", async () => {
   const client = fakeClient();
   await grantSessionRuntimeReceiptAccess(
     client,
@@ -148,6 +150,8 @@ test("grants the runtime role only execution-receipt access", async () => {
   assert.match(sql, /GRANT SELECT \(dispatch_id, dispatch_digest, status, result_json\)/);
   assert.match(sql, /GRANT INSERT \(dispatch_id, dispatch_digest, status\)/);
   assert.match(sql, /GRANT UPDATE \(status, result_json, completed_at\)/);
+  assert.match(sql, /GRANT SELECT \(artifact_id, session_id, generation, checkpoint_id/);
+  assert.match(sql, /GRANT INSERT \(artifact_id, session_id, generation, checkpoint_id/);
   assert.doesNotMatch(sql, /session_runtime_outbox/);
   assert.equal(client.calls.at(-1).text, "COMMIT");
   const existing = fakeClient(undefined, true);

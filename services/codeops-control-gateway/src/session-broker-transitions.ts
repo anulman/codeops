@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  isWorkspaceSessionIdentity,
   SESSION_BROKER_VERSION,
   allowedSessionActionsForState,
   sessionActionTypeSchema,
@@ -38,12 +39,31 @@ export interface RuntimePromptMaterial {
   readonly updates?: readonly SessionTimelineUpdate[];
 }
 
-export interface RuntimeCheckpointMaterial {
+export interface LegacyRuntimeCheckpointMaterial {
   readonly checkpointId: string;
   readonly patchDigest: string;
   readonly acpSessionId: string;
   readonly evidenceReferences: readonly string[];
 }
+
+export interface WorkspaceRuntimeCheckpointMaterial {
+  readonly version: "codeops.session-workspace-checkpoint-material/v1";
+  readonly checkpointId: string;
+  readonly workspaceManifestDigest: string;
+  readonly sourcePatches: readonly {
+    readonly catalogKey: string;
+    readonly repository: string;
+    readonly baseSha: string;
+    readonly patchDigest: string;
+  }[];
+  readonly scratchArtifactDigest: string;
+  readonly acpSessionId: string;
+  readonly evidenceReferences: readonly string[];
+}
+
+export type RuntimeCheckpointMaterial =
+  | LegacyRuntimeCheckpointMaterial
+  | WorkspaceRuntimeCheckpointMaterial;
 
 export interface RuntimeLeaseMaterial {
   readonly leaseId: string;
@@ -54,7 +74,8 @@ export interface RuntimeLeaseMaterial {
 
 export interface RuntimeForkMaterial extends RuntimeLeaseMaterial {
   readonly sessionId: string;
-  readonly branch: string;
+  readonly branch?: string;
+  readonly workspace?: true;
   readonly workflowId: string;
   readonly runId: string;
 }
@@ -365,15 +386,48 @@ export function applyCheckpointSessionTransition(
     throw new Error("checkpoint completion requires an active session");
   }
   const checkpointCursor = snapshot.eventCursor + 1;
-  const checkpoint = sessionCheckpointSchema.parse({
-    version: SESSION_BROKER_VERSION.checkpoint,
-    ...material,
-    sessionId: snapshot.sessionId,
-    generation: snapshot.generation,
-    baseSha: snapshot.identity.baseSha,
-    eventCursor: checkpointCursor,
-    createdAt: occurredAt,
-  });
+  const workspaceIdentity = isWorkspaceSessionIdentity(snapshot.identity);
+  const workspaceMaterial = "version" in material;
+  if (workspaceIdentity !== workspaceMaterial) {
+    throw new Error("checkpoint material must match the session workspace identity");
+  }
+  if (isWorkspaceSessionIdentity(snapshot.identity) && workspaceMaterial) {
+    const expected = snapshot.identity.workspace.sources;
+    if (
+      material.sourcePatches.length !== expected.length ||
+      material.sourcePatches.some((patch, index) => {
+        const source = expected[index];
+        return source === undefined ||
+          patch.catalogKey !== source.catalogKey ||
+          patch.repository !== source.repository ||
+          patch.baseSha !== source.resolvedSha;
+      })
+    ) {
+      throw new Error("workspace checkpoint must bind every exact workspace source");
+    }
+  }
+  const checkpoint = sessionCheckpointSchema.parse(
+    workspaceIdentity && workspaceMaterial
+      ? {
+          ...material,
+          version: SESSION_BROKER_VERSION.workspaceCheckpoint,
+          sessionId: snapshot.sessionId,
+          generation: snapshot.generation,
+          eventCursor: checkpointCursor,
+          createdAt: occurredAt,
+        }
+      : {
+          version: SESSION_BROKER_VERSION.checkpoint,
+          ...material,
+          sessionId: snapshot.sessionId,
+          generation: snapshot.generation,
+          baseSha: "baseSha" in snapshot.identity
+            ? snapshot.identity.baseSha
+            : undefined,
+          eventCursor: checkpointCursor,
+          createdAt: occurredAt,
+        },
+  );
   const hibernate = command.type === "hibernate";
   const eventBodies: readonly Omit<SessionEvent, "version" | "eventId">[] =
     hibernate
@@ -491,6 +545,13 @@ export function applyForkSessionTransition(
   ) {
     throw new Error("fork requires the exact committed parent checkpoint and cursor");
   }
+  const workspaceIdentity = isWorkspaceSessionIdentity(snapshot.identity);
+  if (
+    (workspaceIdentity && material.workspace !== true) ||
+    (!workspaceIdentity && (material.branch === undefined || material.workspace === true))
+  ) {
+    throw new Error("fork material must match the session workspace identity");
+  }
   const child = sessionSnapshotSchema.parse({
     version: SESSION_BROKER_VERSION.snapshot,
     sessionId: material.sessionId,
@@ -498,7 +559,7 @@ export function applyForkSessionTransition(
     state: "running",
     identity: {
       ...snapshot.identity,
-      branch: material.branch,
+      ...(workspaceIdentity ? {} : { branch: material.branch }),
       workflowId: material.workflowId,
       runId: material.runId,
       parentSessionId: snapshot.sessionId,

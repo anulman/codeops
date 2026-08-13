@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import type { SessionSnapshot } from "@codeops/codeops-contracts/session-broker";
+import { sessionSearchText, sessionWorkspaceLabel } from "@/lib/sessionIdentity";
 
 interface AppShellProps {
   readonly children: ReactNode;
@@ -44,7 +45,7 @@ function SidebarHeader() {
         <span className="grid size-7 shrink-0 place-items-center rounded-lg bg-[#6d6af7] text-white shadow-[0_0_0_1px_rgba(255,255,255,.12)_inset]"><PulseMark /></span>
         <span className="truncate text-sm font-semibold tracking-[-0.02em]">Agent Sessions</span>
       </Link>
-      <span className="ml-auto rounded-md border border-white/[0.07] bg-white/[0.035] px-1.5 py-0.5 text-[9px] font-semibold uppercase tracking-[0.12em] text-white/32">Alpha</span>
+      <Link to="/new" className="ml-auto grid size-7 place-items-center rounded-lg border border-[#7774ff]/25 bg-[#7774ff]/10 text-lg text-[#a8a6ff] transition hover:bg-[#7774ff]/18 hover:text-white" aria-label="New session">＋</Link>
     </div>
   );
 }
@@ -64,7 +65,7 @@ function SessionNavigator({ sessions, activeSessionId }: Readonly<{ sessions: re
   const filtered = useMemo(() => {
     const needle = query.trim().toLowerCase();
     if (!needle) return sessions;
-    return sessions.filter((session) => `${session.identity.runId} ${session.identity.workflowId} ${session.identity.branch}`.toLowerCase().includes(needle));
+    return sessions.filter((session) => sessionSearchText(session.identity).toLowerCase().includes(needle));
   }, [query, sessions]);
   const attention = filtered.filter((session) => ["waiting_permission", "failed"].includes(session.state));
   const active = filtered.filter((session) => ["queued", "running", "checkpointing"].includes(session.state));
@@ -105,7 +106,7 @@ function SessionGroup({ label, sessions, activeSessionId, quiet = false }: Reado
                 <span className={`min-w-0 flex-1 truncate text-xs font-medium ${quiet && !selected ? "text-white/45" : ""}`}>{session.identity.runId}</span>
                 <span className={`shrink-0 font-mono text-[9px] tabular-nums ${selected ? "text-white/60" : "text-white/22"}`}>{session.updatedAt.slice(11, 16)}</span>
               </div>
-              <div className={`mt-1 truncate pl-3.5 text-[10px] ${selected ? "text-white/65" : "text-white/28"}`}>{session.identity.branch}</div>
+              <div className={`mt-1 truncate pl-3.5 text-[10px] ${selected ? "text-white/65" : "text-white/28"}`}>{sessionWorkspaceLabel(session.identity)}</div>
             </Link>
           );
         })}

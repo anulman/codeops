@@ -12,12 +12,16 @@ import {
 import {
   candidatePublicationSchema,
   githubPullRequestStackLinkSchema,
+  type WorkspaceLaunch,
 } from "@codeops/codeops-contracts";
 import {
   linkGitHubPullRequestStack,
   loadGitHubPullRequestStack,
 } from "./github-stacks.js";
-import { loadInClusterKubernetesClient } from "./kubernetes.js";
+import {
+  KubernetesResourceIdentityDriftError,
+  loadInClusterKubernetesClient,
+} from "./kubernetes.js";
 import { publishCandidateRevision } from "./publication.js";
 import { createAgentJobRunner } from "./runtime.js";
 import {
@@ -65,7 +69,28 @@ import {
   SessionForkConflictError,
   SessionNotFoundError,
   SessionRuntimeClaimConflictError,
+  loadSessionSnapshot,
 } from "./session-broker-repository.js";
+import {
+  InvalidWorkspaceLaunchRequestError,
+  serveWorkspaceLaunch,
+} from "./workspace-launch-http.js";
+import {
+  admitWorkspaceLaunch,
+  createCatalogSourceResolver,
+} from "./workspace-launch.js";
+import {
+  createPostgresWorkspaceLaunchStore,
+  listActiveWorkspaceLaunchIds,
+  loadWorkspaceLaunchForPrincipal,
+  loadWorkspaceLaunchRequest,
+  updateWorkspaceLaunch,
+} from "./workspace-launch-store.js";
+import {
+  PermanentWorkspaceLaunchError,
+  reconcileWorkspaceLaunch,
+  workspaceLaunchRuntimeIdentity,
+} from "./workspace-launch-controller.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -243,6 +268,24 @@ const sessionRuntimeWorkerId = required("CODEOPS_SESSION_RUNTIME_WORKER_ID");
 if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(sessionRuntimeWorkerId)) {
   throw new Error("session runtime worker identity is invalid");
 }
+const workspaceLaunchToken = await secretFile(
+  "CODEOPS_WORKSPACE_LAUNCH_TOKEN_FILE",
+);
+if (
+  workspaceLaunchToken.length < 32 ||
+  workspaceLaunchToken.length > 4_096 ||
+  [
+    token,
+    repositoryHeadToken,
+    publicationToken,
+    sessionBrokerReadToken,
+    sessionBrokerWriteToken,
+    sessionRuntimeWorkerToken,
+    sessionJobInitializationToken,
+  ].includes(workspaceLaunchToken)
+) {
+  throw new Error("workspace launch token must be one distinct authority");
+}
 const repositoryRegistry = await loadConfiguredRepositoryRegistry({
   registryFile: process.env.CODEOPS_REPOSITORY_REGISTRY_FILE,
   loadRegistryFile: loadRepositoryRegistryFile,
@@ -292,11 +335,209 @@ const run = createAgentJobRunner({
   },
 });
 
+const workspaceSourceResolver = createCatalogSourceResolver({
+  entries: new Map(
+    repositoryRegistry.workspaceCatalog.repositories.map((entry) => [
+      entry.key,
+      { repository: entry.repository, defaultRef: entry.defaultRef },
+    ]),
+  ),
+  resolveHead: async (repository, reference) => {
+    if (reference !== "main") {
+      throw new Error("workspace catalog supports only the server-owned main ref");
+    }
+    const authority = repositoryRegistry.resolve(repository);
+    return resolveGitHubBranchHead({
+      repositoryUrl: authority.repositoryUrl,
+      repositoryReadToken: authority.readToken,
+      branch: "main",
+    });
+  },
+});
+
+function workspaceResourceConfig(
+  launch: WorkspaceLaunch,
+  identity: ReturnType<typeof workspaceLaunchRuntimeIdentity>,
+) {
+  return {
+    namespace,
+    launchId: launch.launchId,
+    principalId: launch.principalId,
+    requestDigest: launch.requestDigest,
+    ...identity,
+    workspace: launch.workspace,
+    sources: launch.workspace.sources.map((source) => {
+      const authority = repositoryRegistry.resolve(source.repository);
+      return {
+        catalogKey: source.catalogKey,
+        repositoryUrl: authority.repositoryUrl,
+        readToken: authority.readToken,
+      };
+    }),
+    agentImage: requireDigestImage("CODEOPS_AGENT_IMAGE"),
+    runtimeWorkerImage: requireDigestImage("CODEOPS_SESSION_RUNTIME_WORKER_IMAGE"),
+    imagePullSecrets: imagePullSecrets("CODEOPS_AGENT_IMAGE_PULL_SECRETS"),
+    nodeSelector: stringMap("CODEOPS_AGENT_NODE_SELECTOR"),
+    runtimeServiceAccountName: kubernetesObjectName(
+      "CODEOPS_SESSION_RUNTIME_SERVICE_ACCOUNT_NAME",
+    ),
+    sessionSecretsName: kubernetesObjectName(
+      "CODEOPS_SESSION_SECRETS_NAME",
+    ),
+    sessionGatewayOrigin: required("CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN"),
+    modelProxyOrigin: modelAuth.origin,
+    workspaceStorageSize: required("CODEOPS_WORKSPACE_STORAGE_SIZE"),
+    ...(process.env.CODEOPS_WORKSPACE_STORAGE_CLASS_NAME?.trim()
+      ? {
+          workspaceStorageClassName:
+            process.env.CODEOPS_WORKSPACE_STORAGE_CLASS_NAME.trim(),
+        }
+      : {}),
+  };
+}
+
+async function reconcileOneWorkspaceLaunch(launchId: string): Promise<void> {
+  await reconcileWorkspaceLaunch(launchId, {
+    load: async (identity) => {
+      const client = await database.connect();
+      try {
+        return await loadWorkspaceLaunchRequest(client, identity);
+      } finally {
+        client.release();
+      }
+    },
+    update: async (launch) => {
+      const client = await database.connect();
+      try {
+        return await updateWorkspaceLaunch(client, launch);
+      } finally {
+        client.release();
+      }
+    },
+    ensureResource: async (resource, requestDigest) => {
+      try {
+        await kubernetes.ensure(resource as never, requestDigest);
+      } catch (error) {
+        if (error instanceof KubernetesResourceIdentityDriftError) {
+          throw new PermanentWorkspaceLaunchError(error.message, {
+            cause: error,
+          });
+        }
+        throw error;
+      }
+    },
+    loadSession: async (sessionId) => {
+      const client = await database.connect();
+      try {
+        return await loadSessionSnapshot(client, sessionId);
+      } finally {
+        client.release();
+      }
+    },
+    loadJob: (name) => kubernetes.getJob(name),
+    removeResource: (resource) => kubernetes.delete(resource as never),
+    enqueuePrompt: async (input) => {
+      const client = await database.connect();
+      try {
+        try {
+          return await enqueueSessionRuntimeDispatch(client, input);
+        } catch (error) {
+          if (error instanceof ImmutableSessionRuntimeDispatchConflictError) {
+            throw new PermanentWorkspaceLaunchError(error.message, {
+              cause: error,
+            });
+          }
+          throw error;
+        }
+      } finally {
+        client.release();
+      }
+    },
+    resourceConfig: workspaceResourceConfig,
+  });
+}
+
+let workspaceReconciliation: Promise<void> = Promise.resolve();
+function scheduleWorkspaceReconciliation(): void {
+  workspaceReconciliation = workspaceReconciliation.then(async () => {
+    const client = await database.connect();
+    let launchIds: readonly string[];
+    try {
+      launchIds = await listActiveWorkspaceLaunchIds(client);
+    } finally {
+      client.release();
+    }
+    for (const launchId of launchIds) {
+      await reconcileOneWorkspaceLaunch(launchId).catch((error) => {
+        process.stderr.write(`${JSON.stringify({
+          event: "workspace_launch_reconciliation_failed",
+          launchId,
+          error: error instanceof Error ? error.message : String(error),
+        })}\n`);
+      });
+    }
+  }).catch(() => undefined);
+}
+const workspaceReconciliationTimer = setInterval(
+  scheduleWorkspaceReconciliation,
+  2_000,
+);
+workspaceReconciliationTimer.unref();
+scheduleWorkspaceReconciliation();
+
 let serial: Promise<unknown> = Promise.resolve();
 const server = createServer((request, response) => {
   void (async () => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    try {
+      const workspaceLaunch = await serveWorkspaceLaunch({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        token: workspaceLaunchToken,
+        readBody: () => readJson(request),
+        catalog: repositoryRegistry.workspaceCatalog,
+        admit: async (launchRequest, principalId) => {
+          const client = await database.connect();
+          try {
+            const launch = await admitWorkspaceLaunch({
+              request: launchRequest,
+              principalId,
+              resolver: workspaceSourceResolver,
+              store: createPostgresWorkspaceLaunchStore(client),
+            });
+            scheduleWorkspaceReconciliation();
+            return launch;
+          } finally {
+            client.release();
+          }
+        },
+        load: async (launchId, principalId) => {
+          const client = await database.connect();
+          try {
+            return await loadWorkspaceLaunchForPrincipal(
+              client,
+              launchId,
+              principalId,
+            );
+          } finally {
+            client.release();
+          }
+        },
+      });
+      if (workspaceLaunch !== null) {
+        json(response, workspaceLaunch.status, workspaceLaunch.body);
+        return;
+      }
+    } catch (error) {
+      json(
+        response,
+        error instanceof InvalidWorkspaceLaunchRequestError ? 400 : 503,
+        { status: error instanceof InvalidWorkspaceLaunchRequestError ? "invalid-request" : "unavailable" },
+      );
       return;
     }
     try {

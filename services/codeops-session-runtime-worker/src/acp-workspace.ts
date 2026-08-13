@@ -1,7 +1,19 @@
 import * as acp from "@agentclientprotocol/sdk";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
-import { mkdir, readFile, rename, writeFile } from "node:fs/promises";
+import { constants as fsConstants } from "node:fs";
+import {
+  lstat,
+  mkdir,
+  mkdtemp,
+  open,
+  readFile,
+  readdir,
+  rename,
+  rm,
+  writeFile,
+  type FileHandle,
+} from "node:fs/promises";
 import net from "node:net";
 import path from "node:path";
 import { Readable, Writable } from "node:stream";
@@ -9,9 +21,11 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
   sessionTimelineUpdateSchema,
+  workspaceManifestSchema,
   type SessionContentBlock,
   type SessionRuntimeDispatch,
   type SessionTimelineUpdate,
+  type WorkspaceManifest,
 } from "@codeops/codeops-contracts";
 import type {
   AcpWorkspaceLifecycle,
@@ -20,12 +34,20 @@ import type {
   RuntimeExecutionContext,
   RuntimeExecutionResult,
 } from "./transport.js";
+import type {
+  WorkspaceCheckpointArtifactStore,
+} from "./workspace-artifacts.js";
 
 const execFileAsync = promisify(execFile);
 const MAX_PATCH_BYTES = 2_000_000;
+const MAX_SCRATCH_CONTENT_BYTES = 10_000_000;
+const MAX_SCRATCH_ENTRIES = 10_000;
+const MAX_SCRATCH_PATH_BYTES = 1_000_000;
+const MAX_SCRATCH_ARTIFACT_BYTES = 16_000_000;
 const MAX_ASSISTANT_RESPONSE_CHARS = 200_000;
 const MAX_TIMELINE_UPDATES = 499;
 const MAX_TIMELINE_UPDATE_BYTES = 800_000;
+const GIT_SHA = /^[0-9a-f]{40}$/;
 
 export function appendAcpAssistantText(
   current: string,
@@ -462,22 +484,299 @@ export class AcpSessionStateStore {
   }
 }
 
-export async function captureWorkspacePatch(workspace: string): Promise<Buffer> {
-  const root = boundedAbsolutePath("workspace", workspace);
-  const git = ["-c", `safe.directory=${root}`, "-C", root];
-  await execFileAsync("git", [...git, "add", "--intent-to-add", "--all", "--"], {
-    encoding: "buffer",
-    maxBuffer: MAX_PATCH_BYTES + 1,
-  });
-  const { stdout } = await execFileAsync(
-    "git",
-    [...git, "diff", "--binary", "--no-ext-diff", "HEAD", "--"],
-    { encoding: "buffer", maxBuffer: MAX_PATCH_BYTES + 1 },
-  );
-  if (stdout.length > MAX_PATCH_BYTES) {
-    throw new Error("ACP workspace patch exceeds 2000000 bytes");
+async function requirePlainDirectory(label: string, target: string): Promise<void> {
+  const targetStat = await lstat(target);
+  if (targetStat.isSymbolicLink() || !targetStat.isDirectory()) {
+    throw new Error(`${label} must be one directory, not a symbolic link`);
   }
-  return stdout;
+}
+
+async function rejectGitObjectAlternates(objects: string): Promise<void> {
+  for (const name of ["alternates", "http-alternates"]) {
+    try {
+      await lstat(path.join(objects, "info", name));
+      throw new Error("workspace Git object alternates are not permitted");
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        "code" in error &&
+        String(error.code) === "ENOENT"
+      ) {
+        continue;
+      }
+      throw error;
+    }
+  }
+}
+
+export async function captureWorkspacePatch(
+  workspace: string,
+  baseSha: string,
+  captureRoot: string,
+): Promise<Buffer> {
+  const root = boundedAbsolutePath("workspace", workspace);
+  const exactBaseSha = baseSha.trim().toLowerCase();
+  if (!GIT_SHA.test(exactBaseSha)) {
+    throw new Error("workspace patch base SHA must be one exact Git commit");
+  }
+  const privateRoot = boundedAbsolutePath("Git capture root", captureRoot);
+  const repository = path.join(root, ".git");
+  const objects = path.join(repository, "objects");
+  await requirePlainDirectory("workspace Git directory", repository);
+  await requirePlainDirectory("workspace Git object directory", objects);
+  await rejectGitObjectAlternates(objects);
+  await mkdir(privateRoot, { recursive: true });
+  const captureDirectory = await mkdtemp(
+    path.join(privateRoot, ".codeops-git-capture-"),
+  );
+  try {
+    await mkdir(path.join(captureDirectory, "objects"));
+    await mkdir(path.join(captureDirectory, "refs", "heads"), { recursive: true });
+    await writeFile(
+      path.join(captureDirectory, "config"),
+      "[core]\n\trepositoryformatversion = 0\n\tbare = false\n",
+      { mode: 0o600 },
+    );
+    await writeFile(path.join(captureDirectory, "HEAD"), `${exactBaseSha}\n`, {
+      mode: 0o600,
+    });
+    const env = {
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_DIR: captureDirectory,
+      GIT_INDEX_FILE: path.join(captureDirectory, "index"),
+      GIT_OBJECT_DIRECTORY: objects,
+      GIT_OPTIONAL_LOCKS: "0",
+      GIT_TERMINAL_PROMPT: "0",
+      GIT_WORK_TREE: root,
+      LANG: "C",
+      LC_ALL: "C",
+      PATH: process.env.PATH ?? "/usr/bin:/bin",
+    };
+    await execFileAsync("git", ["read-tree", exactBaseSha], {
+      encoding: "buffer",
+      env,
+      maxBuffer: MAX_PATCH_BYTES + 1,
+    });
+    await execFileAsync("git", ["add", "--intent-to-add", "--all", "--"], {
+      encoding: "buffer",
+      env,
+      maxBuffer: MAX_PATCH_BYTES + 1,
+    });
+    const { stdout } = await execFileAsync(
+      "git",
+      ["diff", "--binary", "--no-ext-diff", exactBaseSha, "--"],
+      { encoding: "buffer", env, maxBuffer: MAX_PATCH_BYTES + 1 },
+    );
+    if (stdout.length > MAX_PATCH_BYTES) {
+      throw new Error("ACP workspace patch exceeds 2000000 bytes");
+    }
+    return stdout;
+  } finally {
+    await rm(captureDirectory, { recursive: true, force: true });
+  }
+}
+
+interface ScratchBundleEntry {
+  readonly path: string;
+  readonly type: "directory" | "file";
+  readonly executable?: boolean;
+  readonly contentBase64?: string;
+}
+
+async function collectScratchEntry(
+  entries: ScratchBundleEntry[],
+  handle: FileHandle,
+  relative: string,
+  total: { bytes: number; entries: number; pathBytes: number },
+): Promise<void> {
+  total.entries += 1;
+  total.pathBytes += Buffer.byteLength(relative);
+  if (
+    total.entries > MAX_SCRATCH_ENTRIES ||
+    total.pathBytes > MAX_SCRATCH_PATH_BYTES
+  ) {
+    throw new Error("scratch artifact tree exceeds its metadata bounds");
+  }
+  const stat = await handle.stat();
+  if (stat.isDirectory()) {
+    entries.push({ path: relative, type: "directory" });
+    const directory = `/proc/self/fd/${handle.fd}`;
+    const children = (await readdir(directory)).sort();
+    for (const name of children) {
+      let child: FileHandle;
+      try {
+        child = await open(
+          `${directory}/${name}`,
+          fsConstants.O_RDONLY |
+            fsConstants.O_NOFOLLOW |
+            fsConstants.O_NONBLOCK,
+        );
+      } catch (error) {
+        if (
+          error instanceof Error &&
+          "code" in error &&
+          String(error.code) === "ELOOP"
+        ) {
+          throw new Error(
+            "scratch artifacts must not contain symbolic links",
+            { cause: error },
+          );
+        }
+        throw error;
+      }
+      try {
+        await collectScratchEntry(
+          entries,
+          child,
+          path.posix.join(relative, name),
+          total,
+        );
+      } finally {
+        await child.close();
+      }
+    }
+    return;
+  }
+  if (!stat.isFile()) {
+    throw new Error("scratch artifacts may contain only files and directories");
+  }
+  const chunks: Buffer[] = [];
+  let position = 0;
+  while (true) {
+    const remaining = MAX_SCRATCH_CONTENT_BYTES - total.bytes;
+    const buffer = Buffer.alloc(Math.min(64 * 1_024, remaining + 1));
+    const { bytesRead } = await handle.read(
+      buffer,
+      0,
+      buffer.length,
+      position,
+    );
+    if (bytesRead === 0) break;
+    total.bytes += bytesRead;
+    if (total.bytes > MAX_SCRATCH_CONTENT_BYTES) {
+      throw new Error("scratch artifact bundle exceeds 10000000 bytes");
+    }
+    chunks.push(buffer.subarray(0, bytesRead));
+    position += bytesRead;
+  }
+  entries.push({
+    path: relative,
+    type: "file",
+    executable: (stat.mode & 0o111) !== 0,
+    contentBase64: Buffer.concat(chunks).toString("base64"),
+  });
+}
+
+export async function captureScratchArtifact(
+  scratchRoot: string,
+): Promise<{ readonly digest: string; readonly content: Buffer }> {
+  const root = boundedAbsolutePath("scratch workspace", scratchRoot);
+  const entries: ScratchBundleEntry[] = [];
+  let rootHandle: FileHandle;
+  try {
+    rootHandle = await open(
+      root,
+      fsConstants.O_RDONLY |
+        fsConstants.O_DIRECTORY |
+        fsConstants.O_NOFOLLOW,
+    );
+  } catch (error) {
+    if (
+      error instanceof Error &&
+      "code" in error &&
+      String(error.code) === "ELOOP"
+    ) {
+      throw new Error("scratch artifacts must not contain symbolic links", {
+        cause: error,
+      });
+    }
+    throw error;
+  }
+  try {
+    await collectScratchEntry(entries, rootHandle, ".", {
+      bytes: 0,
+      entries: 0,
+      pathBytes: 0,
+    });
+  } finally {
+    await rootHandle.close();
+  }
+  const content = Buffer.from(JSON.stringify({
+    version: "codeops.scratch-artifact/v1",
+    entries,
+  }));
+  if (content.byteLength > MAX_SCRATCH_ARTIFACT_BYTES) {
+    throw new Error("scratch artifact exceeds 16000000 encoded bytes");
+  }
+  return {
+    digest: `sha256:${createHash("sha256").update(content).digest("hex")}`,
+    content,
+  };
+}
+
+export async function captureScratchArtifactDigest(
+  scratchRoot: string,
+): Promise<string> {
+  return (await captureScratchArtifact(scratchRoot)).digest;
+}
+
+async function captureWorkspaceCheckpointArtifacts(
+  workspaceRoot: string,
+  rawManifest: WorkspaceManifest,
+  captureRoot: string,
+) {
+  const root = boundedAbsolutePath("workspace", workspaceRoot);
+  const manifest = workspaceManifestSchema.parse(rawManifest);
+  const sourcePatches = [];
+  for (const source of manifest.sources) {
+    const content = await captureWorkspacePatch(
+      path.join(root, source.checkoutPath),
+      source.resolvedSha,
+      captureRoot,
+    );
+    sourcePatches.push({
+      catalogKey: source.catalogKey,
+      repository: source.repository,
+      baseSha: source.resolvedSha,
+      patchDigest: `sha256:${createHash("sha256").update(content).digest("hex")}`,
+      content,
+    });
+  }
+  const scratch = await captureScratchArtifact(path.join(root, manifest.scratchPath));
+  return {
+    workspaceManifestDigest: `sha256:${createHash("sha256")
+      .update(JSON.stringify(manifest))
+      .digest("hex")}`,
+    sourcePatches,
+    scratch,
+  };
+}
+
+export async function captureWorkspaceCheckpoint(
+  workspaceRoot: string,
+  rawManifest: WorkspaceManifest,
+  captureRoot: string,
+): Promise<{
+  readonly workspaceManifestDigest: string;
+  readonly sourcePatches: {
+    readonly catalogKey: string;
+    readonly repository: string;
+    readonly baseSha: string;
+    readonly patchDigest: string;
+  }[];
+  readonly scratchArtifactDigest: string;
+}> {
+  const captured = await captureWorkspaceCheckpointArtifacts(
+    workspaceRoot,
+    rawManifest,
+    captureRoot,
+  );
+  return {
+    workspaceManifestDigest: captured.workspaceManifestDigest,
+    sourcePatches: captured.sourcePatches.map(({ content: _content, ...patch }) => patch),
+    scratchArtifactDigest: captured.scratch.digest,
+  };
 }
 
 export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
@@ -489,6 +788,8 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   readonly #connect: AcpConnectionFactory;
   readonly #now: () => Date;
   readonly #uuid: () => string;
+  readonly #artifacts?: WorkspaceCheckpointArtifactStore;
+  readonly #captureRoot: string;
 
   constructor(input: {
     readonly socketPath: string;
@@ -499,14 +800,18 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     readonly now?: () => Date;
     readonly uuid?: () => string;
     readonly connect?: AcpConnectionFactory;
+    readonly artifacts?: WorkspaceCheckpointArtifactStore;
   }) {
     this.#socketPath = boundedAbsolutePath("ACP socket path", input.socketPath);
     this.#workspace = boundedAbsolutePath("workspace", input.workspace);
-    this.#state = new AcpSessionStateStore(input.statePath);
+    const statePath = boundedAbsolutePath("ACP state path", input.statePath);
+    this.#state = new AcpSessionStateStore(statePath);
+    this.#captureRoot = path.dirname(statePath);
     this.#permissions = input.permissions;
     this.#socketTimeoutMs = input.socketTimeoutMs ?? 30_000;
     this.#now = input.now ?? (() => new Date());
     this.#uuid = input.uuid ?? randomUUID;
+    this.#artifacts = input.artifacts;
     if (
       !Number.isSafeInteger(this.#socketTimeoutMs) ||
       this.#socketTimeoutMs < 1_000 ||
@@ -642,7 +947,62 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     if (acpSessionId === null) {
       throw new Error("checkpoint requires one established ACP session");
     }
-    const patch = await captureWorkspacePatch(this.#workspace);
+    if ("version" in dispatch.snapshot.identity) {
+      if (this.#artifacts === undefined) {
+        throw new Error("workspace checkpoint requires durable artifact storage");
+      }
+      const checkpointId = this.#uuid();
+      const captured = await captureWorkspaceCheckpointArtifacts(
+        this.#workspace,
+        dispatch.snapshot.identity.workspace,
+        this.#captureRoot,
+      );
+      const evidenceReferences = [];
+      for (const patch of captured.sourcePatches) {
+        const artifactId = `artifact:${checkpointId}:source:${patch.catalogKey}`;
+        await this.#artifacts.put({
+          artifactId,
+          sessionId: dispatch.command.sessionId,
+          generation: dispatch.command.generation,
+          checkpointId,
+          kind: "source-patch",
+          catalogKey: patch.catalogKey,
+          digest: patch.patchDigest,
+          content: patch.content,
+        });
+        evidenceReferences.push(artifactId);
+      }
+      const scratchArtifactId = `artifact:${checkpointId}:scratch`;
+      await this.#artifacts.put({
+        artifactId: scratchArtifactId,
+        sessionId: dispatch.command.sessionId,
+        generation: dispatch.command.generation,
+        checkpointId,
+        kind: "scratch-bundle",
+        digest: captured.scratch.digest,
+        content: captured.scratch.content,
+      });
+      evidenceReferences.push(scratchArtifactId);
+      return {
+        type,
+        material: {
+          version: "codeops.session-workspace-checkpoint-material/v1",
+          checkpointId,
+          workspaceManifestDigest: captured.workspaceManifestDigest,
+          sourcePatches: captured.sourcePatches.map(
+            ({ content: _content, ...patch }) => patch,
+          ),
+          scratchArtifactDigest: captured.scratch.digest,
+          acpSessionId,
+          evidenceReferences,
+        },
+      };
+    }
+    const patch = await captureWorkspacePatch(
+      this.#workspace,
+      dispatch.snapshot.identity.baseSha,
+      this.#captureRoot,
+    );
     const patchDigest = `sha256:${createHash("sha256").update(patch).digest("hex")}`;
     return {
       type,
@@ -695,7 +1055,9 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
       type: "fork",
       material: {
         sessionId: childBrokerSessionId,
-        branch: `${dispatch.snapshot.identity.branch}-fork-${suffix}`,
+        ...("version" in dispatch.snapshot.identity
+          ? { workspace: true as const }
+          : { branch: `${dispatch.snapshot.identity.branch}-fork-${suffix}` }),
         workflowId: `fork-${suffix}`,
         runId: `fork-${suffix}`,
         leaseId: this.#uuid(),

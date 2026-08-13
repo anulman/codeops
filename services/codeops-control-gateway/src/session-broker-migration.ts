@@ -20,6 +20,10 @@ const migrations = [
     ),
   },
   {
+    name: "workspace-checkpoint-artifacts-v1",
+    url: new URL("../sql/workspace-checkpoint-artifacts.sql", import.meta.url),
+  },
+  {
     name: "session-job-initialization-v1",
     url: new URL("../sql/session-job-initialization.sql", import.meta.url),
   },
@@ -30,6 +34,10 @@ const migrations = [
   {
     name: "work-item-lifecycle-journal-v1",
     url: new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url),
+  },
+  {
+    name: "workspace-launch-v1",
+    url: new URL("../sql/workspace-launch.sql", import.meta.url),
   },
 ] as const;
 
@@ -143,6 +151,8 @@ export async function grantSessionRuntimeReceiptAccess(
     await client.query(`GRANT SELECT (dispatch_id, dispatch_digest, status, result_json) ON codeops.session_runtime_execution_receipts TO ${identifier}`);
     await client.query(`GRANT INSERT (dispatch_id, dispatch_digest, status) ON codeops.session_runtime_execution_receipts TO ${identifier}`);
     await client.query(`GRANT UPDATE (status, result_json, completed_at) ON codeops.session_runtime_execution_receipts TO ${identifier}`);
+    await client.query(`GRANT SELECT (artifact_id, session_id, generation, checkpoint_id, artifact_kind, catalog_key, artifact_digest, artifact_bytes) ON codeops.workspace_checkpoint_artifacts TO ${identifier}`);
+    await client.query(`GRANT INSERT (artifact_id, session_id, generation, checkpoint_id, artifact_kind, catalog_key, artifact_digest, artifact_bytes, artifact_content) ON codeops.workspace_checkpoint_artifacts TO ${identifier}`);
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");

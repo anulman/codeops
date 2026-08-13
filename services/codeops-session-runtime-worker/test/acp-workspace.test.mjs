@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,8 +8,10 @@ import { promisify } from "node:util";
 import {
   AcpSessionStateStore,
   appendAcpAssistantText,
+  captureScratchArtifact,
   captureAcpTimelineUpdate,
   captureWorkspacePatch,
+  captureWorkspaceCheckpoint,
   createAcpPermissionRelay,
   forkOrCreateAcpSession,
   SocketAcpWorkspaceLifecycle,
@@ -227,17 +229,166 @@ test("maps ACP options through opaque broker identities without exposing claim a
 
 test("captures tracked and untracked workspace changes in one bounded patch", async () => {
   const root = await workspace();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "codeops-private-capture-"));
+  const baseSha = (await execFileAsync("git", ["-C", root, "rev-parse", "HEAD"])).stdout.trim();
   await writeFile(path.join(root, "README.md"), "after\n");
   await writeFile(path.join(root, "new.txt"), "new\n");
-  const patch = (await captureWorkspacePatch(root)).toString("utf8");
+  const patch = (await captureWorkspacePatch(root, baseSha, privateRoot)).toString("utf8");
   assert.match(patch, /README\.md/);
   assert.match(patch, /new\.txt/);
   assert.match(patch, /\+after/);
   assert.match(patch, /\+new/);
 });
 
+test("captures with isolated Git metadata without executing workspace configuration", async () => {
+  const root = await workspace();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "codeops-private-capture-"));
+  const baseSha = (await execFileAsync("git", ["-C", root, "rev-parse", "HEAD"])).stdout.trim();
+  const marker = path.join(root, "fsmonitor-executed");
+  const fsmonitor = path.join(root, "malicious-fsmonitor.sh");
+  await writeFile(fsmonitor, `#!/bin/sh\ntouch ${JSON.stringify(marker)}\n`, { mode: 0o700 });
+  await execFileAsync("git", ["-C", root, "config", "core.fsmonitor", fsmonitor]);
+  const originalIndex = await readFile(path.join(root, ".git", "index"));
+  await writeFile(path.join(root, "new.txt"), "new\n");
+
+  const patch = (await captureWorkspacePatch(root, baseSha, privateRoot)).toString("utf8");
+
+  assert.match(patch, /new\.txt/);
+  await assert.rejects(readFile(marker), { code: "ENOENT" });
+  assert.deepEqual(await readFile(path.join(root, ".git", "index")), originalIndex);
+  assert.deepEqual(await readdir(privateRoot), []);
+});
+
+test("captures exact per-source patches and a deterministic scratch artifact", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-workspace-v1-"));
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "codeops-private-capture-"));
+  const source = path.join(root, "sources", "repo-one");
+  const scratch = path.join(root, "scratch");
+  await mkdir(source, { recursive: true });
+  await mkdir(scratch, { recursive: true });
+  await execFileAsync("git", ["-C", source, "init"]);
+  await execFileAsync("git", ["-C", source, "config", "user.email", "test@example.com"]);
+  await execFileAsync("git", ["-C", source, "config", "user.name", "Test"]);
+  await writeFile(path.join(source, "README.md"), "before\n");
+  await execFileAsync("git", ["-C", source, "add", "README.md"]);
+  await execFileAsync("git", ["-C", source, "commit", "-m", "base"]);
+  const sha = (await execFileAsync("git", ["-C", source, "rev-parse", "HEAD"])).stdout.trim();
+  await writeFile(path.join(source, "README.md"), "after\n");
+  await writeFile(path.join(scratch, "script.mjs"), "console.log('ok')\n");
+  const checkpoint = await captureWorkspaceCheckpoint(root, {
+    version: "codeops.workspace/v1",
+    sources: [{
+      catalogKey: "repo-one",
+      repository: "example-org/repo-one",
+      checkoutPath: "sources/repo-one",
+      requestedRef: "main",
+      resolvedSha: sha,
+    }],
+    scratchPath: "scratch",
+  }, privateRoot);
+  assert.equal(checkpoint.sourcePatches[0].baseSha, sha);
+  assert.match(checkpoint.sourcePatches[0].patchDigest, /^sha256:[0-9a-f]{64}$/);
+  assert.match(checkpoint.scratchArtifactDigest, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("rejects scratch links without reading outside the pinned directory", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-scratch-links-"));
+  const outside = path.join(root, "outside.txt");
+  const scratch = path.join(root, "scratch");
+  await mkdir(scratch);
+  await writeFile(outside, "must-not-be-captured\n");
+  await symlink(outside, path.join(scratch, "linked.txt"));
+
+  await assert.rejects(
+    captureScratchArtifact(scratch),
+    /must not contain symbolic links/,
+  );
+});
+
+test("keeps a ten-megabyte scratch boundary within the durable encoded artifact limit", async () => {
+  const scratch = await mkdtemp(path.join(os.tmpdir(), "codeops-scratch-bound-"));
+  await writeFile(path.join(scratch, "large.txt"), Buffer.alloc(10_000_000, 0x61));
+
+  const artifact = await captureScratchArtifact(scratch);
+
+  assert.equal(artifact.content.byteLength > 12_000_000, true);
+  assert.equal(artifact.content.byteLength <= 16_000_000, true);
+});
+
+test("persists actual source patches and scratch files before committing a workspace checkpoint", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-workspace-artifacts-"));
+  const source = path.join(root, "sources", "repo-one");
+  const scratch = path.join(root, "scratch");
+  await mkdir(source, { recursive: true });
+  await mkdir(scratch, { recursive: true });
+  await execFileAsync("git", ["-C", source, "init"]);
+  await execFileAsync("git", ["-C", source, "config", "user.email", "test@example.com"]);
+  await execFileAsync("git", ["-C", source, "config", "user.name", "Test"]);
+  await writeFile(path.join(source, "README.md"), "before\n");
+  await execFileAsync("git", ["-C", source, "add", "README.md"]);
+  await execFileAsync("git", ["-C", source, "commit", "-m", "base"]);
+  const sha = (await execFileAsync("git", ["-C", source, "rev-parse", "HEAD"])).stdout.trim();
+  await writeFile(path.join(source, "README.md"), "after\n");
+  await writeFile(path.join(scratch, "script.mjs"), "console.log('durable')\n");
+  const manifest = {
+    version: "codeops.workspace/v1",
+    sources: [{
+      catalogKey: "repo-one",
+      repository: "example-org/repo-one",
+      checkoutPath: "sources/repo-one",
+      requestedRef: "main",
+      resolvedSha: sha,
+    }],
+    scratchPath: "scratch",
+  };
+  const artifacts = [];
+  const lifecycle = new SocketAcpWorkspaceLifecycle({
+    socketPath: "/run/codeops/agent.sock",
+    workspace: root,
+    statePath: path.join(root, ".runtime", "sessions.json"),
+    permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
+    uuid: () => "99999999-9999-4999-8999-999999999999",
+    artifacts: { put: async (artifact) => artifacts.push(artifact) },
+    connect: async (_runtimeDispatch, operation) => operation({
+      newSession: async () => "acp-workspace-session",
+      loadSession: async () => {},
+      prompt: async () => ({ response: "ready", stopReason: "end_turn" }),
+      forkSession: async () => "unused",
+    }),
+  });
+  const workspaceSnapshot = {
+    identity: {
+      version: "codeops.session-workspace-identity/v1",
+      workspace: manifest,
+      workflowId: "workspace-launch",
+      runId: "launch-test",
+      parentSessionId: null,
+      forkedAtCursor: null,
+    },
+  };
+  await lifecycle.prompt(dispatch(
+    "prompt",
+    { prompt: "Make durable changes." },
+    workspaceSnapshot,
+  ));
+  const checkpoint = await lifecycle.checkpoint(
+    dispatch("checkpoint", {}, workspaceSnapshot),
+  );
+  assert.deepEqual(checkpoint.material.evidenceReferences, [
+    "artifact:99999999-9999-4999-8999-999999999999:source:repo-one",
+    "artifact:99999999-9999-4999-8999-999999999999:scratch",
+  ]);
+  assert.equal(artifacts.length, 2);
+  assert.match(artifacts[0].content.toString("utf8"), /\+after/);
+  assert.match(artifacts[1].content.toString("utf8"), /Y29uc29sZS5sb2coJ2R1cmFibGUnKQo=/);
+  assert.equal(artifacts[0].digest, checkpoint.material.sourcePatches[0].patchDigest);
+  assert.equal(artifacts[1].digest, checkpoint.material.scratchArtifactDigest);
+});
+
 test("executes prompt, checkpoint, hibernate, resume, and fork through ACP identity", async () => {
   const root = await workspace();
+  const baseSha = (await execFileAsync("git", ["-C", root, "rev-parse", "HEAD"])).stdout.trim();
+  const identity = { ...snapshot().identity, baseSha };
   await writeFile(path.join(root, "README.md"), "after\n");
   const calls = [];
   const ids = [
@@ -277,7 +428,11 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
   });
 
   assert.deepEqual(
-    await lifecycle.prompt(dispatch("prompt", { prompt: "Make one safe edit." })),
+    await lifecycle.prompt(dispatch(
+      "prompt",
+      { prompt: "Make one safe edit." },
+      { identity },
+    )),
     {
       type: "prompt",
       material: {
@@ -286,11 +441,11 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
       },
     },
   );
-  const checkpoint = await lifecycle.checkpoint(dispatch("checkpoint"));
+  const checkpoint = await lifecycle.checkpoint(dispatch("checkpoint", {}, { identity }));
   assert.equal(checkpoint.type, "checkpoint");
   assert.equal(checkpoint.material.acpSessionId, "acp-session-parent");
   assert.match(checkpoint.material.patchDigest, /^sha256:[0-9a-f]{64}$/);
-  const hibernate = await lifecycle.hibernate(dispatch("hibernate"));
+  const hibernate = await lifecycle.hibernate(dispatch("hibernate", {}, { identity }));
   assert.equal(hibernate.type, "hibernate");
 
   const hibernated = {

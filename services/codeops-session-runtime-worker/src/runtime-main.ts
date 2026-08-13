@@ -10,8 +10,10 @@ import {
 import { createSessionRuntimeLifecycleExecutor } from "./lifecycle.js";
 import { SessionJobInitializer } from "./initialization.js";
 import { PostgresRuntimeExecutionReceiptStore } from "./postgres-receipts.js";
+import { PostgresWorkspaceCheckpointArtifactStore } from "./workspace-artifacts.js";
 import { runSessionRuntimeWorker } from "./runner.js";
 import { SessionRuntimeTransport } from "./transport.js";
+import { loadRuntimeSessionIdentity } from "./session-identity.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -91,6 +93,7 @@ const socketTimeoutMs = boundedInteger(
 
 const database = new Pool({ connectionString: databaseUrl, max: 1 });
 const receipts = new PostgresRuntimeExecutionReceiptStore(database);
+const workspaceArtifacts = new PostgresWorkspaceCheckpointArtifactStore(database);
 const initializer = new SessionJobInitializer({
   gatewayOrigin,
   token: initializationToken,
@@ -102,18 +105,11 @@ process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);
 
 try {
+  const identity = await loadRuntimeSessionIdentity({ env: process.env });
   const initialization = await initializer.initialize(sessionJobInitializationRequestSchema.parse({
     version: "codeops.session-job-initialization/v1",
     sessionId: required("CODEOPS_SESSION_ID"),
-    identity: {
-      repository: required("CODEOPS_SESSION_REPOSITORY"),
-      branch: required("CODEOPS_SESSION_BRANCH"),
-      baseSha: required("CODEOPS_SESSION_BASE_SHA"),
-      workflowId: required("CODEOPS_SESSION_WORKFLOW_ID"),
-      runId: required("CODEOPS_SESSION_RUN_ID"),
-      parentSessionId: null,
-      forkedAtCursor: null,
-    },
+    identity,
     leaseId: required("CODEOPS_SESSION_LEASE_ID"),
     holderId: required("CODEOPS_SESSION_HOLDER_ID"),
   }));
@@ -152,6 +148,7 @@ try {
         statePath,
         socketTimeoutMs,
         permissions: createAcpPermissionRelay({ context }),
+        artifacts: workspaceArtifacts,
       });
       return createSessionRuntimeLifecycleExecutor({
         lifecycle,

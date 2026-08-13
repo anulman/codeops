@@ -13,6 +13,7 @@ interface KubernetesResource {
 
 const resourcePaths: Readonly<Record<string, string>> = {
   Secret: "api/v1/namespaces/{namespace}/secrets",
+  PersistentVolumeClaim: "api/v1/namespaces/{namespace}/persistentvolumeclaims",
   ServiceAccount: "api/v1/namespaces/{namespace}/serviceaccounts",
   Job: "apis/batch/v1/namespaces/{namespace}/jobs",
   NetworkPolicy:
@@ -26,6 +27,8 @@ export interface KubernetesClient {
   getPodLogs(name: string, container: string): Promise<string>;
   delete(resource: KubernetesResource): Promise<void>;
 }
+
+export class KubernetesResourceIdentityDriftError extends Error {}
 
 export function createInClusterKubernetesClient(input: {
   namespace: string;
@@ -102,10 +105,26 @@ export function createInClusterKubernetesClient(input: {
       const collection = collectionPath(resource);
       const created = await request("POST", collection, resource, [201, 409]);
       if (created.status === 201) return;
-      // Secret names are derived from the claimed request digest and Secrets
-      // are immutable. Avoid granting the gateway read access to unrelated
-      // namespace Secrets solely for restart reconciliation.
-      if (resource.kind === "Secret") return;
+      // Source Secret names include the first ten characters of a digest over
+      // the principal, request, workspace, and repository authorities. A 409
+      // is therefore an exact idempotent replay without Secret read authority.
+      if (resource.kind === "Secret") {
+        const sourceIdentity = resource.metadata.annotations?.[
+          "codeops.example/source-identity"
+        ];
+        if (
+          typeof sourceIdentity !== "string" ||
+          !/^[0-9a-f]{64}$/.test(sourceIdentity) ||
+          !resource.metadata.name.endsWith(`-source-${sourceIdentity.slice(0, 10)}`) ||
+          resource.metadata.annotations?.["codeops.example/request-digest"] !==
+            requestDigest
+        ) {
+          throw new KubernetesResourceIdentityDriftError(
+            "existing Kubernetes Secret identity is not content-addressed",
+          );
+        }
+        return;
+      }
       const existing = JSON.parse(
         (
           await request(
@@ -120,7 +139,9 @@ export function createInClusterKubernetesClient(input: {
           "codeops.example/request-digest"
         ] !== requestDigest
       ) {
-        throw new Error("existing Kubernetes run resource identity drift");
+        throw new KubernetesResourceIdentityDriftError(
+          "existing Kubernetes run resource identity drift",
+        );
       }
     },
     async getJob(name) {

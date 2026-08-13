@@ -46,6 +46,8 @@ test("documents one values file and one Helm install command", async () => {
   assert.match(chartReadme, /Quickstart supports exactly one repository/);
   assert.match(chartReadme, /Helm also stores supplied[\s\S]*release record/);
   assert.match(chartReadme, /uninstall retains the quickstart Secrets and PostgreSQL data PVC/);
+  assert.match(chartReadme, /workspace-launch-token/);
+  assert.match(chartReadme, /upgrade-for-interactive-workspace-launch/);
   assert.match(chartReadme, /ASD-STE100 technical product writing standard/);
 
   const render = spawnSync("helm", [

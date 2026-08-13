@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { workspaceManifestSchema } from "./workspace-launch.js";
 
 const identifier = z
   .string()
@@ -20,6 +21,7 @@ const optionalText = (maximum: number) => z.string().max(maximum).optional();
 export const SESSION_BROKER_VERSION = {
   snapshot: "codeops.session-snapshot/v1",
   checkpoint: "codeops.session-checkpoint/v1",
+  workspaceCheckpoint: "codeops.session-workspace-checkpoint/v1",
   command: "codeops.session-command/v1",
   commandResult: "codeops.session-command-result/v1",
   event: "codeops.session-event/v1",
@@ -131,7 +133,7 @@ export const sessionLeaseSchema = z.discriminatedUnion("status", [
   }
 });
 
-export const sessionCheckpointSchema = z
+export const legacySessionCheckpointSchema = z
   .object({
     version: z.literal(SESSION_BROKER_VERSION.checkpoint),
     checkpointId: uuid,
@@ -145,6 +147,46 @@ export const sessionCheckpointSchema = z
     createdAt: isoDateTime,
   })
   .strict();
+
+export const sessionWorkspaceCheckpointSchema = z
+  .object({
+    version: z.literal(SESSION_BROKER_VERSION.workspaceCheckpoint),
+    checkpointId: uuid,
+    sessionId: identifier,
+    generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    workspaceManifestDigest: sha256Digest,
+    sourcePatches: z
+      .array(
+        z
+          .object({
+            catalogKey: z.string().min(1).max(63),
+            repository: z
+              .string()
+              .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+            baseSha: gitSha,
+            patchDigest: sha256Digest,
+          })
+          .strict(),
+      )
+      .max(4),
+    scratchArtifactDigest: sha256Digest,
+    acpSessionId: safeText(500),
+    eventCursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    evidenceReferences: z.array(identifier).max(100),
+    createdAt: isoDateTime,
+  })
+  .strict()
+  .refine(
+    (checkpoint) =>
+      new Set(checkpoint.sourcePatches.map(({ catalogKey }) => catalogKey)).size ===
+      checkpoint.sourcePatches.length,
+    "workspace checkpoint source patches must be unique",
+  );
+
+export const sessionCheckpointSchema = z.union([
+  legacySessionCheckpointSchema,
+  sessionWorkspaceCheckpointSchema,
+]);
 
 export const sessionPermissionRequestSchema = z
   .object({
@@ -172,50 +214,102 @@ export const sessionPermissionRequestSchema = z
     "permission request options must be unique",
   );
 
-export const sessionIdentitySchema = z
+const sessionIdentityCommonShape = {
+  workflowId: workflowRunIdentifier,
+  runId: workflowRunIdentifier,
+  workItemId: uuid.optional(),
+  pullRequestNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
+  pullRequestHeadSha: gitSha.optional(),
+  agentRole: z
+    .enum(["coordinator", "research", "persona", "coding", "critic", "revision"])
+    .optional(),
+  round: z.number().int().positive().max(100).optional(),
+  parentSessionId: identifier.nullable(),
+  forkedAtCursor: z
+    .number()
+    .int()
+    .nonnegative()
+    .max(Number.MAX_SAFE_INTEGER)
+    .nullable(),
+} as const;
+
+function refineSessionIdentity<Schema extends z.ZodTypeAny>(
+  schema: Schema,
+): z.ZodEffects<Schema, z.output<Schema>, z.input<Schema>> {
+  return schema.superRefine((value, context) => {
+    const identity = value as {
+      readonly parentSessionId: string | null;
+      readonly forkedAtCursor: number | null;
+      readonly pullRequestNumber?: number;
+      readonly pullRequestHeadSha?: string;
+      readonly agentRole?: string;
+      readonly round?: number;
+    };
+    if (
+      (identity.parentSessionId === null) !==
+      (identity.forkedAtCursor === null)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "fork lineage requires both parent session and event cursor",
+      });
+    }
+    if (
+      (identity.pullRequestNumber === undefined) !==
+      (identity.pullRequestHeadSha === undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "pull request identity requires both number and head SHA",
+      });
+    }
+    if (
+      (identity.agentRole === undefined) !== (identity.round === undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "agent role and round must be supplied together",
+      });
+    }
+  });
+}
+
+export const legacySessionIdentitySchema = refineSessionIdentity(
+  z
   .object({
     repository: z
       .string()
       .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
     branch: safeText(200),
     baseSha: gitSha,
-    workflowId: workflowRunIdentifier,
-    runId: workflowRunIdentifier,
-    workItemId: uuid.optional(),
-    pullRequestNumber: z.number().int().positive().max(Number.MAX_SAFE_INTEGER).optional(),
-    pullRequestHeadSha: gitSha.optional(),
-    agentRole: z
-      .enum(["coordinator", "research", "persona", "coding", "critic", "revision"])
-      .optional(),
-    round: z.number().int().positive().max(100).optional(),
-    parentSessionId: identifier.nullable(),
-    forkedAtCursor: z
-      .number()
-      .int()
-      .nonnegative()
-      .max(Number.MAX_SAFE_INTEGER)
-      .nullable(),
+    ...sessionIdentityCommonShape,
   })
-  .strict()
-  .refine(
-    (identity) =>
-      (identity.parentSessionId === null) ===
-      (identity.forkedAtCursor === null),
-    "fork lineage requires both parent session and event cursor",
-  )
-  .refine(
-    (identity) =>
-      (identity.pullRequestNumber === undefined) ===
-      (identity.pullRequestHeadSha === undefined),
-    "pull request identity requires both number and head SHA",
-  )
-  .refine(
-    (identity) =>
-      (identity.agentRole === undefined) === (identity.round === undefined),
-    "agent role and round must be supplied together",
-  );
+  .strict(),
+);
 
-export const temporalCodeOpsSessionIdentitySchema = sessionIdentitySchema
+export const workspaceSessionIdentitySchema = refineSessionIdentity(
+  z
+    .object({
+      version: z.literal("codeops.session-workspace-identity/v1"),
+      workspace: workspaceManifestSchema,
+      ...sessionIdentityCommonShape,
+    })
+    .strict(),
+);
+
+export const sessionIdentitySchema = z.union([
+  legacySessionIdentitySchema,
+  workspaceSessionIdentitySchema,
+]);
+
+export function isWorkspaceSessionIdentity(
+  identity: z.infer<typeof sessionIdentitySchema>,
+): identity is z.infer<typeof workspaceSessionIdentitySchema> {
+  return "version" in identity &&
+    identity.version === "codeops.session-workspace-identity/v1";
+}
+
+export const temporalCodeOpsSessionIdentitySchema = legacySessionIdentitySchema
   .superRefine((identity, context) => {
     if (identity.workItemId === undefined) {
       context.addIssue({
@@ -771,7 +865,17 @@ export type SessionCapability = z.infer<typeof sessionCapabilitySchema>;
 export type SessionState = z.infer<typeof sessionStateSchema>;
 export type SessionLease = z.infer<typeof sessionLeaseSchema>;
 export type SessionCheckpoint = z.infer<typeof sessionCheckpointSchema>;
+export type LegacySessionCheckpoint = z.infer<
+  typeof legacySessionCheckpointSchema
+>;
+export type SessionWorkspaceCheckpoint = z.infer<
+  typeof sessionWorkspaceCheckpointSchema
+>;
 export type SessionIdentity = z.infer<typeof sessionIdentitySchema>;
+export type LegacySessionIdentity = z.infer<typeof legacySessionIdentitySchema>;
+export type WorkspaceSessionIdentity = z.infer<
+  typeof workspaceSessionIdentitySchema
+>;
 export type TemporalCodeOpsSessionIdentity = z.infer<
   typeof temporalCodeOpsSessionIdentitySchema
 >;

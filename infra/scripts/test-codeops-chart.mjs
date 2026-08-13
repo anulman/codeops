@@ -348,7 +348,7 @@ test("exposes only the Agents UI and requires signed Access configuration", () =
 test("defaults to deny and opens only explicit component paths", () => {
   const resources = render();
   const policies = resources.filter(({ kind }) => kind === "NetworkPolicy");
-  assert.equal(policies.length, 15);
+  assert.equal(policies.length, 16);
   const deny = resource(resources, "NetworkPolicy", "team-a-codeops-default-deny");
   assert.deepEqual(deny.spec.podSelector, {
     matchLabels: { "app.kubernetes.io/part-of": "codeops" },
@@ -408,6 +408,21 @@ test("defaults to deny and opens only explicit component paths", () => {
   assert.deepEqual(
     modelProxy.spec.ingress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)),
     ["TCP:8080"],
+  );
+  const materializer = resource(
+    resources,
+    "NetworkPolicy",
+    "team-a-codeops-workspace-materializer",
+  );
+  assert.deepEqual(materializer.spec.ingress, []);
+  assert.deepEqual(materializer.spec.podSelector, {
+    matchLabels: { "app.kubernetes.io/component": "workspace-materializer" },
+  });
+  assert.deepEqual(
+    materializer.spec.egress.flatMap(({ ports = [] }) =>
+      ports.map(({ protocol, port }) => `${protocol}:${port}`)
+    ).sort(),
+    ["TCP:443", "TCP:53", "UDP:53"],
   );
   const relay = resource(resources, "NetworkPolicy", "team-a-codeops-lifecycle-relay");
   assert.match(JSON.stringify(relay), /TCP.*4222/);

@@ -3,6 +3,7 @@ import { Link, createFileRoute } from "@tanstack/react-router";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
 import { getSessionFleet } from "@/lib/sessionBroker.data";
+import { sessionSearchText, sessionWorkspaceDetail, sessionWorkspaceLabel } from "@/lib/sessionIdentity";
 import type { SessionSnapshot } from "@codeops/codeops-contracts/session-broker";
 
 export const Route = createFileRoute("/")({
@@ -32,7 +33,7 @@ function DesktopOverview({ sessions }: Readonly<{ sessions: readonly SessionSnap
     <main className="hidden min-h-dvh bg-[#111113] lg:block">
       <div className="flex h-13 items-center justify-between border-b border-white/[0.07] px-5">
         <div className="flex items-center gap-2 text-sm font-semibold tracking-[-0.01em]">Sessions <span className="rounded-md bg-white/[0.05] px-1.5 py-0.5 text-[10px] font-medium text-white/35">{sessions.length}</span></div>
-        <div className="flex items-center gap-2 text-[11px] text-white/35"><span className="size-1.5 rounded-full bg-[#54d18b]" />Live broker state</div>
+        <div className="flex items-center gap-3"><div className="flex items-center gap-2 text-[11px] text-white/35"><span className="size-1.5 rounded-full bg-[#54d18b]" />Live broker state</div><Link to="/new" className="grid h-8 place-items-center rounded-lg bg-[#6d6af7] px-3 text-[11px] font-semibold text-white transition hover:bg-[#7c79ff]">New session</Link></div>
       </div>
       <div className="mx-auto max-w-5xl px-8 py-10 xl:px-12">
         <div className="flex items-end justify-between gap-8 border-b border-white/[0.07] pb-7">
@@ -71,14 +72,14 @@ function MobileFleet({ sessions }: Readonly<{ sessions: readonly SessionSnapshot
   const [query, setQuery] = useState("");
   const counts = stateCounts(sessions);
   const visibleSessions = useMemo(() => sessions.filter((session) => {
-    const searchable = `${session.identity.workflowId} ${session.identity.runId} ${session.identity.branch} ${session.identity.baseSha}`.toLowerCase();
+    const searchable = sessionSearchText(session.identity).toLowerCase();
     return matchesFilter(session, filter) && searchable.includes(query.trim().toLowerCase());
   }), [filter, query, sessions]);
   return (
     <main className="px-4 pb-10 pt-6 lg:hidden">
       <div className="flex items-start justify-between gap-4">
         <div><p className="text-[10px] font-semibold uppercase tracking-[0.14em] text-white/28">CodeOps</p><h1 className="mt-1 text-2xl font-semibold tracking-[-0.035em]">Sessions</h1></div>
-        <div className="flex items-center gap-3 pt-1 text-[11px] text-white/35"><span><strong className="text-[#6ee2a0]">{counts.active}</strong> Active</span><span><strong className="text-[#ffae8d]">{counts.attention}</strong> Attention</span></div>
+        <div className="flex items-center gap-3 pt-1 text-[11px] text-white/35"><span><strong className="text-[#6ee2a0]">{counts.active}</strong> Active</span><Link to="/new" className="grid size-9 place-items-center rounded-xl bg-[#6d6af7] text-xl text-white" aria-label="New session">＋</Link></div>
       </div>
       <label className="relative mt-5 block">
         <span className="sr-only">Search sessions</span><SearchIcon />
@@ -110,7 +111,7 @@ function OverviewGroup({ title, description, sessions, empty, tone = "default" }
 function DesktopSessionRow({ session }: Readonly<{ session: SessionSnapshot }>) {
   return (
     <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="group grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-5 px-4 py-3.5 transition hover:bg-white/[0.035]">
-      <div className="min-w-0"><div className="flex items-center gap-2"><span className={`size-1.5 rounded-full ${stateDot(session)}`} /><span className="truncate text-sm font-medium text-white/78 group-hover:text-white">{session.identity.runId}</span></div><p className="mt-1 truncate pl-3.5 font-mono text-[10px] text-white/26">{session.identity.branch} · {session.identity.baseSha.slice(0, 7)}</p></div>
+      <div className="min-w-0"><div className="flex items-center gap-2"><span className={`size-1.5 rounded-full ${stateDot(session)}`} /><span className="truncate text-sm font-medium text-white/78 group-hover:text-white">{session.identity.runId}</span></div><p className="mt-1 truncate pl-3.5 font-mono text-[10px] text-white/26">{sessionWorkspaceDetail(session.identity)}</p></div>
       <StatusBadge state={session.state} />
       <span className="font-mono text-[10px] text-white/22">{session.updatedAt.slice(11, 16)}</span>
     </Link>
@@ -125,7 +126,7 @@ function MobileSessionRow({ session }: Readonly<{ session: SessionSnapshot }>) {
   return (
     <Link to="/sessions/$sessionId" params={{ sessionId: session.sessionId }} className="group block py-4">
       <div className="flex items-center gap-2"><span className={`size-1.5 shrink-0 rounded-full ${stateDot(session)}`} /><span className="min-w-0 flex-1 truncate text-[15px] font-medium text-white/82">{session.identity.runId}</span><span className="font-mono text-[10px] text-white/24">{session.updatedAt.slice(11, 16)}</span></div>
-      <div className="mt-1.5 flex items-center justify-between gap-3 pl-3.5"><span className="min-w-0 truncate text-xs text-white/34">{session.identity.branch}</span><StatusBadge state={session.state} /></div>
+      <div className="mt-1.5 flex items-center justify-between gap-3 pl-3.5"><span className="min-w-0 truncate text-xs text-white/34">{sessionWorkspaceLabel(session.identity)}</span><StatusBadge state={session.state} /></div>
     </Link>
   );
 }
