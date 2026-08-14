@@ -3,6 +3,7 @@
 
 import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
+import { validateCodeOpsReleaseVersion } from "./codeops-release-version.mjs";
 import {
   copyFile,
   mkdtemp,
@@ -157,7 +158,10 @@ export function validateLock(lock) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(lock.release.repository)) {
     throw new Error("release repository must be owner/name");
   }
-  if (!/^v\d+\.\d+\.\d+$/.test(lock.release.tag)) throw new Error("release tag must be exact SemVer");
+  if (typeof lock.release.tag !== "string" || !lock.release.tag.startsWith("v")) {
+    throw new Error("release tag must have a v prefix");
+  }
+  validateCodeOpsReleaseVersion(lock.release.tag.slice(1));
   if (!SOURCE_SHA.test(lock.release.sourceSha)) throw new Error("release source SHA is invalid");
   if (!/^[0-9a-f]{64}$/.test(lock.release.manifestSha256)) {
     throw new Error("release manifest checksum is invalid");

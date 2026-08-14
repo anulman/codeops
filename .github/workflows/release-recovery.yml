@@ -32,6 +32,10 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
       - name: Validate immutable release recovery request
         env:
           GH_TOKEN: ${{ github.token }}
@@ -41,7 +45,8 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$RUN_ID" =~ ^[1-9][0-9]*$ ]]
-          [[ "$RELEASE_TAG" =~ ^v(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          [[ "$RELEASE_TAG" == v* ]]
+          node infra/scripts/codeops-release-version.mjs "${RELEASE_TAG#v}"
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
           [[ "$(git rev-parse "refs/tags/${RELEASE_TAG}")" == "$SOURCE_SHA" ]]
 

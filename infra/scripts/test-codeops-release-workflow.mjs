@@ -27,6 +27,10 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.ok(workflow.on.push.paths.includes("services/codeops-acceptance-runner/src/golden-dogfood.mjs"));
   assert.ok(workflow.on.push.paths.includes(".github/actions/codeops/action.yml"));
   assert.equal(workflow.on.workflow_dispatch.inputs.publish.default, false);
+  const releaseIdentity = workflow.jobs.validate.steps.find(
+    ({ name }) => name === "Validate release identity",
+  );
+  assert.match(releaseIdentity.run, /codeops-release-version\.mjs/);
   const goldenSource = workflow.jobs.validate.steps.find(
     ({ name }) => name === "Write exact golden source report",
   );
@@ -197,6 +201,10 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(serialized, /release-manifest\.json/);
   assert.match(serialized, /values\.release\.yaml/);
   assert.match(serialized, /codeops-release-consumer-lock\.mjs/);
+  assert.match(
+    serialized,
+    /cp infra\/scripts\/codeops-release-version\.mjs.*\.release\/evidence\/codeops-release-version\.mjs/s,
+  );
   assert.match(serialized, /codeops-consumer-lock\.json/);
   assert.match(serialized, /codeopsctl\.mjs/);
   assert.match(serialized, /Download exact image license evidence/);
@@ -233,7 +241,8 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   );
   assert.match(publishRelease.run, /gh release create/);
   assert.match(publishRelease.run, /--target "\$SOURCE_SHA"/);
-  assert.doesNotMatch(publishRelease.run, /--prerelease/);
+  assert.match(publishRelease.run, /RELEASE_VERSION.*== \*-\*/s);
+  assert.match(publishRelease.run, /--prerelease/);
   assert.match(publishRelease.run, /release\/\*/);
   assert.doesNotMatch(serialized, /example-repository\/example-repository-codeops/);
 });

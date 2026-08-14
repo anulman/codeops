@@ -16,6 +16,7 @@ on:
       - infra/scripts/codeops-release-images.mjs
       - infra/scripts/codeops-release-chart.mjs
       - infra/scripts/codeops-release-consumer-lock.mjs
+      - infra/scripts/codeops-release-version.mjs
       - infra/scripts/codeops-golden-release-evidence.mjs
       - infra/scripts/codeopsctl.mjs
       - services/codeops-acceptance-runner/src/golden-dogfood.mjs
@@ -23,6 +24,7 @@ on:
       - infra/scripts/test-codeops-action.mjs
       - infra/scripts/test-codeopsctl.mjs
       - infra/scripts/test-codeops-release-consumer-lock.mjs
+      - infra/scripts/test-codeops-release-version.mjs
       - infra/scripts/test-codeops-release-chart.mjs
       - infra/scripts/test-codeops-quickstart-docs.mjs
       - infra/scripts/test-codeops-release-images.mjs
@@ -31,7 +33,7 @@ on:
   workflow_dispatch:
     inputs:
       version:
-        description: Exact SemVer release version without a v prefix
+        description: Stable or <channel>.<sequence> prerelease version without a v prefix
         required: true
         type: string
       publish:
@@ -99,7 +101,7 @@ jobs:
               ;;
             *) exit 1 ;;
           esac
-          [[ "$release_version" =~ ^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$ ]]
+          node infra/scripts/codeops-release-version.mjs "$release_version"
           [[ "$publish" == "true" || "$publish" == "false" ]]
           printf 'release_version=%s\npublish=%s\n' "$release_version" "$publish" >> "$GITHUB_OUTPUT"
 
@@ -408,6 +410,8 @@ jobs:
             values.release.yaml \
             .release/evidence/
           cp infra/scripts/codeopsctl.mjs .release/evidence/codeopsctl.mjs
+          cp infra/scripts/codeops-release-version.mjs \
+            .release/evidence/codeops-release-version.mjs
           cp infra/scripts/codeops-golden-release-evidence.mjs \
             .release/evidence/codeops-golden-release-evidence.mjs
           RELEASE_TAG="v${RELEASE_VERSION}" \
@@ -785,9 +789,14 @@ jobs:
         run: |
           set -euo pipefail
           tag="v${RELEASE_VERSION}"
+          release_flags=()
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
           gh release create "$tag" \
             --repo "$GITHUB_REPOSITORY" \
             --target "$SOURCE_SHA" \
             --title "CodeOps ${tag}" \
             --generate-notes \
+            "${release_flags[@]}" \
             release/*
