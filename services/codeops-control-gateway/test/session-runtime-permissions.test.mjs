@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   pollSessionRuntimePermission,
@@ -10,7 +11,16 @@ const dispatchId = "33333333-3333-4333-8333-333333333333";
 const claimToken = "44444444-4444-4444-8444-444444444444";
 const leaseId = "11111111-1111-4111-8111-111111111111";
 const idempotencyKey = "22222222-2222-4222-8222-222222222222";
-const requestId = "permission-1";
+const operation = { kind: "command", command: "npm test", cwd: "/workspace" };
+const operationBytes = '{"command":"npm test","cwd":"/workspace","kind":"command"}';
+const operationDigest = `sha256:${createHash("sha256").update(operationBytes).digest("hex")}`;
+const requestId = `permission-${createHash("sha256")
+  .update(operationBytes)
+  .update("\0")
+  .update(dispatchId)
+  .update("\0")
+  .update("tool-call-1")
+  .digest("hex")}`;
 const workerId = "acp-worker:primary";
 
 function capabilities(state) {
@@ -86,6 +96,8 @@ function submission(overrides = {}) {
       requestId,
       title: "Allow write?",
       description: "The agent wants to update one file.",
+      operation,
+      operationDigest,
       options: [
         { optionId: "allow-once", label: "Allow once" },
         { optionId: "allow-session", label: "Allow for session" },
@@ -162,7 +174,7 @@ test("atomically publishes one claim-bound permission request and waiting snapsh
   assert.equal(event.values[6], "2026-08-05T03:18:00.000Z");
   const update = client.calls.find(({ text }) => text.startsWith("UPDATE codeops.sessions"));
   assert.match(update.values[0], /"state":"waiting_permission"/);
-  assert.match(update.values[0], /"requestId":"permission-1"/);
+  assert.match(update.values[0], new RegExp(`"requestId":"${requestId}"`));
   assert.equal(client.calls.at(-1).text, "COMMIT");
 });
 
@@ -178,6 +190,20 @@ test("replays only the exact immutable permission request and rejects stale clai
     replay.calls.some(({ text }) => text.startsWith("UPDATE codeops.sessions")),
     false,
   );
+
+  const operationDrift = new SubmitClient({ stored: submission() });
+  await assert.rejects(submitSessionRuntimePermission(operationDrift, {
+    dispatchId,
+    workerId,
+    submission: submission({
+      request: {
+        ...submission().request,
+        operation: { kind: "command", command: "npm run deploy", cwd: "/workspace" },
+      },
+    }),
+    now: () => new Date("2026-08-05T03:18:00.000Z"),
+  }), SessionRuntimePermissionConflictError);
+  assert.equal(operationDrift.calls.length, 0);
 
   for (const client of [
     new SubmitClient({ token: "99999999-9999-4999-8999-999999999999" }),

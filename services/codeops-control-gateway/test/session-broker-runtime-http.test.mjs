@@ -187,6 +187,8 @@ test("binds permission submission and polling to the claimed dispatch", async ()
       requestId,
       title: "Allow write?",
       description: "The agent wants to update one file.",
+      operation: { kind: "command", command: "npm test", cwd: "/workspace" },
+      operationDigest: `sha256:${"a".repeat(64)}`,
       options: [{ optionId: "allow-once", label: "Allow once" }],
       requestedAt: "2026-08-04T19:04:00.000Z",
     },

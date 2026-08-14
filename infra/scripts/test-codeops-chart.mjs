@@ -142,6 +142,12 @@ test("renders one portable CodeOps package with immutable images", () => {
   assert.match(proxySource, /team-a-codeops-model-proxy-credentials/);
   assert.match(proxySource, /openai-api-key/);
   assert.match(proxySource, /signing-key/);
+  assert.equal(
+    modelProxy.spec.template.spec.containers[0].env.find(
+      ({ name }) => name === "CODEOPS_MODEL_PROXY_PRIVACY_MODE",
+    ).value,
+    "strict-v1",
+  );
   const migration = resource(resources, "Job", "team-a-codeops-session-migrate");
   assert.equal(
     migration.metadata.annotations["helm.sh/hook"],

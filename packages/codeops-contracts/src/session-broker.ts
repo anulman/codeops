@@ -188,11 +188,77 @@ export const sessionCheckpointSchema = z.union([
   sessionWorkspaceCheckpointSchema,
 ]);
 
+export const sessionPermissionOperationSchema = z.discriminatedUnion("kind", [
+  z
+    .object({
+      kind: z.literal("command"),
+      command: safeText(20_000),
+      cwd: safeText(2_000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("mcp"),
+      server: safeText(200),
+      tool: safeText(200),
+      argumentsJson: safeText(50_000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("file_change"),
+      changes: z
+        .array(
+          z
+            .object({
+              path: safeText(2_000),
+              oldText: z.string().max(100_000).nullable(),
+              newText: z.string().max(100_000),
+            })
+            .strict(),
+        )
+        .min(1)
+        .max(20),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("work_item"),
+      repository: z
+        .string()
+        .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+      operation: z.enum(["create", "comment", "update", "relate"]),
+      targetWorkItemId: uuid.nullable(),
+      payloadJson: safeText(50_000),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("agent_permissions"),
+      detailsJson: safeText(50_000),
+    })
+    .strict(),
+]).superRefine((operation, context) => {
+  if (
+    operation.kind === "file_change" &&
+    new TextEncoder().encode(JSON.stringify(operation.changes)).byteLength >
+      200_000
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "permission file-change representation exceeds 200000 bytes",
+      path: ["changes"],
+    });
+  }
+});
+
 export const sessionPermissionRequestSchema = z
   .object({
     requestId: identifier,
     title: safeText(500),
     description: safeText(5_000),
+    operation: sessionPermissionOperationSchema,
+    operationDigest: sha256Digest,
     options: z
       .array(
         z
@@ -898,5 +964,8 @@ export type SessionCommandSubmission = z.infer<
 >;
 export type SessionContentBlock = z.infer<typeof sessionContentBlockSchema>;
 export type SessionTimelineUpdate = z.infer<typeof sessionTimelineUpdateSchema>;
+export type SessionPermissionOperation = z.infer<
+  typeof sessionPermissionOperationSchema
+>;
 export type SessionUserAction = z.infer<typeof sessionUserActionSchema>;
 export type SessionEvent = z.infer<typeof sessionEventSchema>;

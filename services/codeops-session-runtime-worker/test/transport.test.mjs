@@ -255,6 +255,11 @@ test("relays permission through a claim-hidden executor callback", async () => {
           requestId: "permission-1",
           title: "Allow write?",
           description: "The agent wants to update one file.",
+          operation: {
+            kind: "file_change",
+            changes: [{ path: "README.md", oldText: "before", newText: "after" }],
+          },
+          operationDigest: `sha256:${"a".repeat(64)}`,
           options: [{ optionId: "allow-once", label: "Allow once" }],
           requestedAt: "2026-08-04T20:01:00.000Z",
         },

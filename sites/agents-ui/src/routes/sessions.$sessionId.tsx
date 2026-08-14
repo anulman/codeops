@@ -6,7 +6,7 @@ import { executeSessionCommand, getSessionDetail, getSessionEvents, getSessionFl
 import { getWorkspaceLaunch } from "@/lib/workspaceLaunch.data";
 import { checkpointPatchLabel, isWorkspaceIdentity, sessionDisplayName, sessionWorkspaceDetail } from "@/lib/sessionIdentity";
 import { workspaceLaunchSessionId, workspaceSessionLaunchId, type WorkspaceLaunch } from "@codeops/codeops-contracts/workspace-launch";
-import type { SessionCommand, SessionActionType, SessionCapability, SessionContentBlock, SessionEvent, SessionSnapshot, SessionTimelineUpdate, SessionUserAction } from "@codeops/codeops-contracts/session-broker";
+import type { SessionCommand, SessionActionType, SessionCapability, SessionContentBlock, SessionEvent, SessionPermissionOperation, SessionSnapshot, SessionTimelineUpdate, SessionUserAction } from "@codeops/codeops-contracts/session-broker";
 
 export const Route = createFileRoute("/sessions/$sessionId")({
   loader: async ({ params }) => {
@@ -354,9 +354,30 @@ function PermissionCard({ session, capability }: Readonly<{ session: SessionSnap
   };
   return (
     <section className="mb-7 rounded-xl border border-[#ff9b73]/18 bg-[#ff9b73]/[0.055] p-4 shadow-[0_12px_40px_rgba(0,0,0,.16)]">
-      <div className="flex items-start gap-3"><span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-[#ff9b73]/10 text-[#ffae8d]">!</span><div className="min-w-0 flex-1"><p className="text-[9px] font-semibold uppercase tracking-[0.13em] text-[#ffae8d]/70">Input required</p><h2 className="mt-1 text-sm font-semibold text-white/86">{request.title}</h2><p className="mt-1.5 text-xs leading-5 text-white/42">{request.description}</p><div className="mt-3 flex flex-wrap gap-2">{request.options.map((option) => <button key={option.optionId} type="button" disabled={disabled} onClick={() => void respond(option.optionId)} className="h-10 rounded-lg border border-[#ff9b73]/20 bg-[#ff9b73]/10 px-3 text-[11px] font-medium text-[#ffc0a7] transition hover:bg-[#ff9b73]/16 disabled:cursor-not-allowed disabled:opacity-40 sm:h-8">{pendingOption === option.optionId ? "Working…" : option.label}</button>)}<button type="button" disabled={disabled} onClick={() => void respond(null)} className="h-10 rounded-lg border border-white/[0.07] px-3 text-[11px] font-medium text-white/42 transition hover:bg-white/[0.05] hover:text-white/70 disabled:cursor-not-allowed disabled:opacity-40 sm:h-8">{pendingOption === "deny" ? "Working…" : "Deny"}</button></div>{error ? <p role="alert" className="mt-3 text-[11px] leading-4 text-[#ff989d]">{error}</p> : null}</div></div>
+      <div className="flex items-start gap-3"><span className="mt-0.5 grid size-8 shrink-0 place-items-center rounded-lg bg-[#ff9b73]/10 text-[#ffae8d]">!</span><div className="min-w-0 flex-1"><p className="text-[9px] font-semibold uppercase tracking-[0.13em] text-[#ffae8d]/70">Input required</p><h2 className="mt-1 text-sm font-semibold text-white/86">{request.title}</h2><p className="mt-1.5 text-xs leading-5 text-white/42">{request.description}</p><PermissionOperationView operation={request.operation} digest={request.operationDigest} /><div className="mt-3 flex flex-wrap gap-2">{request.options.map((option) => <button key={option.optionId} type="button" disabled={disabled} onClick={() => void respond(option.optionId)} className="h-10 rounded-lg border border-[#ff9b73]/20 bg-[#ff9b73]/10 px-3 text-[11px] font-medium text-[#ffc0a7] transition hover:bg-[#ff9b73]/16 disabled:cursor-not-allowed disabled:opacity-40 sm:h-8">{pendingOption === option.optionId ? "Working…" : option.label}</button>)}<button type="button" disabled={disabled} onClick={() => void respond(null)} className="h-10 rounded-lg border border-white/[0.07] px-3 text-[11px] font-medium text-white/42 transition hover:bg-white/[0.05] hover:text-white/70 disabled:cursor-not-allowed disabled:opacity-40 sm:h-8">{pendingOption === "deny" ? "Working…" : "Deny"}</button></div>{error ? <p role="alert" className="mt-3 text-[11px] leading-4 text-[#ff989d]">{error}</p> : null}</div></div>
     </section>
   );
+}
+
+function PermissionOperationView({ operation, digest }: Readonly<{
+  operation: SessionPermissionOperation;
+  digest: string;
+}>) {
+  const body = (() => {
+    switch (operation.kind) {
+      case "command":
+        return <><Fact label="Working directory" value={operation.cwd} mono /><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/25 p-3 font-mono text-[10px] leading-5 text-white/65">{operation.command}</pre></>;
+      case "mcp":
+        return <><Fact label="MCP tool" value={`${operation.server} / ${operation.tool}`} mono /><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/25 p-3 font-mono text-[10px] leading-5 text-white/65">{operation.argumentsJson}</pre></>;
+      case "file_change":
+        return <div className="space-y-2">{operation.changes.map((change) => <details key={change.path} open className="rounded-lg border border-white/[0.06] bg-black/20 p-2"><summary className="cursor-pointer font-mono text-[10px] text-white/60">{change.path}</summary><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words font-mono text-[10px] leading-5 text-white/55">{`--- before\n${change.oldText ?? "(new file)"}\n+++ after\n${change.newText}`}</pre></details>)}</div>;
+      case "work_item":
+        return <><Fact label="Work item action" value={`${operation.operation} · ${operation.repository}`} /><Fact label="Target" value={operation.targetWorkItemId ?? "New work item"} mono /><pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/25 p-3 font-mono text-[10px] leading-5 text-white/65">{operation.payloadJson}</pre></>;
+      case "agent_permissions":
+        return <pre className="max-h-56 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-black/25 p-3 font-mono text-[10px] leading-5 text-white/65">{operation.detailsJson}</pre>;
+    }
+  })();
+  return <div aria-label="Exact operation awaiting permission" className="mt-3 rounded-lg border border-[#ff9b73]/12 bg-black/15 p-3"><p className="mb-2 text-[9px] font-semibold uppercase tracking-[0.12em] text-white/32">Exact operation</p>{body}<p className="mt-2 truncate font-mono text-[9px] text-white/22" title={digest}>{digest}</p></div>;
 }
 
 interface PromptSubmission {

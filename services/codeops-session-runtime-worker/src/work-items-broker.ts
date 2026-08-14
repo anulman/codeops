@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
+  sessionPermissionOperationSchema,
   workItemCommentInputSchema,
   workItemCreateInputSchema,
   workItemGetInputSchema,
@@ -104,6 +105,17 @@ export class WorkItemsBroker {
         ["comment", "update", "relate"].includes(operation) ||
         (operation === "create" && "mode" in workItem && workItem.mode === "direct");
       if (permissionRequired) {
+        const permissionOperation = sessionPermissionOperationSchema.parse({
+          kind: "work_item",
+          repository: workItem.repository,
+          operation,
+          targetWorkItemId:
+            "workItemId" in workItem ? workItem.workItemId : null,
+          payloadJson: canonical(workItem),
+        });
+        const operationDigest = `sha256:${createHash("sha256")
+          .update(canonical(permissionOperation))
+          .digest("hex")}`;
         const action = operation === "create"
           ? `Create “${"title" in workItem ? workItem.title : "work item"}”`
           : `${operation[0]!.toUpperCase()}${operation.slice(1)} work item`;
@@ -113,6 +125,8 @@ export class WorkItemsBroker {
             title: `${action} in ${workItem.repository}?`,
             description:
               `Allow CodeOps to ${operation} this work item in the configured project system.`,
+            operation: permissionOperation,
+            operationDigest,
             options: [
               { optionId: "allow-once", label: `Allow ${operation} once` },
               { optionId: "deny", label: "Do not allow it" },
