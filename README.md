@@ -6,8 +6,8 @@ repositories.
 
 The project is in alpha. Version 0 releases are public development releases.
 The chart and configuration can change before version 1.0. The portability,
-multi-repository, browser, image, and registry-install acceptance suites
-qualify each published release.
+multi-repository, browser, image, registry-install, and deterministic golden
+acceptance suites qualify each published release.
 
 ## Components
 
@@ -145,9 +145,13 @@ packaged values, publishes the Helm chart to
 `oci://ghcr.io/anulman/codeops/charts/codeops`, and retains the exact image,
 chart, source, and release-values evidence. After the registry-only install
 proof passes, the workflow creates an immutable public release in GitHub
-Releases with the chart archive, image plan, release manifest, release values, and
-checksums. GHCR remains the canonical Helm registry. GitHub Releases is the
-durable human-facing release record. Ordinary branch pushes and CI runs do not
+Releases with the chart archive, image plan, release manifest, release values,
+golden release report, and checksums. The golden release report binds the
+11-scenario source proof to anonymous registry access, the exact deployed chart
+and images, rollback, smoke, and cleanup evidence. It does not claim that the
+source scenarios ran inside the live services. GHCR remains the canonical Helm
+registry. GitHub Releases is the durable human-facing release record. Ordinary
+branch pushes and CI runs do not
 publish artifacts. Each release also retains an SPDX SBOM and a license-policy
 report for every published CodeOps image.
 
