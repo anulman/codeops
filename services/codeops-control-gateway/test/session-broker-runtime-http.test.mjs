@@ -50,6 +50,7 @@ function request(overrides = {}) {
   const permissionPolls = [];
   const workItems = [];
   const workItemOperations = [];
+  const githubReads = [];
   return {
     claims,
     completions,
@@ -57,6 +58,7 @@ function request(overrides = {}) {
     permissionPolls,
     workItems,
     workItemOperations,
+    githubReads,
     promise: serveSessionRuntime({
       method: "POST",
       url: "/v1/session-runtime/claims",
@@ -129,6 +131,17 @@ function request(overrides = {}) {
       relateWorkItem: async (input) => {
         workItemOperations.push({ operation: "relate", input });
         return { operation: "relate" };
+      },
+      readGitHub: async (input) => {
+        githubReads.push(input);
+        return {
+          version: "codeops.github-search-result/v1",
+          repository: "example-org/example-repository",
+          kind: "issues",
+          query: "runtime",
+          items: [],
+          truncated: false,
+        };
       },
       ...overrides,
     }),
@@ -245,6 +258,31 @@ test("binds work-item creation to the claimed dispatch and authenticated worker"
     dispatchId,
     workerId: "acp-worker:primary",
     request: createRequest,
+  }]);
+});
+
+test("binds one GitHub read to its exact runtime route and worker", async () => {
+  const githubRead = {
+    version: "codeops.session-runtime-github-read-request/v1",
+    claimToken,
+    operation: "search",
+    operationId: `githubread-${"a".repeat(64)}`,
+    input: {
+      repository: "example-org/example-repository",
+      kind: "issues",
+      query: "runtime",
+      limit: 5,
+    },
+  };
+  const submitted = request({
+    url: `/v1/session-runtime/dispatches/${dispatchId}/github-reads`,
+    readBody: async () => githubRead,
+  });
+  assert.equal((await submitted.promise).body.version, "codeops.github-search-result/v1");
+  assert.deepEqual(submitted.githubReads, [{
+    dispatchId,
+    workerId: "acp-worker:primary",
+    request: githubRead,
   }]);
 });
 

@@ -15,6 +15,7 @@ import { runSessionRuntimeWorker } from "./runner.js";
 import { SessionRuntimeTransport } from "./transport.js";
 import { loadRuntimeSessionIdentity } from "./session-identity.js";
 import { WorkItemsBroker } from "./work-items-broker.js";
+import { GitHubReadsBroker } from "./github-reads-broker.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -97,6 +98,12 @@ const workItemsBrokerPort = boundedInteger(
   1,
   65_535,
 );
+const githubReadsBrokerPort = boundedInteger(
+  "CODEOPS_GITHUB_READS_BROKER_PORT",
+  8092,
+  1,
+  65_535,
+);
 
 const database = new Pool({ connectionString: databaseUrl, max: 1 });
 const receipts = new PostgresRuntimeExecutionReceiptStore(database);
@@ -108,6 +115,7 @@ const initializer = new SessionJobInitializer({
 });
 const cancellation = new AbortController();
 const workItemsBroker = new WorkItemsBroker();
+const githubReadsBroker = new GitHubReadsBroker();
 const shutdown = () => cancellation.abort();
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);
@@ -143,6 +151,7 @@ try {
     },
   });
   await workItemsBroker.listen(workItemsBrokerPort);
+  await githubReadsBroker.listen(githubReadsBrokerPort);
   await waitForAcpSocket(socketPath, socketTimeoutMs);
   await writeFile(readyPath, "", { mode: 0o600, flag: "wx" });
   await runSessionRuntimeWorker({
@@ -160,10 +169,12 @@ try {
         artifacts: workspaceArtifacts,
       });
       return workItemsBroker.run(dispatch, context, () =>
-        createSessionRuntimeLifecycleExecutor({
-          lifecycle,
-          receipts,
-        })(dispatch, context),
+        githubReadsBroker.run(dispatch, context, () =>
+          createSessionRuntimeLifecycleExecutor({
+            lifecycle,
+            receipts,
+          })(dispatch, context),
+        ),
       );
     },
     onCompleted: (result) => {
@@ -178,6 +189,7 @@ try {
   });
 } finally {
   await workItemsBroker.close().catch(() => {});
+  await githubReadsBroker.close().catch(() => {});
   await rm(readyPath, { force: true }).catch(() => {});
   await rm(modelProxyTokenPath, { force: true }).catch(() => {});
   await writeFile(path.join(path.dirname(socketPath), "done"), "", {

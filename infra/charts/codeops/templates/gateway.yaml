@@ -47,6 +47,8 @@ spec:
             - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/codeops/initialization-token }
             - { name: CODEOPS_REPOSITORY_STEERING_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-steering/registry.json }
             - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy/signing-key }
+            - { name: CODEOPS_GITHUB_READ_PROVIDER_ORIGIN, value: http://{{ include "codeops.fullname" . }}-control-gateway:8080 }
+            - { name: CODEOPS_GITHUB_READ_PROVIDER_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-github-reads/repository-head-token }
             {{- if .Values.plane.adapter.enabled }}
             - { name: CODEOPS_WORK_ITEM_PROVIDER_ORIGIN, value: http://{{ include "codeops.fullname" . }}-github-controller:8080 }
             - { name: CODEOPS_WORK_ITEM_PROVIDER_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-work-items/work-item-mutation-token }
@@ -74,6 +76,7 @@ spec:
             - { name: secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
             - { name: repository-steering, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-steering, readOnly: true }
             - { name: model-proxy-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy, readOnly: true }
+            - { name: github-read-provider-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-github-reads, readOnly: true }
             {{- if .Values.plane.adapter.enabled }}
             - { name: work-item-provider-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-work-items, readOnly: true }
             {{- end }}
@@ -99,6 +102,12 @@ spec:
             defaultMode: 256
             items:
               - { key: signing-key, path: signing-key }
+        - name: github-read-provider-auth
+          secret:
+            secretName: {{ .Values.controlGateway.secretName }}
+            defaultMode: 256
+            items:
+              - { key: repository-head-token, path: repository-head-token }
         - name: temp
           emptyDir: { sizeLimit: 64Mi }
         {{- if .Values.plane.adapter.enabled }}

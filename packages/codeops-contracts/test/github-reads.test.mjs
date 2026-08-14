@@ -6,11 +6,14 @@ import {
   githubCheckRunSchema,
   githubProtectedBranchResultSchema,
   githubPullRequestDiffInputSchema,
+  githubReadProviderRequestSchema,
+  githubReadResultSchema,
   githubPullRequestSnapshotSchema,
   githubReviewThreadsInputSchema,
   githubSearchInputSchema,
   githubSearchItemSchema,
   githubSearchResultSchema,
+  sessionRuntimeGitHubReadRequestSchema,
 } from "../dist/github-reads.js";
 
 const repository = "anulman/codeops";
@@ -196,4 +199,60 @@ test("keeps issue and pull-request search result shapes distinct", () => {
     }],
     truncated: false,
   }), /kind is inconsistent/);
+});
+
+test("separates live-claim runtime requests from credential-free provider provenance", () => {
+  const input = {
+    repository,
+    kind: "issues",
+    query: "runtime",
+    limit: 5,
+  };
+  const operationId = `githubread-${"c".repeat(64)}`;
+  const runtime = sessionRuntimeGitHubReadRequestSchema.parse({
+    version: "codeops.session-runtime-github-read-request/v1",
+    claimToken: "11111111-1111-4111-8111-111111111111",
+    operation: "search",
+    operationId,
+    input,
+  });
+  assert.equal(runtime.claimToken, "11111111-1111-4111-8111-111111111111");
+
+  const provider = githubReadProviderRequestSchema.parse({
+    version: "codeops.github-read-provider-request/v1",
+    operation: "search",
+    operationId,
+    input,
+    payloadDigest: `sha256:${"d".repeat(64)}`,
+    provenance: {
+      sessionId: "session-1",
+      dispatchId: "22222222-2222-4222-8222-222222222222",
+      principalDigest: `sha256:${"e".repeat(64)}`,
+    },
+  });
+  assert.equal("claimToken" in provider, false);
+  assert.throws(() => githubReadProviderRequestSchema.parse({
+    ...provider,
+    claimToken: runtime.claimToken,
+  }));
+  assert.throws(() => sessionRuntimeGitHubReadRequestSchema.parse({
+    ...runtime,
+    operation: "checks",
+  }));
+});
+
+test("accepts only one declared bounded GitHub result shape", () => {
+  assert.equal(githubReadResultSchema.parse({
+    version: "codeops.github-search-result/v1",
+    repository,
+    kind: "issues",
+    query: "runtime",
+    items: [],
+    truncated: false,
+  }).version, "codeops.github-search-result/v1");
+  assert.throws(() => githubReadResultSchema.parse({
+    version: "codeops.github-raw-response/v1",
+    repository,
+    body: { token: "must-not-pass" },
+  }));
 });
