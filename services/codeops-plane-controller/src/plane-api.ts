@@ -85,6 +85,11 @@ export interface PlaneApiClient extends PlaneContentClient {
   ): Promise<readonly unknown[]>;
   getWorkItemRelations(projectId: string, workItemId: string): Promise<unknown>;
   listProjectWorkItemSnapshots(projectId: string): Promise<readonly unknown[]>;
+  createWorkItemRelation(
+    projectId: string,
+    workItemId: string,
+    input: Readonly<{ relation_type: string; issues: readonly string[] }>,
+  ): Promise<void>;
 }
 
 function planeOrigin(value: string): URL {
@@ -300,14 +305,19 @@ export function createPlaneApiClient(
       if (matches.length > 1) {
         throw new Error("duplicate Plane comments share the CodeOps identity");
       }
-      if (matches.length === 1) return matches[0]!;
-      return commentSchema.parse(
+      if (matches.length === 1) {
+        return { ...matches[0]!, disposition: "existing" as const };
+      }
+      return {
+        ...commentSchema.parse(
         await request(
           "POST",
           commentsPath,
           { ...input, access: "INTERNAL" },
         ),
-      );
+        ),
+        disposition: "created" as const,
+      };
     },
 
     async updateWorkItem(
@@ -348,6 +358,19 @@ export function createPlaneApiClient(
         name: intake.issue.name,
         descriptionHtml: intake.issue.description_html ?? "",
       };
+    },
+
+    async createWorkItemRelation(projectId, workItemId, input): Promise<void> {
+      await request(
+        "POST",
+        `${projectPath(projectId)}/work-items/${encodeURIComponent(
+          uuid.parse(workItemId),
+        )}/relations/`,
+        {
+          relation_type: z.string().min(1).max(64).parse(input.relation_type),
+          issues: z.array(uuid).min(1).max(50).parse(input.issues),
+        },
+      );
     },
 
   };

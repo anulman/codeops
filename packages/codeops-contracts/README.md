@@ -127,12 +127,14 @@ is the bounded round brief; a mention-only comment uses the bound ticket title
 and description. Edited comments, deleted comments, unregistered `@ai-*` text,
 and service-authored comments cannot start a research run.
 
-`codeops.plane-session-request/v1` separately classifies a new human comment
-as research, response, source change, or steering. A registered persona
-mention is always actionable. A comment without a persona must use an explicit
-request form. Discussion-only text returns no request. The request identity
-binds the comment, actor, exact Plane revision, requested personas, and intent
-so delivery retries produce one logical session input.
+`codeops.plane-session-request/v1` separately binds a strict small-model
+classification of a new human comment as ignore, research, response, source
+change, or steering. A registered persona mention remains a deterministic
+research trigger. Other comments use the bounded model classifier through the
+internal model proxy. An ignored comment returns no request before mutable
+Plane source is loaded. The request identity binds the comment, actor, exact
+Plane revision, requested personas, and admitted intent so delivery retries
+produce one logical session input.
 
 `qaContractResearcherPolicy` and the research mutation schemas enforce a
 content-only capability envelope. The researcher may propose or apply comments,

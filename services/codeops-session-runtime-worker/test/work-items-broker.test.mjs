@@ -68,3 +68,61 @@ test("direct creation stops when durable permission is denied", async () => {
     await broker.close();
   }
 });
+
+test("reads without permission and gates every mutation on one durable decision", async () => {
+  const broker = new WorkItemsBroker();
+  const port = await broker.listen(0);
+  const permissionTitles = [];
+  const calls = [];
+  const workItemId = "22222222-2222-4222-8222-222222222222";
+  const relatedWorkItemId = "33333333-3333-4333-8333-333333333333";
+  try {
+    await broker.run(dispatch, {
+      async requestPermission(input) {
+        permissionTitles.push(input.request.title);
+        return { outcome: "selected", acpOptionId: "allow-once" };
+      },
+      async getWorkItem(input) { calls.push(["get", input]); return { ok: true }; },
+      async searchWorkItems(input) { calls.push(["search", input]); return { ok: true }; },
+      async commentWorkItem(input) { calls.push(["comment", input]); return { ok: true }; },
+      async updateWorkItem(input) { calls.push(["update", input]); return { ok: true }; },
+      async relateWorkItem(input) { calls.push(["relate", input]); return { ok: true }; },
+    }, async () => {
+      const cases = [
+        ["get", { repository: "anulman/codeops", workItemId }],
+        ["search", { repository: "anulman/codeops", query: "provider" }],
+        ["comment", { repository: "anulman/codeops", workItemId, body: "Validated." }],
+        ["update", {
+          repository: "anulman/codeops",
+          workItemId,
+          expectedRevision: `sha256:${"a".repeat(64)}`,
+          title: "Updated",
+        }],
+        ["relate", {
+          repository: "anulman/codeops",
+          workItemId,
+          relatedWorkItemId,
+          relation: "relates_to",
+        }],
+      ];
+      for (const [operation, body] of cases) {
+        const response = await fetch(`http://127.0.0.1:${port}/v1/work-items/${operation}`, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        });
+        assert.equal(response.status, 200);
+      }
+    });
+    assert.deepEqual(calls.map(([operation]) => operation), [
+      "get", "search", "comment", "update", "relate",
+    ]);
+    assert.equal(permissionTitles.length, 3);
+    assert.match(permissionTitles[0], /^Comment work item/);
+    assert.match(permissionTitles[1], /^Update work item/);
+    assert.match(permissionTitles[2], /^Relate work item/);
+    assert.ok(calls.every(([, input]) => /^workitem-[0-9a-f]{64}$/.test(input.operationId)));
+  } finally {
+    await broker.close();
+  }
+});

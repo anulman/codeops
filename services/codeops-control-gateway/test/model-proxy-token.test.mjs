@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
-import { createModelProxyToken } from "../dist/model-proxy-token.js";
+import { createModelProxyToken } from "@codeops/codeops-contracts/model-proxy";
 
 test("issues one exact 75-minute session-bound model proxy token", () => {
   const signingKey = "m".repeat(64);

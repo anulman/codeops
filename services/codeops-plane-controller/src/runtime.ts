@@ -14,10 +14,16 @@ import {
   type GitHubPullRequestStackLink,
   type GitHubPullRequestStackSnapshot,
   type CodingRequest,
+  type PlaneSessionRequest,
   type ResearchRequest,
   type WorkflowTransitionNotice,
   workItemProviderCreateRequestSchema,
+  type WorkItemCommentResult,
   type WorkItemCreateResult,
+  type WorkItemProjection,
+  type WorkItemRelateResult,
+  type WorkItemSearchResult,
+  type WorkItemUpdateResult,
 } from "@codeops/codeops-contracts";
 import {
   parseGitHubEvent,
@@ -512,6 +518,72 @@ export function createGitHubSessionSteeringClient(input: {
   };
 }
 
+export function createPlaneSessionSteeringClient(input: {
+  readonly origin: string;
+  readonly repository: string;
+  readonly token: string;
+  readonly fetch?: typeof fetch;
+}): (
+  request: PlaneSessionRequest,
+) => Promise<"enqueued" | "already-enqueued" | "not-found"> {
+  const origin = internalServiceOrigin(
+    input.origin,
+    "session-control-gateway",
+    "Plane session steering origin must be the internal session gateway",
+  );
+  if (input.token.length < 32 || input.token.length > 4_096) {
+    throw new Error("Plane session steering token is invalid");
+  }
+  const repository = z.string().regex(REPOSITORY_IDENTITY).parse(input.repository);
+  return async (request) => {
+    const requestRepository = `${request.repository.owner}/${request.repository.name}`;
+    if (requestRepository !== repository) {
+      throw new Error("Plane session steering repository identity mismatch");
+    }
+    const response = await (input.fetch ?? fetch)(
+      new URL(repositoryRoute(repository, "/plane-session-events"), origin),
+      {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          authorization: `Bearer ${input.token}`,
+          "content-type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify({
+          version: "codeops.plane-session-steering/v1",
+          request,
+          principalId: `plane:${request.requestedBy}`,
+        }),
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (response.status === 404) return "not-found";
+    if (response.status !== 202) {
+      throw new Error(`Plane session steering failed with ${response.status}`);
+    }
+    const result = z
+      .object({
+        version: z.literal("codeops.plane-session-steering-result/v1"),
+        status: z.literal("accepted"),
+        sessionId: z.string().min(1).max(128),
+        workItemId: z.string().uuid(),
+        repository: z.string(),
+        requestId: z.string(),
+        dispatchId: z.string().uuid(),
+      })
+      .strict()
+      .parse(await response.json());
+    if (
+      result.workItemId !== request.workItemId ||
+      result.repository !== requestRepository ||
+      result.requestId !== request.requestId
+    ) {
+      throw new Error("Plane session steering response identity mismatch");
+    }
+    return "enqueued";
+  };
+}
+
 export function createTemporalResearchEnqueuer(input: {
   client: Pick<Client, "workflow">;
   taskQueue: string;
@@ -688,6 +760,11 @@ export function createPlaneWebhookRequestListener(input: {
   workItems?: {
     token: string;
     create: (request: unknown) => Promise<WorkItemCreateResult>;
+    get: (request: unknown) => Promise<WorkItemProjection>;
+    search: (request: unknown) => Promise<WorkItemSearchResult>;
+    comment: (request: unknown) => Promise<WorkItemCommentResult>;
+    update: (request: unknown) => Promise<WorkItemUpdateResult>;
+    relate: (request: unknown) => Promise<WorkItemRelateResult>;
   };
   github?: {
     resolveSecret: (repository: string) => string;
@@ -742,7 +819,18 @@ export function createPlaneWebhookRequestListener(input: {
       }
       return;
     }
-    if (request.method === "POST" && request.url === "/v1/work-items") {
+    if (
+      request.method === "POST" &&
+      request.url !== undefined &&
+      [
+        "/v1/work-items",
+        "/v1/work-items/get",
+        "/v1/work-items/search",
+        "/v1/work-items/comment",
+        "/v1/work-items/update",
+        "/v1/work-items/relate",
+      ].includes(request.url)
+    ) {
       if (
         input.workItems === undefined ||
         !authenticateBearer(
@@ -760,10 +848,17 @@ export function createPlaneWebhookRequestListener(input: {
         return;
       }
       try {
-        const createRequest = workItemProviderCreateRequestSchema.parse(
-          JSON.parse((await readRawBody(request)).toString("utf8")) as unknown,
-        );
-        json(response, 200, await input.workItems.create(createRequest));
+        const body = JSON.parse(
+          (await readRawBody(request)).toString("utf8"),
+        ) as unknown;
+        const operation =
+          request.url === "/v1/work-items"
+            ? "create"
+            : request.url.slice("/v1/work-items/".length);
+        const handler = input.workItems[
+          operation as "create" | "get" | "search" | "comment" | "update" | "relate"
+        ];
+        json(response, 200, await handler(body));
       } catch {
         json(response, 503, { status: "unavailable" });
       }

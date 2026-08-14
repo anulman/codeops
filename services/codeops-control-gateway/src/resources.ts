@@ -3,7 +3,7 @@ import type {
   CandidateCheckpoint,
 } from "@codeops/codeops-contracts";
 import { buildAgentPrompt } from "./core.js";
-import { createModelProxyToken } from "./model-proxy-token.js";
+import { createModelProxyToken } from "@codeops/codeops-contracts/model-proxy";
 
 interface ResourceConfig {
   readonly namespace: string;

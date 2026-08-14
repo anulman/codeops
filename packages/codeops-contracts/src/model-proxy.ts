@@ -15,12 +15,14 @@ export function createModelProxyToken(input: {
   if (!Number.isSafeInteger(issuedAt)) {
     throw new Error("model proxy token issue time is invalid");
   }
-  const payload = Buffer.from(JSON.stringify({
-    aud: "codeops-model-proxy",
-    sub: input.subject,
-    iat: issuedAt,
-    exp: issuedAt + 75 * 60,
-  })).toString("base64url");
+  const payload = Buffer.from(
+    JSON.stringify({
+      aud: "codeops-model-proxy",
+      sub: input.subject,
+      iat: issuedAt,
+      exp: issuedAt + 75 * 60,
+    }),
+  ).toString("base64url");
   const signature = createHmac("sha256", input.signingKey)
     .update(`v1.${payload}`)
     .digest("base64url");

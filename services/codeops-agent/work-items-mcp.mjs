@@ -14,19 +14,23 @@ if (
   throw new Error("work-items MCP broker must be an exact loopback HTTP origin");
 }
 
-const tool = {
-  name: "work_items.create",
-  description:
-    "Create an idempotent work item through the configured project-system provider. Use triage unless the user explicitly requests direct creation.",
-  inputSchema: {
+const repository = {
+  type: "string",
+  description: "Repository identity in owner/name form. It must be a source in this workspace.",
+};
+const workItemId = { type: "string", format: "uuid" };
+const tools = [
+  {
+    name: "work_items.create",
+    path: "/v1/work-items",
+    description:
+      "Create an idempotent work item through the configured project-system provider. Use triage unless the user explicitly requests direct creation.",
+    inputSchema: {
     type: "object",
     additionalProperties: false,
     required: ["repository", "title", "description"],
     properties: {
-      repository: {
-        type: "string",
-        description: "Repository identity in owner/name form. It must be a source in this workspace.",
-      },
+      repository,
       mode: {
         type: "string",
         enum: ["triage", "direct"],
@@ -37,7 +41,77 @@ const tool = {
       description: { type: "string", minLength: 1, maxLength: 20000 },
     },
   },
-};
+  },
+  {
+    name: "work_items.get",
+    path: "/v1/work-items/get",
+    description: "Get one work item and its exact optimistic-concurrency revision.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      required: ["repository", "workItemId"],
+      properties: { repository, workItemId },
+    },
+  },
+  {
+    name: "work_items.search",
+    path: "/v1/work-items/search",
+    description: "Search admitted-project work items before creating a duplicate.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      required: ["repository", "query"],
+      properties: {
+        repository,
+        query: { type: "string", minLength: 1, maxLength: 500 },
+        limit: { type: "integer", minimum: 1, maximum: 50, default: 20 },
+      },
+    },
+  },
+  {
+    name: "work_items.comment",
+    path: "/v1/work-items/comment",
+    description: "Add an idempotent comment after a human permission decision.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      required: ["repository", "workItemId", "body"],
+      properties: {
+        repository, workItemId,
+        body: { type: "string", minLength: 1, maxLength: 20000 },
+      },
+    },
+  },
+  {
+    name: "work_items.update",
+    path: "/v1/work-items/update",
+    description: "Update title or description after permission. Pass the exact revision returned by work_items.get.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      required: ["repository", "workItemId", "expectedRevision"],
+      anyOf: [{ required: ["title"] }, { required: ["description"] }],
+      properties: {
+        repository, workItemId,
+        expectedRevision: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+        title: { type: "string", minLength: 1, maxLength: 500 },
+        description: { type: "string", minLength: 1, maxLength: 20000 },
+      },
+    },
+  },
+  {
+    name: "work_items.relate",
+    path: "/v1/work-items/relate",
+    description: "Create an idempotent same-project relation after human permission.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      required: ["repository", "workItemId", "relatedWorkItemId", "relation"],
+      properties: {
+        repository, workItemId, relatedWorkItemId: workItemId,
+        relation: {
+          type: "string",
+          enum: ["blocking", "blocked_by", "duplicate", "relates_to", "start_after", "start_before", "finish_after", "finish_before"],
+        },
+      },
+    },
+  },
+];
 
 function send(message) {
   process.stdout.write(`${JSON.stringify(message)}\n`);
@@ -67,16 +141,21 @@ async function handle(message) {
     return;
   }
   if (message.method === "tools/list") {
-    send({ jsonrpc: "2.0", id: message.id, result: { tools: [tool] } });
+    send({
+      jsonrpc: "2.0",
+      id: message.id,
+      result: { tools: tools.map(({ path: _path, ...tool }) => tool) },
+    });
     return;
   }
   if (message.method === "tools/call") {
-    if (message.params?.name !== tool.name) {
+    const tool = tools.find(({ name }) => name === message.params?.name);
+    if (tool === undefined) {
       error(message.id, -32602, "unknown work-items tool");
       return;
     }
     try {
-      const response = await fetch(new URL("/v1/work-items", parsedOrigin), {
+      const response = await fetch(new URL(tool.path, parsedOrigin), {
         method: "POST",
         redirect: "error",
         headers: { "content-type": "application/json; charset=utf-8" },

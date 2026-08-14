@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
 import { validateSessionControlSecrets } from "./session-control-config.js";
-import { createModelProxyToken } from "./model-proxy-token.js";
+import { createModelProxyToken } from "@codeops/codeops-contracts/model-proxy";
 import {
   createGitHubSteeringRegistry,
   loadGitHubSteeringRegistryFile,
@@ -13,6 +13,12 @@ import {
   InvalidGitHubSessionSteeringRequestError,
   serveGitHubSessionSteering,
 } from "./github-session-steering.js";
+import {
+  AmbiguousPlaneSessionTargetError,
+  InvalidPlaneSessionSteeringRequestError,
+  PlaneSessionTargetNotFoundError,
+  servePlaneSessionSteering,
+} from "./plane-session-steering.js";
 import { migrateSessionBroker } from "./session-broker-migration.js";
 import {
   InvalidSessionCommandRequestError,
@@ -54,8 +60,13 @@ import {
   listSessionSnapshots,
 } from "./session-broker-repository.js";
 import {
+  authorizeSessionRuntimeWorkItemComment,
   authorizeSessionRuntimeWorkItemCreate,
-  createWorkItemProviderClient,
+  authorizeSessionRuntimeWorkItemGet,
+  authorizeSessionRuntimeWorkItemRelate,
+  authorizeSessionRuntimeWorkItemSearch,
+  authorizeSessionRuntimeWorkItemUpdate,
+  createWorkItemProviderClients,
   SessionRuntimeWorkItemConflictError,
   SessionRuntimeWorkItemNotFoundError,
 } from "./session-runtime-work-items.js";
@@ -155,7 +166,7 @@ if (
 const configuredWorkItemProvider =
   workItemProviderOrigin === undefined || workItemProviderToken === undefined
     ? undefined
-    : createWorkItemProviderClient({
+    : createWorkItemProviderClients({
         origin: workItemProviderOrigin,
         token: workItemProviderToken,
       });
@@ -177,6 +188,50 @@ const server = createServer((request, response) => {
   void (async () => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    try {
+      const result = await servePlaneSessionSteering({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        resolveToken: (repository) =>
+          repositorySteeringRegistry.resolve(repository),
+        readBody: () => readJson(request),
+        listSessions: async () => {
+          const client = await database.connect();
+          try { return await listSessionSnapshots(client, 200); }
+          finally { client.release(); }
+        },
+        enqueue: async (input) => {
+          const client = await database.connect();
+          try { return await enqueueSessionRuntimeDispatch(client, input); }
+          finally { client.release(); }
+        },
+      });
+      if (result !== null) {
+        json(response, result.status, result.body);
+        return;
+      }
+    } catch (error) {
+      const status =
+        error instanceof InvalidPlaneSessionSteeringRequestError
+          ? 400
+          : error instanceof PlaneSessionTargetNotFoundError
+            ? 404
+            : error instanceof AmbiguousPlaneSessionTargetError
+              ? 409
+              : 503;
+      json(response, status, {
+        status:
+          status === 400
+            ? "invalid-request"
+            : status === 404
+              ? "not-found"
+              : status === 409
+                ? "conflict"
+                : "unavailable",
+      });
       return;
     }
     try {
@@ -313,10 +368,50 @@ const server = createServer((request, response) => {
                 try {
                   const providerRequest =
                     await authorizeSessionRuntimeWorkItemCreate(client, input);
-                  return await configuredWorkItemProvider(providerRequest);
+                  return await configuredWorkItemProvider.create(providerRequest);
                 } finally {
                   client.release();
                 }
+              },
+              getWorkItem: async (input) => {
+                const client = await database.connect();
+                try {
+                  return await configuredWorkItemProvider.get(
+                    await authorizeSessionRuntimeWorkItemGet(client, input),
+                  );
+                } finally { client.release(); }
+              },
+              searchWorkItems: async (input) => {
+                const client = await database.connect();
+                try {
+                  return await configuredWorkItemProvider.search(
+                    await authorizeSessionRuntimeWorkItemSearch(client, input),
+                  );
+                } finally { client.release(); }
+              },
+              commentWorkItem: async (input) => {
+                const client = await database.connect();
+                try {
+                  return await configuredWorkItemProvider.comment(
+                    await authorizeSessionRuntimeWorkItemComment(client, input),
+                  );
+                } finally { client.release(); }
+              },
+              updateWorkItem: async (input) => {
+                const client = await database.connect();
+                try {
+                  return await configuredWorkItemProvider.update(
+                    await authorizeSessionRuntimeWorkItemUpdate(client, input),
+                  );
+                } finally { client.release(); }
+              },
+              relateWorkItem: async (input) => {
+                const client = await database.connect();
+                try {
+                  return await configuredWorkItemProvider.relate(
+                    await authorizeSessionRuntimeWorkItemRelate(client, input),
+                  );
+                } finally { client.release(); }
               },
             }),
       });

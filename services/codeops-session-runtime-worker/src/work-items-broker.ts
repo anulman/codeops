@@ -1,9 +1,13 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
+  workItemCommentInputSchema,
   workItemCreateInputSchema,
+  workItemGetInputSchema,
+  workItemRelateInputSchema,
+  workItemSearchInputSchema,
+  workItemUpdateInputSchema,
   type SessionRuntimeDispatch,
-  type WorkItemCreateResult,
 } from "@codeops/codeops-contracts";
 import type { RuntimeExecutionContext } from "./transport.js";
 
@@ -66,7 +70,10 @@ export class WorkItemsBroker {
   }
 
   async #serve(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    if (request.method !== "POST" || request.url !== "/v1/work-items") {
+    const operation = request.url === "/v1/work-items"
+      ? "create"
+      : request.url?.match(/^\/v1\/work-items\/(get|search|comment|update|relate)$/)?.[1];
+    if (request.method !== "POST" || operation === undefined) {
       json(response, 404, { status: "not-found" });
       return;
     }
@@ -80,20 +87,35 @@ export class WorkItemsBroker {
       return;
     }
     try {
-      const workItem = workItemCreateInputSchema.parse(await readJson(request));
+      const raw = await readJson(request);
+      const schemas = {
+        create: workItemCreateInputSchema,
+        get: workItemGetInputSchema,
+        search: workItemSearchInputSchema,
+        comment: workItemCommentInputSchema,
+        update: workItemUpdateInputSchema,
+        relate: workItemRelateInputSchema,
+      } as const;
+      const workItem = schemas[operation as keyof typeof schemas].parse(raw);
       const operationId = `workitem-${createHash("sha256")
-        .update(canonical({ dispatchId: active.dispatch.dispatchId, workItem }))
+        .update(canonical({ dispatchId: active.dispatch.dispatchId, operation, workItem }))
         .digest("hex")}`;
-      if (workItem.mode === "direct") {
+      const permissionRequired =
+        ["comment", "update", "relate"].includes(operation) ||
+        (operation === "create" && "mode" in workItem && workItem.mode === "direct");
+      if (permissionRequired) {
+        const action = operation === "create"
+          ? `Create “${"title" in workItem ? workItem.title : "work item"}”`
+          : `${operation[0]!.toUpperCase()}${operation.slice(1)} work item`;
         const decision = await active.context.requestPermission({
           request: {
             requestId: operationId,
-            title: `Create “${workItem.title}” in ${workItem.repository}?`,
+            title: `${action} in ${workItem.repository}?`,
             description:
-              "Allow CodeOps to create this work item directly in the configured project system.",
+              `Allow CodeOps to ${operation} this work item in the configured project system.`,
             options: [
-              { optionId: "allow-once", label: "Create this work item" },
-              { optionId: "deny", label: "Do not create it" },
+              { optionId: "allow-once", label: `Allow ${operation} once` },
+              { optionId: "deny", label: "Do not allow it" },
             ],
             requestedAt: new Date().toISOString(),
           },
@@ -109,11 +131,44 @@ export class WorkItemsBroker {
           return;
         }
       }
-      const result: WorkItemCreateResult = await active.context.createWorkItem({
-        operationId,
-        workItem,
-      });
-      json(response, 200, result);
+      switch (operation) {
+        case "create":
+          json(response, 200, await active.context.createWorkItem({
+            operationId,
+            workItem: workItemCreateInputSchema.parse(workItem),
+          }));
+          return;
+        case "get":
+          json(response, 200, await active.context.getWorkItem({
+            operationId,
+            workItem: workItemGetInputSchema.parse(workItem),
+          }));
+          return;
+        case "search":
+          json(response, 200, await active.context.searchWorkItems({
+            operationId,
+            workItem: workItemSearchInputSchema.parse(workItem),
+          }));
+          return;
+        case "comment":
+          json(response, 200, await active.context.commentWorkItem({
+            operationId,
+            workItem: workItemCommentInputSchema.parse(workItem),
+          }));
+          return;
+        case "update":
+          json(response, 200, await active.context.updateWorkItem({
+            operationId,
+            workItem: workItemUpdateInputSchema.parse(workItem),
+          }));
+          return;
+        case "relate":
+          json(response, 200, await active.context.relateWorkItem({
+            operationId,
+            workItem: workItemRelateInputSchema.parse(workItem),
+          }));
+          return;
+      }
     } catch {
       json(response, 503, { status: "unavailable" });
     }

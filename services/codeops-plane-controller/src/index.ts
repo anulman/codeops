@@ -3,14 +3,17 @@ import {
   canonicalSerialize,
   codingRequestSchema,
   contractVersions,
+  createPlaneSessionRequestFromPlaneComment,
   createResearchRequestFromPlaneComment,
   type ProjectContextDocument,
   parseResearchPersonaRound,
   type CodingRequest,
+  type PlaneSessionRequest,
   type ResearchRequest,
   verifyPlaneWebhookSignature,
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
+import type { PlaneCommentRequestClassifier } from "./comment-classifier.js";
 import { compileProjectContext } from "./project-context.js";
 
 export {
@@ -128,6 +131,7 @@ export {
   createGitHubStackLinker,
   createGitHubStackLoader,
   createGitHubSessionSteeringClient,
+  createPlaneSessionSteeringClient,
   createGitHubCurrentPullRequestResolver,
   createRepositoryHeadResolver,
   createTemporalCodingCanceller,
@@ -310,6 +314,11 @@ export type ResearchAdmission = Readonly<{
   request: ResearchRequest;
   planeRevisionDigest: string;
 }>;
+export type PlaneSessionAdmission = Readonly<{
+  eventId: string;
+  request: PlaneSessionRequest;
+  planeRevisionDigest: string;
+}>;
 
 export type ReadyAdmission = Readonly<{
   eventId: string;
@@ -490,7 +499,7 @@ function normalizePlaneCommentEvent(input: {
   };
 }
 
-export async function admitPlaneResearchComment(input: {
+async function admitPlaneComment(input: {
   rawBody: Buffer;
   headers: PlaneWebhookHeaders;
   webhookSecret: string;
@@ -501,12 +510,18 @@ export async function admitPlaneResearchComment(input: {
   baseSha: string;
   receivedAt: string;
   projectContextDocuments: readonly ProjectContextDocument[];
+  classifyCommentRequest: PlaneCommentRequestClassifier;
   loadSource: (input: {
     workspaceId: string;
     projectId: string | undefined;
     workItemId: string;
   }) => Promise<PlaneSourceSnapshot>;
-}): Promise<ResearchAdmission | null> {
+}, mode: "persona" | "actionable"): Promise<{
+  readonly eventId: string;
+  readonly sessionRequest: PlaneSessionRequest;
+  readonly researchRequest: ResearchRequest | null;
+  readonly planeRevisionDigest: string;
+} | null> {
   if (
     !verifyPlaneWebhookSignature({
       secret: input.webhookSecret,
@@ -522,14 +537,23 @@ export async function admitPlaneResearchComment(input: {
     headers: input.headers,
     personaUserIds: input.personaUserIds ?? new Map(),
   });
-
-  if (parseResearchPersonaRound(event.comment) === null) return null;
   if (!input.allowedHumanActorIds.has(event.actorId)) {
     // Controller/persona-authored replies may quote or mention persona handles.
     // Ignoring every non-admitted actor prevents recursive dispatch without
     // weakening the positive human allowlist.
     return null;
   }
+  const personaRound = parseResearchPersonaRound(event.comment);
+  if (mode === "persona" && personaRound === null) return null;
+  if (mode === "actionable" && personaRound !== null) return null;
+  const classification =
+    personaRound === null
+      ? await input.classifyCommentRequest({
+          eventId: event.eventId,
+          comment: event.comment,
+        })
+      : { intent: "research" as const };
+  if (classification.intent === "ignore") return null;
 
   const source = await input.loadSource({
     workspaceId: event.workspaceId,
@@ -643,8 +667,7 @@ export async function admitPlaneResearchComment(input: {
     documents: input.projectContextDocuments,
   });
 
-  const request = createResearchRequestFromPlaneComment(
-    {
+  const commentEvent = {
       version: contractVersions.planeCommentEvent,
       deliveryId: event.deliveryId,
       eventId: event.eventId,
@@ -659,27 +682,66 @@ export async function admitPlaneResearchComment(input: {
       },
       comment: event.comment,
       occurredAt: z.string().datetime({ offset: true }).parse(input.receivedAt),
-    },
+  };
+  const sourceContext = {
+    repository: input.repository,
+    controlPlaneSha: gitSha.parse(input.controlPlaneSha),
+    baseSha: gitSha.parse(input.baseSha),
+    planeRevisionDigest,
+    projectContext,
+    ticketSnapshot,
+    defaultBrief: [workItem.name, workItemDescription(workItem)]
+      .filter((value) => value.trim().length > 0)
+      .join("\n\n")
+      .slice(0, 8_000),
+  };
+  const sessionRequest = createPlaneSessionRequestFromPlaneComment(
+    commentEvent,
+    sourceContext,
+    classification,
+  );
+  const researchRequest = createResearchRequestFromPlaneComment(
+    commentEvent,
     {
-      repository: input.repository,
-      controlPlaneSha: gitSha.parse(input.controlPlaneSha),
-      baseSha: gitSha.parse(input.baseSha),
-      planeRevisionDigest,
-      projectContext,
-      ticketSnapshot,
-      defaultBrief: [workItem.name, workItemDescription(workItem)]
-        .filter((value) => value.trim().length > 0)
-        .join("\n\n")
-        .slice(0, 8_000),
+      ...sourceContext,
     },
   );
-  if (request === null) {
-    throw new Error("admitted Plane research event did not produce a request");
+  if (sessionRequest === null) {
+    throw new Error("admitted Plane event did not produce a session request");
   }
   return {
     eventId: event.eventId,
-    request,
+    sessionRequest,
+    researchRequest,
     planeRevisionDigest,
+  };
+}
+
+export async function admitPlaneSessionComment(
+  input: Parameters<typeof admitPlaneComment>[0],
+): Promise<PlaneSessionAdmission | null> {
+  const admission = await admitPlaneComment(input, "actionable");
+  return admission === null
+    ? null
+    : {
+        eventId: admission.eventId,
+        request: admission.sessionRequest,
+        planeRevisionDigest: admission.planeRevisionDigest,
+      };
+}
+
+export async function admitPlaneResearchComment(
+  input: Parameters<typeof admitPlaneComment>[0],
+): Promise<ResearchAdmission | null> {
+  const admission = await admitPlaneComment(input, "persona");
+  if (admission === null) return null;
+  if (admission.researchRequest === null) {
+    throw new Error("admitted Plane research event did not produce a request");
+  }
+  return {
+    eventId: admission.eventId,
+    request: admission.researchRequest,
+    planeRevisionDigest: admission.planeRevisionDigest,
   };
 }
 
@@ -1227,6 +1289,24 @@ function researchEventDigest(request: ResearchRequest): string {
       }),
     )
     .digest("hex")}`;
+}
+
+export async function processPlaneSessionWebhook(
+  input: Parameters<typeof admitPlaneSessionComment>[0] & {
+    enqueue: (
+      request: PlaneSessionRequest,
+    ) => Promise<"enqueued" | "already-enqueued" | "not-found">;
+  },
+): Promise<ResearchWebhookProcessingResult> {
+  const admission = await admitPlaneSessionComment(input);
+  if (admission === null) return { status: "ignored" };
+  const result = await input.enqueue(admission.request);
+  if (result === "not-found") return { status: "ignored" };
+  return {
+    status: "enqueued",
+    requestId: admission.request.requestId,
+    duplicate: result === "already-enqueued",
+  };
 }
 
 export async function processPlaneResearchWebhook(

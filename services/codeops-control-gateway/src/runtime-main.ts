@@ -30,7 +30,7 @@ import {
   loadRepositoryRegistryFile,
   resolveRepositoryRoute,
 } from "./repository-registry.js";
-import { createModelProxyToken } from "./model-proxy-token.js";
+import { createModelProxyToken } from "@codeops/codeops-contracts/model-proxy";
 import { migrateSessionBroker } from "./session-broker-migration.js";
 import {
   InvalidSessionCommandRequestError,

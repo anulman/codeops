@@ -69,6 +69,8 @@ spec:
             - { name: CODEOPS_WORK_ITEM_MUTATION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-controller/work-item-mutation-token }
             - { name: CODEOPS_REPOSITORY_HEAD_ORIGIN, value: http://{{ include "codeops.fullname" . }}-control-gateway:8080 }
             - { name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/repository-head-token }
+            - { name: CODEOPS_MODEL_PROXY_ORIGIN, value: http://{{ include "codeops.fullname" . }}-model-proxy:8080 }
+            - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy/signing-key }
             - { name: CODEOPS_REPOSITORY_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-repositories/registry.json }
           ports:
             - { name: http, containerPort: 8080 }
@@ -93,6 +95,7 @@ spec:
             - { name: controller-state, mountPath: /var/lib/codeops/controller }
             - { name: controller-secrets, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-controller, readOnly: true }
             - { name: control-gateway-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway, readOnly: true }
+            - { name: model-proxy-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy, readOnly: true }
             - { name: repository-registry, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-repositories, readOnly: true }
             {{- if $repositoryContexts }}
             - { name: repository-contexts, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-contexts, readOnly: true }
@@ -113,6 +116,12 @@ spec:
             defaultMode: 256
             items:
               - { key: repository-head-token, path: repository-head-token }
+        - name: model-proxy-auth
+          secret:
+            secretName: {{ .Values.modelProxy.secretName }}
+            defaultMode: 256
+            items:
+              - { key: signing-key, path: signing-key }
         - name: repository-registry
           secret:
             secretName: {{ .Values.githubController.repositoryAuthoritySecretName }}

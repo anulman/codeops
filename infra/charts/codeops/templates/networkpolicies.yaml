@@ -237,6 +237,10 @@ spec:
             matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-control-gateway }
       ports: [{ protocol: TCP, port: 8080 }]
     - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-model-proxy }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - to:
         - namespaceSelector: {}
       ports: [{ protocol: TCP, port: 7233 }]
     - to:
@@ -334,7 +338,10 @@ spec:
   ingress:
     - from:
         - podSelector:
-            matchLabels: { app.kubernetes.io/component: runtime }
+            matchExpressions:
+              - key: app.kubernetes.io/component
+                operator: In
+                values: [github-controller, runtime]
       ports: [{ protocol: TCP, port: 8080 }]
   egress:
     - to:

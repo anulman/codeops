@@ -6,7 +6,6 @@ import {
   agentJobDispatchRequestSchema,
   agentJobDispatchResultSchema,
   canonicalSerialize,
-  classifyPlaneCommentRequest,
   codingRequestSchema,
   contractVersions,
   controlCommandSchema,
@@ -23,6 +22,7 @@ import {
   lifecycleProfileSchema,
   lifecycleStateSchema,
   planeCommentEventSchema,
+  planeCommentRequestClassificationSchema,
   providerLifecycleBindingSchema,
   qaContractResearcherPolicy,
   readinessGateSchema,
@@ -1183,26 +1183,36 @@ test("admits registered persona mentions only from a new human comment", () => {
   );
 });
 
-test("classifies actionable Plane comments and ignores discussion", () => {
-  assert.deepEqual(classifyPlaneCommentRequest("Please investigate this."), {
-    intent: "research",
-    personas: [],
-  });
-  assert.deepEqual(
-    classifyPlaneCommentRequest("@ai-security Can you explain this boundary?"),
-    { intent: "response", personas: ["@ai-security"] },
+test("binds the model classifier to one strict Plane intent", () => {
+  for (const intent of [
+    "ignore",
+    "research",
+    "response",
+    "source_change",
+    "steering",
+  ]) {
+    assert.deepEqual(planeCommentRequestClassificationSchema.parse({ intent }), {
+      intent,
+    });
+  }
+  assert.throws(() =>
+    planeCommentRequestClassificationSchema.parse({
+      intent: "source-change",
+    }),
   );
-  assert.equal(
-    classifyPlaneCommentRequest("This update looks good to me."),
-    null,
+  assert.throws(() =>
+    planeCommentRequestClassificationSchema.parse({
+      intent: "research",
+      confidence: 0.9,
+    }),
   );
-  assert.equal(classifyPlaneCommentRequest("I agree with the analysis."), null);
 });
 
 test("creates one deterministic Agent Session request for actionable comments", () => {
   const sourceChange = createPlaneSessionRequestFromPlaneComment(
     { ...planeCommentEvent, comment: "Please fix the stale lifecycle gate." },
     researchSource,
+    { intent: "source_change" },
   );
   assert.equal(sourceChange.intent, "source_change");
   assert.deepEqual(sourceChange.personas, []);
@@ -1213,12 +1223,14 @@ test("creates one deterministic Agent Session request for actionable comments", 
       comment: "Please fix the stale lifecycle gate.",
     },
     researchSource,
+    { intent: "source_change" },
   );
   assert.equal(retry.requestId, sourceChange.requestId);
   assert.equal(
     createPlaneSessionRequestFromPlaneComment(
       { ...planeCommentEvent, comment: "Thanks, this is useful." },
       researchSource,
+      { intent: "ignore" },
     ),
     null,
   );

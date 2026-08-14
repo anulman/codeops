@@ -49,12 +49,14 @@ function request(overrides = {}) {
   const permissionSubmissions = [];
   const permissionPolls = [];
   const workItems = [];
+  const workItemOperations = [];
   return {
     claims,
     completions,
     permissionSubmissions,
     permissionPolls,
     workItems,
+    workItemOperations,
     promise: serveSessionRuntime({
       method: "POST",
       url: "/v1/session-runtime/claims",
@@ -107,6 +109,26 @@ function request(overrides = {}) {
           workItemId: "77777777-7777-4777-8777-777777777777",
           disposition: "created",
         };
+      },
+      getWorkItem: async (input) => {
+        workItemOperations.push({ operation: "get", input });
+        return { operation: "get" };
+      },
+      searchWorkItems: async (input) => {
+        workItemOperations.push({ operation: "search", input });
+        return { operation: "search" };
+      },
+      commentWorkItem: async (input) => {
+        workItemOperations.push({ operation: "comment", input });
+        return { operation: "comment" };
+      },
+      updateWorkItem: async (input) => {
+        workItemOperations.push({ operation: "update", input });
+        return { operation: "update" };
+      },
+      relateWorkItem: async (input) => {
+        workItemOperations.push({ operation: "relate", input });
+        return { operation: "relate" };
       },
       ...overrides,
     }),
@@ -222,6 +244,53 @@ test("binds work-item creation to the claimed dispatch and authenticated worker"
     workerId: "acp-worker:primary",
     request: createRequest,
   }]);
+});
+
+test("binds every work-item operation to its exact runtime route", async () => {
+  const workItemId = "77777777-7777-4777-8777-777777777777";
+  const relatedWorkItemId = "88888888-8888-4888-8888-888888888888";
+  const cases = [
+    ["get", { repository: "example-org/example-repository", workItemId }],
+    ["search", { repository: "example-org/example-repository", query: "runtime route", limit: 5 }],
+    ["comment", { repository: "example-org/example-repository", workItemId, body: "Verified." }],
+    ["update", {
+      repository: "example-org/example-repository",
+      workItemId,
+      expectedRevision: `sha256:${"a".repeat(64)}`,
+      title: "Updated",
+    }],
+    ["relate", {
+      repository: "example-org/example-repository",
+      workItemId,
+      relatedWorkItemId,
+      relation: "relates_to",
+    }],
+  ];
+  for (const [operation, input] of cases) {
+    const operationId = `workitem-${operation}`;
+    const runtimeRequest = {
+      version: `codeops.session-runtime-work-item-${operation}-request/v1`,
+      claimToken,
+      operationId,
+      input,
+    };
+    const submitted = request({
+      url: `/v1/session-runtime/dispatches/${dispatchId}/work-items/${operation}`,
+      readBody: async () => runtimeRequest,
+    });
+    assert.deepEqual(await submitted.promise, {
+      status: 200,
+      body: { operation },
+    });
+    assert.deepEqual(submitted.workItemOperations, [{
+      operation,
+      input: {
+        dispatchId,
+        workerId: "acp-worker:primary",
+        request: runtimeRequest,
+      },
+    }]);
+  }
 });
 
 test("rejects ambiguous or drifting runtime requests before persistence", async () => {

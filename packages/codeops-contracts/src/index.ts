@@ -114,15 +114,51 @@ export {
   type WorkspaceSourceSelection,
 } from "./workspace-launch.js";
 export {
+  sessionRuntimeWorkItemCommentRequestSchema,
   sessionRuntimeWorkItemCreateRequestSchema,
+  sessionRuntimeWorkItemGetRequestSchema,
+  sessionRuntimeWorkItemRelateRequestSchema,
+  sessionRuntimeWorkItemSearchRequestSchema,
+  sessionRuntimeWorkItemUpdateRequestSchema,
+  workItemCommentInputSchema,
+  workItemCommentResultSchema,
   workItemCreateInputSchema,
   workItemCreateModeSchema,
   workItemCreateResultSchema,
+  workItemGetInputSchema,
+  workItemProjectionSchema,
+  workItemProviderCommentRequestSchema,
   workItemProviderCreateRequestSchema,
+  workItemProviderGetRequestSchema,
+  workItemProviderRelateRequestSchema,
+  workItemProviderSearchRequestSchema,
+  workItemProviderUpdateRequestSchema,
+  workItemRelateInputSchema,
+  workItemRelateResultSchema,
+  workItemRelationKindSchema,
+  workItemSearchInputSchema,
+  workItemSearchResultSchema,
+  workItemUpdateInputSchema,
+  workItemUpdateResultSchema,
+  type WorkItemCommentInput,
+  type WorkItemCommentResult,
   type SessionRuntimeWorkItemCreateRequest,
   type WorkItemCreateInput,
   type WorkItemCreateResult,
+  type WorkItemGetInput,
+  type WorkItemProjection,
+  type WorkItemProviderCommentRequest,
   type WorkItemProviderCreateRequest,
+  type WorkItemProviderGetRequest,
+  type WorkItemProviderRelateRequest,
+  type WorkItemProviderSearchRequest,
+  type WorkItemProviderUpdateRequest,
+  type WorkItemRelateInput,
+  type WorkItemRelateResult,
+  type WorkItemSearchInput,
+  type WorkItemSearchResult,
+  type WorkItemUpdateInput,
+  type WorkItemUpdateResult,
 } from "./work-items.js";
 
 const VERSION = {
@@ -1189,6 +1225,18 @@ export const planeSessionRequestSchema = z
     }
   });
 
+export const planeCommentRequestClassificationSchema = z
+  .object({
+    intent: z.enum([
+      "ignore",
+      "research",
+      "response",
+      "source_change",
+      "steering",
+    ]),
+  })
+  .strict();
+
 export const researchCitationSchema = z
   .object({
     id: identifier,
@@ -2016,35 +2064,6 @@ export function parseResearchPersonaRound(
   return { personas, brief };
 }
 
-export function classifyPlaneCommentRequest(
-  comment: string,
-): Readonly<{
-  intent: "research" | "response" | "source_change" | "steering";
-  personas: ResearchPersonaHandle[];
-}> | null {
-  const normalized = z.string().min(1).max(8_000).parse(comment.trim());
-  const personaRound = parseResearchPersonaRound(normalized);
-  const requestText = (personaRound?.brief ?? normalized).trim();
-  const lower = requestText.toLowerCase();
-  const explicitlyRequestsWork =
-    personaRound !== null ||
-    /^(?:please\s+|kindly\s+)?(?:(?:can|could|would|will)\s+you\b|(?:investigate|research|review|fix|update|change|implement|add|remove|explain|answer|respond|continue|resume|pause|stop|cancel|fork)\b)/i.test(
-      requestText,
-    );
-  if (!explicitlyRequestsWork) return null;
-
-  const intent = /\b(?:continue|resume|pause|stop|cancel|fork|steer)\b/.test(lower)
-    ? "steering"
-    : /\b(?:fix|update|change|implement|add|remove|revise|revision|edit)\b/.test(
-          lower,
-        )
-      ? "source_change"
-      : /\?|\b(?:explain|answer|respond|reply)\b/.test(lower)
-        ? "response"
-        : "research";
-  return { intent, personas: personaRound?.personas ?? [] };
-}
-
 export function createPlaneSessionRequestId(input: {
   eventId: string;
   commentId: string;
@@ -2070,16 +2089,20 @@ export function createPlaneSessionRequestFromPlaneComment(
     projectContext: ProjectContext;
     ticketSnapshot: z.infer<typeof ticketSnapshotSchema>;
   },
+  classificationInput: unknown,
 ): PlaneSessionRequest | null {
   const event = planeCommentEventSchema.parse(input);
-  const classification = classifyPlaneCommentRequest(event.comment);
+  const classification = planeCommentRequestClassificationSchema.parse(
+    classificationInput,
+  );
   if (
     event.action !== "create" ||
     event.actor.kind !== "human" ||
-    classification === null
+    classification.intent === "ignore"
   ) {
     return null;
   }
+  const personaRound = parseResearchPersonaRound(event.comment);
   return planeSessionRequestSchema.parse({
     version: VERSION.planeSessionRequest,
     requestId: createPlaneSessionRequestId({
@@ -2100,7 +2123,7 @@ export function createPlaneSessionRequestFromPlaneComment(
     ticketSnapshot: source.ticketSnapshot,
     projectContext: source.projectContext,
     intent: classification.intent,
-    personas: classification.personas,
+    personas: personaRound?.personas ?? [],
     comment: event.comment,
     requestedAt: event.occurredAt,
   });
@@ -2226,6 +2249,9 @@ export type WorkflowEvent = z.infer<typeof workflowEventSchema>;
 export type ControlCommand = z.infer<typeof controlCommandSchema>;
 export type ControlResult = z.infer<typeof controlResultSchema>;
 export type PlaneCommentEvent = z.infer<typeof planeCommentEventSchema>;
+export type PlaneCommentRequestClassification = z.infer<
+  typeof planeCommentRequestClassificationSchema
+>;
 export type PlaneSessionRequest = z.infer<typeof planeSessionRequestSchema>;
 export type ResearchRequest = z.infer<typeof researchRequestSchema>;
 export type ResearchPersonaReport = z.infer<
