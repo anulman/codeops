@@ -23,8 +23,24 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.deepEqual(workflow.on.push.tags, ["v*.*.*"]);
   assert.ok(workflow.on.push.paths.includes("infra/charts/codeops/**"));
   assert.ok(workflow.on.push.paths.includes("infra/scripts/codeopsctl.mjs"));
+  assert.ok(workflow.on.push.paths.includes("infra/scripts/codeops-golden-release-evidence.mjs"));
+  assert.ok(workflow.on.push.paths.includes("services/codeops-acceptance-runner/src/golden-dogfood.mjs"));
   assert.ok(workflow.on.push.paths.includes(".github/actions/codeops/action.yml"));
   assert.equal(workflow.on.workflow_dispatch.inputs.publish.default, false);
+  const goldenSource = workflow.jobs.validate.steps.find(
+    ({ name }) => name === "Write exact golden source report",
+  );
+  assert.equal(goldenSource.if, "steps.release_identity.outputs.publish == 'true'");
+  assert.match(goldenSource.run, /node services\/codeops-acceptance-runner\/src\/golden-dogfood\.mjs/);
+  assert.match(goldenSource.run, /sourceSha/);
+  const retainedGoldenSource = workflow.jobs.validate.steps.find(
+    ({ name }) => name === "Retain exact golden source report",
+  );
+  assert.equal(
+    retainedGoldenSource.uses,
+    "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
+  );
+  assert.equal(retainedGoldenSource.with.name, "codeops-golden-source-${{ github.sha }}");
   assert.deepEqual(workflow.jobs.images.strategy.matrix.image, expectedImages);
   const build = workflow.jobs.images.steps.find(({ name }) => name === "Build exact image");
   assert.equal(build.with.push, "${{ needs.validate.outputs.publish == 'true' }}");
@@ -85,6 +101,15 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(anonymousAccess.run, /release-manifest\.json/);
   assert.match(anonymousAccess.run, /ghcr\.io\/token/);
   assert.match(anonymousAccess.run, /\.images \| to_entries/);
+  assert.match(anonymousAccess.run, /codeops\.registry-access\/v1/);
+  assert.match(anonymousAccess.run, /sourceCheckout:false/);
+  const downloadGoldenSource = registryInstall.steps.find(
+    ({ name }) => name === "Download exact golden source report",
+  );
+  assert.equal(
+    downloadGoldenSource.with.name,
+    "codeops-golden-source-${{ github.sha }}",
+  );
   const install = registryInstall.steps.find(
     ({ name }) => name === "Install only from the OCI registry",
   );
@@ -119,6 +144,17 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(install.run, /codeops-\$\{RELEASE_VERSION\}/);
   assert.doesNotMatch(install.run, /\.chart\.metadata/);
   assert.match(install.run, /helm uninstall proof-system/);
+  assert.match(install.run, /codeopsctl\.mjs smoke/);
+  assert.match(install.run, /codeops\.live-images\/v1/);
+  assert.match(install.run, /codeops\.registry-install\/v1/);
+  assert.match(install.run, /rollbackStatus:"passed"/);
+  assert.match(install.run, /cleanupStatus:"passed"/);
+  assert.match(install.run, /codeops-golden-release-evidence\.mjs/);
+  assert.match(install.run, /golden-release-report\.json/);
+  assert.ok(
+    install.run.indexOf("helm uninstall proof-system") <
+      install.run.indexOf("codeops-golden-release-evidence.mjs"),
+  );
   assert.match(quickstartValues.run, /profile: "custom"/);
   assert.match(quickstartValues.run, /renoconcierge\.ca\/codeops/);
   assert.doesNotMatch(quickstartValues.run, /GHCR_TOKEN/);
@@ -180,6 +216,18 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
     downloadRelease.uses,
     "actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093",
   );
+  const downloadGoldenRelease = githubRelease.steps.find(
+    ({ name }) => name === "Download exact golden released-image evidence",
+  );
+  assert.equal(
+    downloadGoldenRelease.with.name,
+    "codeops-registry-install-${{ needs.validate.outputs.release_version }}-${{ github.sha }}",
+  );
+  const bindGoldenRelease = githubRelease.steps.find(
+    ({ name }) => name === "Bind golden released-image evidence to the release",
+  );
+  assert.match(bindGoldenRelease.run, /codeops\.golden-release-report\/v1/);
+  assert.match(bindGoldenRelease.run, /golden-release-report\.json >> SHA256SUMS/);
   const publishRelease = githubRelease.steps.find(
     ({ name }) => name === "Publish durable GitHub Release",
   );

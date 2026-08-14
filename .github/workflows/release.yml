@@ -16,7 +16,9 @@ on:
       - infra/scripts/codeops-release-images.mjs
       - infra/scripts/codeops-release-chart.mjs
       - infra/scripts/codeops-release-consumer-lock.mjs
+      - infra/scripts/codeops-golden-release-evidence.mjs
       - infra/scripts/codeopsctl.mjs
+      - services/codeops-acceptance-runner/src/golden-dogfood.mjs
       - .github/actions/codeops/action.yml
       - infra/scripts/test-codeops-action.mjs
       - infra/scripts/test-codeopsctl.mjs
@@ -24,6 +26,7 @@ on:
       - infra/scripts/test-codeops-release-chart.mjs
       - infra/scripts/test-codeops-quickstart-docs.mjs
       - infra/scripts/test-codeops-release-images.mjs
+      - infra/scripts/test-codeops-golden-release-evidence.mjs
       - infra/scripts/test-codeops-release-workflow.mjs
   workflow_dispatch:
     inputs:
@@ -116,6 +119,30 @@ jobs:
 
       - name: Verify exact source tree
         run: nub run verify
+
+      - name: Write exact golden source report
+        if: steps.release_identity.outputs.publish == 'true'
+        env:
+          SOURCE_SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          node services/codeops-acceptance-runner/src/golden-dogfood.mjs \
+            > /tmp/golden-source-report.raw.json
+          jq -e --arg sourceSha "$SOURCE_SHA" \
+            '.passed == true and .scenarioCount == 11
+              | if . then . else error("golden source report did not pass") end' \
+            /tmp/golden-source-report.raw.json >/dev/null
+          jq --arg sourceSha "$SOURCE_SHA" '. + {sourceSha:$sourceSha}' \
+            /tmp/golden-source-report.raw.json > golden-source-report.json
+
+      - name: Retain exact golden source report
+        if: steps.release_identity.outputs.publish == 'true'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codeops-golden-source-${{ github.sha }}
+          if-no-files-found: error
+          retention-days: 90
+          path: golden-source-report.json
 
       - uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3
         if: steps.release_identity.outputs.publish == 'true'
@@ -381,6 +408,8 @@ jobs:
             values.release.yaml \
             .release/evidence/
           cp infra/scripts/codeopsctl.mjs .release/evidence/codeopsctl.mjs
+          cp infra/scripts/codeops-golden-release-evidence.mjs \
+            .release/evidence/codeops-golden-release-evidence.mjs
           RELEASE_TAG="v${RELEASE_VERSION}" \
             node infra/scripts/codeops-release-consumer-lock.mjs \
               ".release/codeops-${RELEASE_VERSION}.tgz" \
@@ -442,9 +471,16 @@ jobs:
           name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
           path: /tmp/codeops-release
 
+      - name: Download exact golden source report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codeops-golden-source-${{ github.sha }}
+          path: /tmp/codeops-golden-source
+
       - name: Verify anonymous registry access
         env:
           RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+          SOURCE_SHA: ${{ github.sha }}
         run: |
           set -euo pipefail
           anonymous_root=$(mktemp -d)
@@ -482,6 +518,18 @@ jobs:
                 exit 1
               }
             done
+          jq -e --arg sourceSha "$SOURCE_SHA" '
+            .sourceSha == $sourceSha and (.images | length) == 10
+            | if . then empty else error("release manifest image identity drifted") end
+          ' /tmp/codeops-release/release-manifest.json
+          jq --arg sourceSha "$SOURCE_SHA" '{
+            version:"codeops.registry-access/v1",
+            sourceSha:$sourceSha,
+            sourceCheckout:false,
+            imageCount:(.images | length),
+            images:(.images | to_entries | map({name:.key, immutableRef:.value.immutableRef}))
+          }' /tmp/codeops-release/release-manifest.json \
+            > /tmp/codeops-registry-proof/registry-access-evidence.json
 
       - name: Create isolated quickstart values
         run: |
@@ -629,11 +677,43 @@ jobs:
           [[ "$(jq -r .chart <<<"$restored")" == "codeops-${RELEASE_VERSION}" ]]
           [[ "$(jq -r .app_version <<<"$restored")" == "$SOURCE_SHA" ]]
           [[ "$(jq -r .revision <<<"$restored")" -gt "$prior_revision" ]]
-          jq -n --arg version "$RELEASE_VERSION" --arg sourceSha "$SOURCE_SHA" --arg chartDigest "$pulled_digest" \
-            '{version:$version,sourceSha:$sourceSha,chartDigest:$chartDigest,installStatus:"deployed",sourceCheckout:false}' \
-            > /tmp/codeops-registry-proof/registry-install-evidence.json
+          kubectl wait --namespace proof-system --for=condition=Available deployment --all --timeout=5m
+          node /tmp/codeops-release/codeopsctl.mjs smoke \
+            --release proof-system \
+            --namespace proof-system \
+            > /tmp/codeops-registry-proof/smoke-report.json
+          kubectl get deployment --namespace proof-system --output json | jq -e \
+            --arg sourceSha "$SOURCE_SHA" '{
+              version:"codeops.live-images/v1",
+              sourceSha:$sourceSha,
+              release:"proof-system",
+              namespace:"proof-system",
+              images:([.items[].spec.template.spec.containers[].image
+                | select(startswith("ghcr.io/anulman/codeops/"))
+                | {name:(split("/")[-1] | split("@")[0]), immutableRef:.}]
+                | unique_by(.name) | sort_by(.name))
+            } | if (.images | length) == 4 then . else error("live image set drifted") end' \
+            > /tmp/codeops-registry-proof/live-images.json
           helm uninstall proof-system --namespace proof-system --wait --timeout 5m
           test -z "$(kubectl get deployment,statefulset,daemonset,job --namespace proof-system --output name)"
+          jq -n --arg releaseVersion "$RELEASE_VERSION" --arg sourceSha "$SOURCE_SHA" --arg chartDigest "$pulled_digest" '{
+            version:"codeops.registry-install/v1",
+            releaseVersion:$releaseVersion,
+            sourceSha:$sourceSha,
+            chartDigest:$chartDigest,
+            installStatus:"deployed",
+            rollbackStatus:"passed",
+            cleanupStatus:"passed",
+            sourceCheckout:false
+          }' > /tmp/codeops-registry-proof/registry-install-evidence.json
+          node /tmp/codeops-release/codeops-golden-release-evidence.mjs \
+            /tmp/codeops-golden-source/golden-source-report.json \
+            /tmp/codeops-release/release-manifest.json \
+            /tmp/codeops-registry-proof/registry-access-evidence.json \
+            /tmp/codeops-registry-proof/registry-install-evidence.json \
+            /tmp/codeops-registry-proof/live-images.json \
+            /tmp/codeops-registry-proof/smoke-report.json \
+            /tmp/codeops-registry-proof/golden-release-report.json
 
       - name: Capture registry-install diagnostics
         if: failure()
@@ -675,9 +755,27 @@ jobs:
           name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
           path: release
 
+      - name: Download exact golden released-image evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codeops-registry-install-${{ needs.validate.outputs.release_version }}-${{ github.sha }}
+          path: registry-proof
+
       - name: Verify release checksums
         working-directory: release
         run: sha256sum --check SHA256SUMS
+
+      - name: Bind golden released-image evidence to the release
+        run: |
+          set -euo pipefail
+          jq -e '.version == "codeops.golden-release-report/v1" and .passed == true' \
+            registry-proof/golden-release-report.json >/dev/null
+          cp registry-proof/golden-release-report.json release/golden-release-report.json
+          (
+            cd release
+            sha256sum golden-release-report.json >> SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
 
       - name: Publish durable GitHub Release
         env:

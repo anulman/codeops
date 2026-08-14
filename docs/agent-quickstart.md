@@ -44,8 +44,10 @@ This lane proves source behavior. It does not prove a live provider or cluster.
      --output /absolute/path/codeops-values.yaml
    ```
 
-6. Download `codeopsctl.mjs` and `codeops-consumer-lock.json` from the exact
-   GitHub Release. Verify both files with that release's `SHA256SUMS`.
+6. Download `codeopsctl.mjs`, `codeops-consumer-lock.json`, and
+   `golden-release-report.json` from the exact GitHub Release. Verify all three
+   files with that release's `SHA256SUMS`. Confirm that the golden report binds
+   the expected source SHA, chart digest, and image digests.
 7. Validate the exact file without installing:
 
    ```sh
