@@ -29,6 +29,10 @@
       "types": "./dist/session-policy.d.ts",
       "default": "./dist/session-policy.js"
     },
+    "./session-budget": {
+      "types": "./dist/session-budget.d.ts",
+      "default": "./dist/session-budget.js"
+    },
     "./workspace-context-node": {
       "types": "./dist/workspace-context-node.d.ts",
       "default": "./dist/workspace-context-node.js"

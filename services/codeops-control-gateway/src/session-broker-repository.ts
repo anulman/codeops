@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import {
   isWorkspaceSessionIdentity,
+  projectSessionBudget,
   SESSION_BROKER_VERSION,
   sessionCommandResultSchema,
   sessionCommandSchema,
@@ -55,13 +56,20 @@ export async function loadSessionSnapshot(
 ): Promise<SessionSnapshot | null> {
   requireSessionIdentifier(sessionId);
   const result = await client.query<StoredSessionRow>(
-    `SELECT snapshot_json
-       FROM codeops.sessions
-      WHERE session_id = $1`,
+    `SELECT parent.snapshot_json,
+            CURRENT_TIMESTAMP AS observed_at,
+            (SELECT count(*)::integer
+               FROM codeops.sessions AS child
+              WHERE child.snapshot_json->'identity'->>'parentSessionId' = parent.session_id
+                AND child.snapshot_json->>'state' IN
+                    ('queued', 'running', 'waiting_permission', 'checkpointing', 'hibernated'))
+              AS active_children
+       FROM codeops.sessions AS parent
+      WHERE parent.session_id = $1`,
     [sessionId],
   );
   if (!result.rows[0]) return null;
-  const snapshot = sessionSnapshotSchema.parse(result.rows[0].snapshot_json);
+  const snapshot = projectStoredSessionBudget(result.rows[0]);
   if (snapshot.sessionId !== sessionId) {
     throw new Error("stored snapshot does not match the requested session");
   }
@@ -74,15 +82,45 @@ export async function listSessionSnapshots(
 ): Promise<readonly SessionSnapshot[]> {
   requireReadLimit(limit, 200);
   const result = await client.query<StoredSessionRow>(
-    `SELECT snapshot_json
-       FROM codeops.sessions
-      ORDER BY updated_at DESC, session_id ASC
+    `SELECT parent.snapshot_json,
+            CURRENT_TIMESTAMP AS observed_at,
+            (SELECT count(*)::integer
+               FROM codeops.sessions AS child
+              WHERE child.snapshot_json->'identity'->>'parentSessionId' = parent.session_id
+                AND child.snapshot_json->>'state' IN
+                    ('queued', 'running', 'waiting_permission', 'checkpointing', 'hibernated'))
+              AS active_children
+       FROM codeops.sessions AS parent
+      ORDER BY parent.updated_at DESC, parent.session_id ASC
       LIMIT $1`,
     [limit],
   );
-  return result.rows.map(({ snapshot_json }) =>
-    sessionSnapshotSchema.parse(snapshot_json),
-  );
+  return result.rows.map(projectStoredSessionBudget);
+}
+
+function projectStoredSessionBudget(row: StoredSessionRow): SessionSnapshot {
+  const snapshot = sessionSnapshotSchema.parse(row.snapshot_json);
+  if (snapshot.budget === undefined || row.observed_at === undefined) {
+    return snapshot;
+  }
+  const observedAt = row.observed_at instanceof Date
+    ? row.observed_at.toISOString()
+    : String(row.observed_at);
+  const activeChildren = Number(row.active_children ?? 0);
+  if (!Number.isSafeInteger(activeChildren) || activeChildren < 0) {
+    throw new Error("stored active child session count is invalid");
+  }
+  return sessionSnapshotSchema.parse({
+    ...snapshot,
+    budget: projectSessionBudget({
+      startedAt: snapshot.budget.startedAt,
+      observedAt,
+      limits: snapshot.budget.limits,
+      totalTokens: snapshot.budget.usage.totalTokens,
+      modelRequests: snapshot.budget.usage.modelRequests,
+      activeChildren,
+    }),
+  });
 }
 
 interface StoredEventRow extends Record<string, unknown> {
@@ -174,6 +212,8 @@ interface StoredRuntimeDispatchRow extends Record<string, unknown> {
 
 interface StoredSessionRow extends Record<string, unknown> {
   readonly snapshot_json: unknown;
+  readonly observed_at?: unknown;
+  readonly active_children?: unknown;
 }
 
 function canonical(value: unknown): string {
@@ -245,7 +285,11 @@ function duplicateResult(result: SessionCommandResult): SessionCommandResult {
 function rejectedResult(
   snapshot: SessionSnapshot,
   command: SessionCommand,
-  code: "generation_conflict" | "lease_conflict" | "capability_unavailable",
+  code:
+    | "generation_conflict"
+    | "lease_conflict"
+    | "capability_unavailable"
+    | "budget_exhausted",
   reason: string,
   committedAt: string,
   commandId: string,
@@ -265,6 +309,71 @@ function rejectedResult(
     rejectionCode: code,
     reason,
   });
+}
+
+async function commandBudgetRejection(
+  client: TransactionClient,
+  snapshot: SessionSnapshot,
+  command: SessionCommand,
+  observedAt: string,
+): Promise<{ readonly snapshot: SessionSnapshot; readonly reason: string } | null> {
+  if (snapshot.budget === undefined) return null;
+  let activeChildren = snapshot.budget.usage.activeChildren;
+  if (command.type === "fork") {
+    const result = await client.query<{ readonly active_children: unknown }>(
+      `SELECT count(*)::integer AS active_children
+         FROM codeops.sessions
+        WHERE snapshot_json->'identity'->>'parentSessionId' = $1
+          AND snapshot_json->>'state' IN
+              ('queued', 'running', 'waiting_permission', 'checkpointing', 'hibernated')`,
+      [snapshot.sessionId],
+    );
+    const count = Number(result.rows[0]?.active_children ?? 0);
+    if (!Number.isSafeInteger(count) || count < 0) {
+      throw new Error("active child session count is invalid");
+    }
+    activeChildren = count;
+  }
+  const budget = projectSessionBudget({
+    startedAt: snapshot.budget.startedAt,
+    observedAt,
+    limits: snapshot.budget.limits,
+    totalTokens: snapshot.budget.usage.totalTokens,
+    modelRequests: snapshot.budget.usage.modelRequests,
+    activeChildren,
+  });
+  const hardReason = (() => {
+    if (
+      ["prompt", "resume", "fork"].includes(command.type) &&
+      budget.usage.elapsedSeconds >= budget.limits.elapsedSeconds
+    ) {
+      return "The elapsed-time budget is exhausted.";
+    }
+    if (
+      command.type === "prompt" &&
+      budget.usage.totalTokens >= budget.limits.totalTokens
+    ) {
+      return "The token budget is exhausted.";
+    }
+    if (
+      command.type === "prompt" &&
+      budget.usage.modelRequests >= budget.limits.modelRequests
+    ) {
+      return "The model-request budget is exhausted.";
+    }
+    if (
+      command.type === "fork" &&
+      budget.usage.activeChildren >= budget.limits.activeChildren
+    ) {
+      return "The active-child budget is exhausted.";
+    }
+    return null;
+  })();
+  if (hardReason === null) return null;
+  return {
+    snapshot: sessionSnapshotSchema.parse({ ...snapshot, budget }),
+    reason: hardReason,
+  };
 }
 
 async function persistCommand(
@@ -525,10 +634,25 @@ export async function executeSessionCommandTransaction(
         commandId,
       );
     } else {
+      const budgetRejection = await commandBudgetRejection(
+        client,
+        snapshot,
+        command,
+        committedAt,
+      );
       const capability = snapshot.capabilities.find(
         ({ action }) => action === command.type,
       );
-      if (!capability || capability.availability !== "enabled") {
+      if (budgetRejection !== null) {
+        result = rejectedResult(
+          budgetRejection.snapshot,
+          command,
+          "budget_exhausted",
+          budgetRejection.reason,
+          committedAt,
+          commandId,
+        );
+      } else if (!capability || capability.availability !== "enabled") {
         result = rejectedResult(
           snapshot,
           command,

@@ -5,6 +5,7 @@ import {
   applyForkSessionTransition,
   applyLocalSessionTransition,
   applyPermissionSessionTransition,
+  applyPromptSessionTransition,
   applyResumeSessionTransition,
   applyRuntimePermissionRequestTransition,
 } from "../dist/session-broker-transitions.js";
@@ -208,6 +209,63 @@ test("ACP runtime permission request durably pauses one running session", () => 
   );
 });
 
+test("projects signed model-request and token usage after each prompt", () => {
+  const current = {
+    ...snapshot({ checkpoint: false }),
+    budget: {
+      version: "codeops.session-budget/v1",
+      startedAt: "2026-08-04T04:30:00.000Z",
+      observedAt: "2026-08-04T04:40:00.000Z",
+      limits: {
+        elapsedSeconds: 3600,
+        totalTokens: 50_000,
+        modelRequests: 4,
+        activeChildren: 2,
+      },
+      usage: {
+        elapsedSeconds: 600,
+        totalTokens: 10_000,
+        modelRequests: 1,
+        activeChildren: 1,
+      },
+      remaining: {
+        elapsedSeconds: 3000,
+        totalTokens: 40_000,
+        modelRequests: 3,
+        activeChildren: 1,
+      },
+      exhaustedLimit: null,
+    },
+  };
+  const result = applyPromptSessionTransition(
+    current,
+    command("prompt", { prompt: "Continue the exact task." }),
+    {
+      response: "Done.",
+      stopReason: "end_turn",
+      updates: [{
+        kind: "usage",
+        usedTokens: 12_500,
+        contextWindowTokens: 200_000,
+      }],
+    },
+    occurredAt,
+  );
+  assert.deepEqual(result.snapshot.budget.usage, {
+    elapsedSeconds: 900,
+    totalTokens: 12_500,
+    modelRequests: 2,
+    activeChildren: 1,
+  });
+  assert.deepEqual(result.snapshot.budget.remaining, {
+    elapsedSeconds: 2700,
+    totalTokens: 37_500,
+    modelRequests: 2,
+    activeChildren: 1,
+  });
+  assert.equal(result.snapshot.budget.exhaustedLimit, null);
+});
+
 test("archive remains resumable only when a checkpoint exists", () => {
   for (const checkpoint of [true, false]) {
     const current = snapshot({
@@ -350,6 +408,8 @@ test("forks one generation-one child with independent cursor lineage", () => {
   assert.equal(result.snapshot.identity.forkedAtCursor, 184);
   assert.equal(result.snapshot.identity.displayName, command.title);
   assert.equal(result.snapshot.eventCursor, 1);
+  assert.equal(result.snapshot.budget.startedAt, occurredAt);
+  assert.equal(result.snapshot.budget.usage.modelRequests, 0);
   assert.equal(result.event.cursor, 1);
   assert.equal(result.event.type, "session_created");
   assert.throws(() =>

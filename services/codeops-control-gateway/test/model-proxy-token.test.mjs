@@ -25,6 +25,8 @@ test("issues one exact 75-minute session-bound model proxy token", () => {
     sub: "ses_agents_control_plane_1",
     model: "gpt-5.6-sol",
     reasoningEffort: "high",
+    maximumRequests: 200,
+    maximumOutputTokens: 32768,
     iat: 1786323600,
     exp: 1786328100,
   });
@@ -48,5 +50,19 @@ test("rejects invalid token subjects and reusable signing-key bounds", () => {
     signingKey: "m".repeat(64),
     model: "unsafe/model",
     reasoningEffort: "high",
+  }));
+  assert.throws(() => createModelProxyToken({
+    subject: "ses_1",
+    signingKey: "m".repeat(64),
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
+    maximumRequests: 0,
+  }));
+  assert.throws(() => createModelProxyToken({
+    subject: "ses_1",
+    signingKey: "m".repeat(64),
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
+    maximumOutputTokens: 100_001,
   }));
 });

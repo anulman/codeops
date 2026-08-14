@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Link } from "@tanstack/react-router";
 import type { SessionSnapshot } from "@codeops/codeops-contracts/session-broker";
 import { sessionDisplayName, sessionSearchText, sessionWorkspaceLabel } from "@/lib/sessionIdentity";
+import { SessionNotifications } from "./SessionNotifications";
 
 interface AppShellProps {
   readonly children: ReactNode;
@@ -12,10 +13,11 @@ interface AppShellProps {
 export function AppShell({ children, sessions = [], activeSessionId }: AppShellProps) {
   return (
     <div className="min-h-dvh bg-[#111113] text-[#f3f3f1] lg:grid lg:grid-cols-[304px_minmax(0,1fr)]">
+      <SessionNotifications initialSessions={sessions} />
       <aside className="sticky top-0 hidden h-dvh min-h-0 flex-col border-r border-white/[0.07] bg-[#171719] lg:flex">
         <SidebarHeader />
         <SessionNavigator sessions={sessions} activeSessionId={activeSessionId} />
-        <div className="flex h-11 shrink-0 items-center justify-between border-t border-white/[0.06] px-3 text-[11px] text-white/38">
+        <div className="flex min-h-11 shrink-0 items-center justify-between gap-2 border-t border-white/[0.06] px-3 py-2 text-[11px] text-white/38">
           <span className="flex items-center gap-2"><span className="size-1.5 rounded-full bg-[#54d18b] shadow-[0_0_7px_rgba(84,209,139,.7)]" />Broker connected</span>
           <a href="https://github.com/anulman/codeops#license" target="_blank" rel="noreferrer" className="transition hover:text-white/65">Legal &amp; source</a>
         </div>

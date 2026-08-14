@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   isWorkspaceSessionIdentity,
+  projectSessionBudget,
   SESSION_BROKER_VERSION,
   allowedSessionActionsForState,
   sessionActionTypeSchema,
@@ -360,8 +361,25 @@ export function applyPromptSessionTransition(
     });
   }
   const eventBodies = [userEventBody, ...updateEventBodies];
+  const latestUsage = retainedUpdates.findLast(
+    (update) => update.kind === "usage",
+  );
+  const budget = snapshot.budget === undefined
+    ? undefined
+    : projectSessionBudget({
+        startedAt: snapshot.budget.startedAt,
+        observedAt: occurredAt,
+        limits: snapshot.budget.limits,
+        totalTokens: Math.max(
+          snapshot.budget.usage.totalTokens,
+          latestUsage?.kind === "usage" ? latestUsage.usedTokens : 0,
+        ),
+        modelRequests: snapshot.budget.usage.modelRequests + 1,
+        activeChildren: snapshot.budget.usage.activeChildren,
+      });
   const nextSnapshot = sessionSnapshotSchema.parse({
     ...snapshot,
+    ...(budget === undefined ? {} : { budget }),
     eventCursor: eventBodies.at(-1)!.cursor,
     updatedAt: occurredAt,
   });
@@ -583,6 +601,11 @@ export function applyForkSessionTransition(
     },
     checkpoint: null,
     pendingPermission: null,
+    budget: projectSessionBudget({
+      startedAt: occurredAt,
+      observedAt: occurredAt,
+      ...(snapshot.budget === undefined ? {} : { limits: snapshot.budget.limits }),
+    }),
     eventCursor: 1,
     capabilities: sessionCapabilitiesFor("running", false),
     updatedAt: occurredAt,

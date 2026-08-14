@@ -127,11 +127,54 @@ test("loads one strict session snapshot without locking", async () => {
   );
 });
 
+test("projects current elapsed time and active children on every snapshot read", async () => {
+  const stored = snapshot({
+    budget: {
+      version: "codeops.session-budget/v1",
+      startedAt: "2026-08-04T03:00:00.000Z",
+      observedAt: "2026-08-04T03:01:00.000Z",
+      limits: {
+        elapsedSeconds: 3600,
+        totalTokens: 10_000,
+        modelRequests: 10,
+        activeChildren: 4,
+      },
+      usage: {
+        elapsedSeconds: 60,
+        totalTokens: 1_000,
+        modelRequests: 2,
+        activeChildren: 0,
+      },
+      remaining: {
+        elapsedSeconds: 3540,
+        totalTokens: 9_000,
+        modelRequests: 8,
+        activeChildren: 4,
+      },
+      exhaustedLimit: null,
+    },
+  });
+  const row = {
+    snapshot_json: stored,
+    observed_at: new Date("2026-08-04T03:10:00.000Z"),
+    active_children: 3,
+  };
+  const loaded = await loadSessionSnapshot(new FakeReadClient([row]), stored.sessionId);
+  assert.deepEqual(loaded.budget.usage, {
+    elapsedSeconds: 600,
+    totalTokens: 1_000,
+    modelRequests: 2,
+    activeChildren: 3,
+  });
+  const listed = await listSessionSnapshots(new FakeReadClient([row]));
+  assert.deepEqual(listed[0].budget, loaded.budget);
+});
+
 test("bounds and revalidates the fleet snapshot read", async () => {
   const client = new FakeReadClient([{ snapshot_json: snapshot() }]);
   assert.equal((await listSessionSnapshots(client, 25)).length, 1);
   assert.deepEqual(client.calls[0].values, [25]);
-  assert.match(client.calls[0].text, /updated_at DESC, session_id ASC/);
+  assert.match(client.calls[0].text, /parent\.updated_at DESC, parent\.session_id ASC/);
   await assert.rejects(listSessionSnapshots(client, 201), /between 1 and 200/);
   await assert.rejects(
     listSessionSnapshots(new FakeReadClient([{ snapshot_json: { unsafe: true } }])),
@@ -264,6 +307,50 @@ test("durably rejects stale generation and lease commands without mutation", asy
     assert.equal(client.calls.some(({ text }) => text.startsWith("UPDATE codeops.sessions")), false);
     assert.equal(client.calls.at(-1).text, "COMMIT");
   }
+});
+
+test("durably rejects prompt execution after an exact budget is exhausted", async () => {
+  const current = snapshot({
+    budget: {
+      version: "codeops.session-budget/v1",
+      startedAt: "2026-08-04T03:00:00.000Z",
+      observedAt: "2026-08-04T03:04:00.000Z",
+      limits: {
+        elapsedSeconds: 3600,
+        totalTokens: 10_000,
+        modelRequests: 4,
+        activeChildren: 2,
+      },
+      usage: {
+        elapsedSeconds: 240,
+        totalTokens: 10_000,
+        modelRequests: 2,
+        activeChildren: 0,
+      },
+      remaining: {
+        elapsedSeconds: 3360,
+        totalTokens: 0,
+        modelRequests: 2,
+        activeChildren: 2,
+      },
+      exhaustedLimit: "total_tokens",
+    },
+  });
+  const client = new FakeClient({ current });
+  let invoked = false;
+  const result = await execute(client, {
+    mutate: () => { invoked = true; return mutation(); },
+  });
+  assert.equal(invoked, false);
+  assert.equal(result.disposition, "rejected");
+  assert.equal(result.rejectionCode, "budget_exhausted");
+  assert.equal(result.reason, "The token budget is exhausted.");
+  assert.equal(result.snapshot.budget.exhaustedLimit, "total_tokens");
+  assert.equal(
+    client.calls.some(({ text }) => text.startsWith("UPDATE codeops.sessions")),
+    false,
+  );
+  assert.equal(client.calls.at(-1).text, "COMMIT");
 });
 
 test("rolls back when the final compare-and-swap loses", async () => {

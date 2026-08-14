@@ -18,6 +18,8 @@ function token(overrides = {}) {
     sub: "run-159",
     model: "gpt-5.6-sol",
     reasoningEffort: "high",
+    maximumRequests: 200,
+    maximumOutputTokens: 32768,
     iat: issuedAt,
     exp: issuedAt + 75 * 60,
     ...overrides,
@@ -33,6 +35,8 @@ test("accepts only an exact signed, bounded, unexpired run token", () => {
     expiresAt: Math.floor(now / 1_000) + 75 * 60,
     model: "gpt-5.6-sol",
     reasoningEffort: "high",
+    maximumRequests: 200,
+    maximumOutputTokens: 32768,
   });
   assert.equal(
     validateModelProxyToken({ token: `${token()}x`, signingKey, now }),
@@ -209,7 +213,7 @@ test("bounds admitted text and structured Responses inputs", async () => {
   assert.equal(upstreamCalls, 0);
 });
 
-test("rejects model, output-token, and per-run request budget drift", async () => {
+test("rejects model, output-token, and signed per-run request budget drift", async () => {
   let upstreamCalls = 0;
   await withProxy(
     createModelProxyRequestListener({
@@ -226,14 +230,14 @@ test("rejects model, output-token, and per-run request budget drift", async () =
       const request = (body) => fetch(`${origin}/v1/responses`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token()}`,
+          Authorization: `Bearer ${token({ maximumRequests: 2, maximumOutputTokens: 2048 })}`,
           "Content-Type": "application/json",
         },
         body: JSON.stringify(body),
       });
       assert.equal((await request({ model: "foreign-model", input: "x", reasoning: { effort: "high" } })).status, 400);
       assert.equal(
-        (await request({ model: "gpt-5.6-sol", input: "x", reasoning: { effort: "high" }, max_output_tokens: 32769 })).status,
+        (await request({ model: "gpt-5.6-sol", input: "x", reasoning: { effort: "high" }, max_output_tokens: 2049 })).status,
         400,
       );
       assert.equal(
