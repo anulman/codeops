@@ -1,4 +1,5 @@
 import {
+  githubMutationResultSchema,
   githubReadResultSchema,
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeClaimResponseSchema,
@@ -11,6 +12,7 @@ import {
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
+  sessionRuntimeGitHubMutationRequestSchema,
   sessionRuntimeGitHubReadRequestSchema,
   sessionTimelineUpdateSchema,
   sessionRuntimeWorkItemCommentRequestSchema,
@@ -26,6 +28,7 @@ import {
   workItemSearchResultSchema,
   workItemUpdateResultSchema,
   type SessionCommandResult,
+  type GitHubMutationResult,
   type GitHubReadResult,
   type SessionIdentity,
   type SessionRuntimeCompletion,
@@ -33,6 +36,7 @@ import {
   type SessionRuntimeDispatchClaim,
   type SessionRuntimePermissionResult,
   type SessionRuntimePermissionSubmission,
+  type SessionRuntimeGitHubMutationRequest,
   type SessionRuntimeGitHubReadRequest,
   type WorkItemCommentInput,
   type WorkItemCommentResult,
@@ -116,6 +120,13 @@ export type RuntimeGitHubReadRequest =
       : never
     : never;
 
+export type RuntimeGitHubMutationRequest =
+  SessionRuntimeGitHubMutationRequest extends infer Request
+    ? Request extends unknown
+      ? Omit<Request, "version" | "claimToken">
+      : never
+    : never;
+
 export interface RuntimeExecutionContext {
   requestPermission(
     submission: RuntimePermissionSubmission,
@@ -147,6 +158,9 @@ export interface RuntimeExecutionContext {
   readGitHub(
     input: RuntimeGitHubReadRequest,
   ): Promise<GitHubReadResult>;
+  mutateGitHub(
+    input: RuntimeGitHubMutationRequest,
+  ): Promise<GitHubMutationResult>;
 }
 
 export type RuntimeExecutor = (
@@ -571,6 +585,32 @@ export class SessionRuntimeTransport {
     );
   }
 
+  async #mutateGitHub(
+    claim: SessionRuntimeDispatchClaim,
+    input: RuntimeGitHubMutationRequest,
+    now: () => Date,
+  ): Promise<GitHubMutationResult> {
+    if (
+      claim.dispatch.command.type !== "prompt" ||
+      now().getTime() >= Date.parse(claim.claimExpiresAt)
+    ) {
+      throw new SessionRuntimeTransportError(
+        "only one live claimed prompt may mutate GitHub",
+      );
+    }
+    const request = sessionRuntimeGitHubMutationRequestSchema.parse({
+      version: "codeops.session-runtime-github-mutation-request/v1",
+      claimToken: claim.claimToken,
+      ...input,
+    });
+    return githubMutationResultSchema.parse(
+      await this.#post(
+        `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/github-mutations`,
+        request,
+      ),
+    );
+  }
+
   async runOne(input: {
     readonly leaseMs: number;
     readonly execute: RuntimeExecutor;
@@ -608,6 +648,8 @@ export class SessionRuntimeTransport {
         await this.#operateWorkItem(claim, "relate", workItem, now),
       ),
       readGitHub: (githubRead) => this.#readGitHub(claim, githubRead, now),
+      mutateGitHub: (githubMutation) =>
+        this.#mutateGitHub(claim, githubMutation, now),
     });
     const completedAt = now();
     if (completedAt.getTime() >= Date.parse(claim.claimExpiresAt)) {

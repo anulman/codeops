@@ -48,6 +48,10 @@
     "./work-items": {
       "types": "./dist/work-items.d.ts",
       "default": "./dist/work-items.js"
+    },
+    "./github-mutations": {
+      "types": "./dist/github-mutations.d.ts",
+      "default": "./dist/github-mutations.js"
     }
   },
   "scripts": {

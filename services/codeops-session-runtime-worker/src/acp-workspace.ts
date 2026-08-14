@@ -71,6 +71,12 @@ function codeopsMcpServers(): acp.McpServer[] {
       args: ["/opt/codeops-agent/github-reads-mcp.mjs"],
       env: [],
     },
+    {
+      name: "codeops-github-mutations",
+      command: "/usr/local/bin/node",
+      args: ["/opt/codeops-agent/github-mutations-mcp.mjs"],
+      env: [],
+    },
   ];
 }
 

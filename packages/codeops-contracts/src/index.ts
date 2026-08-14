@@ -232,6 +232,24 @@ export {
   type GitHubSearchResult,
   type SessionRuntimeGitHubReadRequest,
 } from "./github-reads.js";
+export {
+  githubCheckRerunInputSchema,
+  githubCheckRerunResultSchema,
+  githubMutationOperationSchema,
+  githubMutationProviderRequestSchema,
+  githubMutationResultSchema,
+  githubPullRequestUpdateBranchInputSchema,
+  githubPullRequestUpdateBranchResultSchema,
+  githubPullRequestUpdateInputSchema,
+  githubPullRequestUpdateResultSchema,
+  githubReviewThreadReplyInputSchema,
+  githubReviewThreadReplyResultSchema,
+  sessionRuntimeGitHubMutationRequestSchema,
+  type GitHubMutationOperation,
+  type GitHubMutationProviderRequest,
+  type GitHubMutationResult,
+  type SessionRuntimeGitHubMutationRequest,
+} from "./github-mutations.js";
 
 const VERSION = {
   workItem: "codeops.work-item/v1",

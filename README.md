@@ -182,6 +182,14 @@ GitHub credentials. The trusted control plane binds every runtime action to an
 exact repository, base commit, session, generation, and lease. Keep these
 properties fail closed when you change the package or chart.
 
+Interactive GitHub writes require one operation-specific durable allow-once
+decision. The session gateway consumes that decision before it calls the
+credential-owning control gateway. The control gateway then performs exact
+head preflight and postflight identity checks. Only pull-request branch
+updates, bounded pull-request title/body/base updates, review-thread replies,
+and check reruns are available. Merge, close, release, deployment, deletion,
+and generic API operations are not available.
+
 The control gateway resolves Agent Job dispatches through a repository
 registry before it reads retained evidence or creates Kubernetes resources.
 Each admitted repository has a distinct read and write authority. An unknown

@@ -32,6 +32,13 @@ const migrations = [
     url: new URL("../sql/session-runtime-permission-relay.sql", import.meta.url),
   },
   {
+    name: "session-runtime-github-mutations-v1",
+    url: new URL(
+      "../sql/session-runtime-github-mutations.sql",
+      import.meta.url,
+    ),
+  },
+  {
     name: "work-item-lifecycle-journal-v1",
     url: new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url),
   },

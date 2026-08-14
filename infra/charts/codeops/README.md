@@ -95,7 +95,7 @@ installation, the operator must create these Secrets:
   database role;
 - `codeops-model-proxy-credentials`: `openai-api-key`, `signing-key`;
 - `codeops-control-gateway-secrets`: `dispatch-token`,
-  `repository-head-token`, `publication-token`.
+  `repository-head-token`, `github-mutation-token`, `publication-token`.
 - `codeops-controller-secrets`: `research-projection-token`.
 - `codeops-controller-config`: the controller's non-file runtime
   configuration, including Temporal, internal service origins, the control
@@ -143,6 +143,13 @@ repository-authority Secret names in the consumer policy's `requiredSecrets`
 list. See
 [`docs/operations/consumer-deployment.md`](../../../docs/operations/consumer-deployment.md#upgrade-for-interactive-workspace-launch)
 for the ordered upgrade and catalog contract.
+
+Before enabling permissioned GitHub mutations, add a distinct
+`github-mutation-token` to `controlGateway.secretName`. The session gateway
+uses this internal authority only after it consumes one exact durable
+allow-once decision. The control gateway permits only pull-request branch
+updates, bounded pull-request metadata updates, review-thread replies, and
+check reruns. It does not provide a generic GitHub API route.
 
 The controller is a separate HMAC-authenticated process. Plane webhooks use
 `/webhooks/plane/{owner}/{repository}`. The route selects the repository's
