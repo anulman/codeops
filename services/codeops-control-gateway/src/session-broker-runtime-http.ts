@@ -5,9 +5,19 @@ import {
   sessionRuntimeCompletionRequestSchema,
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionSubmissionSchema,
+  sessionRuntimeWorkItemCommentRequestSchema,
   sessionRuntimeWorkItemCreateRequestSchema,
+  sessionRuntimeWorkItemGetRequestSchema,
+  sessionRuntimeWorkItemRelateRequestSchema,
+  sessionRuntimeWorkItemSearchRequestSchema,
+  sessionRuntimeWorkItemUpdateRequestSchema,
   type SessionCommandResult,
+  type WorkItemCommentResult,
   type WorkItemCreateResult,
+  type WorkItemProjection,
+  type WorkItemRelateResult,
+  type WorkItemSearchResult,
+  type WorkItemUpdateResult,
   type SessionRuntimePermissionResult,
 } from "@codeops/codeops-contracts";
 import { authenticateBearer } from "./bearer-auth.js";
@@ -21,8 +31,8 @@ const permissionSubmissionPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/permissions$/i;
 const permissionPollPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/permissions\/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})\/poll$/;
-const workItemCreatePath =
-  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/work-items$/i;
+const workItemPath =
+  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/work-items(?:\/(get|search|comment|update|relate))?$/i;
 
 function header(
   headers: IncomingHttpHeaders,
@@ -99,6 +109,31 @@ export async function serveSessionRuntime(input: {
     readonly workerId: string;
     readonly request: unknown;
   }) => Promise<WorkItemCreateResult>;
+  readonly getWorkItem?: (input: {
+    readonly dispatchId: string;
+    readonly workerId: string;
+    readonly request: unknown;
+  }) => Promise<WorkItemProjection>;
+  readonly searchWorkItems?: (input: {
+    readonly dispatchId: string;
+    readonly workerId: string;
+    readonly request: unknown;
+  }) => Promise<WorkItemSearchResult>;
+  readonly commentWorkItem?: (input: {
+    readonly dispatchId: string;
+    readonly workerId: string;
+    readonly request: unknown;
+  }) => Promise<WorkItemCommentResult>;
+  readonly updateWorkItem?: (input: {
+    readonly dispatchId: string;
+    readonly workerId: string;
+    readonly request: unknown;
+  }) => Promise<WorkItemUpdateResult>;
+  readonly relateWorkItem?: (input: {
+    readonly dispatchId: string;
+    readonly workerId: string;
+    readonly request: unknown;
+  }) => Promise<WorkItemRelateResult>;
 }): Promise<SessionRuntimeHttpResult | null> {
   if (input.method !== "POST" || input.url === undefined) return null;
   const url = new URL(input.url, "http://codeops.internal");
@@ -106,13 +141,13 @@ export async function serveSessionRuntime(input: {
   const completionMatch = url.pathname.match(completionPath);
   const permissionSubmissionMatch = url.pathname.match(permissionSubmissionPath);
   const permissionPollMatch = url.pathname.match(permissionPollPath);
-  const workItemCreateMatch = url.pathname.match(workItemCreatePath);
+  const workItemMatch = url.pathname.match(workItemPath);
   if (
     !isClaim &&
     completionMatch === null &&
     permissionSubmissionMatch === null &&
     permissionPollMatch === null
-    && workItemCreateMatch === null
+    && workItemMatch === null
   ) return null;
   if ([...url.searchParams].length !== 0) {
     throw new InvalidSessionRuntimeRequestError(
@@ -150,25 +185,35 @@ export async function serveSessionRuntime(input: {
     };
   }
 
-  if (workItemCreateMatch !== null) {
-    if (input.createWorkItem === undefined) {
+  if (workItemMatch !== null) {
+    const operation = workItemMatch[2] ?? "create";
+    const operations = {
+      create: [sessionRuntimeWorkItemCreateRequestSchema, input.createWorkItem],
+      get: [sessionRuntimeWorkItemGetRequestSchema, input.getWorkItem],
+      search: [sessionRuntimeWorkItemSearchRequestSchema, input.searchWorkItems],
+      comment: [sessionRuntimeWorkItemCommentRequestSchema, input.commentWorkItem],
+      update: [sessionRuntimeWorkItemUpdateRequestSchema, input.updateWorkItem],
+      relate: [sessionRuntimeWorkItemRelateRequestSchema, input.relateWorkItem],
+    } as const;
+    const selected = operations[operation as keyof typeof operations];
+    if (selected === undefined || selected[1] === undefined) {
       return { status: 404, body: { status: "not-found" } };
     }
-    const createRequest = sessionRuntimeWorkItemCreateRequestSchema.safeParse(
+    const workItemRequest = selected[0].safeParse(
       await readRequestBody(input.readBody),
     );
-    if (!createRequest.success) {
+    if (!workItemRequest.success) {
       throw new InvalidSessionRuntimeRequestError(
-        "session runtime work-item create body is invalid",
+        `session runtime work-item ${operation} body is invalid`,
       );
     }
     return {
       status: 200,
-      body: await input.createWorkItem({
-        dispatchId: dispatchId.parse(workItemCreateMatch[1]),
+      body: await selected[1]({
+        dispatchId: dispatchId.parse(workItemMatch[1]),
         workerId: input.workerId,
-        request: createRequest.data,
-      }),
+        request: workItemRequest.data,
+      } as never),
     };
   }
 

@@ -2,7 +2,14 @@ import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { Client, Connection } from "@temporalio/client";
 import { z } from "zod";
-import { workItemProviderCreateRequestSchema } from "@codeops/codeops-contracts";
+import {
+  workItemProviderCommentRequestSchema,
+  workItemProviderCreateRequestSchema,
+  workItemProviderGetRequestSchema,
+  workItemProviderRelateRequestSchema,
+  workItemProviderSearchRequestSchema,
+  workItemProviderUpdateRequestSchema,
+} from "@codeops/codeops-contracts";
 import {
   createFileResearchDedupLedger,
   createFileCodingRequestStore,
@@ -13,6 +20,7 @@ import {
   createGitHubWebhookRegistry,
   createGitHubStackLoader,
   createGitHubSessionSteeringClient,
+  createPlaneSessionSteeringClient,
   createGitHubCurrentPullRequestResolver,
   createPlaneLifecycleClient,
   createRepositoryPlaneRegistry,
@@ -26,6 +34,7 @@ import {
   projectResearchPacket,
   processPlaneReadyWebhook,
   processPlaneResearchWebhook,
+  processPlaneSessionWebhook,
   reconcileGitHubPullRequestReviewEvent,
   reconcileGitHubPullRequestMergeGroup,
   reconcileGitHubSessionEvent,
@@ -36,7 +45,14 @@ import {
   createTemporalCodingEnqueuer,
   createTemporalResearchEnqueuer,
 } from "./runtime.js";
-import { createPlaneWorkItem } from "./work-item-provider.js";
+import {
+  commentOnPlaneWorkItem,
+  createPlaneWorkItem,
+  getPlaneWorkItem,
+  relatePlaneWorkItems,
+  searchPlaneWorkItems,
+  updatePlaneWorkItem,
+} from "./work-item-provider.js";
 
 const personaHandle = z.enum([
   "@ai-web",
@@ -238,6 +254,16 @@ if (
     "GitHub and Plane repository registries must admit the same identities",
   );
 }
+const steerPlaneSessions = new Map(
+  githubWebhookRegistry.repositories.map((repository) => [
+    repository,
+    createPlaneSessionSteeringClient({
+      origin: githubSessionSteeringOrigin,
+      repository,
+      token: githubWebhookRegistry.resolve(repository).steeringToken,
+    }),
+  ]),
+);
 const controllerCredentials = new Set<string>();
 for (const repository of githubWebhookRegistry.repositories) {
   const github = githubWebhookRegistry.resolve(repository);
@@ -472,6 +498,31 @@ const listener = createPlaneWebhookRequestListener({
         projectId: authority.projectId,
         client,
       });
+    },
+    get: (request) => {
+      const parsed = workItemProviderGetRequestSchema.parse(request);
+      const { client, authority } = planeRuntimeForRepository(parsed.repository);
+      return getPlaneWorkItem({ request: parsed, projectId: authority.projectId, client });
+    },
+    search: (request) => {
+      const parsed = workItemProviderSearchRequestSchema.parse(request);
+      const { client, authority } = planeRuntimeForRepository(parsed.repository);
+      return searchPlaneWorkItems({ request: parsed, projectId: authority.projectId, client });
+    },
+    comment: (request) => {
+      const parsed = workItemProviderCommentRequestSchema.parse(request);
+      const { client, authority } = planeRuntimeForRepository(parsed.repository);
+      return commentOnPlaneWorkItem({ request: parsed, projectId: authority.projectId, client });
+    },
+    update: (request) => {
+      const parsed = workItemProviderUpdateRequestSchema.parse(request);
+      const { client, authority } = planeRuntimeForRepository(parsed.repository);
+      return updatePlaneWorkItem({ request: parsed, projectId: authority.projectId, client });
+    },
+    relate: (request) => {
+      const parsed = workItemProviderRelateRequestSchema.parse(request);
+      const { client, authority } = planeRuntimeForRepository(parsed.repository);
+      return relatePlaneWorkItems({ request: parsed, projectId: authority.projectId, client });
     },
   },
   projection: {
@@ -843,6 +894,12 @@ const listener = createPlaneWebhookRequestListener({
           },
         });
         if (ready.status !== "ignored") return ready;
+        const session = await processPlaneSessionWebhook({
+          ...shared,
+          personaUserIds,
+          enqueue: steerPlaneSessions.get(routedRepository)!,
+        });
+        if (session.status !== "ignored") return session;
         return processPlaneResearchWebhook({
           ...shared,
           personaUserIds,

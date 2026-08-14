@@ -11,8 +11,18 @@ import {
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
   sessionTimelineUpdateSchema,
+  sessionRuntimeWorkItemCommentRequestSchema,
   sessionRuntimeWorkItemCreateRequestSchema,
+  sessionRuntimeWorkItemGetRequestSchema,
+  sessionRuntimeWorkItemRelateRequestSchema,
+  sessionRuntimeWorkItemSearchRequestSchema,
+  sessionRuntimeWorkItemUpdateRequestSchema,
+  workItemCommentResultSchema,
   workItemCreateResultSchema,
+  workItemProjectionSchema,
+  workItemRelateResultSchema,
+  workItemSearchResultSchema,
+  workItemUpdateResultSchema,
   type SessionCommandResult,
   type SessionIdentity,
   type SessionRuntimeCompletion,
@@ -20,8 +30,18 @@ import {
   type SessionRuntimeDispatchClaim,
   type SessionRuntimePermissionResult,
   type SessionRuntimePermissionSubmission,
+  type WorkItemCommentInput,
+  type WorkItemCommentResult,
   type WorkItemCreateInput,
   type WorkItemCreateResult,
+  type WorkItemGetInput,
+  type WorkItemProjection,
+  type WorkItemRelateInput,
+  type WorkItemRelateResult,
+  type WorkItemSearchInput,
+  type WorkItemSearchResult,
+  type WorkItemUpdateInput,
+  type WorkItemUpdateResult,
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
 import { setTimeout as delay } from "node:timers/promises";
@@ -93,6 +113,26 @@ export interface RuntimeExecutionContext {
     readonly operationId: string;
     readonly workItem: WorkItemCreateInput;
   }): Promise<WorkItemCreateResult>;
+  getWorkItem(input: {
+    readonly operationId: string;
+    readonly workItem: WorkItemGetInput;
+  }): Promise<WorkItemProjection>;
+  searchWorkItems(input: {
+    readonly operationId: string;
+    readonly workItem: WorkItemSearchInput;
+  }): Promise<WorkItemSearchResult>;
+  commentWorkItem(input: {
+    readonly operationId: string;
+    readonly workItem: WorkItemCommentInput;
+  }): Promise<WorkItemCommentResult>;
+  updateWorkItem(input: {
+    readonly operationId: string;
+    readonly workItem: WorkItemUpdateInput;
+  }): Promise<WorkItemUpdateResult>;
+  relateWorkItem(input: {
+    readonly operationId: string;
+    readonly workItem: WorkItemRelateInput;
+  }): Promise<WorkItemRelateResult>;
 }
 
 export type RuntimeExecutor = (
@@ -449,6 +489,48 @@ export class SessionRuntimeTransport {
     );
   }
 
+  async #operateWorkItem(
+    claim: SessionRuntimeDispatchClaim,
+    operation: "get" | "search" | "comment" | "update" | "relate",
+    input: { readonly operationId: string; readonly workItem: unknown },
+    now: () => Date,
+  ): Promise<unknown> {
+    if (
+      claim.dispatch.command.type !== "prompt" ||
+      now().getTime() >= Date.parse(claim.claimExpiresAt)
+    ) {
+      throw new SessionRuntimeTransportError(
+        `only one live claimed prompt may ${operation} a work item`,
+      );
+    }
+    const schemas = {
+      get: sessionRuntimeWorkItemGetRequestSchema,
+      search: sessionRuntimeWorkItemSearchRequestSchema,
+      comment: sessionRuntimeWorkItemCommentRequestSchema,
+      update: sessionRuntimeWorkItemUpdateRequestSchema,
+      relate: sessionRuntimeWorkItemRelateRequestSchema,
+    } as const;
+    const results = {
+      get: workItemProjectionSchema,
+      search: workItemSearchResultSchema,
+      comment: workItemCommentResultSchema,
+      update: workItemUpdateResultSchema,
+      relate: workItemRelateResultSchema,
+    } as const;
+    const request = schemas[operation].parse({
+      version: `codeops.session-runtime-work-item-${operation}-request/v1`,
+      claimToken: claim.claimToken,
+      operationId: input.operationId,
+      input: input.workItem,
+    });
+    return results[operation].parse(
+      await this.#post(
+        `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/work-items/${operation}`,
+        request,
+      ),
+    );
+  }
+
   async runOne(input: {
     readonly leaseMs: number;
     readonly execute: RuntimeExecutor;
@@ -470,6 +552,21 @@ export class SessionRuntimeTransport {
       requestPermission: (submission) =>
         this.#requestPermission(claim, submission, now),
       createWorkItem: (workItem) => this.#createWorkItem(claim, workItem, now),
+      getWorkItem: async (workItem) => workItemProjectionSchema.parse(
+        await this.#operateWorkItem(claim, "get", workItem, now),
+      ),
+      searchWorkItems: async (workItem) => workItemSearchResultSchema.parse(
+        await this.#operateWorkItem(claim, "search", workItem, now),
+      ),
+      commentWorkItem: async (workItem) => workItemCommentResultSchema.parse(
+        await this.#operateWorkItem(claim, "comment", workItem, now),
+      ),
+      updateWorkItem: async (workItem) => workItemUpdateResultSchema.parse(
+        await this.#operateWorkItem(claim, "update", workItem, now),
+      ),
+      relateWorkItem: async (workItem) => workItemRelateResultSchema.parse(
+        await this.#operateWorkItem(claim, "relate", workItem, now),
+      ),
     });
     const completedAt = now();
     if (completedAt.getTime() >= Date.parse(claim.claimExpiresAt)) {

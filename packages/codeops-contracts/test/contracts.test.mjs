@@ -1192,6 +1192,18 @@ test("classifies actionable Plane comments and ignores discussion", () => {
     classifyPlaneCommentRequest("@ai-security Can you explain this boundary?"),
     { intent: "response", personas: ["@ai-security"] },
   );
+  assert.deepEqual(classifyPlaneCommentRequest("Use option B."), {
+    intent: "steering",
+    personas: [],
+  });
+  assert.deepEqual(classifyPlaneCommentRequest("Also cover mobile."), {
+    intent: "source_change",
+    personas: [],
+  });
+  assert.deepEqual(classifyPlaneCommentRequest("Create those follow-ups."), {
+    intent: "source_change",
+    personas: [],
+  });
   assert.equal(
     classifyPlaneCommentRequest("This update looks good to me."),
     null,

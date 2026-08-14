@@ -4,6 +4,7 @@ import { test } from "node:test";
 import {
   admitPlaneReadyTransition,
   admitPlaneResearchComment,
+  admitPlaneSessionComment,
   compileProjectContext,
   identifyPlaneReadyTransition,
   identifyPlaneStateTransition,
@@ -333,6 +334,30 @@ test("admits signed human persona mentions and binds the bounded round", async (
     "Cross-check auth boundaries and route guards.",
   );
   assert.match(admission.planeRevisionDigest, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("keeps persona mentions on the research path instead of steering a live session", async () => {
+  assert.equal(await admitPlaneSessionComment(signedInput()), null);
+});
+
+test("admits an actionable non-persona Plane reply for exact-session steering", async () => {
+  const actionablePayload = {
+    ...payload,
+    data: {
+      ...payload.data,
+      comment: {
+        ...payload.data.comment,
+        comment_stripped: "Please continue with option B.",
+      },
+    },
+  };
+  const admission = await admitPlaneSessionComment(
+    signedInput({ payload: actionablePayload }),
+  );
+  assert.equal(admission.request.workItemId, payload.entity_id);
+  assert.equal(admission.request.intent, "steering");
+  assert.deepEqual(admission.request.personas, []);
+  assert.equal(admission.request.comment, "Please continue with option B.");
 });
 
 test("admits the real Plane CE issue-comment payload and resolves mention UUIDs", async () => {

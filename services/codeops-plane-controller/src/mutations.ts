@@ -32,7 +32,7 @@ export interface PlaneContentClient {
       external_source: "codeops";
       external_id: string;
     }>,
-  ): Promise<Readonly<{ id: string }>>;
+  ): Promise<Readonly<{ id: string; disposition?: "created" | "existing" }>>;
   updateWorkItem(
     projectId: string,
     workItemId: string,

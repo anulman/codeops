@@ -1,6 +1,13 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPlaneWorkItem } from "../dist/work-item-provider.js";
+import {
+  commentOnPlaneWorkItem,
+  createPlaneWorkItem,
+  getPlaneWorkItem,
+  relatePlaneWorkItems,
+  searchPlaneWorkItems,
+  updatePlaneWorkItem,
+} from "../dist/work-item-provider.js";
 
 const projectId = "11111111-1111-4111-8111-111111111111";
 const workItemId = "22222222-2222-4222-8222-222222222222";
@@ -23,11 +30,18 @@ const request = {
 function client(items = []) {
   const creates = [];
   const intakeCreates = [];
+  const comments = [];
+  const updates = [];
+  const relations = [];
+  let snapshots = [...items];
   return {
-    creates,
-    intakeCreates,
+    creates, intakeCreates, comments, updates, relations,
     api: {
       async listProjectWorkItems() { return items; },
+      async listProjectWorkItemSnapshots() { return snapshots; },
+      async getWorkItemSnapshot(_projectId, id) {
+        return snapshots.find((item) => item.id === id);
+      },
       async createWorkItem(_projectId, input) {
         creates.push(input);
         return { id: workItemId, project: projectId, labels: [], name: input.name, descriptionHtml: input.description_html };
@@ -36,7 +50,53 @@ function client(items = []) {
         intakeCreates.push(input);
         return { id: workItemId, project: projectId, labels: [], name: input.name, descriptionHtml: input.description_html };
       },
+      async createComment(_projectId, _workItemId, input) {
+        comments.push(input);
+        return { id: "44444444-4444-4444-8444-444444444444", disposition: "created" };
+      },
+      async updateWorkItem(_projectId, id, input) {
+        updates.push(input);
+        snapshots = snapshots.map((item) => item.id === id ? {
+          ...item,
+          ...(input.name === undefined ? {} : { name: input.name }),
+          ...(input.description_html === undefined ? {} : {
+            description_html: input.description_html,
+            description_stripped: input.description_html.replace(/<[^>]+>/g, ""),
+          }),
+          updated_at: "2026-08-14T00:00:01.000Z",
+        } : item);
+      },
+      async getWorkItemRelations() { return { relates_to: [] }; },
+      async createWorkItemRelation(_projectId, _workItemId, input) {
+        relations.push(input);
+      },
     },
+  };
+}
+
+function snapshot(id = workItemId, name = "Existing item") {
+  return {
+    id,
+    project: projectId,
+    name,
+    description_html: "<p>Existing description.</p>",
+    description_stripped: "Existing description.",
+    priority: "none",
+    state: "55555555-5555-4555-8555-555555555555",
+    labels: [],
+    updated_at: "2026-08-14T00:00:00.000Z",
+  };
+}
+
+function providerRequest(version, extra) {
+  return {
+    version,
+    provider: "plane",
+    operationId: "workitem-operation",
+    payloadDigest: `sha256:${"c".repeat(64)}`,
+    repository: "anulman/codeops",
+    provenance: request.provenance,
+    ...extra,
   };
 }
 
@@ -80,4 +140,88 @@ test("fails closed when an operation identity has different content", async () =
     createPlaneWorkItem({ request, projectId, client: fake.api }),
     /conflicts/,
   );
+});
+
+test("gets and searches bounded same-project work-item projections", async () => {
+  const fake = client([snapshot(), snapshot("66666666-6666-4666-8666-666666666666", "Other")]);
+  const item = await getPlaneWorkItem({
+    request: providerRequest("codeops.work-item-provider-get-request/v1", { workItemId }),
+    projectId,
+    client: fake.api,
+  });
+  assert.equal(item.workItemId, workItemId);
+  assert.match(item.revision, /^sha256:[0-9a-f]{64}$/);
+
+  const result = await searchPlaneWorkItems({
+    request: providerRequest("codeops.work-item-provider-search-request/v1", {
+      query: "existing description",
+      limit: 20,
+    }),
+    projectId,
+    client: fake.api,
+  });
+  assert.equal(result.items.length, 2);
+});
+
+test("comments and relates through idempotent provider identities", async () => {
+  const relatedWorkItemId = "66666666-6666-4666-8666-666666666666";
+  const fake = client([snapshot(), snapshot(relatedWorkItemId, "Related")]);
+  const comment = await commentOnPlaneWorkItem({
+    request: providerRequest("codeops.work-item-provider-comment-request/v1", {
+      workItemId,
+      body: "Passed <focused> validation.",
+    }),
+    projectId,
+    client: fake.api,
+  });
+  assert.equal(comment.disposition, "created");
+  assert.match(fake.comments[0].comment_html, /Passed &lt;focused&gt; validation/);
+  assert.match(fake.comments[0].external_id, /workitem-operation/);
+
+  const relation = await relatePlaneWorkItems({
+    request: providerRequest("codeops.work-item-provider-relate-request/v1", {
+      workItemId,
+      relatedWorkItemId,
+      relation: "relates_to",
+    }),
+    projectId,
+    client: fake.api,
+  });
+  assert.equal(relation.disposition, "created");
+  assert.deepEqual(fake.relations, [{ relation_type: "relates_to", issues: [relatedWorkItemId] }]);
+});
+
+test("updates only from the exact observed revision", async () => {
+  const fake = client([snapshot()]);
+  const before = await getPlaneWorkItem({
+    request: providerRequest("codeops.work-item-provider-get-request/v1", { workItemId }),
+    projectId,
+    client: fake.api,
+  });
+  const result = await updatePlaneWorkItem({
+    request: providerRequest("codeops.work-item-provider-update-request/v1", {
+      workItemId,
+      expectedRevision: before.revision,
+      title: "Updated item",
+    }),
+    projectId,
+    client: fake.api,
+  });
+  assert.equal(result.disposition, "updated");
+  assert.equal(result.item.title, "Updated item");
+  assert.equal(fake.updates.length, 1);
+
+  const stale = await updatePlaneWorkItem({
+      request: providerRequest("codeops.work-item-provider-update-request/v1", {
+        workItemId,
+        expectedRevision: before.revision,
+        title: "Stale write",
+      }),
+      projectId,
+      client: fake.api,
+    });
+  assert.equal(stale.disposition, "reload-required");
+  assert.equal(stale.item.title, "Updated item");
+  assert.notEqual(stale.item.revision, before.revision);
+  assert.equal(fake.updates.length, 1);
 });

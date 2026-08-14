@@ -114,15 +114,51 @@ export {
   type WorkspaceSourceSelection,
 } from "./workspace-launch.js";
 export {
+  sessionRuntimeWorkItemCommentRequestSchema,
   sessionRuntimeWorkItemCreateRequestSchema,
+  sessionRuntimeWorkItemGetRequestSchema,
+  sessionRuntimeWorkItemRelateRequestSchema,
+  sessionRuntimeWorkItemSearchRequestSchema,
+  sessionRuntimeWorkItemUpdateRequestSchema,
+  workItemCommentInputSchema,
+  workItemCommentResultSchema,
   workItemCreateInputSchema,
   workItemCreateModeSchema,
   workItemCreateResultSchema,
+  workItemGetInputSchema,
+  workItemProjectionSchema,
+  workItemProviderCommentRequestSchema,
   workItemProviderCreateRequestSchema,
+  workItemProviderGetRequestSchema,
+  workItemProviderRelateRequestSchema,
+  workItemProviderSearchRequestSchema,
+  workItemProviderUpdateRequestSchema,
+  workItemRelateInputSchema,
+  workItemRelateResultSchema,
+  workItemRelationKindSchema,
+  workItemSearchInputSchema,
+  workItemSearchResultSchema,
+  workItemUpdateInputSchema,
+  workItemUpdateResultSchema,
+  type WorkItemCommentInput,
+  type WorkItemCommentResult,
   type SessionRuntimeWorkItemCreateRequest,
   type WorkItemCreateInput,
   type WorkItemCreateResult,
+  type WorkItemGetInput,
+  type WorkItemProjection,
+  type WorkItemProviderCommentRequest,
   type WorkItemProviderCreateRequest,
+  type WorkItemProviderGetRequest,
+  type WorkItemProviderRelateRequest,
+  type WorkItemProviderSearchRequest,
+  type WorkItemProviderUpdateRequest,
+  type WorkItemRelateInput,
+  type WorkItemRelateResult,
+  type WorkItemSearchInput,
+  type WorkItemSearchResult,
+  type WorkItemUpdateInput,
+  type WorkItemUpdateResult,
 } from "./work-items.js";
 
 const VERSION = {
@@ -2028,14 +2064,14 @@ export function classifyPlaneCommentRequest(
   const lower = requestText.toLowerCase();
   const explicitlyRequestsWork =
     personaRound !== null ||
-    /^(?:please\s+|kindly\s+)?(?:(?:can|could|would|will)\s+you\b|(?:investigate|research|review|fix|update|change|implement|add|remove|explain|answer|respond|continue|resume|pause|stop|cancel|fork)\b)/i.test(
+    /^(?:(?:please|kindly|also)\s+)*(?:(?:can|could|would|will)\s+you\b|(?:investigate|research|review|fix|update|change|implement|add|remove|use|cover|create|explain|answer|respond|continue|resume|pause|stop|cancel|fork)\b)/i.test(
       requestText,
     );
   if (!explicitlyRequestsWork) return null;
 
-  const intent = /\b(?:continue|resume|pause|stop|cancel|fork|steer)\b/.test(lower)
+  const intent = /\b(?:continue|resume|pause|stop|cancel|fork|steer|use)\b/.test(lower)
     ? "steering"
-    : /\b(?:fix|update|change|implement|add|remove|revise|revision|edit)\b/.test(
+    : /\b(?:fix|update|change|implement|add|remove|cover|create|revise|revision|edit)\b/.test(
           lower,
         )
       ? "source_change"
