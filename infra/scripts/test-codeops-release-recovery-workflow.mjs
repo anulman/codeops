@@ -26,12 +26,17 @@ test("release recovery retries only one validated immutable failed run", async (
   );
   assert.equal(checkout.with["fetch-depth"], 0);
   assert.equal(checkout.with["persist-credentials"], false);
+  const setupNode = job.steps.find(
+    ({ uses }) => uses === "actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020",
+  );
+  assert.equal(setupNode.with["node-version"], "24");
 
   const validate = job.steps.find(
     ({ name }) => name === "Validate immutable release recovery request",
   );
   assert.equal(validate.env.GH_TOKEN, "${{ github.token }}");
   assert.match(validate.run, /git rev-parse "refs\/tags\/\$\{RELEASE_TAG\}"/);
+  assert.match(validate.run, /codeops-release-version\.mjs/);
   assert.match(validate.run, /\.event/);
   assert.match(validate.run, /\.status/);
   assert.match(validate.run, /\.conclusion/);

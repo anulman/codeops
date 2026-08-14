@@ -94,6 +94,17 @@ test("validates the small lock and consumer-owned policy", () => {
   );
 });
 
+test("validates structured prerelease locks", () => {
+  const prerelease = lock();
+  prerelease.release.tag = "v1.2.3-alpha.0";
+  prerelease.chart.version = "1.2.3-alpha.0";
+  prerelease.chart.asset = "codeops-1.2.3-alpha.0.tgz";
+  assert.equal(validateLock(prerelease).release.tag, "v1.2.3-alpha.0");
+
+  prerelease.release.tag = "v1.2.3-alpha.01";
+  assert.throws(() => validateLock(prerelease), /release version/);
+});
+
 test("rejects unsafe policy drift", () => {
   assert.throws(
     () => validatePolicy({ ...policy(), requiredSecrets: ["same", "same"] }),

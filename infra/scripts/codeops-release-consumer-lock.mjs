@@ -4,6 +4,7 @@
 import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { validateCodeOpsReleaseVersion } from "./codeops-release-version.mjs";
 
 function sha256(bytes) {
   return createHash("sha256").update(bytes).digest("hex");
@@ -24,9 +25,10 @@ export async function writeConsumerLock({
   if (manifest.version !== "codeops.release-images/v1") {
     throw new Error("release manifest schema is not supported");
   }
-  if (!/^v\d+\.\d+\.\d+$/.test(releaseTag)) {
-    throw new Error("release tag must be exact SemVer with a v prefix");
+  if (!releaseTag.startsWith("v")) {
+    throw new Error("release tag must have a v prefix");
   }
+  validateCodeOpsReleaseVersion(releaseTag.slice(1));
   if (releaseTag !== `v${manifest.chart.version}`) {
     throw new Error("release tag and chart version differ");
   }
