@@ -8,9 +8,171 @@ const WARN_CONCURRENCY_PER_TOKEN = 4;
 const MAX_CONCURRENCY_PER_TOKEN = 8;
 const WARN_GLOBAL_CONCURRENCY = 8;
 const MAX_GLOBAL_CONCURRENCY = 16;
+const MAX_REQUEST_TEXT_BYTES = 8 * 1024 * 1024;
+const MAX_REQUEST_NODES = 100_000;
+const MAX_REQUEST_DEPTH = 20;
+const MAX_OBJECT_KEYS = 1_000;
+const MAX_ARRAY_ITEMS = 10_000;
+
+const ALLOWED_RESPONSE_FIELDS = new Set([
+  "include",
+  "input",
+  "instructions",
+  "max_output_tokens",
+  "model",
+  "parallel_tool_calls",
+  "reasoning",
+  "store",
+  "stream",
+  "temperature",
+  "text",
+  "tool_choice",
+  "tools",
+  "top_p",
+  "truncation",
+]);
+const ALLOWED_TOOL_TYPES = new Set(["function", "custom"]);
+const ALLOWED_INCLUDE_VALUES = new Set(["reasoning.encrypted_content"]);
+const FORBIDDEN_NESTED_KEYS = new Set([
+  "attachments",
+  "conversation",
+  "file_id",
+  "previous_response_id",
+  "vector_store_id",
+  "vector_store_ids",
+]);
+const FORBIDDEN_ITEM_TYPES = new Set([
+  "code_interpreter",
+  "computer",
+  "computer_call",
+  "file_search",
+  "image_generation",
+  "input_file",
+  "input_image",
+  "mcp",
+  "web_search",
+  "web_search_preview",
+]);
 
 class RequestBodyLimitError extends Error {}
 class RequestPolicyError extends Error {}
+
+function validateBoundedJson(value) {
+  const state = { nodes: 0, textBytes: 0 };
+  const visit = (entry, depth) => {
+    state.nodes += 1;
+    if (state.nodes > MAX_REQUEST_NODES || depth > MAX_REQUEST_DEPTH) {
+      throw new RequestPolicyError("request structured input exceeds its bound");
+    }
+    if (entry === null || typeof entry === "boolean") return;
+    if (typeof entry === "number") {
+      if (!Number.isFinite(entry)) {
+        throw new RequestPolicyError("request structured input contains an invalid number");
+      }
+      return;
+    }
+    if (typeof entry === "string") {
+      state.textBytes += Buffer.byteLength(entry);
+      if (state.textBytes > MAX_REQUEST_TEXT_BYTES) {
+        throw new RequestPolicyError("request text exceeds 8 MiB");
+      }
+      return;
+    }
+    if (Array.isArray(entry)) {
+      if (entry.length > MAX_ARRAY_ITEMS) {
+        throw new RequestPolicyError("request array exceeds 10000 items");
+      }
+      for (const item of entry) visit(item, depth + 1);
+      return;
+    }
+    if (typeof entry !== "object") {
+      throw new RequestPolicyError("request structured input contains an invalid value");
+    }
+    const fields = Object.entries(entry);
+    if (fields.length > MAX_OBJECT_KEYS) {
+      throw new RequestPolicyError("request object exceeds 1000 fields");
+    }
+    for (const [key, nested] of fields) {
+      if (key.length > 200 || FORBIDDEN_NESTED_KEYS.has(key)) {
+        throw new RequestPolicyError("request uses provider-hosted or external state");
+      }
+      if (key === "type" && FORBIDDEN_ITEM_TYPES.has(nested)) {
+        throw new RequestPolicyError("request uses an unapproved hosted tool or file input");
+      }
+      visit(nested, depth + 1);
+    }
+  };
+  visit(value, 0);
+}
+
+function enforceResponsesPrivacyPolicy(body, allowedModels, maxOutputTokens) {
+  if (body === null || typeof body !== "object" || Array.isArray(body)) {
+    throw new RequestPolicyError("request exceeds the model policy");
+  }
+  const unknownFields = Object.keys(body).filter(
+    (field) => !ALLOWED_RESPONSE_FIELDS.has(field),
+  );
+  if (unknownFields.length > 0) {
+    throw new RequestPolicyError("request contains an unapproved Responses field");
+  }
+  if (
+    !allowedModels.has(body.model) ||
+    body.input === undefined ||
+    (body.max_output_tokens !== undefined &&
+      (!Number.isSafeInteger(body.max_output_tokens) ||
+        body.max_output_tokens < 1 ||
+        body.max_output_tokens > maxOutputTokens)) ||
+    (body.store !== undefined && body.store !== false) ||
+    (body.stream !== undefined && typeof body.stream !== "boolean") ||
+    (body.parallel_tool_calls !== undefined &&
+      typeof body.parallel_tool_calls !== "boolean") ||
+    (body.temperature !== undefined &&
+      (typeof body.temperature !== "number" ||
+        !Number.isFinite(body.temperature) ||
+        body.temperature < 0 ||
+        body.temperature > 2)) ||
+    (body.top_p !== undefined &&
+      (typeof body.top_p !== "number" ||
+        !Number.isFinite(body.top_p) ||
+        body.top_p < 0 ||
+        body.top_p > 1)) ||
+    (body.truncation !== undefined &&
+      !["auto", "disabled"].includes(body.truncation))
+  ) {
+    throw new RequestPolicyError("request exceeds the model policy");
+  }
+  if (body.include !== undefined) {
+    if (
+      !Array.isArray(body.include) ||
+      body.include.length > ALLOWED_INCLUDE_VALUES.size ||
+      new Set(body.include).size !== body.include.length ||
+      body.include.some((value) => !ALLOWED_INCLUDE_VALUES.has(value))
+    ) {
+      throw new RequestPolicyError("request asks for unapproved included data");
+    }
+  }
+  if (body.tools !== undefined) {
+    if (
+      !Array.isArray(body.tools) ||
+      body.tools.length > 256 ||
+      body.tools.some(
+        (tool) =>
+          tool === null ||
+          typeof tool !== "object" ||
+          Array.isArray(tool) ||
+          !ALLOWED_TOOL_TYPES.has(tool.type),
+      )
+    ) {
+      throw new RequestPolicyError("request uses an unapproved hosted tool");
+    }
+  }
+  validateBoundedJson(body);
+  return {
+    ...body,
+    store: false,
+    max_output_tokens: body.max_output_tokens ?? maxOutputTokens,
+  };
+}
 
 function json(response, status, body, headers = {}) {
   response.writeHead(status, {
@@ -239,20 +401,12 @@ export function createModelProxyRequestListener(input) {
         } catch {
           throw new RequestPolicyError("request body must be JSON");
         }
-        if (
-          body === null ||
-          typeof body !== "object" ||
-          Array.isArray(body) ||
-          !allowedModels.has(body.model) ||
-          (body.max_output_tokens !== undefined &&
-            (!Number.isSafeInteger(body.max_output_tokens) ||
-              body.max_output_tokens < 1 ||
-              body.max_output_tokens > maxOutputTokens))
-        ) {
-          throw new RequestPolicyError("request exceeds the model policy");
-        }
-        body.max_output_tokens ??= maxOutputTokens;
-        const upstreamBody = Buffer.from(JSON.stringify(body));
+        const admittedBody = enforceResponsesPrivacyPolicy(
+          body,
+          allowedModels,
+          maxOutputTokens,
+        );
+        const upstreamBody = Buffer.from(JSON.stringify(admittedBody));
         if (requestBytes >= WARN_BODY_BYTES) {
           log({
             event: "model_proxy_body_warning",

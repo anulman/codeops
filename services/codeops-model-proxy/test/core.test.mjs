@@ -109,8 +109,97 @@ test("replaces the run token with the real key only for the Responses API", asyn
     model: "gpt-5.4-nano-2026-03-17",
     input: "hello",
     max_output_tokens: 32768,
+    store: false,
   });
   assert.equal((await new Response(calls[0].init.body).text()).includes(token()), false);
+});
+
+test("enforces stateless Responses requests and rejects provider-hosted state", async () => {
+  const admitted = [];
+  await withProxy(
+    createModelProxyRequestListener({
+      openAiApiKey: "test-openai-key-never-exposed",
+      signingKey,
+      now: () => now,
+      maxRequestsPerRun: 20,
+      fetch: async (_url, init) => {
+        admitted.push(JSON.parse(init.body));
+        return new Response('{"id":"resp_private"}\n', { status: 200 });
+      },
+    }),
+    async (origin) => {
+      const request = (body) => fetch(`${origin}/v1/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token()}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      const safe = await request({
+        model: "gpt-5.6-sol",
+        input: [{ type: "message", role: "user", content: "Inspect this." }],
+        stream: true,
+        include: ["reasoning.encrypted_content"],
+        tools: [{ type: "function", name: "inspect", parameters: { type: "object" } }],
+      });
+      assert.equal(safe.status, 200);
+      await safe.text();
+
+      const rejected = [
+        { previous_response_id: "resp_prior" },
+        { conversation: "conv_1" },
+        { store: true },
+        { tools: [{ type: "web_search" }] },
+        { tools: [{ type: "file_search", vector_store_ids: ["vs_1"] }] },
+        { input: [{ type: "input_file", file_id: "file_1" }] },
+        { prompt_cache_key: "stable-provider-state" },
+        { metadata: { workItemBody: "private" } },
+      ];
+      for (const drift of rejected) {
+        const response = await request({
+          model: "gpt-5.6-sol",
+          input: "hello",
+          ...drift,
+        });
+        assert.equal(response.status, 400);
+      }
+    },
+  );
+  assert.equal(admitted.length, 1);
+  assert.equal(admitted[0].store, false);
+  assert.equal("previous_response_id" in admitted[0], false);
+});
+
+test("bounds admitted text and structured Responses inputs", async () => {
+  let upstreamCalls = 0;
+  await withProxy(
+    createModelProxyRequestListener({
+      openAiApiKey: "test-openai-key-never-exposed",
+      signingKey,
+      now: () => now,
+      maxRequestsPerRun: 5,
+      fetch: async () => {
+        upstreamCalls += 1;
+        return new Response('{"id":"unexpected"}\n', { status: 200 });
+      },
+    }),
+    async (origin) => {
+      const request = (input) => fetch(`${origin}/v1/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token()}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({ model: "gpt-5.6-sol", input }),
+      });
+      assert.equal((await request("x".repeat(8 * 1024 * 1024 + 1))).status, 400);
+      let nested = "leaf";
+      for (let index = 0; index < 21; index += 1) nested = { nested };
+      assert.equal((await request(nested)).status, 400);
+    },
+  );
+  assert.equal(upstreamCalls, 0);
 });
 
 test("rejects model, output-token, and per-run request budget drift", async () => {

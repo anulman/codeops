@@ -219,6 +219,12 @@ test("binds one durable permission request to waiting state", () => {
     requestId: "permission-1",
     title: "Run database migration?",
     description: "Apply the reviewed migration to the session database.",
+    operation: {
+      kind: "command",
+      command: "npm run migrate",
+      cwd: "/workspace",
+    },
+    operationDigest: `sha256:${"a".repeat(64)}`,
     options: [
       { optionId: "allow_once", label: "Allow once" },
       { optionId: "deny", label: "Deny" },
@@ -480,6 +486,15 @@ test("binds ACP permission options to one durable broker request and decision", 
       requestId,
       title: "Edit demo file",
       description: "The ACP agent wants to edit the synthetic demo file.",
+      operation: {
+        kind: "file_change",
+        changes: [{
+          path: "demo.txt",
+          oldText: "before\n",
+          newText: "after\n",
+        }],
+      },
+      operationDigest: `sha256:${"b".repeat(64)}`,
       options: [
         { optionId: "opt_allow", label: "Allow once" },
         { optionId: "opt_deny", label: "Deny once" },

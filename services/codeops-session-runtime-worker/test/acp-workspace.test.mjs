@@ -14,6 +14,8 @@ import {
   captureWorkspaceCheckpoint,
   createAcpPermissionRelay,
   forkOrCreateAcpSession,
+  mergeAcpPermissionToolCall,
+  renderAcpPermissionOperation,
   SocketAcpWorkspaceLifecycle,
   waitForAcpSocket,
 } from "../dist/acp-workspace.js";
@@ -204,6 +206,12 @@ test("maps ACP options through opaque broker identities without exposing claim a
         toolCallId: "tool-call-1",
         title: "Write README.md",
         kind: "edit",
+        content: [{
+          type: "diff",
+          path: "README.md",
+          oldText: "before\n",
+          newText: "after\n",
+        }],
       },
       options: [
         { optionId: "opaque-allow-once", name: "Allow once", kind: "allow_once" },
@@ -217,6 +225,15 @@ test("maps ACP options through opaque broker identities without exposing claim a
   assert.equal(submitted.length, 1);
   assert.equal("claimToken" in submitted[0], false);
   assert.match(submitted[0].request.requestId, /^permission-[0-9a-f]{64}$/);
+  assert.deepEqual(submitted[0].request.operation, {
+    kind: "file_change",
+    changes: [{
+      path: "README.md",
+      oldText: "before\n",
+      newText: "after\n",
+    }],
+  });
+  assert.match(submitted[0].request.operationDigest, /^sha256:[0-9a-f]{64}$/);
   assert.deepEqual(submitted[0].request.options, [
     { optionId: "option-1", label: "Allow once" },
     { optionId: "option-2", label: "Reject" },
@@ -225,6 +242,59 @@ test("maps ACP options through opaque broker identities without exposing claim a
     { optionId: "option-1", acpOptionId: "opaque-allow-once" },
     { optionId: "option-2", acpOptionId: "opaque-reject" },
   ]);
+});
+
+test("renders exact command, MCP, and prior file-change permission details", () => {
+  const options = [{ optionId: "allow", name: "Allow", kind: "allow_once" }];
+  assert.deepEqual(renderAcpPermissionOperation({
+    sessionId: "acp-1",
+    toolCall: {
+      toolCallId: "command-1",
+      kind: "execute",
+      rawInput: { command: "npm test", cwd: "/workspace" },
+    },
+    options,
+  }), { kind: "command", command: "npm test", cwd: "/workspace" });
+  assert.deepEqual(renderAcpPermissionOperation({
+    sessionId: "acp-1",
+    toolCall: {
+      toolCallId: "mcp-1",
+      kind: "execute",
+      rawInput: {
+        server: "plane",
+        tool: "comment",
+        arguments: { body: "Ship this.", id: "item-1" },
+      },
+    },
+    options,
+  }), {
+    kind: "mcp",
+    server: "plane",
+    tool: "comment",
+    argumentsJson: '{"body":"Ship this.","id":"item-1"}',
+  });
+  const enriched = mergeAcpPermissionToolCall(
+    { toolCallId: "edit-1", kind: "edit", status: "pending" },
+    {
+      toolCallId: "edit-1",
+      title: "Editing files",
+      kind: "edit",
+      content: [{ type: "diff", path: "a.ts", oldText: "a", newText: "b" }],
+    },
+  );
+  assert.deepEqual(renderAcpPermissionOperation({
+    sessionId: "acp-1",
+    toolCall: enriched,
+    options,
+  }), {
+    kind: "file_change",
+    changes: [{ path: "a.ts", oldText: "a", newText: "b" }],
+  });
+  assert.throws(() => renderAcpPermissionOperation({
+    sessionId: "acp-1",
+    toolCall: { toolCallId: "opaque-1", kind: "other" },
+    options,
+  }), /no safe operation renderer/);
 });
 
 test("captures tracked and untracked workspace changes in one bounded patch", async () => {

@@ -169,6 +169,11 @@ test("ACP runtime permission request durably pauses one running session", () => 
     requestId: "prm_91a4",
     title: "Edit demo file",
     description: "The ACP agent wants to edit the synthetic demo file.",
+    operation: {
+      kind: "file_change",
+      changes: [{ path: "demo.txt", oldText: "before", newText: "after" }],
+    },
+    operationDigest: `sha256:${"a".repeat(64)}`,
     options: [
       { optionId: "opt_allow", label: "Allow once" },
       { optionId: "opt_deny", label: "Deny once" },

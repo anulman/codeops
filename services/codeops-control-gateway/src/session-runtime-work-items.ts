@@ -71,6 +71,33 @@ function digest(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
+export function assertWorkItemPermissionIdentity(
+  permission: ReturnType<typeof sessionRuntimePermissionSubmissionSchema.parse>,
+  dispatch: SessionRuntimeDispatch,
+  operation: "create" | "comment" | "update" | "relate",
+  input: Record<string, unknown>,
+): void {
+  const rendered = permission.request.operation;
+  const expectedOperationId = `workitem-${createHash("sha256")
+    .update(canonical({ dispatchId: dispatch.dispatchId, operation, workItem: input }))
+    .digest("hex")}`;
+  const expectedDigest = digest(canonical(rendered));
+  if (
+    permission.acpSessionId !== "codeops-work-items" ||
+    permission.request.requestId !== expectedOperationId ||
+    permission.request.operationDigest !== expectedDigest ||
+    rendered.kind !== "work_item" ||
+    rendered.operation !== operation ||
+    rendered.repository !== input.repository ||
+    rendered.targetWorkItemId !== ("workItemId" in input ? input.workItemId : null) ||
+    rendered.payloadJson !== canonical(input)
+  ) {
+    throw new SessionRuntimeWorkItemConflictError(
+      `work-item ${operation} permission does not bind the exact operation`,
+    );
+  }
+}
+
 function assertRepositoryScope(
   dispatch: SessionRuntimeDispatch,
   repository: string,
@@ -155,6 +182,7 @@ export async function authorizeSessionRuntimeWorkItemCreate(
       row.request_json,
     );
     const decision = sessionCommandSchema.parse(row.command_json);
+    assertWorkItemPermissionIdentity(permission, dispatch, "create", request.input);
     if (
       permission.request.requestId !== request.operationId ||
       permission.claimToken !== request.claimToken ||
@@ -266,6 +294,12 @@ async function authorizeSessionRuntimeWorkItemOperation(
     }
     const permission = sessionRuntimePermissionSubmissionSchema.parse(row.request_json);
     const decision = sessionCommandSchema.parse(row.command_json);
+    assertWorkItemPermissionIdentity(
+      permission,
+      dispatch,
+      operation as "comment" | "update" | "relate",
+      request.input,
+    );
     if (
       permission.request.requestId !== request.operationId ||
       permission.claimToken !== request.claimToken ||

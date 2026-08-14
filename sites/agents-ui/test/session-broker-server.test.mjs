@@ -247,3 +247,24 @@ test("server functions bind the private UI service principal", async () => {
   assert.match(contextSource, /codeops:agents-ui/);
   assert.doesNotMatch(contextSource, /requestHeader|process\.env/i);
 });
+
+test("permission cards render the digest-bound operation before approval", async () => {
+  const routeSource = await readFile(
+    new URL("../src/routes/sessions.$sessionId.tsx", import.meta.url),
+    "utf8",
+  );
+  assert.match(routeSource, /Exact operation awaiting permission/);
+  for (const field of [
+    "operation\.command",
+    "operation\.cwd",
+    "operation\.server",
+    "operation\.tool",
+    "operation\.argumentsJson",
+    "operation\.changes",
+    "operation\.targetWorkItemId",
+    "operation\.payloadJson",
+    "operationDigest",
+  ]) {
+    assert.match(routeSource, new RegExp(field));
+  }
+});

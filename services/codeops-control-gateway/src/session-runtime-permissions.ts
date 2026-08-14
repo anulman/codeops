@@ -10,6 +10,7 @@ import {
   type SessionRuntimeDispatch,
   type SessionSnapshot,
 } from "@codeops/codeops-contracts";
+import { createHash } from "node:crypto";
 import type { TransactionClient } from "./session-broker-repository.js";
 import { applyRuntimePermissionRequestTransition } from "./session-broker-transitions.js";
 
@@ -63,6 +64,35 @@ function canonical(value: unknown): string {
   return JSON.stringify(normalize(value));
 }
 
+function assertPermissionOperationIdentity(
+  submission: ReturnType<typeof sessionRuntimePermissionSubmissionSchema.parse>,
+  dispatchId: string,
+): void {
+  const operationBytes = canonical(submission.request.operation);
+  const operationDigest = `sha256:${createHash("sha256")
+    .update(operationBytes)
+    .digest("hex")}`;
+  if (submission.request.operationDigest !== operationDigest) {
+    throw new SessionRuntimePermissionConflictError(
+      "runtime permission operation digest is invalid",
+    );
+  }
+  if (submission.acpSessionId !== "codeops-work-items") {
+    const requestId = `permission-${createHash("sha256")
+      .update(operationBytes)
+      .update("\0")
+      .update(dispatchId)
+      .update("\0")
+      .update(submission.toolCallId)
+      .digest("hex")}`;
+    if (submission.request.requestId !== requestId) {
+      throw new SessionRuntimePermissionConflictError(
+        "runtime permission request does not bind its rendered operation",
+      );
+    }
+  }
+}
+
 function requireWorkerId(workerId: string): void {
   if (!workerPattern.test(workerId)) {
     throw new Error("runtime worker must be a bounded audit identity");
@@ -113,6 +143,7 @@ export async function submitSessionRuntimePermission(
   const submission = sessionRuntimePermissionSubmissionSchema.parse(
     input.submission,
   );
+  assertPermissionOperationIdentity(submission, input.dispatchId);
   requireWorkerId(input.workerId);
   const now = (input.now ?? (() => new Date()))().toISOString();
 

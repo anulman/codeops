@@ -20,8 +20,10 @@ import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
+  sessionPermissionOperationSchema,
   sessionTimelineUpdateSchema,
   workspaceManifestSchema,
+  type SessionPermissionOperation,
   type SessionContentBlock,
   type SessionRuntimeDispatch,
   type SessionTimelineUpdate,
@@ -48,6 +50,103 @@ const MAX_ASSISTANT_RESPONSE_CHARS = 200_000;
 const MAX_TIMELINE_UPDATES = 499;
 const MAX_TIMELINE_UPDATE_BYTES = 800_000;
 const GIT_SHA = /^[0-9a-f]{40}$/;
+
+function canonical(value: unknown): string {
+  const normalize = (entry: unknown): unknown => {
+    if (Array.isArray(entry)) return entry.map(normalize);
+    if (entry !== null && typeof entry === "object") {
+      return Object.fromEntries(
+        Object.entries(entry as Record<string, unknown>)
+          .sort(([left], [right]) => left.localeCompare(right))
+          .map(([key, nested]) => [key, normalize(nested)]),
+      );
+    }
+    return entry;
+  };
+  return JSON.stringify(normalize(value));
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+export function renderAcpPermissionOperation(
+  request: acp.RequestPermissionRequest,
+): SessionPermissionOperation {
+  const raw = record(request.toolCall.rawInput);
+  if (
+    raw !== null &&
+    typeof raw.server === "string" &&
+    typeof raw.tool === "string" &&
+    "arguments" in raw
+  ) {
+    return sessionPermissionOperationSchema.parse({
+      kind: "mcp",
+      server: raw.server,
+      tool: raw.tool,
+      argumentsJson: canonical(raw.arguments),
+    });
+  }
+  if (
+    request.toolCall.kind === "execute" &&
+    raw !== null &&
+    typeof raw.command === "string" &&
+    typeof raw.cwd === "string"
+  ) {
+    return sessionPermissionOperationSchema.parse({
+      kind: "command",
+      command: raw.command,
+      cwd: raw.cwd,
+    });
+  }
+  if (request.toolCall.kind === "edit" && request.toolCall.content) {
+    const changes = request.toolCall.content.flatMap((content) =>
+      content.type === "diff"
+        ? [{
+            path: content.path,
+            oldText: content.oldText ?? null,
+            newText: content.newText,
+          }]
+        : [],
+    );
+    if (changes.length > 0) {
+      return sessionPermissionOperationSchema.parse({
+        kind: "file_change",
+        changes,
+      });
+    }
+  }
+  if (
+    request.toolCall.kind === "other" &&
+    raw !== null &&
+    Array.isArray(raw.permissions)
+  ) {
+    return sessionPermissionOperationSchema.parse({
+      kind: "agent_permissions",
+      detailsJson: canonical(raw),
+    });
+  }
+  throw new Error("ACP permission has no safe operation renderer");
+}
+
+export function mergeAcpPermissionToolCall(
+  current: acp.ToolCallUpdate,
+  prior: acp.ToolCall | acp.ToolCallUpdate | undefined,
+): acp.ToolCallUpdate {
+  if (prior === undefined) return current;
+  return {
+    toolCallId: current.toolCallId,
+    ...(current.kind !== undefined ? { kind: current.kind } : prior.kind !== undefined ? { kind: prior.kind } : {}),
+    ...(current.status !== undefined ? { status: current.status } : prior.status !== undefined ? { status: prior.status } : {}),
+    ...(current.title !== undefined ? { title: current.title } : prior.title !== undefined ? { title: prior.title } : {}),
+    ...(current.name !== undefined ? { name: current.name } : prior.name !== undefined ? { name: prior.name } : {}),
+    ...(current.content !== undefined ? { content: current.content } : prior.content !== undefined ? { content: prior.content } : {}),
+    ...(current.locations !== undefined ? { locations: current.locations } : prior.locations !== undefined ? { locations: prior.locations } : {}),
+    ...(current.rawInput !== undefined ? { rawInput: current.rawInput } : prior.rawInput !== undefined ? { rawInput: prior.rawInput } : {}),
+  };
+}
 
 export function appendAcpAssistantText(
   current: string,
@@ -274,10 +373,16 @@ export function createAcpPermissionRelay(input: {
       ) {
         throw new Error("ACP permission tool-call identity is invalid");
       }
+      const operation = renderAcpPermissionOperation(request);
       const requestId = `permission-${createHash("sha256")
+        .update(canonical(operation))
+        .update("\0")
         .update(dispatch.dispatchId)
         .update("\0")
         .update(request.toolCall.toolCallId)
+        .digest("hex")}`;
+      const operationDigest = `sha256:${createHash("sha256")
+        .update(canonical(operation))
         .digest("hex")}`;
       const title =
         request.toolCall.title?.trim() ||
@@ -294,6 +399,8 @@ export function createAcpPermissionRelay(input: {
           requestId,
           title,
           description,
+          operation,
+          operationDigest,
           options,
           requestedAt: now().toISOString(),
         },
@@ -833,6 +940,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
       Readable.toWeb(socket) as ReadableStream<Uint8Array>,
     );
     const promptOutput = new Map<string, AcpPromptCapture>();
+    const toolCalls = new Map<string, acp.ToolCall | acp.ToolCallUpdate>();
     try {
       return await acp
         .client({ name: "codeops-session-runtime-worker" })
@@ -842,13 +950,33 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
             if (dispatch.command.type !== "prompt") {
               return { outcome: { outcome: "cancelled" } };
             }
-            return this.#permissions.request(dispatch as PromptDispatch, params);
+            const key = `${params.sessionId}\0${params.toolCall.toolCallId}`;
+            return this.#permissions.request(dispatch as PromptDispatch, {
+              ...params,
+              toolCall: mergeAcpPermissionToolCall(
+                params.toolCall,
+                toolCalls.get(key),
+              ),
+            });
           },
         )
         .onNotification(
           acp.methods.client.session.update,
           ({ params }) => {
             const { sessionId, update } = params;
+            if (
+              update.sessionUpdate === "tool_call" ||
+              update.sessionUpdate === "tool_call_update"
+            ) {
+              const key = `${sessionId}\0${update.toolCallId}`;
+              toolCalls.set(
+                key,
+                mergeAcpPermissionToolCall(update, toolCalls.get(key)),
+              );
+              if (toolCalls.size > MAX_TIMELINE_UPDATES) {
+                toolCalls.delete(toolCalls.keys().next().value!);
+              }
+            }
             promptOutput.set(
               sessionId,
               captureAcpTimelineUpdate(
