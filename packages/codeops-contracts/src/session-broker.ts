@@ -30,6 +30,7 @@ export const SESSION_BROKER_VERSION = {
   command: "codeops.session-command/v1",
   commandResult: "codeops.session-command-result/v1",
   event: "codeops.session-event/v1",
+  forkComparison: "codeops.session-fork-comparison/v1",
 } as const;
 
 export const sessionActionTypeSchema = z.enum([
@@ -1039,6 +1040,122 @@ export const sessionEventSchema = z
     }
   });
 
+export const sessionForkCandidateSchema = z
+  .object({
+    sessionId: identifier,
+    workflowId: workflowRunIdentifier,
+    displayName: safeText(500),
+    generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    state: sessionStateSchema,
+    eventCursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+    eventWindow: z
+      .object({
+        afterCursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+        eventCount: z.number().int().nonnegative().max(500),
+        truncated: z.boolean(),
+      })
+      .strict(),
+    parentSessionId: identifier.nullable(),
+    forkedAtCursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).nullable(),
+    checkpoint: z
+      .object({
+        checkpointId: uuid,
+        eventCursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+        patchDigests: z.array(sha256Digest).max(5),
+        evidenceReferences: z.array(identifier).max(100),
+      })
+      .strict()
+      .nullable(),
+    observedDiff: z
+      .object({
+        fileCount: z.number().int().nonnegative().max(10_000),
+        byteCount: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      })
+      .strict(),
+    testEvidence: z
+      .array(
+        z
+          .object({
+            label: safeText(500),
+            status: z.enum(["completed", "failed"]),
+          })
+          .strict(),
+      )
+      .max(20),
+    riskSignals: z.array(safeText(1_000)).max(20),
+    latestConclusion: safeText(4_000).nullable(),
+  })
+  .strict();
+
+const sessionForkComparisonContentSchema = z
+  .object({
+    version: z.literal(SESSION_BROKER_VERSION.forkComparison),
+    lineage: z
+      .object({
+        parentSessionId: identifier,
+        forkedAtCursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      })
+      .strict(),
+    target: z
+      .object({
+        sessionId: identifier,
+        workflowId: workflowRunIdentifier,
+        generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+        eventCursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      })
+      .strict(),
+    candidates: z.array(sessionForkCandidateSchema).min(2).max(4),
+  })
+  .strict();
+
+function refineSessionForkComparison(
+  comparison: z.infer<typeof sessionForkComparisonContentSchema>,
+  context: z.RefinementCtx,
+): void {
+    const ids = comparison.candidates.map(({ sessionId }) => sessionId);
+    if (new Set(ids).size !== ids.length || ids.includes(comparison.target.sessionId)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["candidates"],
+        message: "fork comparison candidates must be unique and exclude the target",
+      });
+    }
+    if (ids.some((id, index) => index > 0 && ids[index - 1]!.localeCompare(id) >= 0)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["candidates"],
+        message: "fork comparison candidates must use canonical session order",
+      });
+    }
+    for (const [index, candidate] of comparison.candidates.entries()) {
+      if (
+        candidate.parentSessionId !== comparison.lineage.parentSessionId ||
+        candidate.forkedAtCursor !== comparison.lineage.forkedAtCursor
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["candidates", index],
+          message: "fork comparison candidate lineage must match the comparison",
+        });
+      }
+      if (
+        candidate.eventWindow.truncated !== (candidate.eventWindow.afterCursor > 0) ||
+        candidate.eventWindow.afterCursor + candidate.eventWindow.eventCount !== candidate.eventCursor
+      ) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["candidates", index, "eventWindow"],
+          message: "fork comparison event window must end at the candidate cursor",
+        });
+      }
+    }
+}
+
+export const sessionForkComparisonSchema = sessionForkComparisonContentSchema
+  .extend({ comparisonDigest: sha256Digest })
+  .strict()
+  .superRefine(refineSessionForkComparison);
+
 export type SessionActionType = z.infer<typeof sessionActionTypeSchema>;
 export type SessionCapability = z.infer<typeof sessionCapabilitySchema>;
 export type SessionState = z.infer<typeof sessionStateSchema>;
@@ -1079,5 +1196,7 @@ export type SessionTimelineUpdate = z.infer<typeof sessionTimelineUpdateSchema>;
 export type SessionPermissionOperation = z.infer<
   typeof sessionPermissionOperationSchema
 >;
+export type SessionForkCandidate = z.infer<typeof sessionForkCandidateSchema>;
+export type SessionForkComparison = z.infer<typeof sessionForkComparisonSchema>;
 export type SessionUserAction = z.infer<typeof sessionUserActionSchema>;
 export type SessionEvent = z.infer<typeof sessionEventSchema>;
