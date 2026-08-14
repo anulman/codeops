@@ -261,6 +261,31 @@ test("keeps the Agents UI private", () => {
   assert.doesNotMatch(gatewaySource, /github-steering-token/);
   assert.match(gatewaySource, /team-a-codeops-repository-steering/);
   assert.match(gatewaySource, /CODEOPS_REPOSITORY_STEERING_REGISTRY_FILE/);
+  const gatewayEnv = new Map(
+    gateway.spec.template.spec.containers[0].env.map((entry) => [entry.name, entry]),
+  );
+  assert.equal(
+    gatewayEnv.get("CODEOPS_GITHUB_READ_PROVIDER_ORIGIN").value,
+    "http://team-a-codeops-control-gateway:8080",
+  );
+  assert.equal(
+    gatewayEnv.get("CODEOPS_GITHUB_READ_PROVIDER_TOKEN_FILE").value,
+    "/var/run/secrets/team-a-codeops-github-reads/repository-head-token",
+  );
+  const githubReadAuthority = gateway.spec.template.spec.volumes.find(
+    ({ name }) => name === "github-read-provider-auth",
+  );
+  assert.equal(
+    githubReadAuthority.secret.secretName,
+    "team-a-codeops-control-gateway-secrets",
+  );
+  assert.deepEqual(githubReadAuthority.secret.items, [
+    { key: "repository-head-token", path: "repository-head-token" },
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(githubReadAuthority),
+    /repository-registry|read-token|write-token/,
+  );
   assert.equal(JSON.stringify(deployment).includes("initialization-token"), false);
 
   const controller = resource(
@@ -373,6 +398,7 @@ test("defaults to deny and opens only explicit component paths", () => {
   const gateway = resource(resources, "NetworkPolicy", "team-a-codeops-session-gateway");
   assert.ok(JSON.stringify(gateway).includes("github-controller"));
   assert.ok(JSON.stringify(gateway).includes("team-a-codeops-postgresql"));
+  assert.ok(JSON.stringify(gateway.spec.egress).includes("team-a-codeops-control-gateway"));
   const controller = resource(resources, "NetworkPolicy", "team-a-codeops-github-controller");
   assert.ok(JSON.stringify(controller).includes("team-a-codeops-session-gateway"));
   assert.ok(JSON.stringify(controller).includes("team-a-codeops-control-gateway"));
@@ -380,6 +406,7 @@ test("defaults to deny and opens only explicit component paths", () => {
   const controlGateway = resource(resources, "NetworkPolicy", "team-a-codeops-control-gateway");
   assert.ok(JSON.stringify(controlGateway).includes("10.43.0.1/32"));
   assert.ok(JSON.stringify(controlGateway.spec.ingress).includes("orchestrator"));
+  assert.ok(JSON.stringify(controlGateway.spec.ingress).includes("session-gateway"));
   const orchestrator = resource(resources, "NetworkPolicy", "team-a-codeops-orchestrator");
   assert.ok(JSON.stringify(orchestrator).includes("team-a-codeops-control-gateway"));
   const migration = resource(resources, "NetworkPolicy", "team-a-codeops-session-migration");

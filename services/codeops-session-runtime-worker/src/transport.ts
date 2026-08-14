@@ -1,4 +1,5 @@
 import {
+  githubReadResultSchema,
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeClaimResponseSchema,
   sessionRuntimeCheckpointMaterialSchema,
@@ -10,6 +11,7 @@ import {
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
+  sessionRuntimeGitHubReadRequestSchema,
   sessionTimelineUpdateSchema,
   sessionRuntimeWorkItemCommentRequestSchema,
   sessionRuntimeWorkItemCreateRequestSchema,
@@ -24,12 +26,14 @@ import {
   workItemSearchResultSchema,
   workItemUpdateResultSchema,
   type SessionCommandResult,
+  type GitHubReadResult,
   type SessionIdentity,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
   type SessionRuntimeDispatchClaim,
   type SessionRuntimePermissionResult,
   type SessionRuntimePermissionSubmission,
+  type SessionRuntimeGitHubReadRequest,
   type WorkItemCommentInput,
   type WorkItemCommentResult,
   type WorkItemCreateInput,
@@ -105,6 +109,13 @@ export type RuntimePermissionSubmission = Omit<
   "version" | "claimToken"
 >;
 
+export type RuntimeGitHubReadRequest =
+  SessionRuntimeGitHubReadRequest extends infer Request
+    ? Request extends unknown
+      ? Omit<Request, "version" | "claimToken">
+      : never
+    : never;
+
 export interface RuntimeExecutionContext {
   requestPermission(
     submission: RuntimePermissionSubmission,
@@ -133,6 +144,9 @@ export interface RuntimeExecutionContext {
     readonly operationId: string;
     readonly workItem: WorkItemRelateInput;
   }): Promise<WorkItemRelateResult>;
+  readGitHub(
+    input: RuntimeGitHubReadRequest,
+  ): Promise<GitHubReadResult>;
 }
 
 export type RuntimeExecutor = (
@@ -531,6 +545,32 @@ export class SessionRuntimeTransport {
     );
   }
 
+  async #readGitHub(
+    claim: SessionRuntimeDispatchClaim,
+    input: RuntimeGitHubReadRequest,
+    now: () => Date,
+  ): Promise<GitHubReadResult> {
+    if (
+      claim.dispatch.command.type !== "prompt" ||
+      now().getTime() >= Date.parse(claim.claimExpiresAt)
+    ) {
+      throw new SessionRuntimeTransportError(
+        "only one live claimed prompt may read GitHub",
+      );
+    }
+    const request = sessionRuntimeGitHubReadRequestSchema.parse({
+      version: "codeops.session-runtime-github-read-request/v1",
+      claimToken: claim.claimToken,
+      ...input,
+    });
+    return githubReadResultSchema.parse(
+      await this.#post(
+        `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/github-reads`,
+        request,
+      ),
+    );
+  }
+
   async runOne(input: {
     readonly leaseMs: number;
     readonly execute: RuntimeExecutor;
@@ -567,6 +607,7 @@ export class SessionRuntimeTransport {
       relateWorkItem: async (workItem) => workItemRelateResultSchema.parse(
         await this.#operateWorkItem(claim, "relate", workItem, now),
       ),
+      readGitHub: (githubRead) => this.#readGitHub(claim, githubRead, now),
     });
     const completedAt = now();
     if (completedAt.getTime() >= Date.parse(claim.claimExpiresAt)) {

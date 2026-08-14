@@ -279,6 +279,85 @@ test("relays permission through a claim-hidden executor callback", async () => {
   assert.equal(requests[3].body.claimToken, claimToken);
 });
 
+test("relays a bounded GitHub read through hidden live-claim authority", async () => {
+  const requests = [];
+  const transport = new SessionRuntimeTransport({
+    gatewayOrigin: "http://codeops-control-gateway:8080",
+    token,
+    authority,
+    fetch: async (url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push({ url, body });
+      if (url.endsWith("/claims")) {
+        return json({
+          version: "codeops.session-runtime-claim-response/v1",
+          claim: claim(),
+        });
+      }
+      if (url.endsWith("/github-reads")) {
+        return json({
+          version: "codeops.github-search-result/v1",
+          repository: "example-org/example-repository",
+          kind: "pull_requests",
+          query: "is:open runtime",
+          items: [],
+          truncated: false,
+        });
+      }
+      return json({
+        version: "codeops.session-command-result/v1",
+        commandId: "66666666-6666-4666-8666-666666666666",
+        sessionId: "ses_91a4",
+        generation: 3,
+        leaseId,
+        idempotencyKey,
+        type: "prompt",
+        eventCursor: 186,
+        snapshot: { ...claim().dispatch.snapshot, eventCursor: 186 },
+        committedAt: "2026-08-04T20:03:01.000Z",
+        disposition: "committed",
+      });
+    },
+  });
+
+  await transport.runOne({
+    leaseMs: 300_000,
+    now: () => new Date("2026-08-04T20:03:00.000Z"),
+    execute: async (_dispatch, context) => {
+      assert.equal("claimToken" in context, false);
+      const result = await context.readGitHub({
+        operation: "search",
+        operationId: `githubread-${"b".repeat(64)}`,
+        input: {
+          repository: "example-org/example-repository",
+          kind: "pull_requests",
+          query: "is:open runtime",
+          limit: 5,
+        },
+      });
+      assert.equal(result.version, "codeops.github-search-result/v1");
+      return promptResult;
+    },
+  });
+
+  assert.equal(
+    requests[1].url,
+    `http://codeops-control-gateway:8080/v1/session-runtime/dispatches/${dispatchId}/github-reads`,
+  );
+  assert.deepEqual(requests[1].body, {
+    version: "codeops.session-runtime-github-read-request/v1",
+    claimToken,
+    operation: "search",
+    operationId: `githubread-${"b".repeat(64)}`,
+    input: {
+      repository: "example-org/example-repository",
+      kind: "pull_requests",
+      query: "is:open runtime",
+      limit: 5,
+    },
+  });
+});
+
 test("builds the completion envelope from the claim instead of trusting the executor", () => {
   assert.deepEqual(
     buildSessionRuntimeCompletion(
