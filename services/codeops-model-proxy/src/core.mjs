@@ -223,7 +223,7 @@ export function validateModelProxyToken(input) {
     payload === null ||
     typeof payload !== "object" ||
     Object.keys(payload).sort().join(",") !==
-      "aud,exp,iat,model,reasoningEffort,sub" ||
+      "aud,exp,iat,maximumOutputTokens,maximumRequests,model,reasoningEffort,sub" ||
     payload.aud !== "codeops-model-proxy" ||
     typeof payload.sub !== "string" ||
     !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(payload.sub) ||
@@ -234,6 +234,12 @@ export function validateModelProxyToken(input) {
     ) ||
     !Number.isSafeInteger(payload.iat) ||
     !Number.isSafeInteger(payload.exp) ||
+    !Number.isSafeInteger(payload.maximumRequests) ||
+    payload.maximumRequests < 1 ||
+    payload.maximumRequests > 1_000 ||
+    !Number.isSafeInteger(payload.maximumOutputTokens) ||
+    payload.maximumOutputTokens < 1 ||
+    payload.maximumOutputTokens > 100_000 ||
     payload.iat > now + 60 ||
     payload.exp <= now ||
     payload.exp - payload.iat > MAX_TOKEN_TTL_SECONDS
@@ -245,6 +251,8 @@ export function validateModelProxyToken(input) {
     expiresAt: payload.exp,
     model: payload.model,
     reasoningEffort: payload.reasoningEffort,
+    maximumRequests: payload.maximumRequests,
+    maximumOutputTokens: payload.maximumOutputTokens,
   };
 }
 
@@ -386,13 +394,17 @@ export function createModelProxyRequestListener(input) {
         priorUsage && priorUsage.expiresAt === authority.expiresAt
           ? priorUsage.count + 1
           : 1;
-      if (requestCount > maxRequestsPerRun) {
+      const admittedMaximumRequests = Math.min(
+        maxRequestsPerRun,
+        authority.maximumRequests,
+      );
+      if (requestCount > admittedMaximumRequests) {
         release();
         log({
           event: "model_proxy_request_stop_loss",
           subject: authority.runId,
           requestCount: requestCount - 1,
-          maximumRequests: maxRequestsPerRun,
+          maximumRequests: admittedMaximumRequests,
         });
         json(
           response,
@@ -422,7 +434,7 @@ export function createModelProxyRequestListener(input) {
           body,
           authority,
           allowedModels,
-          maxOutputTokens,
+          Math.min(maxOutputTokens, authority.maximumOutputTokens),
         );
         const upstreamBody = Buffer.from(JSON.stringify(admittedBody));
         if (requestBytes >= WARN_BODY_BYTES) {

@@ -71,7 +71,7 @@ class FakeClient {
     if (text.includes("session_events")) {
       return { rowCount: this.events.length, rows: this.events.map((value) => ({ event_json: value })) };
     }
-    const rows = text.includes("WHERE session_id")
+    const rows = /WHERE (?:parent\.)?session_id/.test(text)
       ? this.sessions.filter((value) => value.sessionId === values[0])
       : this.sessions;
     return { rowCount: rows.length, rows: rows.map((value) => ({ snapshot_json: value })) };

@@ -14,7 +14,11 @@ export const Route = tsr.createRootRoute({
         content: "Live and archived CodeOps agent sessions.",
       },
     ],
-    links: [{ rel: "stylesheet", href: globalStyles }],
+    links: [
+      { rel: "stylesheet", href: globalStyles },
+      { rel: "manifest", href: "/manifest.webmanifest" },
+      { rel: "icon", href: "/codeops-session-icon.svg", type: "image/svg+xml" },
+    ],
   }),
   component: RootComponent,
 });

@@ -579,6 +579,16 @@ const server = createServer((request, response) => {
                       signingKey: modelAuth.signingKey,
                       model: modelPolicy.model,
                       reasoningEffort: modelPolicy.reasoningEffort,
+                      ...(initialized.snapshot.budget === undefined
+                        ? {}
+                        : {
+                            maximumRequests:
+                              initialized.snapshot.budget.remaining.modelRequests,
+                            maximumOutputTokens: Math.min(
+                              32_768,
+                              initialized.snapshot.budget.remaining.totalTokens,
+                            ),
+                          }),
                     }),
                   }),
             };

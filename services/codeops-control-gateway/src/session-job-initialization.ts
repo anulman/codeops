@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import {
   SESSION_BROKER_VERSION,
+  projectSessionBudget,
   sessionEventSchema,
   sessionJobInitializationRequestSchema,
   sessionJobInitializationResponseSchema,
@@ -81,6 +82,10 @@ export async function initializeSessionFromJob(
     },
     checkpoint: null,
     pendingPermission: null,
+    budget: projectSessionBudget({
+      startedAt: initializedAt,
+      observedAt: initializedAt,
+    }),
     eventCursor: 1,
     capabilities: sessionCapabilitiesFor("running", false),
     updatedAt: initializedAt,

@@ -97,6 +97,18 @@ export {
   type SessionRuntimePermissionSubmission,
 } from "./session-runtime.js";
 export {
+  DEFAULT_SESSION_BUDGET_LIMITS,
+  projectSessionBudget,
+  sessionBudgetLimitsSchema,
+  sessionBudgetProjectionSchema,
+  sessionBudgetExhaustedLimitSchema,
+  sessionBudgetUsageSchema,
+  type SessionBudgetLimits,
+  type SessionBudgetProjection,
+  type SessionBudgetExhaustedLimit,
+  type SessionBudgetUsage,
+} from "./session-budget.js";
+export {
   interactiveSessionModeSchema,
   sessionModeSchema,
   sessionPolicyForMode,

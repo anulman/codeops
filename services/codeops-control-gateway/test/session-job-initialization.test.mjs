@@ -54,6 +54,13 @@ test("creates one running root session and one commandless creation event", asyn
   assert.equal(result.snapshot.state, "running");
   assert.equal(result.snapshot.eventCursor, 1);
   assert.equal(result.snapshot.lease.holderId, request.holderId);
+  assert.deepEqual(result.snapshot.budget.usage, {
+    elapsedSeconds: 0,
+    totalTokens: 0,
+    modelRequests: 0,
+    activeChildren: 0,
+  });
+  assert.equal(result.snapshot.budget.exhaustedLimit, null);
   const event = database.calls.find(({ text }) =>
     text.includes("INSERT INTO codeops.session_events"),
   );

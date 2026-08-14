@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { sessionPolicySchema } from "./session-policy.js";
+import { sessionBudgetProjectionSchema } from "./session-budget.js";
 import {
   workspaceContextAttachmentDescriptorsSchema,
   workspaceContextAttachmentsSchema,
@@ -412,6 +413,7 @@ export const sessionSnapshotSchema = z
     lease: sessionLeaseSchema.nullable(),
     checkpoint: sessionCheckpointSchema.nullable(),
     pendingPermission: sessionPermissionRequestSchema.nullable(),
+    budget: sessionBudgetProjectionSchema.optional(),
     eventCursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     capabilities: z.array(sessionCapabilitySchema).length(
       sessionActionTypeSchema.options.length,
@@ -644,6 +646,7 @@ export const sessionCommandResultSchema = z
         disposition: z.literal("rejected"),
         rejectionCode: z.enum([
           "capability_unavailable",
+          "budget_exhausted",
           "generation_conflict",
           "lease_conflict",
           "authorization_denied",
