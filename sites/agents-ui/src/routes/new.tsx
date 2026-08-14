@@ -5,7 +5,14 @@ import {
   createWorkspaceLaunch,
   getWorkspaceCatalog,
 } from "@/lib/workspaceLaunch.data";
+import {
+  MAX_CONTEXT_ATTACHMENTS,
+  MAX_CONTEXT_ATTACHMENTS_TOTAL_BYTES,
+  contextAttachmentSummary,
+  workspaceContextAttachmentFromFile,
+} from "@/lib/contextAttachments";
 import { workspaceLaunchSessionId } from "@codeops/codeops-contracts/workspace-launch";
+import type { WorkspaceContextAttachment } from "@codeops/codeops-contracts/workspace-launch";
 import type { InteractiveSessionMode } from "@codeops/codeops-contracts/session-policy";
 
 const sessionModes: readonly {
@@ -32,6 +39,7 @@ function NewSessionPage() {
   const [title, setTitle] = useState("");
   const [mode, setMode] = useState<InteractiveSessionMode>("implement");
   const [selected, setSelected] = useState<readonly string[]>([]);
+  const [contextAttachments, setContextAttachments] = useState<readonly WorkspaceContextAttachment[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const valid = prompt.trim().length > 0 && prompt.length <= 100_000 &&
@@ -52,6 +60,30 @@ function NewSessionPage() {
     );
   };
 
+  const addContextAttachments = async (files: FileList | null) => {
+    if (!files || submitting) return;
+    setError(null);
+    try {
+      const incoming = Array.from(files);
+      if (contextAttachments.length + incoming.length > MAX_CONTEXT_ATTACHMENTS) {
+        throw new Error("You can attach up to four context files.");
+      }
+      const duplicate = incoming.find((file, index) =>
+        contextAttachments.some((attachment) => attachment.name === file.name) ||
+        incoming.findIndex((candidate) => candidate.name === file.name) !== index,
+      );
+      if (duplicate) throw new Error(`An attachment named ${duplicate.name} is already selected.`);
+      const additions = await Promise.all(incoming.map(workspaceContextAttachmentFromFile));
+      const totalBytes = [...contextAttachments, ...additions].reduce((total, item) => total + item.sizeBytes, 0);
+      if (totalBytes > MAX_CONTEXT_ATTACHMENTS_TOTAL_BYTES) {
+        throw new Error("Context attachments exceed the 512 KiB combined limit.");
+      }
+      setContextAttachments((current) => [...current, ...additions]);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    }
+  };
+
   const submit = async () => {
     if (!valid || submitting) return;
     setSubmitting(true);
@@ -63,6 +95,7 @@ function NewSessionPage() {
           idempotencyKey: crypto.randomUUID(),
           mode,
           prompt: prompt.trim(),
+          ...(contextAttachments.length > 0 ? { contextAttachments } : {}),
           ...(title.trim() ? { title: title.trim() } : {}),
           sources: selected.map((catalogKey) => ({ catalogKey })),
         },
@@ -136,6 +169,16 @@ function NewSessionPage() {
                     );
                   })}
                 </div>
+              </fieldset>
+
+              <fieldset className="mt-7" disabled={locked}>
+                <legend className="text-xs font-semibold text-white/72">Context files <span className="font-normal text-white/28">Optional · up to four</span></legend>
+                <p className="mt-1.5 text-[11px] leading-5 text-white/32">Each file is bound to its SHA-256 digest. The runtime verifies the exact bytes again before it sends them to the agent.</p>
+                <label className="mt-3 flex min-h-11 cursor-pointer items-center justify-center rounded-xl border border-dashed border-white/[0.11] bg-white/[0.02] px-4 text-xs font-medium text-white/42 transition hover:border-[#7774ff]/35 hover:bg-[#7774ff]/[0.05] hover:text-white/68">
+                  <input type="file" multiple className="sr-only" onChange={(event) => { void addContextAttachments(event.target.files); event.target.value = ""; }} />
+                  Add files · 256 KiB each · 512 KiB total
+                </label>
+                {contextAttachments.length > 0 ? <div className="mt-3 space-y-2">{contextAttachments.map((attachment) => <div key={attachment.attachmentId} className="flex items-center gap-3 rounded-xl border border-white/[0.07] bg-white/[0.02] px-3 py-2.5"><span className="grid size-7 shrink-0 place-items-center rounded-lg bg-[#6da8ff]/8 text-[11px] text-[#8dbbff]">↗</span><span className="min-w-0 flex-1"><span className="block truncate text-xs font-medium text-white/66">{attachment.name}</span><span className="mt-0.5 block truncate font-mono text-[9px] text-white/25">{contextAttachmentSummary(attachment)}</span></span><button type="button" disabled={locked} onClick={() => setContextAttachments((current) => current.filter((item) => item.attachmentId !== attachment.attachmentId))} aria-label={`Remove ${attachment.name}`} className="grid size-8 shrink-0 place-items-center rounded-lg text-white/25 transition hover:bg-white/[0.05] hover:text-white/65">×</button></div>)}</div> : null}
               </fieldset>
 
               <div className={`mt-5 flex items-start gap-3 rounded-xl border px-4 py-3 ${selectedRepositories.length === 0 ? "border-[#6da8ff]/16 bg-[#6da8ff]/7" : "border-white/[0.06] bg-white/[0.02]"}`}>

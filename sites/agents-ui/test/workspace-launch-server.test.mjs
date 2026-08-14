@@ -6,6 +6,15 @@ import {
 } from "../src/lib/workspaceLaunch.server.ts";
 
 const token = "l".repeat(32);
+const contextAttachment = {
+  attachmentId: "context-estimator-notes",
+  name: "estimator-notes.txt",
+  mimeType: "text/plain",
+  sizeBytes: 5,
+  digest: `sha256:${"c".repeat(64)}`,
+  content: "aGVsbG8=",
+};
+const contextAttachmentDescriptor = (({ content: _content, ...descriptor }) => descriptor)(contextAttachment);
 const launch = {
   version: "codeops.workspace-launch/v1",
   launchId: "launch-91a4",
@@ -19,6 +28,7 @@ const launch = {
     modelCalls: "allowed",
     modelPolicy: { provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "high" },
   },
+  contextAttachments: [contextAttachmentDescriptor],
   promptDigest: `sha256:${"b".repeat(64)}`,
   workspace: {
     version: "codeops.workspace/v1",
@@ -54,6 +64,7 @@ test("launch client keeps authority server-side and binds the principal", async 
     idempotencyKey: launch.idempotencyKey,
     mode: "plan",
     prompt: "Create a one-off script.",
+    contextAttachments: [contextAttachment],
     sources: [],
   };
   assert.deepEqual(
@@ -66,6 +77,7 @@ test("launch client keeps authority server-side and binds the principal", async 
   assert.equal(calls[0].init.headers["X-CodeOps-Principal"], launch.principalId);
   assert.deepEqual(JSON.parse(calls[0].init.body), request);
   assert.equal("prompt" in launch, false);
+  assert.equal("content" in launch.contextAttachments[0], false);
 });
 
 test("catalog and launch reads validate responses and exact identities", async () => {
@@ -116,6 +128,9 @@ test("launch server functions bind the private UI context and no browser token",
   assert.match(routeSource, /Create session/);
   assert.match(routeSource, /Session mode/);
   assert.match(routeSource, /Validate is deterministic and uses no model/);
+  assert.match(routeSource, /Context files/);
+  assert.match(routeSource, /contextAttachments/);
+  assert.match(sessionRouteSource, /ContextAttachmentList/);
   assert.match(routeSource, /crypto\.randomUUID\(\)/);
   assert.match(routeSource, /workspaceLaunchSessionId\(launch\.launchId\)/);
   assert.doesNotMatch(routeSource, /launch\.state === "ready"/);

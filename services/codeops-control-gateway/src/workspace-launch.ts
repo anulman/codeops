@@ -9,6 +9,7 @@ import {
   type WorkspaceManifest,
   type WorkspaceSource,
 } from "@codeops/codeops-contracts";
+import { workspaceContextAttachmentDescriptors } from "@codeops/codeops-contracts/workspace-context-node";
 
 const MAX_ACTIVE_PER_PRINCIPAL = 2;
 const MAX_ACTIVE_GLOBAL = 8;
@@ -68,6 +69,17 @@ export async function admitWorkspaceLaunch(input: {
   readonly now?: () => Date;
 }): Promise<WorkspaceLaunch> {
   const request = workspaceLaunchRequestSchema.parse(input.request);
+  let contextAttachments;
+  try {
+    contextAttachments = workspaceContextAttachmentDescriptors(
+      request.contextAttachments ?? [],
+    );
+  } catch (error) {
+    throw new InvalidWorkspaceLaunchInputError(
+      "workspace context attachments are invalid",
+      { cause: error },
+    );
+  }
   const principalId = input.principalId.trim();
   if (
     principalId.length < 3 ||
@@ -108,6 +120,7 @@ export async function admitWorkspaceLaunch(input: {
     principalId,
     requestDigest,
     policy: sessionPolicyForMode(request.mode),
+    contextAttachments,
     ...(request.title === undefined ? {} : { title: request.title }),
     promptDigest: digest(request.prompt),
     workspace,

@@ -1,6 +1,10 @@
 import { z } from "zod";
 import { sessionPolicySchema } from "./session-policy.js";
-import { workspaceManifestSchema } from "./workspace-launch.js";
+import {
+  workspaceContextAttachmentDescriptorsSchema,
+  workspaceContextAttachmentsSchema,
+  workspaceManifestSchema,
+} from "./workspace-launch.js";
 
 const identifier = z
   .string()
@@ -360,6 +364,7 @@ export const workspaceSessionIdentitySchema = refineSessionIdentity(
     .object({
       version: z.literal("codeops.session-workspace-identity/v1"),
       policy: sessionPolicySchema,
+      contextAttachments: workspaceContextAttachmentDescriptorsSchema.default([]),
       workspace: workspaceManifestSchema,
       ...sessionIdentityCommonShape,
     })
@@ -547,6 +552,7 @@ const promptCommandSchema = commandBase
   .extend({
     type: z.literal("prompt"),
     prompt: safeText(100_000),
+    contextAttachments: workspaceContextAttachmentsSchema.optional(),
   })
   .strict();
 
@@ -978,6 +984,8 @@ export const sessionEventSchema = z
           .object({
             role: z.literal("user"),
             text: safeText(100_000),
+            contextAttachments:
+              workspaceContextAttachmentDescriptorsSchema.optional(),
             messageId: z.string().min(1).max(500).nullable().optional(),
           })
           .strict(),

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { test } from "node:test";
 import {
   PermanentWorkspaceLaunchError,
@@ -14,6 +15,16 @@ const policy = {
   modelCalls: "allowed",
   modelPolicy: { provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "medium" },
 };
+const attachmentContent = Buffer.from("Exact estimator context.\n", "utf8").toString("base64");
+const contextAttachment = {
+  attachmentId: "context-estimator-notes",
+  name: "estimator-notes.txt",
+  mimeType: "text/plain",
+  sizeBytes: Buffer.from("Exact estimator context.\n", "utf8").byteLength,
+  digest: `sha256:${createHash("sha256").update(Buffer.from(attachmentContent, "base64")).digest("hex")}`,
+  content: attachmentContent,
+};
+const contextAttachmentDescriptor = (({ content: _content, ...descriptor }) => descriptor)(contextAttachment);
 const launch = {
   version: "codeops.workspace-launch/v1",
   launchId: "launch-0123456789abcdef01234567",
@@ -22,6 +33,7 @@ const launch = {
   title: "Investigate the estimator",
   requestDigest: `sha256:${"a".repeat(64)}`,
   policy,
+  contextAttachments: [contextAttachmentDescriptor],
   promptDigest: `sha256:${"b".repeat(64)}`,
   workspace: { version: "codeops.workspace/v1", sources: [], scratchPath: "scratch" },
   state: "queued",
@@ -35,6 +47,7 @@ const request = {
   idempotencyKey: launch.idempotencyKey,
   mode: "implement",
   prompt: "Write a one-off script.",
+  contextAttachments: [contextAttachment],
   sources: [],
 };
 const image = `ghcr.io/anulman/codeops/image@sha256:${"c".repeat(64)}`;
@@ -48,6 +61,7 @@ function resourceConfig(current, identity) {
     ...(current.title === undefined ? {} : { displayName: current.title }),
     ...identity,
     policy: current.policy,
+    contextAttachments: current.contextAttachments,
     workspace: current.workspace,
     sources: [],
     agentImage: image,
@@ -85,6 +99,7 @@ test("provisions fixed resources, waits for the exact session, and sends one pro
       identity: {
         version: "codeops.session-workspace-identity/v1",
         policy: launch.policy,
+        contextAttachments: launch.contextAttachments,
         workspace: launch.workspace,
         workflowId: identity.workflowId,
         runId: identity.runId,
@@ -132,6 +147,7 @@ test("provisions fixed resources, waits for the exact session, and sends one pro
   assert.equal(result.sessionId, identity.sessionId);
   assert.equal(enqueued.length, 1);
   assert.equal(enqueued[0].command.prompt, request.prompt);
+  assert.deepEqual(enqueued[0].command.contextAttachments, request.contextAttachments);
   assert.equal(enqueued[0].command.idempotencyKey, identity.promptIdempotencyKey);
 });
 

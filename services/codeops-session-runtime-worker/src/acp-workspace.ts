@@ -28,7 +28,13 @@ import {
   type SessionRuntimeDispatch,
   type SessionTimelineUpdate,
   type WorkspaceManifest,
+  type WorkspaceContextAttachment,
 } from "@codeops/codeops-contracts";
+import {
+  decodeWorkspaceContextAttachment,
+  isTextContextMediaType,
+  verifyWorkspaceContextAttachments,
+} from "@codeops/codeops-contracts/workspace-context-node";
 import type {
   AcpWorkspaceLifecycle,
 } from "./lifecycle.js";
@@ -507,12 +513,40 @@ interface StoredAcpState {
 export interface AcpAgentSessionConnection {
   newSession(cwd: string): Promise<string>;
   loadSession(sessionId: string, cwd: string): Promise<void>;
-  prompt(sessionId: string, prompt: string): Promise<{
+  prompt(sessionId: string, prompt: readonly acp.ContentBlock[]): Promise<{
     readonly response: string;
     readonly stopReason: acp.PromptResponse["stopReason"];
     readonly updates?: SessionTimelineUpdate[];
   }>;
   forkSession(sessionId: string, cwd: string): Promise<string>;
+}
+
+export function workspacePromptContentBlocks(
+  prompt: string,
+  value: unknown,
+): readonly acp.ContentBlock[] {
+  const attachments = verifyWorkspaceContextAttachments(value);
+  return [
+    { type: "text", text: prompt },
+    ...attachments.map((attachment: WorkspaceContextAttachment): acp.ContentBlock => {
+      const content = decodeWorkspaceContextAttachment(attachment);
+      const uri = `codeops-context://sha256/${attachment.digest.slice(7)}/${encodeURIComponent(attachment.name)}`;
+      return {
+        type: "resource",
+        resource: isTextContextMediaType(attachment.mimeType)
+          ? {
+              uri,
+              mimeType: attachment.mimeType,
+              text: new TextDecoder("utf-8", { fatal: true }).decode(content),
+            }
+          : {
+              uri,
+              mimeType: attachment.mimeType,
+              blob: attachment.content,
+            },
+      };
+    }),
+  ];
 }
 
 export type AcpConnectionFactory = <Result>(
@@ -1087,7 +1121,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
               promptOutput.set(sessionId, { response: "", updates: [] });
               const result = await agent.request(acp.methods.agent.session.prompt, {
                 sessionId,
-                prompt: [{ type: "text", text: prompt }],
+                prompt: [...prompt],
               });
               const capture = promptOutput.get(sessionId) ?? { response: "", updates: [] };
               return { ...capture, stopReason: result.stopReason };
@@ -1135,7 +1169,13 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   async prompt(dispatch: PromptDispatch): Promise<RuntimeExecutionResult> {
     const material = await this.#connect(dispatch, async (agent) => {
       const sessionId = await this.#activeAcpSession(dispatch, agent);
-      return agent.prompt(sessionId, dispatch.command.prompt);
+      return agent.prompt(
+        sessionId,
+        workspacePromptContentBlocks(
+          dispatch.command.prompt,
+          dispatch.command.contextAttachments ?? [],
+        ),
+      );
     });
     return { type: "prompt", material };
   }

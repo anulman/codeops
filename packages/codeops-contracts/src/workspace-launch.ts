@@ -31,6 +31,21 @@ const identifier = z
 const safeText = (maximum: number) => z.string().trim().min(1).max(maximum);
 const isoDateTime = z.string().datetime({ offset: true });
 const sha256Digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const mimeType = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^[a-z0-9][a-z0-9!#$&^_.+-]*\/[a-z0-9][a-z0-9!#$&^_.+-]*$/i);
+const contextAttachmentName = z
+  .string()
+  .min(1)
+  .max(200)
+  .regex(/^(?![. ]+$)(?!.*[\\/\u0000-\u001f\u007f])[\p{L}\p{N}][\p{L}\p{N} ._()\[\]-]*$/u);
+const canonicalBase64 = z
+  .string()
+  .min(1)
+  .max(350_000)
+  .regex(/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/);
 const workspaceLaunchIdPattern = /^launch-([0-9a-f]{24})$/;
 const workspaceSessionIdPattern = /^ses_([0-9a-f]{24})$/;
 
@@ -50,6 +65,49 @@ export const workspaceSourceSelectionSchema = z
     catalogKey,
   })
   .strict();
+
+export const workspaceContextAttachmentDescriptorSchema = z
+  .object({
+    attachmentId: identifier,
+    name: contextAttachmentName,
+    mimeType,
+    sizeBytes: z.number().int().positive().max(256 * 1_024),
+    digest: sha256Digest,
+  })
+  .strict();
+
+export const workspaceContextAttachmentSchema =
+  workspaceContextAttachmentDescriptorSchema
+    .extend({ content: canonicalBase64 })
+    .strict();
+
+function uniqueContextAttachments<Attachment extends {
+  readonly attachmentId: string;
+  readonly name: string;
+}>(attachments: readonly Attachment[], context: z.RefinementCtx): void {
+  for (const [field, values] of [
+    ["attachmentId", attachments.map(({ attachmentId }) => attachmentId)],
+    ["name", attachments.map(({ name }) => name)],
+  ] as const) {
+    if (new Set(values).size !== values.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [field],
+        message: `context attachment ${field} values must be unique`,
+      });
+    }
+  }
+}
+
+export const workspaceContextAttachmentDescriptorsSchema = z
+  .array(workspaceContextAttachmentDescriptorSchema)
+  .max(4)
+  .superRefine(uniqueContextAttachments);
+
+export const workspaceContextAttachmentsSchema = z
+  .array(workspaceContextAttachmentSchema)
+  .max(4)
+  .superRefine(uniqueContextAttachments);
 
 export const workspaceSourceSchema = z
   .object({
@@ -93,6 +151,7 @@ export const workspaceLaunchRequestSchema = z
     idempotencyKey: z.string().uuid(),
     mode: interactiveSessionModeSchema,
     prompt: safeText(100_000),
+    contextAttachments: workspaceContextAttachmentsSchema.optional(),
     title: safeText(200).optional(),
     sources: z.array(workspaceSourceSelectionSchema).max(4),
   })
@@ -134,6 +193,7 @@ const launchBaseSchema = z
     principalId: safeText(320),
     requestDigest: sha256Digest,
     policy: sessionPolicySchema,
+    contextAttachments: workspaceContextAttachmentDescriptorsSchema.default([]),
     title: safeText(200).optional(),
     promptDigest: sha256Digest,
     workspace: workspaceManifestSchema,
@@ -209,6 +269,12 @@ export type WorkspaceSource = z.infer<typeof workspaceSourceSchema>;
 export type WorkspaceManifest = z.infer<typeof workspaceManifestSchema>;
 export type WorkspaceLaunchRequest = z.infer<
   typeof workspaceLaunchRequestSchema
+>;
+export type WorkspaceContextAttachmentDescriptor = z.infer<
+  typeof workspaceContextAttachmentDescriptorSchema
+>;
+export type WorkspaceContextAttachment = z.infer<
+  typeof workspaceContextAttachmentSchema
 >;
 export type WorkspaceCatalogEntry = z.infer<
   typeof workspaceCatalogEntrySchema
