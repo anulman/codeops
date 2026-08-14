@@ -29,6 +29,10 @@
       "types": "./dist/workspace-launch.d.ts",
       "default": "./dist/workspace-launch.js"
     },
+    "./model-proxy": {
+      "types": "./dist/model-proxy.d.ts",
+      "default": "./dist/model-proxy.js"
+    },
     "./work-items": {
       "types": "./dist/work-items.d.ts",
       "default": "./dist/work-items.js"

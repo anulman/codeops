@@ -53,6 +53,7 @@ import {
   searchPlaneWorkItems,
   updatePlaneWorkItem,
 } from "./work-item-provider.js";
+import { createModelPlaneCommentRequestClassifier } from "./comment-classifier.js";
 
 const personaHandle = z.enum([
   "@ai-web",
@@ -124,6 +125,10 @@ const workItemMutationToken = await secretFile(
 const repositoryHeadToken = await secretFile(
   "CODEOPS_REPOSITORY_HEAD_TOKEN_FILE",
 );
+const classifyCommentRequest = createModelPlaneCommentRequestClassifier({
+  origin: required("CODEOPS_MODEL_PROXY_ORIGIN"),
+  signingKey: await secretFile("CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE"),
+});
 if (
   workItemMutationToken.length < 32 ||
   workItemMutationToken.length > 4_096 ||
@@ -805,6 +810,7 @@ const listener = createPlaneWebhookRequestListener({
           baseSha,
           receivedAt: new Date().toISOString(),
           projectContextDocuments,
+          classifyCommentRequest,
           loadResearchPacket: (identity: {
             projectId: string;
             workItemId: string;

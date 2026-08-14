@@ -103,7 +103,11 @@ test("renders one portable CodeOps package with immutable images", () => {
 
   resource(resources, "StatefulSet", "team-a-codeops-postgresql");
   resource(resources, "Deployment", "team-a-codeops-session-gateway");
-  resource(resources, "Deployment", "team-a-codeops-github-controller");
+  const githubControllerDeployment = resource(
+    resources,
+    "Deployment",
+    "team-a-codeops-github-controller",
+  );
   resource(resources, "Deployment", "team-a-codeops-agents-ui");
   const controlGateway = resource(resources, "Deployment", "team-a-codeops-control-gateway");
   const orchestrator = resource(resources, "Deployment", "team-a-codeops-orchestrator");
@@ -116,6 +120,16 @@ test("renders one portable CodeOps package with immutable images", () => {
     controlGateway.spec.template.spec.containers[0].env.map(({ name, value }) => [name, value]),
   );
   assert.equal(controlGatewayEnv.CODEOPS_MODEL_PROXY_ORIGIN, "http://team-a-codeops-model-proxy:8080");
+  const githubControllerEnv = Object.fromEntries(
+    githubControllerDeployment.spec.template.spec.containers[0].env.map(
+      ({ name, value }) => [name, value],
+    ),
+  );
+  assert.equal(
+    githubControllerEnv.CODEOPS_MODEL_PROXY_ORIGIN,
+    "http://team-a-codeops-model-proxy:8080",
+  );
+  assert.match(JSON.stringify(githubControllerDeployment), /model-proxy\/signing-key/);
   assert.equal(controlGatewayEnv.CODEOPS_AGENT_MODEL_PROXY_SERVICE_NAME, "team-a-codeops-model-proxy");
   assert.equal(controlGatewayEnv.CODEOPS_AGENT_MODEL_PROXY_POD_NAME, "team-a-codeops-model-proxy");
   assert.equal(controlGatewayEnv.CODEOPS_AGENT_EVIDENCE_CLAIM_NAME, "team-a-codeops-control-gateway-evidence");
@@ -356,6 +370,7 @@ test("defaults to deny and opens only explicit component paths", () => {
   const controller = resource(resources, "NetworkPolicy", "team-a-codeops-github-controller");
   assert.ok(JSON.stringify(controller).includes("team-a-codeops-session-gateway"));
   assert.ok(JSON.stringify(controller).includes("team-a-codeops-control-gateway"));
+  assert.ok(JSON.stringify(controller).includes("team-a-codeops-model-proxy"));
   const controlGateway = resource(resources, "NetworkPolicy", "team-a-codeops-control-gateway");
   assert.ok(JSON.stringify(controlGateway).includes("10.43.0.1/32"));
   assert.ok(JSON.stringify(controlGateway.spec.ingress).includes("orchestrator"));
@@ -369,6 +384,7 @@ test("defaults to deny and opens only explicit component paths", () => {
   );
   const modelProxy = resource(resources, "NetworkPolicy", "team-a-codeops-model-proxy");
   assert.ok(JSON.stringify(modelProxy.spec.ingress).includes("runtime"));
+  assert.ok(JSON.stringify(modelProxy.spec.ingress).includes("github-controller"));
   assert.deepEqual(
     modelProxy.spec.ingress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)),
     ["TCP:8080"],

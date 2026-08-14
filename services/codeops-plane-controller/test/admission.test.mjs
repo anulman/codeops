@@ -250,6 +250,9 @@ function signedInput(overrides = {}) {
     baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
     projectContextDocuments,
+    classifyCommentRequest:
+      overrides.classifyCommentRequest ??
+      (async () => ({ intent: "steering" })),
     loadSource: async () => source,
   };
 }
@@ -273,6 +276,9 @@ function signedCeInput(overrides = {}) {
     baseSha,
     receivedAt: "2026-07-26T02:30:00.000Z",
     projectContextDocuments,
+    classifyCommentRequest:
+      overrides.classifyCommentRequest ??
+      (async () => ({ intent: "steering" })),
     loadSource: async () => source,
   };
 }
@@ -358,6 +364,37 @@ test("admits an actionable non-persona Plane reply for exact-session steering", 
   assert.equal(admission.request.intent, "steering");
   assert.deepEqual(admission.request.personas, []);
   assert.equal(admission.request.comment, "Please continue with option B.");
+});
+
+test("uses the model result and ignores discussion before loading mutable source", async () => {
+  let classifications = 0;
+  let loads = 0;
+  const discussionPayload = {
+    ...payload,
+    data: {
+      ...payload.data,
+      comment: {
+        ...payload.data.comment,
+        comment_stripped: "This update looks good to me.",
+      },
+    },
+  };
+  const input = signedInput({
+    payload: discussionPayload,
+    classifyCommentRequest: async ({ eventId, comment }) => {
+      classifications += 1;
+      assert.equal(eventId, payload.event_id);
+      assert.equal(comment, "This update looks good to me.");
+      return { intent: "ignore" };
+    },
+  });
+  input.loadSource = async () => {
+    loads += 1;
+    return source;
+  };
+  assert.equal(await admitPlaneSessionComment(input), null);
+  assert.equal(classifications, 1);
+  assert.equal(loads, 0);
 });
 
 test("admits the real Plane CE issue-comment payload and resolves mention UUIDs", async () => {

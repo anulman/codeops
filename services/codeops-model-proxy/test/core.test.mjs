@@ -93,7 +93,7 @@ test("replaces the run token with the real key only for the Responses API", asyn
           Authorization: `Bearer ${token()}`,
           "Content-Type": "application/json",
         },
-        body: '{"model":"gpt-5.6-sol","input":"hello"}',
+        body: '{"model":"gpt-5.4-nano-2026-03-17","input":"hello"}',
       });
       assert.equal(response.status, 200);
       assert.equal((await response.json()).id, "resp_1");
@@ -106,7 +106,7 @@ test("replaces the run token with the real key only for the Responses API", asyn
     "Bearer test-openai-key-never-exposed",
   );
   assert.deepEqual(JSON.parse(calls[0].init.body), {
-    model: "gpt-5.6-sol",
+    model: "gpt-5.4-nano-2026-03-17",
     input: "hello",
     max_output_tokens: 32768,
   });

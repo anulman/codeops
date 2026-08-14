@@ -94,7 +94,9 @@ export function createModelProxyRequestListener(input) {
   }
   const inFlightByRun = new Map();
   const requestsByRun = new Map();
-  const allowedModels = new Set(input.allowedModels ?? ["gpt-5.6-sol"]);
+  const allowedModels = new Set(
+    input.allowedModels ?? ["gpt-5.6-sol", "gpt-5.4-nano-2026-03-17"],
+  );
   const maxOutputTokens = input.maxOutputTokens ?? 32_768;
   const maxRequestsPerRun = input.maxRequestsPerRun ?? 200;
   if (

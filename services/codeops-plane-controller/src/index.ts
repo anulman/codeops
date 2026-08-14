@@ -2,7 +2,6 @@ import { createHash } from "node:crypto";
 import {
   canonicalSerialize,
   codingRequestSchema,
-  classifyPlaneCommentRequest,
   contractVersions,
   createPlaneSessionRequestFromPlaneComment,
   createResearchRequestFromPlaneComment,
@@ -14,6 +13,7 @@ import {
   verifyPlaneWebhookSignature,
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
+import type { PlaneCommentRequestClassifier } from "./comment-classifier.js";
 import { compileProjectContext } from "./project-context.js";
 
 export {
@@ -510,6 +510,7 @@ async function admitPlaneComment(input: {
   baseSha: string;
   receivedAt: string;
   projectContextDocuments: readonly ProjectContextDocument[];
+  classifyCommentRequest: PlaneCommentRequestClassifier;
   loadSource: (input: {
     workspaceId: string;
     projectId: string | undefined;
@@ -536,17 +537,23 @@ async function admitPlaneComment(input: {
     headers: input.headers,
     personaUserIds: input.personaUserIds ?? new Map(),
   });
-
-  const classification = classifyPlaneCommentRequest(event.comment);
-  if (classification === null) return null;
-  if (mode === "persona" && classification.personas.length === 0) return null;
-  if (mode === "actionable" && classification.personas.length > 0) return null;
   if (!input.allowedHumanActorIds.has(event.actorId)) {
     // Controller/persona-authored replies may quote or mention persona handles.
     // Ignoring every non-admitted actor prevents recursive dispatch without
     // weakening the positive human allowlist.
     return null;
   }
+  const personaRound = parseResearchPersonaRound(event.comment);
+  if (mode === "persona" && personaRound === null) return null;
+  if (mode === "actionable" && personaRound !== null) return null;
+  const classification =
+    personaRound === null
+      ? await input.classifyCommentRequest({
+          eventId: event.eventId,
+          comment: event.comment,
+        })
+      : { intent: "research" as const };
+  if (classification.intent === "ignore") return null;
 
   const source = await input.loadSource({
     workspaceId: event.workspaceId,
@@ -691,6 +698,7 @@ async function admitPlaneComment(input: {
   const sessionRequest = createPlaneSessionRequestFromPlaneComment(
     commentEvent,
     sourceContext,
+    classification,
   );
   const researchRequest = createResearchRequestFromPlaneComment(
     commentEvent,

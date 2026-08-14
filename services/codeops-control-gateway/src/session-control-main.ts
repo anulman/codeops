@@ -2,7 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
 import { validateSessionControlSecrets } from "./session-control-config.js";
-import { createModelProxyToken } from "./model-proxy-token.js";
+import { createModelProxyToken } from "@codeops/codeops-contracts/model-proxy";
 import {
   createGitHubSteeringRegistry,
   loadGitHubSteeringRegistryFile,
