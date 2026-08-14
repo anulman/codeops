@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  sessionPolicyForMode,
   workspaceLaunchRequestSchema,
   workspaceLaunchSchema,
   workspaceManifestSchema,
@@ -106,6 +107,7 @@ export async function admitWorkspaceLaunch(input: {
     idempotencyKey: request.idempotencyKey,
     principalId,
     requestDigest,
+    policy: sessionPolicyForMode(request.mode),
     ...(request.title === undefined ? {} : { title: request.title }),
     promptDigest: digest(request.prompt),
     workspace,

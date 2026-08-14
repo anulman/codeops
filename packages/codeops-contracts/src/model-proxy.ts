@@ -3,6 +3,8 @@ import { createHmac } from "node:crypto";
 export function createModelProxyToken(input: {
   readonly subject: string;
   readonly signingKey: string;
+  readonly model: string;
+  readonly reasoningEffort: "none" | "low" | "medium" | "high" | "xhigh";
   readonly issuedAt?: Date;
 }): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.subject)) {
@@ -10,6 +12,14 @@ export function createModelProxyToken(input: {
   }
   if (input.signingKey.length < 32 || input.signingKey.length > 4_096) {
     throw new Error("model proxy signing key length is invalid");
+  }
+  if (
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(input.model) ||
+    !["none", "low", "medium", "high", "xhigh"].includes(
+      input.reasoningEffort,
+    )
+  ) {
+    throw new Error("model proxy token policy is invalid");
   }
   const issuedAt = Math.floor((input.issuedAt ?? new Date()).getTime() / 1_000);
   if (!Number.isSafeInteger(issuedAt)) {
@@ -19,6 +29,8 @@ export function createModelProxyToken(input: {
     JSON.stringify({
       aud: "codeops-model-proxy",
       sub: input.subject,
+      model: input.model,
+      reasoningEffort: input.reasoningEffort,
       iat: issuedAt,
       exp: issuedAt + 75 * 60,
     }),

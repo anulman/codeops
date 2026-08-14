@@ -1,4 +1,8 @@
 import { z } from "zod";
+import {
+  interactiveSessionModeSchema,
+  sessionPolicySchema,
+} from "./session-policy.js";
 
 const repositoryIdentity = z
   .string()
@@ -87,6 +91,7 @@ export const workspaceLaunchRequestSchema = z
   .object({
     version: z.literal("codeops.workspace-launch-request/v1"),
     idempotencyKey: z.string().uuid(),
+    mode: interactiveSessionModeSchema,
     prompt: safeText(100_000),
     title: safeText(200).optional(),
     sources: z.array(workspaceSourceSelectionSchema).max(4),
@@ -128,6 +133,7 @@ const launchBaseSchema = z
     idempotencyKey: z.string().uuid(),
     principalId: safeText(320),
     requestDigest: sha256Digest,
+    policy: sessionPolicySchema,
     title: safeText(200).optional(),
     promptDigest: sha256Digest,
     workspace: workspaceManifestSchema,

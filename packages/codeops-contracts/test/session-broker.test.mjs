@@ -116,6 +116,17 @@ test("keeps work-item identity optional for generic Agent Sessions", () => {
 test("admits a first-class scratch or multi-source workspace identity", () => {
   const identity = workspaceSessionIdentitySchema.parse({
     version: "codeops.session-workspace-identity/v1",
+    policy: {
+      version: "codeops.session-policy/v1",
+      mode: "review",
+      workspaceAccess: "read-only",
+      modelCalls: "allowed",
+      modelPolicy: {
+        provider: "openai",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+      },
+    },
     workspace: {
       version: "codeops.workspace/v1",
       sources: [

@@ -147,6 +147,10 @@ test("commits ordered ACP execution updates, message boundaries, and attachments
     { kind: "thought", messageId: "thought-1", content: { type: "text", text: "I need to inspect the exact contract." } },
     { kind: "tool_call", toolCallId: "tool-1", title: "Read contract", toolKind: "read", status: "in_progress" },
     { kind: "tool_call_update", toolCallId: "tool-1", status: "completed", content: [{ type: "content", content: { type: "text", text: "Contract loaded." } }] },
+    { kind: "available_commands", commands: [{ name: "review", description: "Review the current change.", inputHint: "Optional focus" }] },
+    { kind: "current_mode", modeId: "review" },
+    { kind: "configuration", options: [{ id: "verbosity", name: "Verbosity", type: "select", currentValue: "compact", values: [{ value: "compact", name: "Compact" }] }] },
+    { kind: "usage", usedTokens: 1200, contextWindowTokens: 200000, cost: { amount: 0.18, currency: "USD" } },
     { kind: "assistant_content", messageId: "message-1", content: { type: "text", text: "The contract is valid." } },
     { kind: "assistant_content", messageId: "message-2", content: { type: "image", data: "aGVsbG8=", mimeType: "image/png" } },
     { kind: "assistant_content", messageId: "message-2", content: { type: "text", text: "Here is the visual proof." } },
@@ -156,8 +160,8 @@ test("commits ordered ACP execution updates, message boundaries, and attachments
     completion("prompt", { ...promptMaterial, updates }),
     context,
   );
-  assert.equal(mutation.result.eventCursor, 193);
-  assert.equal(mutation.events.length, 9);
+  assert.equal(mutation.result.eventCursor, 197);
+  assert.equal(mutation.events.length, 13);
   assert.equal(
     mutation.events.filter(({ message }) => message?.role === "user").length,
     2,
@@ -176,7 +180,7 @@ test("commits ordered ACP execution updates, message boundaries, and attachments
     { role: "assistant", text: "Here is the visual proof.", messageId: "message-2", stopReason: "end_turn" },
   ]);
   assert.deepEqual(mutation.events.filter(({ update }) => update).map(({ update }) => update.kind), [
-    "plan", "thought", "tool_call", "tool_call_update", "assistant_content",
+    "plan", "thought", "tool_call", "tool_call_update", "available_commands", "current_mode", "configuration", "usage", "assistant_content",
   ]);
   const laterMatchingPrompt = applySessionRuntimeCompletion(
     dispatch("prompt"),

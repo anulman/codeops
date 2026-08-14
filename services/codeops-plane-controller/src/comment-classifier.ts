@@ -129,6 +129,8 @@ export function createModelPlaneCommentRequestClassifier(input: {
     const authorization = createModelProxyToken({
       subject: `plane-comment-classifier:${eventId}`,
       signingKey,
+      model: CLASSIFIER_MODEL,
+      reasoningEffort: "none",
       issuedAt: input.now?.(),
     });
     const response = await requestFetch(new URL("/v1/responses", origin), {

@@ -267,6 +267,39 @@ function normalizeToolFields(update: acp.ToolCall | acp.ToolCallUpdate) {
   };
 }
 
+function normalizeConfigurationOption(option: acp.SessionConfigOption) {
+  const common = {
+    id: option.id,
+    name: option.name,
+    ...(option.description ? { description: option.description } : {}),
+    ...(option.category ? { category: option.category } : {}),
+  };
+  if (option.type === "boolean") {
+    return { type: "boolean" as const, ...common, currentValue: option.currentValue };
+  }
+  const values = option.options.flatMap((entry) =>
+    "group" in entry
+      ? entry.options.map((value) => ({
+          value: value.value,
+          name: value.name,
+          ...(value.description ? { description: value.description } : {}),
+          groupId: entry.group,
+          groupName: entry.name,
+        }))
+      : [{
+          value: entry.value,
+          name: entry.name,
+          ...(entry.description ? { description: entry.description } : {}),
+        }],
+  );
+  return {
+    type: "select" as const,
+    ...common,
+    currentValue: option.currentValue,
+    values,
+  };
+}
+
 export function normalizeAcpTimelineUpdate(
   update: acp.SessionUpdate,
 ): SessionTimelineUpdate | null {
@@ -312,11 +345,37 @@ export function normalizeAcpTimelineUpdate(
       case "plan_removed":
         return { kind: "plan_removed" as const, planId: update.planId };
       case "available_commands_update":
+        return {
+          kind: "available_commands" as const,
+          commands: update.availableCommands.map((command) => ({
+            name: command.name,
+            description: command.description,
+            ...(command.input?.hint ? { inputHint: command.input.hint } : {}),
+          })),
+        };
       case "current_mode_update":
+        return { kind: "current_mode" as const, modeId: update.currentModeId };
       case "config_option_update":
+        return {
+          kind: "configuration" as const,
+          options: update.configOptions.map(normalizeConfigurationOption),
+        };
       case "session_info_update":
-      case "usage_update":
         return null;
+      case "usage_update":
+        return {
+          kind: "usage" as const,
+          usedTokens: update.used,
+          contextWindowTokens: update.size,
+          ...(update.cost
+            ? {
+                cost: {
+                  amount: update.cost.amount,
+                  currency: update.cost.currency,
+                },
+              }
+            : {}),
+        };
     }
   })();
   return normalized === null ? null : sessionTimelineUpdateSchema.parse(normalized);

@@ -105,7 +105,7 @@ function validateBoundedJson(value) {
   visit(value, 0);
 }
 
-function enforceResponsesPrivacyPolicy(body, allowedModels, maxOutputTokens) {
+function enforceResponsesPrivacyPolicy(body, authority, allowedModels, maxOutputTokens) {
   if (body === null || typeof body !== "object" || Array.isArray(body)) {
     throw new RequestPolicyError("request exceeds the model policy");
   }
@@ -117,6 +117,11 @@ function enforceResponsesPrivacyPolicy(body, allowedModels, maxOutputTokens) {
   }
   if (
     !allowedModels.has(body.model) ||
+    body.model !== authority.model ||
+    body.reasoning === null ||
+    typeof body.reasoning !== "object" ||
+    Array.isArray(body.reasoning) ||
+    body.reasoning.effort !== authority.reasoningEffort ||
     body.input === undefined ||
     (body.max_output_tokens !== undefined &&
       (!Number.isSafeInteger(body.max_output_tokens) ||
@@ -217,9 +222,16 @@ export function validateModelProxyToken(input) {
   if (
     payload === null ||
     typeof payload !== "object" ||
+    Object.keys(payload).sort().join(",") !==
+      "aud,exp,iat,model,reasoningEffort,sub" ||
     payload.aud !== "codeops-model-proxy" ||
     typeof payload.sub !== "string" ||
     !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(payload.sub) ||
+    typeof payload.model !== "string" ||
+    !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(payload.model) ||
+    !["none", "low", "medium", "high", "xhigh"].includes(
+      payload.reasoningEffort,
+    ) ||
     !Number.isSafeInteger(payload.iat) ||
     !Number.isSafeInteger(payload.exp) ||
     payload.iat > now + 60 ||
@@ -228,7 +240,12 @@ export function validateModelProxyToken(input) {
   ) {
     return null;
   }
-  return { runId: payload.sub, expiresAt: payload.exp };
+  return {
+    runId: payload.sub,
+    expiresAt: payload.exp,
+    model: payload.model,
+    reasoningEffort: payload.reasoningEffort,
+  };
 }
 
 async function readBody(request) {
@@ -403,6 +420,7 @@ export function createModelProxyRequestListener(input) {
         }
         const admittedBody = enforceResponsesPrivacyPolicy(
           body,
+          authority,
           allowedModels,
           maxOutputTokens,
         );

@@ -16,6 +16,8 @@ function token(overrides = {}) {
   const payload = Buffer.from(JSON.stringify({
     aud: "codeops-model-proxy",
     sub: "run-159",
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
     iat: issuedAt,
     exp: issuedAt + 75 * 60,
     ...overrides,
@@ -29,6 +31,8 @@ test("accepts only an exact signed, bounded, unexpired run token", () => {
   assert.deepEqual(validateModelProxyToken({ token: token(), signingKey, now }), {
     runId: "run-159",
     expiresAt: Math.floor(now / 1_000) + 75 * 60,
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
   });
   assert.equal(
     validateModelProxyToken({ token: `${token()}x`, signingKey, now }),
@@ -90,10 +94,10 @@ test("replaces the run token with the real key only for the Responses API", asyn
       const response = await fetch(`${origin}/v1/responses`, {
         method: "POST",
         headers: {
-          Authorization: `Bearer ${token()}`,
+          Authorization: `Bearer ${token({ model: "gpt-5.4-nano-2026-03-17", reasoningEffort: "none" })}`,
           "Content-Type": "application/json",
         },
-        body: '{"model":"gpt-5.4-nano-2026-03-17","input":"hello"}',
+        body: '{"model":"gpt-5.4-nano-2026-03-17","input":"hello","reasoning":{"effort":"none"}}',
       });
       assert.equal(response.status, 200);
       assert.equal((await response.json()).id, "resp_1");
@@ -108,6 +112,7 @@ test("replaces the run token with the real key only for the Responses API", asyn
   assert.deepEqual(JSON.parse(calls[0].init.body), {
     model: "gpt-5.4-nano-2026-03-17",
     input: "hello",
+    reasoning: { effort: "none" },
     max_output_tokens: 32768,
     store: false,
   });
@@ -139,6 +144,7 @@ test("enforces stateless Responses requests and rejects provider-hosted state", 
       const safe = await request({
         model: "gpt-5.6-sol",
         input: [{ type: "message", role: "user", content: "Inspect this." }],
+        reasoning: { effort: "high" },
         stream: true,
         include: ["reasoning.encrypted_content"],
         tools: [{ type: "function", name: "inspect", parameters: { type: "object" } }],
@@ -160,6 +166,7 @@ test("enforces stateless Responses requests and rejects provider-hosted state", 
         const response = await request({
           model: "gpt-5.6-sol",
           input: "hello",
+          reasoning: { effort: "high" },
           ...drift,
         });
         assert.equal(response.status, 400);
@@ -191,7 +198,7 @@ test("bounds admitted text and structured Responses inputs", async () => {
           Authorization: `Bearer ${token()}`,
           "Content-Type": "application/json",
         },
-        body: JSON.stringify({ model: "gpt-5.6-sol", input }),
+        body: JSON.stringify({ model: "gpt-5.6-sol", input, reasoning: { effort: "high" } }),
       });
       assert.equal((await request("x".repeat(8 * 1024 * 1024 + 1))).status, 400);
       let nested = "leaf";
@@ -224,18 +231,59 @@ test("rejects model, output-token, and per-run request budget drift", async () =
         },
         body: JSON.stringify(body),
       });
-      assert.equal((await request({ model: "foreign-model", input: "x" })).status, 400);
+      assert.equal((await request({ model: "foreign-model", input: "x", reasoning: { effort: "high" } })).status, 400);
       assert.equal(
-        (await request({ model: "gpt-5.6-sol", input: "x", max_output_tokens: 32769 })).status,
+        (await request({ model: "gpt-5.6-sol", input: "x", reasoning: { effort: "high" }, max_output_tokens: 32769 })).status,
         400,
       );
       assert.equal(
-        (await request({ model: "gpt-5.6-sol", input: "x" })).status,
+        (await request({ model: "gpt-5.6-sol", input: "x", reasoning: { effort: "medium" } })).status,
         429,
       );
     },
   );
   assert.equal(upstreamCalls, 0);
+});
+
+test("admits only the exact model and reasoning effort bound into the run token", async () => {
+  const admitted = [];
+  await withProxy(
+    createModelProxyRequestListener({
+      openAiApiKey: "test-openai-key-never-exposed",
+      signingKey,
+      now: () => now,
+      maxRequestsPerRun: 10,
+      fetch: async (_url, init) => {
+        admitted.push(JSON.parse(init.body));
+        return new Response('{"id":"resp_policy"}\n', { status: 200 });
+      },
+    }),
+    async (origin) => {
+      const request = (body) => fetch(`${origin}/v1/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token()}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(body),
+      });
+      assert.equal(
+        (await request({ model: "gpt-5.6-sol", input: "x", reasoning: { effort: "medium" } })).status,
+        400,
+      );
+      assert.equal(
+        (await request({ model: "gpt-5.4-nano-2026-03-17", input: "x", reasoning: { effort: "none" } })).status,
+        400,
+      );
+      assert.equal(
+        (await request({ model: "gpt-5.6-sol", input: "x", reasoning: { effort: "high" } })).status,
+        200,
+      );
+    },
+  );
+  assert.equal(admitted.length, 1);
+  assert.equal(admitted[0].model, "gpt-5.6-sol");
+  assert.equal(admitted[0].reasoning.effort, "high");
 });
 
 test("does not contact OpenAI for invalid authority or unsupported paths", async () => {
@@ -268,7 +316,7 @@ test("does not contact OpenAI for invalid authority or unsupported paths", async
 
 test("warns on large permitted requests without logging request bodies", async () => {
   const logs = [];
-  const body = JSON.stringify({ model: "gpt-5.6-sol", input: "x".repeat(4 * 1024 * 1024) });
+  const body = JSON.stringify({ model: "gpt-5.6-sol", input: "x".repeat(4 * 1024 * 1024), reasoning: { effort: "high" } });
   await withProxy(
     createModelProxyRequestListener({
       openAiApiKey: "test-openai-key-never-exposed",
@@ -354,7 +402,7 @@ test("uses a high per-token concurrency stop-loss and releases capacity", async 
           Authorization: `Bearer ${token()}`,
           "Content-Type": "application/json",
         },
-        body: '{"model":"gpt-5.6-sol","input":"concurrent"}',
+        body: '{"model":"gpt-5.6-sol","input":"concurrent","reasoning":{"effort":"high"}}',
       });
       const active = Array.from({ length: 8 }, () => request());
       while (upstreamCalls < 8) await new Promise((resolve) => setTimeout(resolve, 5));

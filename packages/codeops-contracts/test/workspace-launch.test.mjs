@@ -27,6 +27,7 @@ test("accepts a first-class scratch workspace launch", () => {
     workspaceLaunchRequestSchema.parse({
       version: "codeops.workspace-launch-request/v1",
       idempotencyKey: "11111111-1111-4111-8111-111111111111",
+      mode: "implement",
       prompt: "Write a one-off CSV normalization script.",
       sources: [],
     }).sources,
@@ -42,6 +43,7 @@ test("accepts up to four unique catalog sources", () => {
     workspaceLaunchRequestSchema.parse({
       version: "codeops.workspace-launch-request/v1",
       idempotencyKey: "11111111-1111-4111-8111-111111111111",
+      mode: "plan",
       prompt: "Update the shared contract.",
       sources,
     }).sources.length,
@@ -51,6 +53,7 @@ test("accepts up to four unique catalog sources", () => {
     workspaceLaunchRequestSchema.parse({
       version: "codeops.workspace-launch-request/v1",
       idempotencyKey: "11111111-1111-4111-8111-111111111111",
+      mode: "implement",
       prompt: "Too many.",
       sources: [...sources, { catalogKey: "fifth" }],
     }),
@@ -59,6 +62,7 @@ test("accepts up to four unique catalog sources", () => {
     workspaceLaunchRequestSchema.parse({
       version: "codeops.workspace-launch-request/v1",
       idempotencyKey: "11111111-1111-4111-8111-111111111111",
+      mode: "review",
       prompt: "Duplicate.",
       sources: [{ catalogKey: "codeops" }, { catalogKey: "codeops" }],
     }),
@@ -111,6 +115,17 @@ test("records durable launch state without the prompt body", () => {
     idempotencyKey: "11111111-1111-4111-8111-111111111111",
     principalId: "anulman@gmail.com",
     requestDigest: digest,
+    policy: {
+      version: "codeops.session-policy/v1",
+      mode: "implement",
+      workspaceAccess: "bounded-writes",
+      modelCalls: "allowed",
+      modelPolicy: {
+        provider: "openai",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "medium",
+      },
+    },
     promptDigest: digest,
     workspace: {
       version: "codeops.workspace/v1",

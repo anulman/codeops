@@ -83,6 +83,8 @@ export function buildRunResources(
   const modelProxyToken = createModelProxyToken({
     subject: input.runId,
     signingKey: input.modelAuth.signingKey,
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
     issuedAt: input.modelAuth.issuedAt,
   });
   const prompt = buildAgentPrompt(request);

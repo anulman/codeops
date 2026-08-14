@@ -10,6 +10,13 @@ import {
 } from "../dist/workspace-launch.js";
 
 const token = "launch-token-0123456789-abcdefghijklmnop";
+const policy = {
+  version: "codeops.session-policy/v1",
+  mode: "implement",
+  workspaceAccess: "bounded-writes",
+  modelCalls: "allowed",
+  modelPolicy: { provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "medium" },
+};
 const catalog = {
   version: "codeops.workspace-catalog/v1",
   repositories: [
@@ -27,6 +34,7 @@ const launch = {
   idempotencyKey: "11111111-1111-4111-8111-111111111111",
   principalId: "anulman@gmail.com",
   requestDigest: `sha256:${"a".repeat(64)}`,
+  policy,
   promptDigest: `sha256:${"b".repeat(64)}`,
   workspace: {
     version: "codeops.workspace/v1",
@@ -50,7 +58,13 @@ function request(overrides = {}) {
       "x-codeops-principal": "anulman@gmail.com",
     },
     token,
-    readBody: async () => ({ request: true }),
+    readBody: async () => ({
+      version: "codeops.workspace-launch-request/v1",
+      idempotencyKey: "11111111-1111-4111-8111-111111111111",
+      mode: "implement",
+      prompt: "Implement the bounded change.",
+      sources: [],
+    }),
     catalog,
     admit: async () => launch,
     load: async () => launch,
@@ -79,7 +93,13 @@ test("creates a principal-bound launch with the launch-only bearer", async () =>
   );
   assert.equal(result.status, 202);
   assert.deepEqual(admitted, {
-    body: { request: true },
+    body: {
+      version: "codeops.workspace-launch-request/v1",
+      idempotencyKey: "11111111-1111-4111-8111-111111111111",
+      mode: "implement",
+      prompt: "Implement the bounded change.",
+      sources: [],
+    },
     principalId: "anulman@gmail.com",
   });
 });

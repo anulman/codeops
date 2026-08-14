@@ -12,6 +12,13 @@ const launch = {
   idempotencyKey: "11111111-1111-4111-8111-111111111111",
   principalId: "operator@example.com",
   requestDigest: `sha256:${"a".repeat(64)}`,
+  policy: {
+    version: "codeops.session-policy/v1",
+    mode: "plan",
+    workspaceAccess: "read-only",
+    modelCalls: "allowed",
+    modelPolicy: { provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "high" },
+  },
   promptDigest: `sha256:${"b".repeat(64)}`,
   workspace: {
     version: "codeops.workspace/v1",
@@ -45,6 +52,7 @@ test("launch client keeps authority server-side and binds the principal", async 
   const request = {
     version: "codeops.workspace-launch-request/v1",
     idempotencyKey: launch.idempotencyKey,
+    mode: "plan",
     prompt: "Create a one-off script.",
     sources: [],
   };
@@ -106,6 +114,8 @@ test("launch server functions bind the private UI context and no browser token",
   assert.doesNotMatch(dataSource, /TOKEN_FILE|readFile/);
   assert.match(routeSource, /Scratch workspace/);
   assert.match(routeSource, /Create session/);
+  assert.match(routeSource, /Session mode/);
+  assert.match(routeSource, /Validate is deterministic and uses no model/);
   assert.match(routeSource, /crypto\.randomUUID\(\)/);
   assert.match(routeSource, /workspaceLaunchSessionId\(launch\.launchId\)/);
   assert.doesNotMatch(routeSource, /launch\.state === "ready"/);

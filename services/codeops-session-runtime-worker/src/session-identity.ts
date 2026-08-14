@@ -1,11 +1,13 @@
 import { readFile } from "node:fs/promises";
 import {
   sessionIdentitySchema,
+  sessionPolicySchema,
   workspaceManifestSchema,
   type SessionIdentity,
 } from "@codeops/codeops-contracts";
 
 const MAX_WORKSPACE_MANIFEST_BYTES = 32 * 1_024;
+const MAX_SESSION_POLICY_BYTES = 2 * 1_024;
 
 export async function loadRuntimeSessionIdentity(input: {
   readonly env: NodeJS.ProcessEnv;
@@ -47,8 +49,18 @@ export async function loadRuntimeSessionIdentity(input: {
   if (contents.byteLength < 1 || contents.byteLength > MAX_WORKSPACE_MANIFEST_BYTES) {
     throw new Error("workspace manifest must contain 1 to 32768 bytes");
   }
+  const policyContents = Buffer.from(required("CODEOPS_SESSION_POLICY_JSON"));
+  if (
+    policyContents.byteLength < 1 ||
+    policyContents.byteLength > MAX_SESSION_POLICY_BYTES
+  ) {
+    throw new Error("session policy must contain 1 to 2048 bytes");
+  }
   return sessionIdentitySchema.parse({
     version: "codeops.session-workspace-identity/v1",
+    policy: sessionPolicySchema.parse(
+      JSON.parse(policyContents.toString("utf8")),
+    ),
     workspace: workspaceManifestSchema.parse(JSON.parse(contents.toString("utf8"))),
     ...common,
   });
