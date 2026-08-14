@@ -4,6 +4,9 @@ import { z } from "zod";
 import { sessionCommandSchema } from "@codeops/codeops-contracts/session-broker";
 import { agentsContextMiddleware } from "./agentsContext";
 import { sessionBrokerClient } from "./sessionBroker.server";
+import {
+  submitSessionForkSynthesis,
+} from "./sessionForkComparison.server";
 
 const sessionIdSchema = z
   .string()
@@ -58,5 +61,37 @@ export const executeSessionCommand = createServerFn({ method: "POST" })
     return (await sessionBrokerClient()).executeCommand({
       command: data,
       principalId: context.agentsPrincipal,
+    });
+  });
+
+export const synthesizeSessionForks = createServerFn({ method: "POST" })
+  .middleware([agentsContextMiddleware])
+  .inputValidator((value: unknown) =>
+    z
+      .object({
+        targetSessionId: sessionIdSchema,
+        candidateSessionIds: z.array(sessionIdSchema).min(2).max(4),
+        idempotencyKey: z.string().uuid(),
+      })
+      .strict()
+      .superRefine((input, context) => {
+        if (new Set(input.candidateSessionIds).size !== input.candidateSessionIds.length) {
+          context.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["candidateSessionIds"],
+            message: "fork comparison candidates must be unique",
+          });
+        }
+      })
+      .parse(value),
+  )
+  .handler(async ({ data, context }) => {
+    protectResponse();
+    return submitSessionForkSynthesis({
+      broker: await sessionBrokerClient(),
+      principalId: context.agentsPrincipal,
+      targetSessionId: data.targetSessionId,
+      candidateSessionIds: data.candidateSessionIds,
+      idempotencyKey: data.idempotencyKey,
     });
   });
