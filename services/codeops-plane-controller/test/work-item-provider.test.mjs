@@ -224,4 +224,22 @@ test("updates only from the exact observed revision", async () => {
   assert.equal(stale.item.title, "Updated item");
   assert.notEqual(stale.item.revision, before.revision);
   assert.equal(fake.updates.length, 1);
+
+  const reloaded = await getPlaneWorkItem({
+    request: providerRequest("codeops.work-item-provider-get-request/v1", { workItemId }),
+    projectId,
+    client: fake.api,
+  });
+  const retried = await updatePlaneWorkItem({
+    request: providerRequest("codeops.work-item-provider-update-request/v1", {
+      workItemId,
+      expectedRevision: reloaded.revision,
+      title: "Retried after reload",
+    }),
+    projectId,
+    client: fake.api,
+  });
+  assert.equal(retried.disposition, "updated");
+  assert.equal(retried.item.title, "Retried after reload");
+  assert.equal(fake.updates.length, 2);
 });
