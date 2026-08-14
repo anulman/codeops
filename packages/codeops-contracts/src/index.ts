@@ -97,6 +97,15 @@ export {
   type SessionRuntimePermissionSubmission,
 } from "./session-runtime.js";
 export {
+  interactiveSessionModeSchema,
+  sessionModeSchema,
+  sessionPolicyForMode,
+  sessionPolicySchema,
+  type InteractiveSessionMode,
+  type SessionMode,
+  type SessionPolicy,
+} from "./session-policy.js";
+export {
   workspaceLaunchSessionId,
   workspaceSessionLaunchId,
   workspaceCatalogEntrySchema,

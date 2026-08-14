@@ -1,5 +1,7 @@
 import {
+  sessionPolicySchema,
   workspaceManifestSchema,
+  type SessionPolicy,
   type WorkspaceManifest,
 } from "@codeops/codeops-contracts";
 import { createHash } from "node:crypto";
@@ -23,6 +25,7 @@ export interface WorkspaceResourceConfig {
   readonly runId: string;
   readonly displayName?: string;
   readonly leaseId: string;
+  readonly policy: SessionPolicy;
   readonly workspace: WorkspaceManifest;
   readonly sources: readonly WorkspaceSourceAuthority[];
   readonly agentImage: string;
@@ -82,6 +85,11 @@ export function buildWorkspaceResources(
   raw: WorkspaceResourceConfig,
 ): readonly Record<string, unknown>[] {
   const workspace = workspaceManifestSchema.parse(raw.workspace);
+  const policy = sessionPolicySchema.parse(raw.policy);
+  if (policy.modelPolicy.provider !== "openai") {
+    throw new Error("interactive workspace runtime requires one model policy");
+  }
+  const workspaceReadOnly = policy.workspaceAccess === "read-only";
   const suffix = raw.launchId.replace(/^launch-/, "");
   if (!/^[0-9a-f]{24}$/.test(suffix)) throw new Error("workspace launch identity is invalid");
   for (const [name, value] of [
@@ -324,6 +332,7 @@ export function buildWorkspaceResources(
                 { name: "CODEOPS_SESSION_RUNTIME_WORKSPACE", value: "/workspace" },
                 { name: "CODEOPS_SESSION_RUNTIME_ACP_STATE_PATH", value: "/var/lib/codeops-session/state.json" },
                 { name: "CODEOPS_SESSION_WORKSPACE_JSON", value: JSON.stringify(workspace) },
+                { name: "CODEOPS_SESSION_POLICY_JSON", value: JSON.stringify(policy) },
                 { name: "CODEOPS_SESSION_ID", value: raw.sessionId },
                 { name: "CODEOPS_SESSION_WORKFLOW_ID", value: raw.workflowId },
                 { name: "CODEOPS_SESSION_RUN_ID", value: raw.runId },
@@ -342,7 +351,7 @@ export function buildWorkspaceResources(
               },
               securityContext,
               volumeMounts: [
-                { name: "workspace", mountPath: "/workspace" },
+                { name: "workspace", mountPath: "/workspace", readOnly: workspaceReadOnly },
                 { name: "session", mountPath: "/run/codeops" },
                 { name: "session-state", mountPath: "/var/lib/codeops-session" },
                 { name: "temp", mountPath: "/tmp" },
@@ -357,8 +366,8 @@ export function buildWorkspaceResources(
                 { name: "CODEOPS_MODEL_PROXY_TOKEN_FILE", value: "/run/codeops/model-proxy-token" },
                 { name: "DEFAULT_AUTH_REQUEST", value: '{"methodId":"api-key"}' },
                 { name: "CODEX_CONFIG", value: JSON.stringify({
-                  model: "gpt-5.6-sol",
-                  model_reasoning_effort: "high",
+                  model: policy.modelPolicy.model,
+                  model_reasoning_effort: policy.modelPolicy.reasoningEffort,
                   approvals_reviewer: "auto_review",
                   web_search: "cached",
                   model_provider: "codeops_proxy",
@@ -379,7 +388,7 @@ export function buildWorkspaceResources(
               },
               securityContext,
               volumeMounts: [
-                { name: "workspace", mountPath: "/workspace" },
+                { name: "workspace", mountPath: "/workspace", readOnly: workspaceReadOnly },
                 { name: "session", mountPath: "/run/codeops" },
                 { name: "temp", mountPath: "/tmp" },
               ],

@@ -6,6 +6,19 @@ import {
   getWorkspaceCatalog,
 } from "@/lib/workspaceLaunch.data";
 import { workspaceLaunchSessionId } from "@codeops/codeops-contracts/workspace-launch";
+import type { InteractiveSessionMode } from "@codeops/codeops-contracts/session-policy";
+
+const sessionModes: readonly {
+  readonly id: InteractiveSessionMode;
+  readonly label: string;
+  readonly summary: string;
+  readonly policy: string;
+}[] = [
+  { id: "explore", label: "Explore", summary: "Investigate and explain without changing files.", policy: "Read-only · Sol · medium reasoning" },
+  { id: "plan", label: "Plan", summary: "Produce a durable plan without changing files.", policy: "Read-only · Sol · high reasoning" },
+  { id: "implement", label: "Implement", summary: "Make bounded changes inside the admitted workspace.", policy: "Bounded writes · Sol · medium reasoning" },
+  { id: "review", label: "Review", summary: "Critique the exact workspace without changing it.", policy: "Read-only · Sol · high reasoning" },
+];
 
 export const Route = createFileRoute("/new")({
   loader: () => getWorkspaceCatalog(),
@@ -17,6 +30,7 @@ function NewSessionPage() {
   const navigate = useNavigate();
   const [prompt, setPrompt] = useState("");
   const [title, setTitle] = useState("");
+  const [mode, setMode] = useState<InteractiveSessionMode>("implement");
   const [selected, setSelected] = useState<readonly string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -47,6 +61,7 @@ function NewSessionPage() {
         data: {
           version: "codeops.workspace-launch-request/v1",
           idempotencyKey: crypto.randomUUID(),
+          mode,
           prompt: prompt.trim(),
           ...(title.trim() ? { title: title.trim() } : {}),
           sources: selected.map((catalogKey) => ({ catalogKey })),
@@ -91,6 +106,22 @@ function NewSessionPage() {
               </label>
 
               <fieldset className="mt-7" disabled={locked}>
+                <legend className="text-xs font-semibold text-white/72">Session mode</legend>
+                <p className="mt-1.5 text-[11px] leading-5 text-white/32">CodeOps binds this policy to the launch, runtime, and model authority. The session cannot expand it.</p>
+                <div className="mt-3 grid gap-2 sm:grid-cols-2">
+                  {sessionModes.map((option) => {
+                    const checked = mode === option.id;
+                    return <label key={option.id} className={`cursor-pointer rounded-xl border p-3.5 transition ${checked ? "border-[#7774ff]/45 bg-[#7774ff]/10" : "border-white/[0.07] bg-white/[0.02] hover:border-white/[0.13]"}`}>
+                      <span className="flex items-center gap-2"><input type="radio" name="session-mode" value={option.id} checked={checked} onChange={() => setMode(option.id)} className="sr-only" /><span className={`size-2 rounded-full ${checked ? "bg-[#8c89ff]" : "bg-white/15"}`} /><span className="text-sm font-medium text-white/76">{option.label}</span></span>
+                      <span className="mt-2 block text-[11px] leading-4 text-white/38">{option.summary}</span>
+                      <span className="mt-2 block font-mono text-[9px] text-white/24">{option.policy}</span>
+                    </label>;
+                  })}
+                </div>
+                <p className="mt-2 text-[10px] text-white/24">Validate is deterministic and uses no model. Interactive launch stays disabled until CodeOps provides a deterministic validation action.</p>
+              </fieldset>
+
+              <fieldset className="mt-7" disabled={locked}>
                 <legend className="text-xs font-semibold text-white/72">Repositories <span className="font-normal text-white/28">Optional · up to four</span></legend>
                 <p className="mt-1.5 text-[11px] leading-5 text-white/32">Each repository is resolved to its exact default-branch commit before the session starts.</p>
                 <div className="mt-3 grid gap-2 sm:grid-cols-2">
@@ -109,7 +140,7 @@ function NewSessionPage() {
 
               <div className={`mt-5 flex items-start gap-3 rounded-xl border px-4 py-3 ${selectedRepositories.length === 0 ? "border-[#6da8ff]/16 bg-[#6da8ff]/7" : "border-white/[0.06] bg-white/[0.02]"}`}>
                 <span className="mt-0.5 text-sm text-[#8dbbff]">{selectedRepositories.length === 0 ? "✦" : "↳"}</span>
-                <div><p className="text-xs font-medium text-white/62">{selectedRepositories.length === 0 ? "Scratch workspace" : `${selectedRepositories.length} source ${selectedRepositories.length === 1 ? "repository" : "repositories"}`}</p><p className="mt-1 text-[11px] leading-4 text-white/30">{selectedRepositories.length === 0 ? "The agent starts with an empty writable workspace. Files remain session artifacts until you choose to publish them." : "The agent receives fixed checkouts plus a separate scratch area. Publication always requires a later explicit action."}</p></div>
+                <div><p className="text-xs font-medium text-white/62">{selectedRepositories.length === 0 ? "Scratch workspace" : `${selectedRepositories.length} source ${selectedRepositories.length === 1 ? "repository" : "repositories"}`}</p><p className="mt-1 text-[11px] leading-4 text-white/30">{mode === "implement" ? selectedRepositories.length === 0 ? "The agent starts with an empty bounded writable workspace. Files remain session artifacts until you choose to publish them." : "The agent receives fixed checkouts plus a bounded writable scratch area. Publication always requires a later explicit action." : "The complete workspace is mounted read-only for this mode. The agent can inspect it but cannot change source or scratch files."}</p></div>
               </div>
             </div>
 

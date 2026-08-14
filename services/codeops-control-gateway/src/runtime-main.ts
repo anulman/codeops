@@ -369,6 +369,7 @@ function workspaceResourceConfig(
     launchId: launch.launchId,
     principalId: launch.principalId,
     requestDigest: launch.requestDigest,
+    policy: launch.policy,
     ...(launch.title === undefined ? {} : { displayName: launch.title }),
     ...identity,
     workspace: launch.workspace,
@@ -559,12 +560,26 @@ const server = createServer((request, response) => {
             const initialized = await initializeSessionFromJob(client, {
               request: initializationRequest,
             });
+            const modelPolicy =
+              "version" in initialized.snapshot.identity
+                ? initialized.snapshot.identity.policy.modelPolicy
+                : {
+                    provider: "openai" as const,
+                    model: "gpt-5.6-sol" as const,
+                    reasoningEffort: "high" as const,
+                  };
             return {
               ...initialized,
-              modelProxyToken: createModelProxyToken({
-                subject: initialized.snapshot.sessionId,
-                signingKey: modelAuth.signingKey,
-              }),
+              ...(modelPolicy.provider === "none"
+                ? {}
+                : {
+                    modelProxyToken: createModelProxyToken({
+                      subject: initialized.snapshot.sessionId,
+                      signingKey: modelAuth.signingKey,
+                      model: modelPolicy.model,
+                      reasoningEffort: modelPolicy.reasoningEffort,
+                    }),
+                  }),
             };
           } finally {
             client.release();

@@ -7,6 +7,13 @@ import {
 } from "../dist/workspace-launch-controller.js";
 
 const now = () => new Date("2026-08-13T12:00:00.000Z");
+const policy = {
+  version: "codeops.session-policy/v1",
+  mode: "implement",
+  workspaceAccess: "bounded-writes",
+  modelCalls: "allowed",
+  modelPolicy: { provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "medium" },
+};
 const launch = {
   version: "codeops.workspace-launch/v1",
   launchId: "launch-0123456789abcdef01234567",
@@ -14,6 +21,7 @@ const launch = {
   principalId: "user@example.com",
   title: "Investigate the estimator",
   requestDigest: `sha256:${"a".repeat(64)}`,
+  policy,
   promptDigest: `sha256:${"b".repeat(64)}`,
   workspace: { version: "codeops.workspace/v1", sources: [], scratchPath: "scratch" },
   state: "queued",
@@ -25,6 +33,7 @@ const launch = {
 const request = {
   version: "codeops.workspace-launch-request/v1",
   idempotencyKey: launch.idempotencyKey,
+  mode: "implement",
   prompt: "Write a one-off script.",
   sources: [],
 };
@@ -38,6 +47,7 @@ function resourceConfig(current, identity) {
     requestDigest: current.requestDigest,
     ...(current.title === undefined ? {} : { displayName: current.title }),
     ...identity,
+    policy: current.policy,
     workspace: current.workspace,
     sources: [],
     agentImage: image,
@@ -74,6 +84,7 @@ test("provisions fixed resources, waits for the exact session, and sends one pro
       state: "running",
       identity: {
         version: "codeops.session-workspace-identity/v1",
+        policy: launch.policy,
         workspace: launch.workspace,
         workflowId: identity.workflowId,
         runId: identity.runId,

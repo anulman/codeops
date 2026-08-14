@@ -77,6 +77,79 @@ test("normalizes ACP plans, tools, reasoning, message boundaries, and media", ()
   ]);
 });
 
+test("retains bounded ACP mode, configuration, command, and usage updates", () => {
+  const updates = [
+    {
+      sessionUpdate: "current_mode_update",
+      currentModeId: "code",
+    },
+    {
+      sessionUpdate: "available_commands_update",
+      availableCommands: [{
+        name: "review",
+        description: "Review the current workspace.",
+        input: { hint: "optional focus" },
+      }],
+    },
+    {
+      sessionUpdate: "config_option_update",
+      configOptions: [
+        {
+          type: "select",
+          id: "model",
+          name: "Model",
+          category: "model",
+          currentValue: "sol",
+          options: [{ value: "sol", name: "Sol" }],
+        },
+        {
+          type: "boolean",
+          id: "compact",
+          name: "Compact output",
+          currentValue: true,
+        },
+      ],
+    },
+    {
+      sessionUpdate: "usage_update",
+      used: 12_000,
+      size: 272_000,
+      cost: { amount: 1.25, currency: "USD" },
+    },
+  ];
+  const capture = updates.reduce(
+    (current, update) => captureAcpTimelineUpdate(current, update),
+    { response: "", updates: [] },
+  );
+  assert.deepEqual(capture.updates.map(({ kind }) => kind), [
+    "current_mode",
+    "available_commands",
+    "configuration",
+    "usage",
+  ]);
+  assert.deepEqual(capture.updates[2].options.map(({ id, currentValue }) => [id, currentValue]), [
+    ["model", "sol"],
+    ["compact", true],
+  ]);
+  assert.equal(capture.updates[3].cost.currency, "USD");
+  assert.throws(
+    () => captureAcpTimelineUpdate(
+      { response: "", updates: [] },
+      { sessionUpdate: "usage_update", used: 2, size: 1 },
+    ),
+    /usage cannot exceed/,
+  );
+  assert.throws(
+    () => captureAcpTimelineUpdate(
+      { response: "", updates: [] },
+      {
+        sessionUpdate: "available_commands_update",
+        availableCommands: [{ name: "x".repeat(201), description: "Too long" }],
+      },
+    ),
+  );
+});
+
 test("falls back to a new ACP session only when session/fork is unsupported", async () => {
   const calls = [];
   assert.equal(await forkOrCreateAcpSession({

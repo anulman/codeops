@@ -19,6 +19,17 @@ function config(sources = []) {
     runId: "launch-0123456789abcdef01234567",
     displayName: "Investigate the estimator",
     leaseId: "11111111-1111-4111-8111-111111111111",
+    policy: {
+      version: "codeops.session-policy/v1",
+      mode: "implement",
+      workspaceAccess: "bounded-writes",
+      modelCalls: "allowed",
+      modelPolicy: {
+        provider: "openai",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "medium",
+      },
+    },
     workspace: {
       version: "codeops.workspace/v1",
       sources: sources.map(({ catalogKey, repository }) => ({
@@ -67,6 +78,48 @@ test("builds isolated materializer and runtime Jobs on bounded persistent storag
     runtimeEnvironment.find((entry) => entry.name === "CODEOPS_SESSION_DISPLAY_NAME")?.value,
     "Investigate the estimator",
   );
+});
+
+test("binds workspace mounts and Codex configuration to the immutable session policy", () => {
+  const implementRuntime = buildWorkspaceResources(config())[3];
+  for (const container of implementRuntime.spec.template.spec.containers) {
+    assert.equal(
+      container.volumeMounts.find((mount) => mount.name === "workspace")?.readOnly,
+      false,
+    );
+  }
+  const implementAgent = implementRuntime.spec.template.spec.containers[1];
+  const implementCodexConfig = JSON.parse(
+    implementAgent.env.find((entry) => entry.name === "CODEX_CONFIG")?.value,
+  );
+  assert.equal(implementCodexConfig.model, "gpt-5.6-sol");
+  assert.equal(implementCodexConfig.model_reasoning_effort, "medium");
+
+  const review = config();
+  review.policy = {
+    version: "codeops.session-policy/v1",
+    mode: "review",
+    workspaceAccess: "read-only",
+    modelCalls: "allowed",
+    modelPolicy: {
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "high",
+    },
+  };
+  const reviewRuntime = buildWorkspaceResources(review)[3];
+  for (const container of reviewRuntime.spec.template.spec.containers) {
+    assert.equal(
+      container.volumeMounts.find((mount) => mount.name === "workspace")?.readOnly,
+      true,
+    );
+  }
+  const reviewAgent = reviewRuntime.spec.template.spec.containers[1];
+  const reviewCodexConfig = JSON.parse(
+    reviewAgent.env.find((entry) => entry.name === "CODEX_CONFIG")?.value,
+  );
+  assert.equal(reviewCodexConfig.model, "gpt-5.6-sol");
+  assert.equal(reviewCodexConfig.model_reasoning_effort, "high");
 });
 
 test("puts exact source authority only in the init-only immutable Secret", () => {

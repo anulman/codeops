@@ -3,6 +3,14 @@ import test from "node:test";
 import { createPostgresWorkspaceLaunchStore } from "../dist/workspace-launch-store.js";
 import { WorkspaceLaunchQuotaError } from "../dist/workspace-launch.js";
 
+const policy = {
+  version: "codeops.session-policy/v1",
+  mode: "implement",
+  workspaceAccess: "bounded-writes",
+  modelCalls: "allowed",
+  modelPolicy: { provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "medium" },
+};
+
 function sharedDatabase() {
   const state = { launches: [], tail: Promise.resolve() };
   return {
@@ -62,6 +70,7 @@ function admission(index, principalId) {
       idempotencyKey: uuid,
       principalId,
       requestDigest: `sha256:${index.toString(16).padStart(64, "0")}`,
+      policy,
       promptDigest: `sha256:${(index + 100).toString(16).padStart(64, "0")}`,
       workspace: { version: "codeops.workspace/v1", sources: [], scratchPath: "scratch" },
       state: "queued",
@@ -73,6 +82,7 @@ function admission(index, principalId) {
     request: {
       version: "codeops.workspace-launch-request/v1",
       idempotencyKey: uuid,
+      mode: "implement",
       prompt: `Prompt ${index}`,
       sources: [],
     },

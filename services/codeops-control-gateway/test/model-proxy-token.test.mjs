@@ -9,6 +9,8 @@ test("issues one exact 75-minute session-bound model proxy token", () => {
   const token = createModelProxyToken({
     subject: "ses_agents_control_plane_1",
     signingKey,
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
     issuedAt,
   });
   const [version, encoded, signature] = token.split(".");
@@ -21,6 +23,8 @@ test("issues one exact 75-minute session-bound model proxy token", () => {
   assert.deepEqual(payload, {
     aud: "codeops-model-proxy",
     sub: "ses_agents_control_plane_1",
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
     iat: 1786323600,
     exp: 1786328100,
   });
@@ -30,9 +34,19 @@ test("rejects invalid token subjects and reusable signing-key bounds", () => {
   assert.throws(() => createModelProxyToken({
     subject: "unsafe/session",
     signingKey: "m".repeat(64),
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
   }));
   assert.throws(() => createModelProxyToken({
     subject: "ses_1",
     signingKey: "short",
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
+  }));
+  assert.throws(() => createModelProxyToken({
+    subject: "ses_1",
+    signingKey: "m".repeat(64),
+    model: "unsafe/model",
+    reasoningEffort: "high",
   }));
 });

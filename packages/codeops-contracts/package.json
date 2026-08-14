@@ -25,6 +25,10 @@
       "types": "./dist/session-runtime.d.ts",
       "default": "./dist/session-runtime.js"
     },
+    "./session-policy": {
+      "types": "./dist/session-policy.d.ts",
+      "default": "./dist/session-policy.js"
+    },
     "./workspace-launch": {
       "types": "./dist/workspace-launch.d.ts",
       "default": "./dist/workspace-launch.js"

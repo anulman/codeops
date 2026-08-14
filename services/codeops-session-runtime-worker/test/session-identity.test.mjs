@@ -2,6 +2,18 @@ import assert from "node:assert/strict";
 import { test } from "node:test";
 import { loadRuntimeSessionIdentity } from "../dist/session-identity.js";
 
+const policyJson = JSON.stringify({
+  version: "codeops.session-policy/v1",
+  mode: "review",
+  workspaceAccess: "read-only",
+  modelCalls: "allowed",
+  modelPolicy: {
+    provider: "openai",
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
+  },
+});
+
 test("loads a bounded workspace manifest without legacy repository fields", async () => {
   const identity = await loadRuntimeSessionIdentity({
     env: {
@@ -9,6 +21,7 @@ test("loads a bounded workspace manifest without legacy repository fields", asyn
       CODEOPS_SESSION_WORKFLOW_ID: "workspace-launch",
       CODEOPS_SESSION_RUN_ID: "launch-123",
       CODEOPS_SESSION_DISPLAY_NAME: "Investigate the estimator",
+      CODEOPS_SESSION_POLICY_JSON: policyJson,
     },
     read: async () => Buffer.from(JSON.stringify({
       version: "codeops.workspace/v1",
@@ -32,6 +45,7 @@ test("loads an inline workspace manifest without a credential-bearing volume", a
       }),
       CODEOPS_SESSION_WORKFLOW_ID: "workspace-launch",
       CODEOPS_SESSION_RUN_ID: "launch-123",
+      CODEOPS_SESSION_POLICY_JSON: policyJson,
     },
   });
   assert.equal(identity.version, "codeops.session-workspace-identity/v1");

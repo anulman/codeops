@@ -342,12 +342,26 @@ const server = createServer((request, response) => {
             const initialized = await initializeSessionFromJob(client, {
               request: initializationRequest,
             });
+            const modelPolicy =
+              "version" in initialized.snapshot.identity
+                ? initialized.snapshot.identity.policy.modelPolicy
+                : {
+                    provider: "openai" as const,
+                    model: "gpt-5.6-sol" as const,
+                    reasoningEffort: "high" as const,
+                  };
             return {
               ...initialized,
-              modelProxyToken: createModelProxyToken({
-                subject: initialized.snapshot.sessionId,
-                signingKey: modelProxySigningKey,
-              }),
+              ...(modelPolicy.provider === "none"
+                ? {}
+                : {
+                    modelProxyToken: createModelProxyToken({
+                      subject: initialized.snapshot.sessionId,
+                      signingKey: modelProxySigningKey,
+                      model: modelPolicy.model,
+                      reasoningEffort: modelPolicy.reasoningEffort,
+                    }),
+                  }),
             };
           } finally {
             client.release();

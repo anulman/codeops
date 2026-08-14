@@ -11,8 +11,21 @@ import {
 const request = {
   version: "codeops.workspace-launch-request/v1",
   idempotencyKey: "11111111-1111-4111-8111-111111111111",
+  mode: "implement",
   prompt: "Implement the bounded change.",
   sources: [{ catalogKey: "codeops" }],
+};
+
+const implementPolicy = {
+  version: "codeops.session-policy/v1",
+  mode: "implement",
+  workspaceAccess: "bounded-writes",
+  modelCalls: "allowed",
+  modelPolicy: {
+    provider: "openai",
+    model: "gpt-5.6-sol",
+    reasoningEffort: "medium",
+  },
 };
 
 function store({ existing = null, principalActive = 0, globalActive = 0 } = {}) {
@@ -55,6 +68,7 @@ test("admits one exact catalog-bound workspace launch", async () => {
   });
   assert.equal(launch.state, "queued");
   assert.equal(launch.workspace.sources[0].resolvedSha, "a".repeat(40));
+  assert.deepEqual(launch.policy, implementPolicy);
   assert.equal(target.created.request.prompt, request.prompt);
   assert.equal("prompt" in launch, false);
 });
@@ -154,6 +168,7 @@ test("marks a provisioned launch ready with one initial prompt identity", () => 
     idempotencyKey: "11111111-1111-4111-8111-111111111111",
     principalId: "anulman@gmail.com",
     requestDigest: `sha256:${"a".repeat(64)}`,
+    policy: implementPolicy,
     promptDigest: `sha256:${"b".repeat(64)}`,
     workspace: {
       version: "codeops.workspace/v1",

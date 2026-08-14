@@ -55,6 +55,13 @@ function dispatch() {
       state: "running",
       identity: {
         version: "codeops.session-workspace-identity/v1",
+        policy: {
+          version: "codeops.session-policy/v1",
+          mode: "review",
+          workspaceAccess: "read-only",
+          modelCalls: "allowed",
+          modelPolicy: { provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "high" },
+        },
         workspace: {
           version: "codeops.workspace/v1",
           sources: [{

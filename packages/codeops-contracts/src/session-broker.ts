@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { sessionPolicySchema } from "./session-policy.js";
 import { workspaceManifestSchema } from "./workspace-launch.js";
 
 const identifier = z
@@ -358,6 +359,7 @@ export const workspaceSessionIdentitySchema = refineSessionIdentity(
   z
     .object({
       version: z.literal("codeops.session-workspace-identity/v1"),
+      policy: sessionPolicySchema,
       workspace: workspaceManifestSchema,
       ...sessionIdentityCommonShape,
     })
@@ -792,7 +794,54 @@ const sessionToolFields = {
     .optional(),
 } as const;
 
-export const sessionTimelineUpdateSchema = z.discriminatedUnion("kind", [
+const sessionConfigurationCommon = {
+  id: safeText(200),
+  name: safeText(500),
+  description: optionalText(2_000),
+  category: optionalText(200),
+} as const;
+
+const sessionConfigurationOptionSchema = z.discriminatedUnion("type", [
+  z
+    .object({
+      type: z.literal("boolean"),
+      ...sessionConfigurationCommon,
+      currentValue: z.boolean(),
+    })
+    .strict(),
+  z
+    .object({
+      type: z.literal("select"),
+      ...sessionConfigurationCommon,
+      currentValue: safeText(500),
+      values: z
+        .array(
+          z
+            .object({
+              value: safeText(500),
+              name: safeText(500),
+              description: optionalText(2_000),
+              groupId: optionalText(200),
+              groupName: optionalText(500),
+            })
+            .strict(),
+        )
+        .max(100),
+    })
+    .strict(),
+]).superRefine((option, context) => {
+  if (
+    option.type === "select" &&
+    !option.values.some(({ value }) => value === option.currentValue)
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "selected configuration value must be available",
+    });
+  }
+});
+
+const sessionTimelineUpdateBaseSchema = z.discriminatedUnion("kind", [
   z
     .object({
       kind: z.literal("user_content"),
@@ -835,7 +884,62 @@ export const sessionTimelineUpdateSchema = z.discriminatedUnion("kind", [
       title: optionalText(2_000),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("available_commands"),
+      commands: z
+        .array(
+          z
+            .object({
+              name: safeText(200),
+              description: safeText(2_000),
+              inputHint: optionalText(500),
+            })
+            .strict(),
+        )
+        .max(100),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("current_mode"),
+      modeId: safeText(200),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("configuration"),
+      options: z.array(sessionConfigurationOptionSchema).max(100),
+    })
+    .strict(),
+  z
+    .object({
+      kind: z.literal("usage"),
+      usedTokens: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
+      contextWindowTokens: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      cost: z
+        .object({
+          amount: z.number().finite().nonnegative().max(1_000_000_000),
+          currency: z.string().regex(/^[A-Z]{3}$/),
+        })
+        .strict()
+        .optional(),
+    })
+    .strict(),
 ]);
+
+export const sessionTimelineUpdateSchema =
+  sessionTimelineUpdateBaseSchema.superRefine((update, context) => {
+    if (
+      update.kind === "usage" &&
+      update.usedTokens > update.contextWindowTokens
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "usage cannot exceed the context window",
+      });
+    }
+  });
 
 export const sessionUserActionSchema = z
   .object({

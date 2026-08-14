@@ -120,7 +120,7 @@ function ProvisioningSession({ launch, sessions }: Readonly<{ launch: WorkspaceL
           <Link to="/" className="grid size-8 shrink-0 place-items-center rounded-lg text-white/35 transition hover:bg-white/[0.05] hover:text-white/72 lg:hidden" aria-label="All sessions">←</Link>
           <div className="min-w-0 flex-1">
             <h1 className="truncate text-sm font-semibold tracking-[-0.01em] text-white/88">{launch.title ?? "New session"}</h1>
-            <p className="mt-0.5 truncate font-mono text-[10px] text-white/27">{launch.workspace.sources.length === 0 ? "scratch workspace" : `${launch.workspace.sources.length} source ${launch.workspace.sources.length === 1 ? "repository" : "repositories"}`}</p>
+            <p className="mt-0.5 truncate font-mono text-[10px] text-white/27">{launch.policy.mode} · {policyDetail(launch.policy)} · {launch.workspace.sources.length === 0 ? "scratch workspace" : `${launch.workspace.sources.length} source ${launch.workspace.sources.length === 1 ? "repository" : "repositories"}`}</p>
           </div>
           <span className={`rounded-full px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.08em] ${failed ? "bg-[#ff7278]/10 text-[#ff989d]" : "bg-[#6da8ff]/10 text-[#8dbbff]"}`}>{failed ? "Failed" : "Provisioning"}</span>
         </header>
@@ -138,12 +138,13 @@ function ProvisioningSession({ launch, sessions }: Readonly<{ launch: WorkspaceL
 }
 
 function CockpitHeader({ session }: Readonly<{ session: SessionSnapshot }>) {
+  const policy = isWorkspaceIdentity(session.identity) ? session.identity.policy : null;
   return (
     <header className="sticky top-13 z-2 flex min-h-14 items-center gap-3 border-b border-white/[0.07] bg-[#151517]/95 px-3 backdrop-blur-xl sm:px-5 lg:top-0">
       <Link to="/" className="grid size-8 shrink-0 place-items-center rounded-lg text-white/35 transition hover:bg-white/[0.05] hover:text-white/72 lg:hidden" aria-label="All sessions">←</Link>
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-center gap-2"><h1 className="truncate text-sm font-semibold tracking-[-0.01em] text-white/88">{sessionDisplayName(session.identity)}</h1><StatusBadge state={session.state} /></div>
-        <p className="mt-0.5 truncate font-mono text-[10px] text-white/27">{sessionWorkspaceDetail(session.identity)}</p>
+        <p className="mt-0.5 truncate font-mono text-[10px] text-white/27">{policy ? `${policy.mode} · ${policyDetail(policy)} · ` : ""}{sessionWorkspaceDetail(session.identity)}</p>
       </div>
       <div className="hidden items-center gap-2 text-[10px] text-white/25 sm:flex"><span>Generation {session.generation}</span><span>·</span><span>Cursor {session.eventCursor}</span></div>
     </header>
@@ -249,6 +250,10 @@ function executionSummary(update: ExecutionUpdate) {
   if (update.kind === "plan") return { label: "Plan", status: `${update.entries.filter((entry) => entry.status === "completed").length}/${update.entries.length}` };
   if (update.kind === "plan_update") return { label: "Plan update", status: update.content.type };
   if (update.kind === "plan_removed") return { label: "Plan removed", status: null };
+  if (update.kind === "current_mode") return { label: "ACP mode", status: update.modeId };
+  if (update.kind === "available_commands") return { label: "Available commands", status: String(update.commands.length) };
+  if (update.kind === "configuration") return { label: "ACP configuration", status: String(update.options.length) };
+  if (update.kind === "usage") return { label: "Context usage", status: `${update.usedTokens.toLocaleString()} / ${update.contextWindowTokens.toLocaleString()}` };
   return {
     label: update.title ?? update.name ?? `${update.toolKind ?? "Tool"} call`,
     status: update.status?.replaceAll("_", " ") ?? (update.kind === "tool_call" ? "started" : "updated"),
@@ -258,14 +263,19 @@ function executionSummary(update: ExecutionUpdate) {
 function executionIcon(update: ExecutionUpdate) {
   if (update.kind === "thought") return "◇";
   if (update.kind === "plan" || update.kind === "plan_update" || update.kind === "plan_removed") return "☷";
+  if (update.kind === "current_mode") return "M";
+  if (update.kind === "available_commands") return "/";
+  if (update.kind === "configuration") return "⚙";
+  if (update.kind === "usage") return "%";
   return update.status === "failed" ? "!" : update.status === "completed" ? "✓" : "›";
 }
 
 function executionTone(update: ExecutionUpdate) {
   if (update.kind === "thought") return "border-[#b39cff]/12 bg-[#b39cff]/6 text-[#c5b6ff]/55";
   if (update.kind === "plan" || update.kind === "plan_update" || update.kind === "plan_removed") return "border-[#6da8ff]/12 bg-[#6da8ff]/6 text-[#8dbbff]/60";
-  if (update.status === "failed") return "border-[#ff747b]/16 bg-[#ff747b]/7 text-[#ff989d]/70";
-  if (update.status === "completed") return "border-[#54d18b]/12 bg-[#54d18b]/6 text-[#6ee2a0]/65";
+  if (["current_mode", "available_commands", "configuration", "usage"].includes(update.kind)) return "border-[#54d18b]/12 bg-[#54d18b]/6 text-[#6ee2a0]/65";
+  if ((update.kind === "tool_call" || update.kind === "tool_call_update") && update.status === "failed") return "border-[#ff747b]/16 bg-[#ff747b]/7 text-[#ff989d]/70";
+  if ((update.kind === "tool_call" || update.kind === "tool_call_update") && update.status === "completed") return "border-[#54d18b]/12 bg-[#54d18b]/6 text-[#6ee2a0]/65";
   return "border-white/[0.06] bg-white/[0.025] text-white/32";
 }
 
@@ -284,6 +294,10 @@ function ExecutionContent({ update }: Readonly<{ update: ExecutionUpdate }>) {
       : <ResourceLink uri={update.content.uri} label="Open plan file" />;
   }
   if (update.kind === "plan_removed") return <p>Plan <code className="font-mono text-[10px] text-white/54">{update.planId}</code> was removed.</p>;
+  if (update.kind === "current_mode") return <p>ACP reports mode <code className="font-mono text-[10px] text-white/54">{update.modeId}</code>. This does not change the immutable CodeOps policy.</p>;
+  if (update.kind === "available_commands") return <ul className="space-y-2">{update.commands.map((command) => <li key={command.name}><code className="font-mono text-[10px] text-white/58">/{command.name}</code><span className="ml-2 text-white/38">{command.description}</span>{command.inputHint ? <span className="mt-0.5 block text-[10px] text-white/24">Input: {command.inputHint}</span> : null}</li>)}</ul>;
+  if (update.kind === "configuration") return <ul className="space-y-2">{update.options.map((option) => <li key={option.id} className="flex items-start justify-between gap-3"><span><span className="text-white/48">{option.name}</span>{option.category ? <span className="ml-2 text-[9px] uppercase text-white/20">{option.category}</span> : null}</span><code className="font-mono text-[10px] text-white/54">{String(option.currentValue)}</code></li>)}</ul>;
+  if (update.kind === "usage") return <p><span className="text-white/55">{update.usedTokens.toLocaleString()}</span> of {update.contextWindowTokens.toLocaleString()} context tokens{update.cost ? ` · ${update.cost.amount.toLocaleString(undefined, { style: "currency", currency: update.cost.currency })}` : ""}</p>;
   return <div className="space-y-3">{update.name ? <p className="font-mono text-[10px] text-white/28">{update.name}</p> : null}{update.locations?.length ? <div className="flex flex-wrap gap-1.5">{update.locations.map((location) => <code key={`${location.path}:${location.line ?? ""}`} className="rounded bg-black/20 px-1.5 py-0.5 font-mono text-[9px] text-white/34">{location.path}{location.line === undefined ? "" : `:${location.line}`}</code>)}</div> : null}{update.content?.map((content, index) => <ToolContentView key={index} content={content} />)}</div>;
 }
 
@@ -475,11 +489,16 @@ function SteeringSheet({ action, pending, error, onClose, onSubmit }: Readonly<{
 
 function Inspector({ session, relatedSessions }: Readonly<{ session: SessionSnapshot; relatedSessions: readonly SessionSnapshot[] }>) {
   const identity = session.identity;
-  return <div className="space-y-6"><InspectorSection title="Execution">{isWorkspaceIdentity(identity) ? <><Fact label="Workspace" value={identity.workspace.sources.length === 0 ? "Scratch" : `${identity.workspace.sources.length} sources`} /><Fact label="Sources" value={identity.workspace.sources.map((source) => source.catalogKey).join(", ") || "None"} /><Fact label="Resolved commits" value={identity.workspace.sources.map((source) => source.resolvedSha.slice(0, 7)).join(", ") || "—"} mono /></> : <><Fact label="Repository" value={identity.repository} /><Fact label="Branch" value={identity.branch} mono /><Fact label="Commit" value={identity.baseSha.slice(0, 12)} mono /></>}<Fact label="Worker" value={session.lease?.status === "active" ? session.lease.holderId : "No active worker"} mono /></InspectorSection><InspectorSection title="Evidence"><Fact label="Event cursor" value={String(session.eventCursor)} /><Fact label="Checkpoint" value={session.checkpoint ? "Committed" : "None"} tone={session.checkpoint ? "success" : "quiet"} /><Fact label="References" value={String(session.checkpoint?.evidenceReferences.length ?? 0)} /><Fact label="Patches" value={checkpointPatchLabel(session.checkpoint)} mono /></InspectorSection><InspectorSection title="Session boundary"><Fact label="Parent" value={session.identity.parentSessionId ?? "Root session"} mono /><Fact label="Fork cursor" value={session.identity.forkedAtCursor === null ? "—" : String(session.identity.forkedAtCursor)} /><Fact label="Permission" value={session.pendingPermission?.title ?? "None pending"} /></InspectorSection><InspectorSection title="Ensemble">{relatedSessions.map((item) => <RelatedSession key={item.sessionId} session={item} />)}{relatedSessions.length === 0 ? <p className="text-xs text-white/28">No related sessions.</p> : null}</InspectorSection><details className="border-t border-white/[0.06] pt-4"><summary className="cursor-pointer list-none text-[10px] font-semibold uppercase tracking-[0.13em] text-white/28">Protocol diagnostics <span className="float-right">＋</span></summary><pre className="mt-4 overflow-x-auto rounded-lg bg-black/20 p-3 font-mono text-[9px] leading-5 text-white/28">session/update{`\n`}broker: {session.sessionId}{`\n`}workflow: {session.identity.workflowId}{`\n`}sequence: {session.eventCursor}{`\n`}transport: server RPC</pre></details></div>;
+  return <div className="space-y-6"><InspectorSection title="Execution">{isWorkspaceIdentity(identity) ? <><Fact label="Mode" value={identity.policy.mode} /><Fact label="Model" value={identity.policy.modelPolicy.model ?? "No model"} mono /><Fact label="Reasoning" value={identity.policy.modelPolicy.reasoningEffort ?? "None"} /><Fact label="Workspace access" value={identity.policy.workspaceAccess} /><Fact label="Workspace" value={identity.workspace.sources.length === 0 ? "Scratch" : `${identity.workspace.sources.length} sources`} /><Fact label="Sources" value={identity.workspace.sources.map((source) => source.catalogKey).join(", ") || "None"} /><Fact label="Resolved commits" value={identity.workspace.sources.map((source) => source.resolvedSha.slice(0, 7)).join(", ") || "—"} mono /></> : <><Fact label="Repository" value={identity.repository} /><Fact label="Branch" value={identity.branch} mono /><Fact label="Commit" value={identity.baseSha.slice(0, 12)} mono /></>}<Fact label="Worker" value={session.lease?.status === "active" ? session.lease.holderId : "No active worker"} mono /></InspectorSection><InspectorSection title="Evidence"><Fact label="Event cursor" value={String(session.eventCursor)} /><Fact label="Checkpoint" value={session.checkpoint ? "Committed" : "None"} tone={session.checkpoint ? "success" : "quiet"} /><Fact label="References" value={String(session.checkpoint?.evidenceReferences.length ?? 0)} /><Fact label="Patches" value={checkpointPatchLabel(session.checkpoint)} mono /></InspectorSection><InspectorSection title="Session boundary"><Fact label="Parent" value={session.identity.parentSessionId ?? "Root session"} mono /><Fact label="Fork cursor" value={session.identity.forkedAtCursor === null ? "—" : String(session.identity.forkedAtCursor)} /><Fact label="Permission" value={session.pendingPermission?.title ?? "None pending"} /></InspectorSection><InspectorSection title="Ensemble">{relatedSessions.map((item) => <RelatedSession key={item.sessionId} session={item} />)}{relatedSessions.length === 0 ? <p className="text-xs text-white/28">No related sessions.</p> : null}</InspectorSection><details className="border-t border-white/[0.06] pt-4"><summary className="cursor-pointer list-none text-[10px] font-semibold uppercase tracking-[0.13em] text-white/28">Protocol diagnostics <span className="float-right">＋</span></summary><pre className="mt-4 overflow-x-auto rounded-lg bg-black/20 p-3 font-mono text-[9px] leading-5 text-white/28">session/update{`\n`}broker: {session.sessionId}{`\n`}workflow: {session.identity.workflowId}{`\n`}sequence: {session.eventCursor}{`\n`}transport: server RPC</pre></details></div>;
 }
 
 function MobileInspector({ session }: Readonly<{ session: SessionSnapshot }>) {
-  return <details className="mb-6 rounded-xl border border-white/[0.07] bg-white/[0.025] px-4 py-3 xl:hidden"><summary className="cursor-pointer list-none text-xs font-medium text-white/48">Session details <span className="float-right text-white/22">＋</span></summary><div className="mt-4 space-y-3 border-t border-white/[0.06] pt-4"><Fact label="Workspace" value={sessionWorkspaceDetail(session.identity)} /><Fact label="Generation" value={String(session.generation)} /><Fact label="Checkpoint" value={session.checkpoint ? "Committed" : "None"} /></div></details>;
+  const policy = isWorkspaceIdentity(session.identity) ? session.identity.policy : null;
+  return <details className="mb-6 rounded-xl border border-white/[0.07] bg-white/[0.025] px-4 py-3 xl:hidden"><summary className="cursor-pointer list-none text-xs font-medium text-white/48">Session details <span className="float-right text-white/22">＋</span></summary><div className="mt-4 space-y-3 border-t border-white/[0.06] pt-4">{policy ? <><Fact label="Mode" value={policy.mode} /><Fact label="Policy" value={policyDetail(policy)} /></> : null}<Fact label="Workspace" value={sessionWorkspaceDetail(session.identity)} /><Fact label="Generation" value={String(session.generation)} /><Fact label="Checkpoint" value={session.checkpoint ? "Committed" : "None"} /></div></details>;
+}
+
+function policyDetail(policy: WorkspaceLaunch["policy"]): string {
+  return `${policy.modelPolicy.model ?? "no model"} · ${policy.modelPolicy.reasoningEffort ?? "no reasoning"} · ${policy.workspaceAccess}`;
 }
 
 function InspectorSection({ title, children }: Readonly<{ title: string; children: ReactNode }>) { return <section><h2 className="mb-3 text-[9px] font-semibold uppercase tracking-[0.14em] text-white/24">{title}</h2><div className="space-y-2.5">{children}</div></section>; }
