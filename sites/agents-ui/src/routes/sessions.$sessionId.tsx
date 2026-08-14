@@ -67,9 +67,9 @@ function SessionCockpit() {
   const relatedSessions = fleet.filter((item) => item.identity.workflowId === session.identity.workflowId && item.sessionId !== session.sessionId).slice(0, 6);
   const comparisonCandidates = fleet.filter((item) =>
     item.sessionId !== session.sessionId &&
-    item.identity.parentSessionId === session.identity.parentSessionId &&
-    item.identity.forkedAtCursor === session.identity.forkedAtCursor
-  ).slice(0, 8);
+    item.identity.parentSessionId === session.sessionId &&
+    item.identity.forkedAtCursor !== null
+  ).slice(0, 32);
   const permissionCapability = session.capabilities.find((item) => item.action === "respond_permission");
 
   return (
@@ -507,13 +507,32 @@ function MobileInspector({ session, comparisonCandidates }: Readonly<{ session: 
 
 function ForkComparisonPanel({ target, candidates }: Readonly<{ target: SessionSnapshot; candidates: readonly SessionSnapshot[] }>) {
   const router = useRouter();
-  const [selected, setSelected] = useState<readonly string[]>(() => candidates.slice(0, 2).map(({ sessionId }) => sessionId));
+  const groups = useMemo(() => forkCandidateGroups(candidates), [candidates]);
+  const [forkCursor, setForkCursor] = useState<number | null>(() => groups[0]?.forkCursor ?? null);
+  const activeGroup = groups.find((group) => group.forkCursor === forkCursor) ?? groups[0];
+  const activeCandidates = activeGroup?.candidates ?? [];
+  const [selected, setSelected] = useState<readonly string[]>(() => activeCandidates.slice(0, 2).map(({ sessionId }) => sessionId));
   const [pending, setPending] = useState(false);
   const [result, setResult] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const promptEnabled = target.capabilities.some(({ action, availability }) => action === "prompt" && availability === "enabled");
-  const isExplicitChild = target.identity.parentSessionId !== null && target.identity.forkedAtCursor !== null;
-  const available = isExplicitChild && promptEnabled && candidates.length >= 2;
+  const available = promptEnabled && activeCandidates.length >= 2;
+  useEffect(() => {
+    const nextGroup = groups.find((group) => group.forkCursor === forkCursor) ?? groups[0];
+    if (!nextGroup) {
+      setForkCursor(null);
+      setSelected([]);
+      return;
+    }
+    if (forkCursor !== nextGroup.forkCursor) setForkCursor(nextGroup.forkCursor);
+    const candidateIds = new Set(nextGroup.candidates.map(({ sessionId }) => sessionId));
+    setSelected((current) => {
+      const retained = current.filter((sessionId) => candidateIds.has(sessionId));
+      return retained.length >= 2
+        ? retained.slice(0, 4)
+        : nextGroup.candidates.slice(0, 2).map(({ sessionId }) => sessionId);
+    });
+  }, [forkCursor, groups]);
   const toggle = (sessionId: string) => setSelected((current) => current.includes(sessionId)
     ? current.filter((item) => item !== sessionId)
     : current.length < 4 ? [...current, sessionId] : current);
@@ -534,7 +553,23 @@ function ForkComparisonPanel({ target, candidates }: Readonly<{ target: SessionS
       setPending(false);
     }
   };
-  return <div className="mt-4 border-t border-white/[0.06] pt-4"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/28">Compare forks</p>{!isExplicitChild ? <p className="mt-2 text-[11px] leading-4 text-white/28">Create an explicit synthesis child from the shared checkpoint, then compare sibling forks in that child.</p> : candidates.length < 2 ? <p className="mt-2 text-[11px] leading-4 text-white/28">At least two sibling forks from the same checkpoint are required.</p> : <><div className="mt-2 space-y-1.5">{candidates.map((candidate) => { const checked = selected.includes(candidate.sessionId); return <label key={candidate.sessionId} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] text-white/46 hover:bg-white/[0.035]"><input type="checkbox" checked={checked} disabled={pending || (!checked && selected.length >= 4)} onChange={() => toggle(candidate.sessionId)} className="accent-[#7774ff]" /><span className="min-w-0 flex-1 truncate">{sessionDisplayName(candidate.identity)}</span><span className="font-mono text-[9px] text-white/20">#{candidate.eventCursor}</span></label>; })}</div><button type="button" disabled={!available || pending || selected.length < 2} onClick={() => void submit()} className="mt-3 h-8 w-full rounded-lg bg-[#6d6af7] px-3 text-[11px] font-semibold text-white transition hover:bg-[#7c79ff] disabled:cursor-not-allowed disabled:opacity-35">{pending ? "Queuing…" : `Synthesize ${selected.length} forks`}</button></>}{result ? <p className="mt-2 font-mono text-[9px] text-[#6ee2a0]">{result}</p> : null}{error ? <p role="alert" className="mt-2 text-[10px] leading-4 text-[#ff989d]">{error}</p> : null}</div>;
+  return <div className="mt-4 border-t border-white/[0.06] pt-4"><p className="text-[10px] font-semibold uppercase tracking-[0.12em] text-white/28">Synthesize children</p>{groups.length === 0 ? <p className="mt-2 text-[11px] leading-4 text-white/28">Fork at least two alternatives from the same parent checkpoint.</p> : <>{groups.length > 1 ? <select aria-label="Fork checkpoint" value={activeGroup?.forkCursor ?? ""} disabled={pending} onChange={(event) => setForkCursor(Number(event.target.value))} className="mt-2 h-8 w-full rounded-md border border-white/[0.08] bg-[#171719] px-2 text-[10px] text-white/55"><option value="" disabled>Select a fork checkpoint</option>{groups.map((group) => <option key={group.forkCursor} value={group.forkCursor}>Checkpoint cursor {group.forkCursor} · {group.candidates.length} children</option>)}</select> : null}<div className="mt-2 space-y-1.5">{activeCandidates.map((candidate) => { const checked = selected.includes(candidate.sessionId); return <label key={candidate.sessionId} className="flex cursor-pointer items-center gap-2 rounded-lg px-2 py-1.5 text-[11px] text-white/46 hover:bg-white/[0.035]"><input type="checkbox" checked={checked} disabled={pending || (!checked && selected.length >= 4)} onChange={() => toggle(candidate.sessionId)} className="accent-[#7774ff]" /><span className="min-w-0 flex-1 truncate">{sessionDisplayName(candidate.identity)}</span><span className="font-mono text-[9px] text-white/20">#{candidate.eventCursor}</span></label>; })}</div><button type="button" disabled={!available || pending || selected.length < 2} onClick={() => void submit()} className="mt-3 h-8 w-full rounded-lg bg-[#6d6af7] px-3 text-[11px] font-semibold text-white transition hover:bg-[#7c79ff] disabled:cursor-not-allowed disabled:opacity-35">{pending ? "Queuing…" : `Synthesize ${selected.length} children`}</button></>}{result ? <p className="mt-2 font-mono text-[9px] text-[#6ee2a0]">{result}</p> : null}{error ? <p role="alert" className="mt-2 text-[10px] leading-4 text-[#ff989d]">{error}</p> : null}</div>;
+}
+
+function forkCandidateGroups(candidates: readonly SessionSnapshot[]) {
+  const grouped = new Map<number, SessionSnapshot[]>();
+  for (const candidate of candidates) {
+    const cursor = candidate.identity.forkedAtCursor;
+    if (cursor === null) continue;
+    grouped.set(cursor, [...(grouped.get(cursor) ?? []), candidate]);
+  }
+  return [...grouped.entries()]
+    .filter(([, children]) => children.length >= 2)
+    .sort(([left], [right]) => right - left)
+    .map(([forkCursor, children]) => ({
+      forkCursor,
+      candidates: children.sort((left, right) => left.sessionId.localeCompare(right.sessionId)),
+    }));
 }
 
 function ContextAttachmentList({ attachments, className = "" }: Readonly<{ attachments: readonly WorkspaceContextAttachmentDescriptor[]; className?: string }>) {

@@ -71,9 +71,6 @@ export function buildSessionForkComparison(input: {
   )) {
     throw new Error("fork synthesis target requires an active prompt capability");
   }
-  if (target.identity.parentSessionId === null || target.identity.forkedAtCursor === null) {
-    throw new Error("fork synthesis target must be an explicit child session");
-  }
   const candidates = input.candidates.map(({ snapshot, afterCursor, events }) => ({
     snapshot: sessionSnapshotSchema.parse(snapshot),
     afterCursor,
@@ -82,13 +79,17 @@ export function buildSessionForkComparison(input: {
   if (candidates.length < 2 || candidates.length > 4) {
     throw new Error("fork comparison requires two to four candidates");
   }
+  const forkedAtCursor = candidates[0]!.snapshot.identity.forkedAtCursor;
+  if (forkedAtCursor === null || target.eventCursor < forkedAtCursor) {
+    throw new Error("fork synthesis target does not contain the child fork point");
+  }
   for (const candidate of candidates) {
     if (candidate.snapshot.sessionId === target.sessionId) {
       throw new Error("fork comparison candidate cannot be the target");
     }
     if (
-      candidate.snapshot.identity.parentSessionId !== target.identity.parentSessionId ||
-      candidate.snapshot.identity.forkedAtCursor !== target.identity.forkedAtCursor
+      candidate.snapshot.identity.parentSessionId !== target.sessionId ||
+      candidate.snapshot.identity.forkedAtCursor !== forkedAtCursor
     ) {
       throw new Error("fork comparison candidate lineage drifted");
     }
@@ -113,8 +114,8 @@ export function buildSessionForkComparison(input: {
   const content = {
     version: SESSION_BROKER_VERSION.forkComparison,
     lineage: {
-      parentSessionId: target.identity.parentSessionId,
-      forkedAtCursor: target.identity.forkedAtCursor,
+      parentSessionId: target.sessionId,
+      forkedAtCursor,
     },
     target: {
       sessionId: target.sessionId,

@@ -1112,6 +1112,16 @@ function refineSessionForkComparison(
   comparison: z.infer<typeof sessionForkComparisonContentSchema>,
   context: z.RefinementCtx,
 ): void {
+    if (
+      comparison.target.sessionId !== comparison.lineage.parentSessionId ||
+      comparison.target.eventCursor < comparison.lineage.forkedAtCursor
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["target"],
+        message: "fork comparison target must be the parent at or after the fork cursor",
+      });
+    }
     const ids = comparison.candidates.map(({ sessionId }) => sessionId);
     if (new Set(ids).size !== ids.length || ids.includes(comparison.target.sessionId)) {
       context.addIssue({

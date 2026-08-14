@@ -56,6 +56,22 @@ function snapshot(sessionId, eventCursor, overrides = {}) {
   };
 }
 
+function parentSnapshot(eventCursor = 4, overrides = {}) {
+  const parent = snapshot("session-parent", eventCursor, { checkpoint: null });
+  return {
+    ...parent,
+    identity: {
+      ...parent.identity,
+      branch: "main",
+      workflowId: "workflow-parent",
+      runId: "run-parent",
+      parentSessionId: null,
+      forkedAtCursor: null,
+    },
+    ...overrides,
+  };
+}
+
 function event(sessionId, cursor, text) {
   return {
     version: "codeops.session-event/v1",
@@ -90,7 +106,7 @@ function toolEvent(sessionId, cursor, overrides = {}) {
 }
 
 test("builds one stable canonical comparison from exact fork evidence", () => {
-  const target = snapshot("session-target", 0, { checkpoint: null });
+  const target = parentSnapshot();
   const aSnapshot = snapshot("session-a", 2, { identity: { ...snapshot("session-a", 2).identity, workflowId: "workflow-a" } });
   const bSnapshot = snapshot("session-b", 1, { identity: { ...snapshot("session-b", 1).identity, workflowId: "workflow-b" } });
   const a = { snapshot: aSnapshot, afterCursor: 0, events: [event("session-a", 1, "Choose A because its proof is stronger."), toolEvent("session-a", 2)] };
@@ -117,19 +133,19 @@ test("builds one stable canonical comparison from exact fork evidence", () => {
 });
 
 test("rejects lineage, cursor, target, count, and prompt-capability drift", () => {
-  const target = snapshot("session-target", 0, { checkpoint: null });
+  const target = parentSnapshot();
   const exact = { snapshot: snapshot("session-a", 1), afterCursor: 0, events: [event("session-a", 1, "A")] };
   const second = { snapshot: snapshot("session-b", 1), afterCursor: 0, events: [event("session-b", 1, "B")] };
   assert.throws(() => buildSessionForkComparison({ target, candidates: [exact] }), /two to four/);
   assert.throws(() => buildSessionForkComparison({ target, candidates: [exact, { ...second, snapshot: snapshot("session-b", 1, { identity: { ...second.snapshot.identity, parentSessionId: "other-parent" } }) }] }), /lineage drifted/);
   assert.throws(() => buildSessionForkComparison({ target, candidates: [exact, { ...second, events: [] }] }), /cursor drifted/);
-  assert.throws(() => buildSessionForkComparison({ target, candidates: [exact, { snapshot: target, afterCursor: 0, events: [] }] }), /cannot be the target/);
-  assert.throws(() => buildSessionForkComparison({ target: snapshot("session-target", 0, { capabilities: actions.map((action) => ({ action, availability: "disabled", reason: "Unavailable." })) }), candidates: [exact, second] }), /prompt capability/);
-  assert.throws(() => buildSessionForkComparison({ target: snapshot("session-target", 0, { identity: { ...target.identity, parentSessionId: null, forkedAtCursor: null } }), candidates: [exact, second] }), /explicit child/);
+  assert.throws(() => buildSessionForkComparison({ target, candidates: [exact, { snapshot: snapshot(target.sessionId, 1), afterCursor: 0, events: [event(target.sessionId, 1, "Target")] }] }), /cannot be the target/);
+  assert.throws(() => buildSessionForkComparison({ target: parentSnapshot(4, { capabilities: actions.map((action) => ({ action, availability: "disabled", reason: "Unavailable." })) }), candidates: [exact, second] }), /prompt capability/);
+  assert.throws(() => buildSessionForkComparison({ target: parentSnapshot(3), candidates: [exact, second] }), /does not contain the child fork point/);
 });
 
 test("loads exact candidate evidence and submits one identity-bound synthesis prompt", async () => {
-  const target = snapshot("session-target", 0, { checkpoint: null });
+  const target = parentSnapshot();
   const a = snapshot("session-a", 501);
   const b = snapshot("session-b", 1);
   const calls = [];
