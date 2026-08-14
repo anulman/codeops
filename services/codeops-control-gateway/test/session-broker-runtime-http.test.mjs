@@ -51,6 +51,7 @@ function request(overrides = {}) {
   const workItems = [];
   const workItemOperations = [];
   const githubReads = [];
+  const githubMutations = [];
   return {
     claims,
     completions,
@@ -59,6 +60,7 @@ function request(overrides = {}) {
     workItems,
     workItemOperations,
     githubReads,
+    githubMutations,
     promise: serveSessionRuntime({
       method: "POST",
       url: "/v1/session-runtime/claims",
@@ -141,6 +143,17 @@ function request(overrides = {}) {
           query: "runtime",
           items: [],
           truncated: false,
+        };
+      },
+      mutateGitHub: async (input) => {
+        githubMutations.push(input);
+        return {
+          version: "codeops.github-check-rerun-result/v1",
+          repository: "example-org/example-repository",
+          operationId: input.request.operationId,
+          headSha: "a".repeat(40),
+          checkRunId: input.request.input.checkRunId,
+          accepted: true,
         };
       },
       ...overrides,
@@ -283,6 +296,33 @@ test("binds one GitHub read to its exact runtime route and worker", async () => 
     dispatchId,
     workerId: "acp-worker:primary",
     request: githubRead,
+  }]);
+});
+
+test("binds one GitHub mutation to its exact runtime route and worker", async () => {
+  const githubMutation = {
+    version: "codeops.session-runtime-github-mutation-request/v1",
+    claimToken,
+    operation: "check_rerun",
+    operationId: `githubmutation-${"a".repeat(64)}`,
+    input: {
+      repository: "example-org/example-repository",
+      expectedHeadSha: "a".repeat(40),
+      checkRunId: 1234,
+    },
+  };
+  const submitted = request({
+    url: `/v1/session-runtime/dispatches/${dispatchId}/github-mutations`,
+    readBody: async () => githubMutation,
+  });
+  assert.equal(
+    (await submitted.promise).body.version,
+    "codeops.github-check-rerun-result/v1",
+  );
+  assert.deepEqual(submitted.githubMutations, [{
+    dispatchId,
+    workerId: "acp-worker:primary",
+    request: githubMutation,
   }]);
 });
 

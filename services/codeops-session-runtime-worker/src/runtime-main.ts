@@ -16,6 +16,7 @@ import { SessionRuntimeTransport } from "./transport.js";
 import { loadRuntimeSessionIdentity } from "./session-identity.js";
 import { WorkItemsBroker } from "./work-items-broker.js";
 import { GitHubReadsBroker } from "./github-reads-broker.js";
+import { GitHubMutationsBroker } from "./github-mutations-broker.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -104,6 +105,12 @@ const githubReadsBrokerPort = boundedInteger(
   1,
   65_535,
 );
+const githubMutationsBrokerPort = boundedInteger(
+  "CODEOPS_GITHUB_MUTATIONS_BROKER_PORT",
+  8093,
+  1,
+  65_535,
+);
 
 const database = new Pool({ connectionString: databaseUrl, max: 1 });
 const receipts = new PostgresRuntimeExecutionReceiptStore(database);
@@ -116,6 +123,7 @@ const initializer = new SessionJobInitializer({
 const cancellation = new AbortController();
 const workItemsBroker = new WorkItemsBroker();
 const githubReadsBroker = new GitHubReadsBroker();
+const githubMutationsBroker = new GitHubMutationsBroker();
 const shutdown = () => cancellation.abort();
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);
@@ -152,6 +160,7 @@ try {
   });
   await workItemsBroker.listen(workItemsBrokerPort);
   await githubReadsBroker.listen(githubReadsBrokerPort);
+  await githubMutationsBroker.listen(githubMutationsBrokerPort);
   await waitForAcpSocket(socketPath, socketTimeoutMs);
   await writeFile(readyPath, "", { mode: 0o600, flag: "wx" });
   await runSessionRuntimeWorker({
@@ -170,10 +179,12 @@ try {
       });
       return workItemsBroker.run(dispatch, context, () =>
         githubReadsBroker.run(dispatch, context, () =>
-          createSessionRuntimeLifecycleExecutor({
-            lifecycle,
-            receipts,
-          })(dispatch, context),
+          githubMutationsBroker.run(dispatch, context, () =>
+            createSessionRuntimeLifecycleExecutor({
+              lifecycle,
+              receipts,
+            })(dispatch, context),
+          ),
         ),
       );
     },
@@ -190,6 +201,7 @@ try {
 } finally {
   await workItemsBroker.close().catch(() => {});
   await githubReadsBroker.close().catch(() => {});
+  await githubMutationsBroker.close().catch(() => {});
   await rm(readyPath, { force: true }).catch(() => {});
   await rm(modelProxyTokenPath, { force: true }).catch(() => {});
   await writeFile(path.join(path.dirname(socketPath), "done"), "", {

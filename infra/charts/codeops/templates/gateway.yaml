@@ -49,6 +49,8 @@ spec:
             - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy/signing-key }
             - { name: CODEOPS_GITHUB_READ_PROVIDER_ORIGIN, value: http://{{ include "codeops.fullname" . }}-control-gateway:8080 }
             - { name: CODEOPS_GITHUB_READ_PROVIDER_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-github-reads/repository-head-token }
+            - { name: CODEOPS_GITHUB_MUTATION_PROVIDER_ORIGIN, value: http://{{ include "codeops.fullname" . }}-control-gateway:8080 }
+            - { name: CODEOPS_GITHUB_MUTATION_PROVIDER_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-github-mutations/github-mutation-token }
             {{- if .Values.plane.adapter.enabled }}
             - { name: CODEOPS_WORK_ITEM_PROVIDER_ORIGIN, value: http://{{ include "codeops.fullname" . }}-github-controller:8080 }
             - { name: CODEOPS_WORK_ITEM_PROVIDER_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-work-items/work-item-mutation-token }
@@ -77,6 +79,7 @@ spec:
             - { name: repository-steering, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-steering, readOnly: true }
             - { name: model-proxy-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy, readOnly: true }
             - { name: github-read-provider-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-github-reads, readOnly: true }
+            - { name: github-mutation-provider-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-github-mutations, readOnly: true }
             {{- if .Values.plane.adapter.enabled }}
             - { name: work-item-provider-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-work-items, readOnly: true }
             {{- end }}
@@ -108,6 +111,12 @@ spec:
             defaultMode: 256
             items:
               - { key: repository-head-token, path: repository-head-token }
+        - name: github-mutation-provider-auth
+          secret:
+            secretName: {{ .Values.controlGateway.secretName }}
+            defaultMode: 256
+            items:
+              - { key: github-mutation-token, path: github-mutation-token }
         - name: temp
           emptyDir: { sizeLimit: 64Mi }
         {{- if .Values.plane.adapter.enabled }}

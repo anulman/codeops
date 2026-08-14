@@ -241,6 +241,24 @@ export const sessionPermissionOperationSchema = z.discriminatedUnion("kind", [
     .strict(),
   z
     .object({
+      kind: z.literal("github_mutation"),
+      repository: z
+        .string()
+        .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+      operation: z.enum([
+        "pull_request_update_branch",
+        "pull_request_update",
+        "review_thread_reply",
+        "check_rerun",
+      ]),
+      pullRequestNumber: z.number().int().positive().max(2_147_483_647).nullable(),
+      expectedHeadSha: gitSha,
+      targetId: safeText(256).nullable(),
+      payloadJson: safeText(50_000),
+    })
+    .strict(),
+  z
+    .object({
       kind: z.literal("agent_permissions"),
       detailsJson: safeText(50_000),
     })

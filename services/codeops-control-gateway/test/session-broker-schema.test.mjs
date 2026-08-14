@@ -12,6 +12,8 @@ const jobInitializationUrl = new URL("../sql/session-job-initialization.sql", im
 const jobInitializationRevertUrl = new URL("../sql/session-job-initialization-revert.sql", import.meta.url);
 const permissionRelayUrl = new URL("../sql/session-runtime-permission-relay.sql", import.meta.url);
 const permissionRelayRevertUrl = new URL("../sql/session-runtime-permission-relay-revert.sql", import.meta.url);
+const githubMutationsUrl = new URL("../sql/session-runtime-github-mutations.sql", import.meta.url);
+const githubMutationsRevertUrl = new URL("../sql/session-runtime-github-mutations-revert.sql", import.meta.url);
 const lifecycleJournalUrl = new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url);
 const lifecycleJournalRevertUrl = new URL("../sql/work-item-lifecycle-journal-revert.sql", import.meta.url);
 const workspaceLaunchUrl = new URL("../sql/workspace-launch.sql", import.meta.url);
@@ -122,6 +124,24 @@ test("persists claim-bound runtime permission requests and their option map", as
   assert.match(revert, /event_type = 'session_created'/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
+});
+
+test("consumes one GitHub mutation permission before provider effects", async () => {
+  const sql = await readFile(githubMutationsUrl, "utf8");
+  const revert = await readFile(githubMutationsRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.session_runtime_github_mutations/);
+  assert.match(sql, /operation_id text PRIMARY KEY/);
+  assert.match(sql, /dispatch_id uuid NOT NULL UNIQUE/);
+  assert.match(sql, /payload_digest text NOT NULL/);
+  assert.match(sql, /permission_digest text NOT NULL/);
+  assert.match(sql, /status IN \('started', 'completed'\)/);
+  assert.match(sql, /status = 'started' AND result_json IS NULL/);
+  assert.match(sql, /status = 'completed' AND result_json IS NOT NULL/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(
+    revert,
+    /^BEGIN;[\s\S]*DROP TABLE codeops\.session_runtime_github_mutations;[\s\S]*COMMIT;\n$/,
+  );
 });
 
 test("persists idempotent principal-bound workspace launches", async () => {

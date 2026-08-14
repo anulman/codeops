@@ -10,6 +10,13 @@ import {
   SessionRuntimeGitHubReadNotFoundError,
 } from "./session-runtime-github-reads.js";
 import {
+  authorizeSessionRuntimeGitHubMutation,
+  completeSessionRuntimeGitHubMutation,
+  createGitHubMutationProviderClient,
+  SessionRuntimeGitHubMutationConflictError,
+  SessionRuntimeGitHubMutationNotFoundError,
+} from "./session-runtime-github-mutations.js";
+import {
   createGitHubSteeringRegistry,
   loadGitHubSteeringRegistryFile,
 } from "./repository-steering.js";
@@ -177,6 +184,43 @@ const configuredGitHubReadProvider =
         origin: githubReadProviderOrigin,
         token: githubReadProviderToken,
       });
+const githubMutationProviderOrigin =
+  process.env.CODEOPS_GITHUB_MUTATION_PROVIDER_ORIGIN?.trim();
+const githubMutationProviderTokenFile =
+  process.env.CODEOPS_GITHUB_MUTATION_PROVIDER_TOKEN_FILE?.trim();
+if (
+  (githubMutationProviderOrigin === undefined) !==
+  (githubMutationProviderTokenFile === undefined)
+) {
+  throw new Error(
+    "GitHub mutation provider origin and token file must be configured together",
+  );
+}
+const githubMutationProviderToken =
+  githubMutationProviderTokenFile === undefined
+    ? undefined
+    : (await readFile(githubMutationProviderTokenFile, "utf8")).trim();
+if (
+  githubMutationProviderToken !== undefined &&
+  [
+    secrets.readToken,
+    secrets.writeToken,
+    secrets.workerToken,
+    secrets.initializationToken,
+    modelProxySigningKey,
+    githubReadProviderToken,
+  ].includes(githubMutationProviderToken)
+) {
+  throw new Error("GitHub mutation provider token must be a distinct authority");
+}
+const configuredGitHubMutationProvider =
+  githubMutationProviderOrigin === undefined ||
+  githubMutationProviderToken === undefined
+    ? undefined
+    : createGitHubMutationProviderClient({
+        origin: githubMutationProviderOrigin,
+        token: githubMutationProviderToken,
+      });
 const workItemProviderOrigin = process.env.CODEOPS_WORK_ITEM_PROVIDER_ORIGIN?.trim();
 const workItemProviderTokenFile =
   process.env.CODEOPS_WORK_ITEM_PROVIDER_TOKEN_FILE?.trim();
@@ -195,6 +239,14 @@ if (
   workItemProviderToken === githubReadProviderToken
 ) {
   throw new Error("GitHub read and work-item providers require distinct authorities");
+}
+if (
+  githubMutationProviderToken !== undefined &&
+  workItemProviderToken === githubMutationProviderToken
+) {
+  throw new Error(
+    "GitHub mutation and work-item providers require distinct authorities",
+  );
 }
 if (
   workItemProviderToken !== undefined &&
@@ -487,6 +539,25 @@ const server = createServer((request, response) => {
                 }
               },
             }),
+        ...(configuredGitHubMutationProvider === undefined
+          ? {}
+          : {
+              mutateGitHub: async (input) => {
+                const client = await database.connect();
+                try {
+                  const providerRequest =
+                    await authorizeSessionRuntimeGitHubMutation(client, input);
+                  const providerResult =
+                    await configuredGitHubMutationProvider(providerRequest);
+                  return await completeSessionRuntimeGitHubMutation(client, {
+                    request: providerRequest,
+                    result: providerResult,
+                  });
+                } finally {
+                  client.release();
+                }
+              },
+            }),
       });
       if (result !== null) {
         json(response, result.status, result.body);
@@ -498,7 +569,8 @@ const server = createServer((request, response) => {
           ? 400
           : error instanceof SessionRuntimeDispatchNotFoundError ||
               error instanceof SessionRuntimePermissionNotFoundError ||
-              error instanceof SessionRuntimeGitHubReadNotFoundError
+              error instanceof SessionRuntimeGitHubReadNotFoundError ||
+              error instanceof SessionRuntimeGitHubMutationNotFoundError
             ? 404
             : error instanceof SessionRuntimeWorkItemNotFoundError
               ? 404
@@ -507,6 +579,7 @@ const server = createServer((request, response) => {
                 error instanceof SessionRuntimePermissionConflictError
                 || error instanceof SessionRuntimeWorkItemConflictError
                 || error instanceof SessionRuntimeGitHubReadConflictError
+                || error instanceof SessionRuntimeGitHubMutationConflictError
               ? 409
               : 503;
       json(response, status, {

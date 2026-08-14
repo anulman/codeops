@@ -11,11 +11,13 @@ import {
 } from "./core.js";
 import {
   candidatePublicationSchema,
+  githubMutationProviderRequestSchema,
   githubReadProviderRequestSchema,
   githubPullRequestStackLinkSchema,
   type WorkspaceLaunch,
 } from "@codeops/codeops-contracts";
 import { createGitHubReadAdapter } from "./github-reads-adapter.js";
+import { createGitHubMutationAdapter } from "./github-mutations-adapter.js";
 import {
   linkGitHubPullRequestStack,
   loadGitHubPullRequestStack,
@@ -201,6 +203,17 @@ const repositoryHeadToken = await secretFile(
 if (repositoryHeadToken.length < 32 || repositoryHeadToken.length > 4_096) {
   throw new Error("repository head token length is invalid");
 }
+const githubMutationToken = await secretFile(
+  "CODEOPS_GITHUB_MUTATION_TOKEN_FILE",
+);
+if (
+  githubMutationToken.length < 32 ||
+  githubMutationToken.length > 4_096 ||
+  githubMutationToken === repositoryHeadToken ||
+  githubMutationToken === token
+) {
+  throw new Error("GitHub mutation token must be one distinct authority");
+}
 const kubernetes = await loadInClusterKubernetesClient(namespace);
 const modelAuth = {
   mode: "proxy" as const,
@@ -243,6 +256,7 @@ if (
   sessionRuntimeWorkerToken === sessionBrokerWriteToken ||
   sessionRuntimeWorkerToken === token ||
   sessionRuntimeWorkerToken === repositoryHeadToken ||
+  sessionRuntimeWorkerToken === githubMutationToken ||
   sessionRuntimeWorkerToken === publicationToken
 ) {
   throw new Error("session runtime worker token must have a distinct authority");
@@ -262,6 +276,7 @@ if (
   sessionJobInitializationToken === sessionBrokerWriteToken ||
   sessionJobInitializationToken === token ||
   sessionJobInitializationToken === repositoryHeadToken ||
+  sessionJobInitializationToken === githubMutationToken ||
   sessionJobInitializationToken === publicationToken
 ) {
   throw new Error("session Job initialization token must have a distinct authority");
@@ -279,6 +294,7 @@ if (
   [
     token,
     repositoryHeadToken,
+    githubMutationToken,
     publicationToken,
     sessionBrokerReadToken,
     sessionBrokerWriteToken,
@@ -287,6 +303,22 @@ if (
   ].includes(workspaceLaunchToken)
 ) {
   throw new Error("workspace launch token must be one distinct authority");
+}
+if (
+  new Set([
+    token,
+    repositoryHeadToken,
+    githubMutationToken,
+    modelAuth.signingKey,
+    publicationToken,
+    sessionBrokerReadToken,
+    sessionBrokerWriteToken,
+    sessionRuntimeWorkerToken,
+    sessionJobInitializationToken,
+    workspaceLaunchToken,
+  ]).size !== 10
+) {
+  throw new Error("control gateway authorities must be mutually distinct");
 }
 const repositoryRegistry = await loadConfiguredRepositoryRegistry({
   registryFile: process.env.CODEOPS_REPOSITORY_REGISTRY_FILE,
@@ -307,6 +339,9 @@ const repositoryRegistry = await loadConfiguredRepositoryRegistry({
   },
 });
 const readGitHub = createGitHubReadAdapter({
+  resolve: (repository) => repositoryRegistry.resolve(repository),
+});
+const mutateGitHub = createGitHubMutationAdapter({
   resolve: (repository) => repositoryRegistry.resolve(repository),
 });
 const database = new Pool({
@@ -801,6 +836,41 @@ const server = createServer((request, response) => {
           throw new Error("GitHub read repository does not match its route");
         }
         json(response, 200, await readGitHub(githubRead));
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      repositoryRoute?.path === "/github-mutations"
+    ) {
+      if (
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          githubMutationToken,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      if (!request.headers["content-type"]?.startsWith("application/json")) {
+        json(response, 415, { status: "unsupported-media-type" });
+        return;
+      }
+      try {
+        const githubMutation = githubMutationProviderRequestSchema.parse(
+          await readJson(request),
+        );
+        if (
+          githubMutation.input.repository !==
+          repositoryRoute.authority.repository
+        ) {
+          throw new Error("GitHub mutation repository does not match its route");
+        }
+        json(response, 200, await mutateGitHub(githubMutation));
       } catch {
         json(response, 503, { status: "unavailable" });
       }

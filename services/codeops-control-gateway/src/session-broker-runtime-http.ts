@@ -1,11 +1,13 @@
 import type { IncomingHttpHeaders } from "node:http";
 import { z } from "zod";
 import {
+  githubMutationResultSchema,
   githubReadResultSchema,
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeCompletionRequestSchema,
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionSubmissionSchema,
+  sessionRuntimeGitHubMutationRequestSchema,
   sessionRuntimeGitHubReadRequestSchema,
   sessionRuntimeWorkItemCommentRequestSchema,
   sessionRuntimeWorkItemCreateRequestSchema,
@@ -14,6 +16,7 @@ import {
   sessionRuntimeWorkItemSearchRequestSchema,
   sessionRuntimeWorkItemUpdateRequestSchema,
   type SessionCommandResult,
+  type GitHubMutationResult,
   type GitHubReadResult,
   type WorkItemCommentResult,
   type WorkItemCreateResult,
@@ -38,6 +41,8 @@ const workItemPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/work-items(?:\/(get|search|comment|update|relate))?$/i;
 const githubReadPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/github-reads$/i;
+const githubMutationPath =
+  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/github-mutations$/i;
 
 function header(
   headers: IncomingHttpHeaders,
@@ -144,6 +149,11 @@ export async function serveSessionRuntime(input: {
     readonly workerId: string;
     readonly request: unknown;
   }) => Promise<GitHubReadResult>;
+  readonly mutateGitHub?: (input: {
+    readonly dispatchId: string;
+    readonly workerId: string;
+    readonly request: unknown;
+  }) => Promise<GitHubMutationResult>;
 }): Promise<SessionRuntimeHttpResult | null> {
   if (input.method !== "POST" || input.url === undefined) return null;
   const url = new URL(input.url, "http://codeops.internal");
@@ -153,6 +163,7 @@ export async function serveSessionRuntime(input: {
   const permissionPollMatch = url.pathname.match(permissionPollPath);
   const workItemMatch = url.pathname.match(workItemPath);
   const githubReadMatch = url.pathname.match(githubReadPath);
+  const githubMutationMatch = url.pathname.match(githubMutationPath);
   if (
     !isClaim &&
     completionMatch === null &&
@@ -160,6 +171,7 @@ export async function serveSessionRuntime(input: {
     permissionPollMatch === null
     && workItemMatch === null
     && githubReadMatch === null
+    && githubMutationMatch === null
   ) return null;
   if ([...url.searchParams].length !== 0) {
     throw new InvalidSessionRuntimeRequestError(
@@ -247,6 +259,29 @@ export async function serveSessionRuntime(input: {
         dispatchId: dispatchId.parse(githubReadMatch[1]),
         workerId: input.workerId,
         request: githubReadRequest.data,
+      })),
+    };
+  }
+
+  if (githubMutationMatch !== null) {
+    if (input.mutateGitHub === undefined) {
+      return { status: 404, body: { status: "not-found" } };
+    }
+    const githubMutationRequest =
+      sessionRuntimeGitHubMutationRequestSchema.safeParse(
+        await readRequestBody(input.readBody),
+      );
+    if (!githubMutationRequest.success) {
+      throw new InvalidSessionRuntimeRequestError(
+        "session runtime GitHub mutation body is invalid",
+      );
+    }
+    return {
+      status: 200,
+      body: githubMutationResultSchema.parse(await input.mutateGitHub({
+        dispatchId: dispatchId.parse(githubMutationMatch[1]),
+        workerId: input.workerId,
+        request: githubMutationRequest.data,
       })),
     };
   }

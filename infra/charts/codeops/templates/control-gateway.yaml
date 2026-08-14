@@ -119,6 +119,7 @@ spec:
             - { name: CODEOPS_AGENT_MODEL_PROXY_POD_NAME, value: {{ printf "%s-model-proxy" (include "codeops.fullname" .) | quote }} }
             - { name: CODEOPS_DISPATCH_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/dispatch-token }
             - { name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/repository-head-token }
+            - { name: CODEOPS_GITHUB_MUTATION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/github-mutation-token }
             - { name: CODEOPS_PUBLICATION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/publication-token }
             - { name: CODEOPS_WORKSPACE_LAUNCH_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/workspace-launch-token }
             - { name: CODEOPS_REPOSITORY_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-runtime-repositories/registry.json }
@@ -165,6 +166,7 @@ spec:
             items:
               - { key: dispatch-token, path: dispatch-token }
               - { key: repository-head-token, path: repository-head-token }
+              - { key: github-mutation-token, path: github-mutation-token }
               - { key: publication-token, path: publication-token }
               - { key: workspace-launch-token, path: workspace-launch-token }
         - name: session-secrets

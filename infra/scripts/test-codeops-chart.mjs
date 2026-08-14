@@ -272,6 +272,14 @@ test("keeps the Agents UI private", () => {
     gatewayEnv.get("CODEOPS_GITHUB_READ_PROVIDER_TOKEN_FILE").value,
     "/var/run/secrets/team-a-codeops-github-reads/repository-head-token",
   );
+  assert.equal(
+    gatewayEnv.get("CODEOPS_GITHUB_MUTATION_PROVIDER_ORIGIN").value,
+    "http://team-a-codeops-control-gateway:8080",
+  );
+  assert.equal(
+    gatewayEnv.get("CODEOPS_GITHUB_MUTATION_PROVIDER_TOKEN_FILE").value,
+    "/var/run/secrets/team-a-codeops-github-mutations/github-mutation-token",
+  );
   const githubReadAuthority = gateway.spec.template.spec.volumes.find(
     ({ name }) => name === "github-read-provider-auth",
   );
@@ -285,6 +293,20 @@ test("keeps the Agents UI private", () => {
   assert.doesNotMatch(
     JSON.stringify(githubReadAuthority),
     /repository-registry|read-token|write-token/,
+  );
+  const githubMutationAuthority = gateway.spec.template.spec.volumes.find(
+    ({ name }) => name === "github-mutation-provider-auth",
+  );
+  assert.equal(
+    githubMutationAuthority.secret.secretName,
+    "team-a-codeops-control-gateway-secrets",
+  );
+  assert.deepEqual(githubMutationAuthority.secret.items, [
+    { key: "github-mutation-token", path: "github-mutation-token" },
+  ]);
+  assert.doesNotMatch(
+    JSON.stringify(githubMutationAuthority),
+    /repository-registry|github-read-token|github-write-token/,
   );
   assert.equal(JSON.stringify(deployment).includes("initialization-token"), false);
 
@@ -546,6 +568,19 @@ test("creates a complete one-repository quickstart from one values file", () => 
   assert.notEqual(
     controllerSecrets.stringData["work-item-mutation-token"],
     controllerSecrets.stringData["research-projection-token"],
+  );
+  const controlGatewaySecrets = resource(
+    resources,
+    "Secret",
+    "codeops-control-gateway-secrets",
+  );
+  assert.match(
+    controlGatewaySecrets.stringData["github-mutation-token"],
+    /^[A-Za-z0-9]{48}$/,
+  );
+  assert.notEqual(
+    controlGatewaySecrets.stringData["github-mutation-token"],
+    controlGatewaySecrets.stringData["repository-head-token"],
   );
 });
 
