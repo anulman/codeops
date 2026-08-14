@@ -1,7 +1,9 @@
 import {
   sessionPolicySchema,
+  workspaceContextAttachmentDescriptorsSchema,
   workspaceManifestSchema,
   type SessionPolicy,
+  type WorkspaceContextAttachmentDescriptor,
   type WorkspaceManifest,
 } from "@codeops/codeops-contracts";
 import { createHash } from "node:crypto";
@@ -26,6 +28,7 @@ export interface WorkspaceResourceConfig {
   readonly displayName?: string;
   readonly leaseId: string;
   readonly policy: SessionPolicy;
+  readonly contextAttachments?: readonly WorkspaceContextAttachmentDescriptor[];
   readonly workspace: WorkspaceManifest;
   readonly sources: readonly WorkspaceSourceAuthority[];
   readonly agentImage: string;
@@ -86,6 +89,9 @@ export function buildWorkspaceResources(
 ): readonly Record<string, unknown>[] {
   const workspace = workspaceManifestSchema.parse(raw.workspace);
   const policy = sessionPolicySchema.parse(raw.policy);
+  const contextAttachments = workspaceContextAttachmentDescriptorsSchema.parse(
+    raw.contextAttachments ?? [],
+  );
   if (policy.modelPolicy.provider !== "openai") {
     throw new Error("interactive workspace runtime requires one model policy");
   }
@@ -333,6 +339,7 @@ export function buildWorkspaceResources(
                 { name: "CODEOPS_SESSION_RUNTIME_ACP_STATE_PATH", value: "/var/lib/codeops-session/state.json" },
                 { name: "CODEOPS_SESSION_WORKSPACE_JSON", value: JSON.stringify(workspace) },
                 { name: "CODEOPS_SESSION_POLICY_JSON", value: JSON.stringify(policy) },
+                { name: "CODEOPS_SESSION_CONTEXT_ATTACHMENTS_JSON", value: JSON.stringify(contextAttachments) },
                 { name: "CODEOPS_SESSION_ID", value: raw.sessionId },
                 { name: "CODEOPS_SESSION_WORKFLOW_ID", value: raw.workflowId },
                 { name: "CODEOPS_SESSION_RUN_ID", value: raw.runId },

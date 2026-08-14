@@ -370,6 +370,7 @@ function workspaceResourceConfig(
     principalId: launch.principalId,
     requestDigest: launch.requestDigest,
     policy: launch.policy,
+    contextAttachments: launch.contextAttachments,
     ...(launch.title === undefined ? {} : { displayName: launch.title }),
     ...identity,
     workspace: launch.workspace,

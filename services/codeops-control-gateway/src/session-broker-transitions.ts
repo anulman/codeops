@@ -289,6 +289,13 @@ export function applyPromptSessionTransition(
     message: {
       role: "user",
       text: command.prompt,
+      ...(command.contextAttachments === undefined
+        ? {}
+        : {
+            contextAttachments: command.contextAttachments.map(
+              ({ content: _content, ...descriptor }) => descriptor,
+            ),
+          }),
     },
     occurredAt,
   } as const;

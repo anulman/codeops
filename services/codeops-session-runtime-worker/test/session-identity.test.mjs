@@ -22,6 +22,13 @@ test("loads a bounded workspace manifest without legacy repository fields", asyn
       CODEOPS_SESSION_RUN_ID: "launch-123",
       CODEOPS_SESSION_DISPLAY_NAME: "Investigate the estimator",
       CODEOPS_SESSION_POLICY_JSON: policyJson,
+      CODEOPS_SESSION_CONTEXT_ATTACHMENTS_JSON: JSON.stringify([{
+        attachmentId: "context-brief",
+        name: "brief.txt",
+        mimeType: "text/plain",
+        sizeBytes: 5,
+        digest: `sha256:${"b".repeat(64)}`,
+      }]),
     },
     read: async () => Buffer.from(JSON.stringify({
       version: "codeops.workspace/v1",
@@ -32,6 +39,7 @@ test("loads a bounded workspace manifest without legacy repository fields", asyn
   assert.equal(identity.version, "codeops.session-workspace-identity/v1");
   assert.deepEqual(identity.workspace.sources, []);
   assert.equal(identity.displayName, "Investigate the estimator");
+  assert.equal(identity.contextAttachments[0].name, "brief.txt");
   assert.equal("repository" in identity, false);
 });
 

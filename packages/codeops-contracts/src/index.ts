@@ -107,6 +107,10 @@ export {
 } from "./session-policy.js";
 export {
   workspaceLaunchSessionId,
+  workspaceContextAttachmentDescriptorSchema,
+  workspaceContextAttachmentDescriptorsSchema,
+  workspaceContextAttachmentSchema,
+  workspaceContextAttachmentsSchema,
   workspaceSessionLaunchId,
   workspaceCatalogEntrySchema,
   workspaceCatalogSchema,
@@ -118,6 +122,8 @@ export {
   workspaceSourceSelectionSchema,
   type WorkspaceCatalog,
   type WorkspaceCatalogEntry,
+  type WorkspaceContextAttachment,
+  type WorkspaceContextAttachmentDescriptor,
   type WorkspaceCheckpoint,
   type WorkspaceLaunch,
   type WorkspaceLaunchRequest,

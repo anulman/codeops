@@ -7,6 +7,13 @@ import {
 
 const sha = "a".repeat(40);
 const image = `ghcr.io/anulman/codeops/agent@sha256:${"b".repeat(64)}`;
+const contextAttachment = {
+  attachmentId: "context-estimator-notes",
+  name: "estimator-notes.txt",
+  mimeType: "text/plain",
+  sizeBytes: 24,
+  digest: `sha256:${"d".repeat(64)}`,
+};
 
 function config(sources = []) {
   return {
@@ -30,6 +37,7 @@ function config(sources = []) {
         reasoningEffort: "medium",
       },
     },
+    contextAttachments: [contextAttachment],
     workspace: {
       version: "codeops.workspace/v1",
       sources: sources.map(({ catalogKey, repository }) => ({
@@ -78,6 +86,11 @@ test("builds isolated materializer and runtime Jobs on bounded persistent storag
     runtimeEnvironment.find((entry) => entry.name === "CODEOPS_SESSION_DISPLAY_NAME")?.value,
     "Investigate the estimator",
   );
+  assert.deepEqual(
+    JSON.parse(runtimeEnvironment.find((entry) => entry.name === "CODEOPS_SESSION_CONTEXT_ATTACHMENTS_JSON")?.value),
+    [contextAttachment],
+  );
+  assert.equal(JSON.stringify(resources).includes("RXhhY3QgY29udGV4dCBwYXlsb2Fk"), false);
 });
 
 test("binds workspace mounts and Codex configuration to the immutable session policy", () => {

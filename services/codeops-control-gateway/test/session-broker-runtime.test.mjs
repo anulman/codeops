@@ -16,6 +16,14 @@ const promptMaterial = {
   response: "I updated the focused implementation and verified the result.",
   stopReason: "end_turn",
 };
+const contextAttachment = {
+  attachmentId: "context-estimator-notes",
+  name: "estimator-notes.txt",
+  mimeType: "text/plain",
+  sizeBytes: 24,
+  digest: `sha256:${"e".repeat(64)}`,
+  content: "RXhhY3QgZXN0aW1hdG9yIGNvbnRleHQuCg==",
+};
 const actions = [
   "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
   "resume", "fork", "archive",
@@ -137,6 +145,26 @@ test("commits one prompt and assistant response as ordered transcript events", (
       stopReason: promptMaterial.stopReason,
     },
   ]);
+});
+
+test("commits attachment descriptors without retaining prompt payload in durable events", () => {
+  const mutation = applySessionRuntimeCompletion(
+    dispatch("prompt", {}, { contextAttachments: [contextAttachment] }),
+    completion("prompt", promptMaterial),
+    context,
+  );
+  assert.deepEqual(mutation.events[0].message, {
+    role: "user",
+    text: "Continue the focused implementation.",
+    contextAttachments: [{
+      attachmentId: contextAttachment.attachmentId,
+      name: contextAttachment.name,
+      mimeType: contextAttachment.mimeType,
+      sizeBytes: contextAttachment.sizeBytes,
+      digest: contextAttachment.digest,
+    }],
+  });
+  assert.equal(JSON.stringify(mutation.events).includes(contextAttachment.content), false);
 });
 
 test("commits ordered ACP execution updates, message boundaries, and attachments", () => {

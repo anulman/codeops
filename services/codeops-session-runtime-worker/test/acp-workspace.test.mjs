@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
+import { createHash } from "node:crypto";
 import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
@@ -18,6 +19,7 @@ import {
   renderAcpPermissionOperation,
   SocketAcpWorkspaceLifecycle,
   waitForAcpSocket,
+  workspacePromptContentBlocks,
 } from "../dist/acp-workspace.js";
 
 const execFileAsync = promisify(execFile);
@@ -38,6 +40,46 @@ test("collects ordered ACP assistant chunks within the transcript bound", () => 
   assert.throws(
     () => appendAcpAssistantText("x".repeat(200_000), "y"),
     /exceeds 200000 characters/,
+  );
+});
+
+test("reverifies context attachments and emits exact ACP embedded resources", () => {
+  const text = Buffer.from("Exact brief.\n");
+  const image = Buffer.from([0, 1, 2, 3]);
+  const digest = (content) => `sha256:${createHash("sha256").update(content).digest("hex")}`;
+  const blocks = workspacePromptContentBlocks("Inspect both attachments.", [
+    {
+      attachmentId: "context-brief",
+      name: "brief.txt",
+      mimeType: "text/plain",
+      sizeBytes: text.byteLength,
+      digest: digest(text),
+      content: text.toString("base64"),
+    },
+    {
+      attachmentId: "context-image",
+      name: "diagram.png",
+      mimeType: "image/png",
+      sizeBytes: image.byteLength,
+      digest: digest(image),
+      content: image.toString("base64"),
+    },
+  ]);
+  assert.deepEqual(blocks[0], { type: "text", text: "Inspect both attachments." });
+  assert.equal(blocks[1].type, "resource");
+  assert.equal(blocks[1].resource.text, "Exact brief.\n");
+  assert.match(blocks[1].resource.uri, /^codeops-context:\/\/sha256\/[0-9a-f]{64}\/brief\.txt$/);
+  assert.equal(blocks[2].resource.blob, image.toString("base64"));
+  assert.throws(
+    () => workspacePromptContentBlocks("Inspect.", [{
+      attachmentId: "context-image",
+      name: "diagram.png",
+      mimeType: "image/png",
+      sizeBytes: image.byteLength,
+      digest: `sha256:${"0".repeat(64)}`,
+      content: image.toString("base64"),
+    }]),
+    /digest drifted/,
   );
 });
 
@@ -628,7 +670,7 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
   assert.equal(forked.material.leaseId, "88888888-8888-4888-8888-888888888888");
   assert.deepEqual(calls, [
     ["new", root],
-    ["prompt", "acp-session-parent", "Make one safe edit."],
+    ["prompt", "acp-session-parent", [{ type: "text", text: "Make one safe edit." }]],
     ["load", "acp-session-parent", root],
     ["fork", "acp-session-parent", root],
   ]);

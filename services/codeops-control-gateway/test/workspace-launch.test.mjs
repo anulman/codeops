@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   WorkspaceLaunchConflictError,
@@ -27,6 +28,18 @@ const implementPolicy = {
     reasoningEffort: "medium",
   },
 };
+
+function contextAttachment(content = "Exact context") {
+  const bytes = Buffer.from(content);
+  return {
+    attachmentId: "context-brief",
+    name: "brief.txt",
+    mimeType: "text/plain",
+    sizeBytes: bytes.byteLength,
+    digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    content: bytes.toString("base64"),
+  };
+}
 
 function store({ existing = null, principalActive = 0, globalActive = 0 } = {}) {
   let created = null;
@@ -82,6 +95,36 @@ test("admits a scratch workspace without resolving a source", async () => {
     store: target,
   });
   assert.deepEqual(launch.workspace.sources, []);
+});
+
+test("binds verified context descriptors without exposing payload bytes", async () => {
+  const attachment = contextAttachment();
+  const target = store();
+  const launch = await admitWorkspaceLaunch({
+    request: { ...request, contextAttachments: [attachment] },
+    principalId: "anulman@gmail.com",
+    resolver,
+    store: target,
+  });
+  assert.deepEqual(launch.contextAttachments, [{
+    attachmentId: attachment.attachmentId,
+    name: attachment.name,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    digest: attachment.digest,
+  }]);
+  assert.equal(JSON.stringify(launch).includes(attachment.content), false);
+  assert.equal(target.created.request.contextAttachments[0].content, attachment.content);
+  await assert.rejects(admitWorkspaceLaunch({
+    request: {
+      ...request,
+      idempotencyKey: "22222222-2222-4222-8222-222222222222",
+      contextAttachments: [{ ...attachment, digest: `sha256:${"0".repeat(64)}` }],
+    },
+    principalId: "anulman@gmail.com",
+    resolver,
+    store: store(),
+  }), /context attachments are invalid/);
 });
 
 test("binds the global launch identity to the authenticated principal", async () => {
@@ -169,6 +212,7 @@ test("marks a provisioned launch ready with one initial prompt identity", () => 
     principalId: "anulman@gmail.com",
     requestDigest: `sha256:${"a".repeat(64)}`,
     policy: implementPolicy,
+    contextAttachments: [],
     promptDigest: `sha256:${"b".repeat(64)}`,
     workspace: {
       version: "codeops.workspace/v1",

@@ -126,6 +126,13 @@ test("records durable launch state without the prompt body", () => {
         reasoningEffort: "medium",
       },
     },
+    contextAttachments: [{
+      attachmentId: "context-brief",
+      name: "brief.txt",
+      mimeType: "text/plain",
+      sizeBytes: 5,
+      digest,
+    }],
     promptDigest: digest,
     workspace: {
       version: "codeops.workspace/v1",
@@ -139,6 +146,7 @@ test("records durable launch state without the prompt body", () => {
     attemptCount: 0,
   });
   assert.equal("prompt" in launch, false);
+  assert.equal("content" in launch.contextAttachments[0], false);
 });
 
 test("groups checkpoint evidence by source and scratch artifact", () => {
