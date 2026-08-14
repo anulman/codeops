@@ -4,6 +4,12 @@ import { Pool } from "pg";
 import { validateSessionControlSecrets } from "./session-control-config.js";
 import { createModelProxyToken } from "@codeops/codeops-contracts/model-proxy";
 import {
+  authorizeSessionRuntimeGitHubRead,
+  createGitHubReadProviderClient,
+  SessionRuntimeGitHubReadConflictError,
+  SessionRuntimeGitHubReadNotFoundError,
+} from "./session-runtime-github-reads.js";
+import {
   createGitHubSteeringRegistry,
   loadGitHubSteeringRegistryFile,
 } from "./repository-steering.js";
@@ -138,6 +144,39 @@ const workerId = required("CODEOPS_SESSION_RUNTIME_WORKER_ID");
 const modelProxySigningKey = await secretFile(
   "CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE",
 );
+const githubReadProviderOrigin =
+  process.env.CODEOPS_GITHUB_READ_PROVIDER_ORIGIN?.trim();
+const githubReadProviderTokenFile =
+  process.env.CODEOPS_GITHUB_READ_PROVIDER_TOKEN_FILE?.trim();
+if (
+  (githubReadProviderOrigin === undefined) !==
+  (githubReadProviderTokenFile === undefined)
+) {
+  throw new Error("GitHub read provider origin and token file must be configured together");
+}
+const githubReadProviderToken =
+  githubReadProviderTokenFile === undefined
+    ? undefined
+    : (await readFile(githubReadProviderTokenFile, "utf8")).trim();
+if (
+  githubReadProviderToken !== undefined &&
+  [
+    secrets.readToken,
+    secrets.writeToken,
+    secrets.workerToken,
+    secrets.initializationToken,
+    modelProxySigningKey,
+  ].includes(githubReadProviderToken)
+) {
+  throw new Error("GitHub read provider token must be a distinct authority");
+}
+const configuredGitHubReadProvider =
+  githubReadProviderOrigin === undefined || githubReadProviderToken === undefined
+    ? undefined
+    : createGitHubReadProviderClient({
+        origin: githubReadProviderOrigin,
+        token: githubReadProviderToken,
+      });
 const workItemProviderOrigin = process.env.CODEOPS_WORK_ITEM_PROVIDER_ORIGIN?.trim();
 const workItemProviderTokenFile =
   process.env.CODEOPS_WORK_ITEM_PROVIDER_TOKEN_FILE?.trim();
@@ -151,6 +190,12 @@ const workItemProviderToken =
   workItemProviderTokenFile === undefined
     ? undefined
     : (await readFile(workItemProviderTokenFile, "utf8")).trim();
+if (
+  githubReadProviderToken !== undefined &&
+  workItemProviderToken === githubReadProviderToken
+) {
+  throw new Error("GitHub read and work-item providers require distinct authorities");
+}
 if (
   workItemProviderToken !== undefined &&
   ([
@@ -414,6 +459,20 @@ const server = createServer((request, response) => {
                 } finally { client.release(); }
               },
             }),
+        ...(configuredGitHubReadProvider === undefined
+          ? {}
+          : {
+              readGitHub: async (input) => {
+                const client = await database.connect();
+                try {
+                  return await configuredGitHubReadProvider(
+                    await authorizeSessionRuntimeGitHubRead(client, input),
+                  );
+                } finally {
+                  client.release();
+                }
+              },
+            }),
       });
       if (result !== null) {
         json(response, result.status, result.body);
@@ -424,7 +483,8 @@ const server = createServer((request, response) => {
         error instanceof InvalidSessionRuntimeRequestError
           ? 400
           : error instanceof SessionRuntimeDispatchNotFoundError ||
-              error instanceof SessionRuntimePermissionNotFoundError
+              error instanceof SessionRuntimePermissionNotFoundError ||
+              error instanceof SessionRuntimeGitHubReadNotFoundError
             ? 404
             : error instanceof SessionRuntimeWorkItemNotFoundError
               ? 404
@@ -432,6 +492,7 @@ const server = createServer((request, response) => {
                 error instanceof SessionRuntimeClaimConflictError ||
                 error instanceof SessionRuntimePermissionConflictError
                 || error instanceof SessionRuntimeWorkItemConflictError
+                || error instanceof SessionRuntimeGitHubReadConflictError
               ? 409
               : 503;
       json(response, status, {

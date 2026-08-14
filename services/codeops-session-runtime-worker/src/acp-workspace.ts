@@ -51,6 +51,23 @@ const MAX_TIMELINE_UPDATES = 499;
 const MAX_TIMELINE_UPDATE_BYTES = 800_000;
 const GIT_SHA = /^[0-9a-f]{40}$/;
 
+function codeopsMcpServers(): acp.McpServer[] {
+  return [
+    {
+      name: "codeops-work-items",
+      command: "/usr/local/bin/node",
+      args: ["/opt/codeops-agent/work-items-mcp.mjs"],
+      env: [],
+    },
+    {
+      name: "codeops-github",
+      command: "/usr/local/bin/node",
+      args: ["/opt/codeops-agent/github-reads-mcp.mjs"],
+      env: [],
+    },
+  ];
+}
+
 function canonical(value: unknown): string {
   const normalize = (entry: unknown): unknown => {
     if (Array.isArray(entry)) return entry.map(normalize);
@@ -998,23 +1015,13 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
             newSession: async (cwd) =>
               (await agent.request(acp.methods.agent.session.new, {
                 cwd,
-                mcpServers: [{
-                  name: "codeops-work-items",
-                  command: "/usr/local/bin/node",
-                  args: ["/opt/codeops-agent/work-items-mcp.mjs"],
-                  env: [],
-                }],
+                mcpServers: codeopsMcpServers(),
               })).sessionId,
             loadSession: async (sessionId, cwd) => {
               await agent.request(acp.methods.agent.session.load, {
                 sessionId,
                 cwd,
-                mcpServers: [{
-                  name: "codeops-work-items",
-                  command: "/usr/local/bin/node",
-                  args: ["/opt/codeops-agent/work-items-mcp.mjs"],
-                  env: [],
-                }],
+                mcpServers: codeopsMcpServers(),
               });
             },
             prompt: async (sessionId, prompt) => {
@@ -1032,22 +1039,12 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
                   (await agent.request(acp.methods.agent.session.fork, {
                     sessionId,
                     cwd,
-                    mcpServers: [{
-                      name: "codeops-work-items",
-                      command: "/usr/local/bin/node",
-                      args: ["/opt/codeops-agent/work-items-mcp.mjs"],
-                      env: [],
-                    }],
+                    mcpServers: codeopsMcpServers(),
                   })).sessionId,
                 create: async () =>
                   (await agent.request(acp.methods.agent.session.new, {
                     cwd,
-                    mcpServers: [{
-                      name: "codeops-work-items",
-                      command: "/usr/local/bin/node",
-                      args: ["/opt/codeops-agent/work-items-mcp.mjs"],
-                      env: [],
-                    }],
+                    mcpServers: codeopsMcpServers(),
                   })).sessionId,
               }),
           });

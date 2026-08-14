@@ -30,6 +30,9 @@ const branch = z
   );
 const boundedRead = z.number().int().positive().max(200_000).default(100_000);
 const timestamp = z.string().datetime({ offset: true });
+const uuid = z.string().uuid();
+const sha256Digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
+const operationId = z.string().regex(/^githubread-[0-9a-f]{64}$/);
 const webUrl = z
   .string()
   .url()
@@ -335,6 +338,88 @@ export const githubSearchResultSchema = z
     }
   });
 
+export const githubReadOperationSchema = z.enum([
+  "pull_request_get",
+  "pull_request_diff",
+  "review_threads",
+  "checks",
+  "check_logs",
+  "protected_branch",
+  "search",
+]);
+
+const runtimeReadBase = z.object({
+  version: z.literal("codeops.session-runtime-github-read-request/v1"),
+  claimToken: uuid,
+  operationId,
+});
+
+const providerReadBase = z.object({
+  version: z.literal("codeops.github-read-provider-request/v1"),
+  operationId,
+  payloadDigest: sha256Digest,
+  provenance: z
+    .object({
+      sessionId: z.string().min(1).max(128),
+      dispatchId: uuid,
+      principalDigest: sha256Digest,
+    })
+    .strict(),
+});
+
+function readRequestBranches<T extends z.ZodRawShape>(base: z.ZodObject<T>) {
+  return [
+    base.extend({
+      operation: z.literal("pull_request_get"),
+      input: githubPullRequestGetInputSchema,
+    }).strict(),
+    base.extend({
+      operation: z.literal("pull_request_diff"),
+      input: githubPullRequestDiffInputSchema,
+    }).strict(),
+    base.extend({
+      operation: z.literal("review_threads"),
+      input: githubReviewThreadsInputSchema,
+    }).strict(),
+    base.extend({
+      operation: z.literal("checks"),
+      input: githubChecksInputSchema,
+    }).strict(),
+    base.extend({
+      operation: z.literal("check_logs"),
+      input: githubCheckLogsInputSchema,
+    }).strict(),
+    base.extend({
+      operation: z.literal("protected_branch"),
+      input: githubProtectedBranchInputSchema,
+    }).strict(),
+    base.extend({
+      operation: z.literal("search"),
+      input: githubSearchInputSchema,
+    }).strict(),
+  ] as const;
+}
+
+export const sessionRuntimeGitHubReadRequestSchema = z.discriminatedUnion(
+  "operation",
+  readRequestBranches(runtimeReadBase),
+);
+
+export const githubReadProviderRequestSchema = z.discriminatedUnion(
+  "operation",
+  readRequestBranches(providerReadBase),
+);
+
+export const githubReadResultSchema = z.union([
+  githubPullRequestSnapshotSchema,
+  githubPullRequestDiffResultSchema,
+  githubReviewThreadsResultSchema,
+  githubChecksResultSchema,
+  githubCheckLogsResultSchema,
+  githubProtectedBranchResultSchema,
+  githubSearchResultSchema,
+]);
+
 export type GitHubPullRequestGetInput = z.infer<
   typeof githubPullRequestGetInputSchema
 >;
@@ -367,3 +452,11 @@ export type GitHubProtectedBranchResult = z.infer<
   typeof githubProtectedBranchResultSchema
 >;
 export type GitHubSearchResult = z.infer<typeof githubSearchResultSchema>;
+export type GitHubReadOperation = z.infer<typeof githubReadOperationSchema>;
+export type SessionRuntimeGitHubReadRequest = z.infer<
+  typeof sessionRuntimeGitHubReadRequestSchema
+>;
+export type GitHubReadProviderRequest = z.infer<
+  typeof githubReadProviderRequestSchema
+>;
+export type GitHubReadResult = z.infer<typeof githubReadResultSchema>;

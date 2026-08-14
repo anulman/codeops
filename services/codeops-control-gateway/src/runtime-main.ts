@@ -11,9 +11,11 @@ import {
 } from "./core.js";
 import {
   candidatePublicationSchema,
+  githubReadProviderRequestSchema,
   githubPullRequestStackLinkSchema,
   type WorkspaceLaunch,
 } from "@codeops/codeops-contracts";
+import { createGitHubReadAdapter } from "./github-reads-adapter.js";
 import {
   linkGitHubPullRequestStack,
   loadGitHubPullRequestStack,
@@ -303,6 +305,9 @@ const repositoryRegistry = await loadConfiguredRepositoryRegistry({
       },
     ]);
   },
+});
+const readGitHub = createGitHubReadAdapter({
+  resolve: (repository) => repositoryRegistry.resolve(repository),
 });
 const database = new Pool({
   connectionString: await secretFile("CODEOPS_DATABASE_URL_FILE"),
@@ -738,6 +743,41 @@ const server = createServer((request, response) => {
       );
     } catch {
       json(response, 404, { status: "not-found" });
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      repositoryRoute?.path === "/github-reads"
+    ) {
+      if (
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          repositoryHeadToken,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      if (!request.headers["content-type"]?.startsWith("application/json")) {
+        json(response, 415, { status: "unsupported-media-type" });
+        return;
+      }
+      try {
+        const githubRead = githubReadProviderRequestSchema.parse(
+          await readJson(request),
+        );
+        if (
+          githubRead.input.repository !==
+          repositoryRoute.authority.repository
+        ) {
+          throw new Error("GitHub read repository does not match its route");
+        }
+        json(response, 200, await readGitHub(githubRead));
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
       return;
     }
     if (
