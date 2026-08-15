@@ -538,8 +538,12 @@ const server = createServer((request, response) => {
               mutateGitHub: async (input) => {
                 const client = await database.connect();
                 try {
-                  const providerRequest =
+                  const authorization =
                     await authorizeSessionRuntimeGitHubMutation(client, input);
+                  if (authorization.disposition === "replayed") {
+                    return authorization.result;
+                  }
+                  const providerRequest = authorization.request;
                   const providerResult =
                     await configuredGitHubMutationProvider(providerRequest);
                   return await completeSessionRuntimeGitHubMutation(client, {

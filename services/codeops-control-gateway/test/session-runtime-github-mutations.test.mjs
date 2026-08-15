@@ -200,10 +200,11 @@ function decision(permissionSubmission = permission(), decision = {
 }
 
 class Client {
-  constructor({ insertCount = 1, permissionValue = permission(), decisionValue } = {}) {
+  constructor({ insertCount = 1, permissionValue = permission(), decisionValue, storedMutation = null } = {}) {
     this.insertCount = insertCount;
     this.permissionValue = permissionValue;
     this.decisionValue = decisionValue ?? decision(permissionValue);
+    this.storedMutation = storedMutation;
     this.calls = [];
   }
 
@@ -234,6 +235,12 @@ class Client {
     if (text.includes("INSERT INTO codeops.session_runtime_github_mutations")) {
       return { rowCount: this.insertCount, rows: [] };
     }
+    if (text.includes("FROM codeops.session_runtime_github_mutations")) {
+      return {
+        rowCount: this.storedMutation ? 1 : 0,
+        rows: this.storedMutation ? [this.storedMutation] : [],
+      };
+    }
     if (text.includes("UPDATE codeops.session_runtime_github_mutations")) {
       return { rowCount: 1, rows: [] };
     }
@@ -243,12 +250,14 @@ class Client {
 
 test("consumes one exact durable permission before returning provider authority", async () => {
   const client = new Client();
-  const provider = await authorizeSessionRuntimeGitHubMutation(client, {
+  const authorization = await authorizeSessionRuntimeGitHubMutation(client, {
     dispatchId,
     workerId,
     request: runtimeRequest(),
     now: () => new Date("2026-08-14T15:07:00.000Z"),
   });
+  assert.equal(authorization.disposition, "authorized");
+  const provider = authorization.request;
   assert.equal(provider.operation, "check_rerun");
   assert.equal(provider.input.repository, repository);
   assert.match(provider.payloadDigest, /^sha256:[0-9a-f]{64}$/);
@@ -256,6 +265,10 @@ test("consumes one exact durable permission before returning provider authority"
   assert.equal("claimToken" in provider, false);
   assert.ok(client.calls.some(({ text }) =>
     text.includes("INSERT INTO codeops.session_runtime_github_mutations")));
+  const authorizationQuery = client.calls.find(({ text }) =>
+    text.includes("FROM codeops.session_runtime_outbox AS outbox"));
+  assert.match(authorizationQuery.text, /permission\.request_id = \$2/);
+  assert.equal(authorizationQuery.values[1], permission().request.requestId);
 
   const result = {
     version: "codeops.github-check-rerun-result/v1",
@@ -310,17 +323,77 @@ test("rejects denial, payload drift, and reuse before provider authority", async
       request: runtimeRequest(),
       now: () => new Date("2026-08-14T15:07:00.000Z"),
     }),
-    /already consumed/,
+    /immutable stored identity/,
+  );
+});
+
+test("replays an exact completed operation without granting provider authority", async () => {
+  const request = runtimeRequest();
+  const permissionSubmission = permission(request);
+  const operationDigest = permissionSubmission.request.operationDigest;
+  const payloadDigest = digest(canonical(request.input));
+  const result = {
+    version: "codeops.github-check-rerun-result/v1",
+    repository,
+    operationId: request.operationId,
+    headSha: "a".repeat(40),
+    checkRunId: 1234,
+    accepted: true,
+  };
+  const authorization = await authorizeSessionRuntimeGitHubMutation(
+    new Client({
+      insertCount: 0,
+      permissionValue: permissionSubmission,
+      storedMutation: {
+        dispatch_id: dispatchId,
+        payload_digest: payloadDigest,
+        permission_digest: operationDigest,
+        status: "completed",
+        result_json: result,
+      },
+    }),
+    {
+      dispatchId,
+      workerId,
+      request,
+      now: () => new Date("2026-08-14T15:07:00.000Z"),
+    },
+  );
+  assert.deepEqual(authorization, { disposition: "replayed", result });
+
+  await assert.rejects(
+    authorizeSessionRuntimeGitHubMutation(
+      new Client({
+        insertCount: 0,
+        permissionValue: permissionSubmission,
+        storedMutation: {
+          dispatch_id: dispatchId,
+          payload_digest: payloadDigest,
+          permission_digest: operationDigest,
+          status: "started",
+          result_json: null,
+        },
+      }),
+      {
+        dispatchId,
+        workerId,
+        request,
+        now: () => new Date("2026-08-14T15:07:00.000Z"),
+      },
+    ),
+    /outcome is not known/,
   );
 });
 
 test("calls only the internal mutation route with a distinct provider bearer", async () => {
-  const provider = await authorizeSessionRuntimeGitHubMutation(new Client(), {
+  const authorization = await authorizeSessionRuntimeGitHubMutation(new Client(), {
     dispatchId,
     workerId,
     request: runtimeRequest(),
     now: () => new Date("2026-08-14T15:07:00.000Z"),
   });
+  assert.equal(authorization.disposition, "authorized");
+  const provider = authorization.request;
   const calls = [];
   const mutate = createGitHubMutationProviderClient({
     origin: "http://team-a-codeops-control-gateway:8080",

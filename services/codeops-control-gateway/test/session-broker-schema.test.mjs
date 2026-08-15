@@ -14,6 +14,8 @@ const permissionRelayUrl = new URL("../sql/session-runtime-permission-relay.sql"
 const permissionRelayRevertUrl = new URL("../sql/session-runtime-permission-relay-revert.sql", import.meta.url);
 const githubMutationsUrl = new URL("../sql/session-runtime-github-mutations.sql", import.meta.url);
 const githubMutationsRevertUrl = new URL("../sql/session-runtime-github-mutations-revert.sql", import.meta.url);
+const requestScopedGithubMutationsUrl = new URL("../sql/session-runtime-github-mutations-request-scoped-v2.sql", import.meta.url);
+const requestScopedGithubMutationsRevertUrl = new URL("../sql/session-runtime-github-mutations-request-scoped-v2-revert.sql", import.meta.url);
 const lifecycleJournalUrl = new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url);
 const lifecycleJournalRevertUrl = new URL("../sql/work-item-lifecycle-journal-revert.sql", import.meta.url);
 const workspaceLaunchUrl = new URL("../sql/workspace-launch.sql", import.meta.url);
@@ -150,6 +152,19 @@ test("consumes one GitHub mutation permission before provider effects", async ()
     revert,
     /^BEGIN;[\s\S]*DROP TABLE codeops\.session_runtime_github_mutations;[\s\S]*COMMIT;\n$/,
   );
+});
+
+test("permits request-scoped GitHub mutations while preserving every row", async () => {
+  const sql = await readFile(requestScopedGithubMutationsUrl, "utf8");
+  const revert = await readFile(requestScopedGithubMutationsRevertUrl, "utf8");
+  assert.match(sql, /DROP CONSTRAINT session_runtime_github_mutations_dispatch_id_key/);
+  assert.match(sql, /CREATE INDEX session_runtime_github_mutations_dispatch_started_idx/);
+  assert.doesNotMatch(sql, /DELETE|TRUNCATE|DROP TABLE/);
+  assert.match(revert, /ADD CONSTRAINT session_runtime_github_mutations_dispatch_id_key/);
+  assert.match(revert, /UNIQUE \(dispatch_id\)/);
+  assert.doesNotMatch(revert, /DELETE|TRUNCATE|DROP TABLE/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });
 
 test("persists idempotent principal-bound workspace launches", async () => {
