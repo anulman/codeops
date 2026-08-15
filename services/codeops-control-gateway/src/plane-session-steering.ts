@@ -36,12 +36,18 @@ function authorization(headers: IncomingHttpHeaders): string | undefined {
     : undefined;
 }
 
-function hasRepository(session: SessionSnapshot, repository: string): boolean {
+function hasExactSource(
+  session: SessionSnapshot,
+  repository: string,
+  baseSha: string,
+): boolean {
   return isWorkspaceSessionIdentity(session.identity)
     ? session.identity.workspace.sources.some(
-        (source) => source.repository === repository,
+        (source) =>
+          source.repository === repository && source.resolvedSha === baseSha,
       )
-    : session.identity.repository === repository;
+    : session.identity.repository === repository &&
+        session.identity.baseSha === baseSha;
 }
 
 function requestRepository(
@@ -66,7 +72,11 @@ export function resolvePlaneSessionTarget(input: {
         session.lease?.status === "active" &&
         Date.parse(session.lease.expiresAt) > now &&
         session.identity.workItemId === input.request.workItemId &&
-        hasRepository(session, requestRepository(input.request))
+        hasExactSource(
+          session,
+          requestRepository(input.request),
+          input.request.baseSha,
+        )
       );
     });
   const coordinators = matches.filter(

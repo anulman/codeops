@@ -2,7 +2,6 @@ import {
   canonicalJsonText,
   sessionCommandResultSchema,
   sessionCommandSchema,
-  sessionRuntimeDispatchSchema,
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
@@ -14,8 +13,11 @@ import {
 import { createHash } from "node:crypto";
 import type { TransactionClient } from "./session-broker-repository.js";
 import { applyRuntimePermissionRequestTransition } from "./session-broker-transitions.js";
-
-const workerPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
+import {
+  ClaimedDispatchAuthorityConflictError,
+  validateClaimedDispatchAuthority,
+  type ClaimedDispatchAuthority,
+} from "./claimed-dispatch-authority.js";
 
 export class SessionRuntimePermissionNotFoundError extends Error {}
 export class SessionRuntimePermissionConflictError extends Error {}
@@ -79,28 +81,23 @@ function assertPermissionOperationIdentity(
   }
 }
 
-function requireWorkerId(workerId: string): void {
-  if (!workerPattern.test(workerId)) {
-    throw new Error("runtime worker must be a bounded audit identity");
-  }
-}
-
-function requireLiveClaim(
+function validatePermissionAuthority(
   row: StoredDispatchRow,
-  input: { readonly claimToken: string; readonly workerId: string },
-  now: string,
-): void {
-  const claimExpiresAt = Date.parse(String(row.claim_expires_at));
-  if (
-    row.status !== "claimed" ||
-    row.claim_token !== input.claimToken ||
-    row.claimed_by !== input.workerId ||
-    !Number.isFinite(claimExpiresAt) ||
-    claimExpiresAt <= Date.parse(now)
-  ) {
-    throw new SessionRuntimePermissionConflictError(
-      "runtime permission request does not hold the exact live dispatch claim",
-    );
+  input: {
+    readonly dispatchId: string;
+    readonly workerId: string;
+    readonly claimToken: string;
+    readonly now: Date;
+    readonly sessionSnapshot?: unknown;
+  },
+): ClaimedDispatchAuthority {
+  try {
+    return validateClaimedDispatchAuthority(row, input);
+  } catch (error) {
+    if (error instanceof ClaimedDispatchAuthorityConflictError) {
+      throw new SessionRuntimePermissionConflictError(error.message);
+    }
+    throw error;
   }
 }
 
@@ -130,8 +127,8 @@ export async function submitSessionRuntimePermission(
     input.submission,
   );
   assertPermissionOperationIdentity(submission, input.dispatchId);
-  requireWorkerId(input.workerId);
-  const now = (input.now ?? (() => new Date()))().toISOString();
+  const nowDate = (input.now ?? (() => new Date()))();
+  const now = nowDate.toISOString();
 
   // Read the immutable dispatch identity before entering the transaction so
   // the lock order matches completion ingestion: session first, outbox second.
@@ -147,9 +144,13 @@ export async function submitSessionRuntimePermission(
       `runtime dispatch ${input.dispatchId} was not found`,
     );
   }
-  const discoveredDispatch = sessionRuntimeDispatchSchema.parse(
-    discovered.rows[0].dispatch_json,
-  );
+  const discoveredAuthority = validatePermissionAuthority(discovered.rows[0], {
+    dispatchId: input.dispatchId,
+    workerId: input.workerId,
+    claimToken: submission.claimToken,
+    now: nowDate,
+  });
+  const discoveredDispatch = discoveredAuthority.dispatch;
 
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
@@ -177,19 +178,18 @@ export async function submitSessionRuntimePermission(
         `runtime dispatch ${input.dispatchId} was not found`,
       );
     }
-    const dispatchRow = dispatchRows.rows[0];
-    requireLiveClaim(
-      dispatchRow,
-      { claimToken: submission.claimToken, workerId: input.workerId },
-      now,
-    );
-    const dispatch = sessionRuntimeDispatchSchema.parse(
-      dispatchRow.dispatch_json,
-    );
+    const lockedAuthority = validatePermissionAuthority(dispatchRows.rows[0], {
+      dispatchId: input.dispatchId,
+      workerId: input.workerId,
+      claimToken: submission.claimToken,
+      now: nowDate,
+      sessionSnapshot: sessionRows.rows[0].snapshot_json,
+    });
+    const dispatch = lockedAuthority.dispatch;
     if (
       canonicalJsonText(dispatch) !== canonicalJsonText(discoveredDispatch) ||
-      dispatch.dispatchId !== input.dispatchId ||
-      dispatch.command.type !== "prompt"
+      canonicalJsonText(lockedAuthority.snapshot) !==
+        canonicalJsonText(discoveredAuthority.snapshot)
     ) {
       throw new SessionRuntimePermissionConflictError(
         "runtime permissions belong only to the exact claimed prompt dispatch",
@@ -398,8 +398,7 @@ export async function pollSessionRuntimePermission(
   },
 ): Promise<SessionRuntimePermissionResult> {
   const poll = sessionRuntimePermissionPollSchema.parse(input.poll);
-  requireWorkerId(input.workerId);
-  const now = (input.now ?? (() => new Date()))().toISOString();
+  const now = (input.now ?? (() => new Date()))();
   const result = await client.query<PolledPermissionRow>(
     `SELECT request.request_json,
             outbox.dispatch_json, outbox.status, outbox.claim_token,
@@ -429,12 +428,12 @@ export async function pollSessionRuntimePermission(
     );
   }
   const row = result.rows[0];
-  requireLiveClaim(
-    row,
-    { claimToken: poll.claimToken, workerId: input.workerId },
+  const dispatch = validatePermissionAuthority(row, {
+    dispatchId: input.dispatchId,
+    workerId: input.workerId,
+    claimToken: poll.claimToken,
     now,
-  );
-  const dispatch = sessionRuntimeDispatchSchema.parse(row.dispatch_json);
+  }).dispatch;
   const submission = sessionRuntimePermissionSubmissionSchema.parse(
     row.request_json,
   );
