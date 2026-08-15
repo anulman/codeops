@@ -37,6 +37,8 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.equal(goldenSource.if, "steps.release_identity.outputs.publish == 'true'");
   assert.match(goldenSource.run, /node services\/codeops-acceptance-runner\/src\/golden-dogfood\.mjs/);
   assert.match(goldenSource.run, /sourceSha/);
+  assert.match(goldenSource.run, /codeops\.golden-dogfood-report\/v2/);
+  assert.match(goldenSource.run, /simulated-provider/);
   const retainedGoldenSource = workflow.jobs.validate.steps.find(
     ({ name }) => name === "Retain exact golden source report",
   );
@@ -234,7 +236,13 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   const bindGoldenRelease = githubRelease.steps.find(
     ({ name }) => name === "Bind golden released-image evidence to the release",
   );
-  assert.match(bindGoldenRelease.run, /codeops\.golden-release-report\/v1/);
+  assert.match(bindGoldenRelease.run, /codeops\.golden-release-report\/v2/);
+  assert.match(bindGoldenRelease.run, /sourceProof\.evidence/);
+  assert.match(bindGoldenRelease.run, /artifactProof\.evidence/);
+  assert.match(bindGoldenRelease.run, /simulated-provider/);
+  assert.match(bindGoldenRelease.run, /released-image/);
+  assert.match(bindGoldenRelease.run, /browser-acceptance/);
+  assert.match(bindGoldenRelease.run, /live-provider/);
   assert.match(bindGoldenRelease.run, /golden-release-report\.json >> SHA256SUMS/);
   const publishRelease = githubRelease.steps.find(
     ({ name }) => name === "Publish durable GitHub Release",

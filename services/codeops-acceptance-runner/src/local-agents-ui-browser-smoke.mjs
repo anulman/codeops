@@ -7,6 +7,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { runAgentsUiSmoke } from "./agents-ui-smoke.mjs";
+import { browserAcceptanceReport } from "./browser-acceptance-report.mjs";
 
 const repositoryRoot = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
@@ -130,7 +131,7 @@ try {
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\nBroker requests: ${JSON.stringify(brokerRequests)}\n${logs.slice(-8_000)}`);
   }
-  process.stdout.write(`${JSON.stringify({ status: "passed", target: "local-agents-ui" })}\n`);
+  process.stdout.write(`${JSON.stringify(browserAcceptanceReport())}\n`);
 } finally {
   if (ui?.exitCode === null) {
     ui.kill("SIGTERM");

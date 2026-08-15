@@ -37,7 +37,7 @@ const SCENARIO_IDS = Object.freeze([
   "stale-write-recovery",
   "validation-recovery",
   "cleanup-isolation",
-  "notification-delivery",
+  "lifecycle-relay",
 ]);
 
 function object(value, name) {
@@ -61,6 +61,43 @@ function exactArray(value, expected, name) {
   if (value.join(",") !== expected.join(",")) {
     throw new Error(`${name} identity drifted`);
   }
+}
+
+function validateEvidenceDeclaration(value, name) {
+  const evidence = object(value, name);
+  switch (evidence.kind) {
+    case "simulated-provider":
+      exactKeys(evidence, ["kind", "providerMode"], name);
+      if (evidence.providerMode !== "fake") throw new Error(`${name} is invalid`);
+      break;
+    case "browser-acceptance":
+      exactKeys(evidence, ["kind", "providerDelivery"], name);
+      if (evidence.providerDelivery !== false) throw new Error(`${name} is invalid`);
+      break;
+    case "released-image":
+      exactKeys(evidence, ["kind", "sourceCheckout", "immutableImageRefs"], name);
+      if (evidence.sourceCheckout !== false || evidence.immutableImageRefs !== true) {
+        throw new Error(`${name} is invalid`);
+      }
+      break;
+    case "live-provider":
+      exactKeys(evidence, ["kind", "providerDelivery", "authorizationMode"], name);
+      if (evidence.providerDelivery !== true || evidence.authorizationMode !== "explicit") {
+        throw new Error(`${name} is invalid`);
+      }
+      break;
+    default:
+      throw new Error(`${name} kind is unsupported`);
+  }
+  return evidence;
+}
+
+function requireEvidenceKind(value, expectedKind, name) {
+  const evidence = validateEvidenceDeclaration(value, name);
+  if (evidence.kind !== expectedKind) {
+    throw new Error(`${name} must be ${expectedKind}`);
+  }
+  return evidence;
 }
 
 function releaseImages(manifest) {
@@ -95,12 +132,11 @@ function releaseImages(manifest) {
 function validateGoldenSource(report, sourceSha) {
   exactKeys(
     report,
-    ["version", "adapterMode", "telemetry", "passed", "scenarioCount", "scenarios", "sourceSha"],
+    ["version", "evidence", "telemetry", "passed", "scenarioCount", "scenarios", "sourceSha"],
     "golden source report",
   );
   if (
-    report.version !== "codeops.golden-dogfood-report/v1" ||
-    report.adapterMode !== "fake" ||
+    report.version !== "codeops.golden-dogfood-report/v2" ||
     report.telemetry !== "operational-only" ||
     report.passed !== true ||
     report.sourceSha !== sourceSha ||
@@ -108,6 +144,7 @@ function validateGoldenSource(report, sourceSha) {
   ) {
     throw new Error("golden source report did not pass for the release source");
   }
+  requireEvidenceKind(report.evidence, "simulated-provider", "golden source evidence");
   if (!Array.isArray(report.scenarios)) throw new Error("golden source scenarios are invalid");
   const ids = [];
   for (const scenario of report.scenarios) {
@@ -215,12 +252,15 @@ export function buildGoldenReleaseEvidence(input) {
   validateSmoke(object(input.smokeReport, "smoke report"), manifest);
 
   return Object.freeze({
-    version: "codeops.golden-release-report/v1",
+    version: "codeops.golden-release-report/v2",
     passed: true,
     telemetry: "operational-only",
     sourceSha: manifest.sourceSha,
     sourceProof: {
-      kind: "deterministic-fake-adapter-gate",
+      evidence: {
+        kind: "simulated-provider",
+        providerMode: "fake",
+      },
       scenarioCount: SCENARIO_IDS.length,
       scenarios: input.goldenSourceReport.scenarios.map(({ id, status, durationMs }) => ({
         id,
@@ -229,7 +269,11 @@ export function buildGoldenReleaseEvidence(input) {
       })),
     },
     artifactProof: {
-      kind: "disposable-cluster-released-images",
+      evidence: {
+        kind: "released-image",
+        sourceCheckout: false,
+        immutableImageRefs: true,
+      },
       chartVersion: manifest.chart.version,
       chartDigest: manifest.chart.digest,
       anonymousRegistryImages: IMAGE_NAMES.length,

@@ -13,17 +13,20 @@ Each CodeOps GitHub Release contains:
 - the OCI chart archive and `SHA256SUMS`.
 
 `golden-release-report.json` uses schema
-`codeops.golden-release-report/v1`. It binds two operational-only proofs to the
+`codeops.golden-release-report/v2`. It binds two operational-only proofs to the
 same source SHA and immutable release manifest:
 
-- the 11 deterministic source scenarios passed with fake adapters;
-- an anonymous disposable cluster resolved all ten images and the exact OCI
+- `sourceProof.evidence` declares `simulated-provider` with fake-provider
+  mode because the 11 deterministic source scenarios use fake adapters;
+- `artifactProof.evidence` declares `released-image`, no source checkout, and
+  immutable image references because an anonymous disposable cluster resolved all ten images and the exact OCI
   chart, deployed the release, rejected a forced update, restored the prior
   revision, passed `codeops.smoke/v1`, and completed cleanup.
 
-The report does not claim that the source scenarios ran inside the deployed
-services. It contains no prompt, body, diff, log, attachment, credential,
-Secret data, or raw Kubernetes workload object.
+The report does not declare browser acceptance or live-provider evidence. It
+does not claim that the source scenarios ran inside the deployed services. It
+contains no prompt, body, diff, log, attachment, credential, Secret data, or
+raw Kubernetes workload object.
 
 Commit the release's `codeops-consumer-lock.json` to the consumer repository.
 Commit the non-secret Helm values and one policy file. Do not commit a

@@ -131,7 +131,10 @@ jobs:
           node services/codeops-acceptance-runner/src/golden-dogfood.mjs \
             > /tmp/golden-source-report.raw.json
           jq -e --arg sourceSha "$SOURCE_SHA" \
-            '.passed == true and .scenarioCount == 11
+            '.version == "codeops.golden-dogfood-report/v2"
+              and .passed == true
+              and .scenarioCount == 11
+              and .evidence == {kind:"simulated-provider",providerMode:"fake"}
               | if . then . else error("golden source report did not pass") end' \
             /tmp/golden-source-report.raw.json >/dev/null
           jq --arg sourceSha "$SOURCE_SHA" '. + {sourceSha:$sourceSha}' \
@@ -772,7 +775,16 @@ jobs:
       - name: Bind golden released-image evidence to the release
         run: |
           set -euo pipefail
-          jq -e '.version == "codeops.golden-release-report/v1" and .passed == true' \
+          jq -e '.version == "codeops.golden-release-report/v2"
+              and .passed == true
+              and .sourceProof.evidence == {kind:"simulated-provider",providerMode:"fake"}
+              and .artifactProof.evidence == {
+                kind:"released-image",
+                sourceCheckout:false,
+                immutableImageRefs:true
+              }
+              and ([.sourceProof.evidence.kind, .artifactProof.evidence.kind]
+                | all(. != "browser-acceptance" and . != "live-provider"))' \
             registry-proof/golden-release-report.json >/dev/null
           cp registry-proof/golden-release-report.json release/golden-release-report.json
           (

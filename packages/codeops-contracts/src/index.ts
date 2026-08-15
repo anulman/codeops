@@ -17,6 +17,11 @@ import {
   codingOutcomeSchema,
 } from "./adversarial-review.js";
 export {
+  EVIDENCE_KINDS,
+  evidenceDeclarationSchema,
+  type EvidenceDeclaration,
+} from "./evidence-kind.js";
+export {
   adversarialReviewSchema,
   candidateCheckpointSchema,
   codingOutcomeSchema,

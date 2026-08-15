@@ -14,7 +14,7 @@ const scenarioIds = [
   "launch-exact-source", "work-item-read-search", "github-bounded-reads",
   "checkpoint-resume", "plane-steering", "approved-mutation", "permission-denial",
   "stale-write-recovery", "validation-recovery", "cleanup-isolation",
-  "notification-delivery",
+  "lifecycle-relay",
 ];
 const images = Object.fromEntries(names.map((name, index) => {
   const repository = `ghcr.io/anulman/codeops/${name}`;
@@ -30,8 +30,8 @@ const images = Object.fromEntries(names.map((name, index) => {
 function fixture() {
   return {
     goldenSourceReport: {
-      version: "codeops.golden-dogfood-report/v1",
-      adapterMode: "fake",
+      version: "codeops.golden-dogfood-report/v2",
+      evidence: { kind: "simulated-provider", providerMode: "fake" },
       telemetry: "operational-only",
       passed: true,
       sourceSha,
@@ -93,8 +93,17 @@ function fixture() {
 
 test("binds source scenarios to exact released-image cluster evidence", () => {
   const report = buildGoldenReleaseEvidence(fixture());
-  assert.equal(report.version, "codeops.golden-release-report/v1");
+  assert.equal(report.version, "codeops.golden-release-report/v2");
   assert.equal(report.passed, true);
+  assert.deepEqual(report.sourceProof.evidence, {
+    kind: "simulated-provider",
+    providerMode: "fake",
+  });
+  assert.deepEqual(report.artifactProof.evidence, {
+    kind: "released-image",
+    sourceCheckout: false,
+    immutableImageRefs: true,
+  });
   assert.equal(report.sourceProof.scenarioCount, 11);
   assert.equal(report.artifactProof.anonymousRegistryImages, 10);
   assert.equal(report.artifactProof.deployedImages, 4);
@@ -147,4 +156,18 @@ test("rejects retained source, incomplete cleanup, and unsupported evidence fiel
   const unsupported = fixture();
   unsupported.goldenSourceReport.prompt = "must not pass";
   assert.throws(() => buildGoldenReleaseEvidence(unsupported), /unsupported fields/);
+});
+
+test("rejects unsupported, upgraded, or mixed source evidence kinds", () => {
+  for (const evidence of [
+    { kind: "unsupported" },
+    { kind: "browser-acceptance", providerDelivery: false },
+    { kind: "released-image", sourceCheckout: false, immutableImageRefs: true },
+    { kind: "live-provider", providerDelivery: true, authorizationMode: "explicit" },
+    { kind: "simulated-provider", providerMode: "fake", providerDelivery: true },
+  ]) {
+    const input = fixture();
+    input.goldenSourceReport.evidence = evidence;
+    assert.throws(() => buildGoldenReleaseEvidence(input), /golden source evidence/);
+  }
 });
