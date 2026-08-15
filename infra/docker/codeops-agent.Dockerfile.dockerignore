@@ -1,6 +1,16 @@
 **
 !LICENSE
 !THIRD_PARTY_NOTICES.md
+!tsconfig.json
+!packages/
+packages/*
+!packages/codeops-contracts/
+!packages/codeops-contracts/**
+!infra/
+infra/*
+!infra/scripts/
+infra/scripts/*
+!infra/scripts/rewrite-workspace-dependency-for-npm.mjs
 !services/
 services/*
 !services/codeops-agent/

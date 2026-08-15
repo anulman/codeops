@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  canonicalJsonText,
   sessionCommandResultSchema,
   sessionRuntimeClaimRequestSchema,
   type SessionCommandResult,
@@ -50,21 +51,6 @@ function postgresTimestamp(value: unknown): string {
     throw new Error("runtime claim persistence returned an invalid timestamp");
   }
   return parsed.toISOString();
-}
-
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, nested]) => [key, normalize(nested)]),
-      );
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
 }
 
 function requireWorkerId(workerId: string): void {
@@ -136,7 +122,7 @@ export async function enqueueSessionRuntimeDispatch(
       );
       if (
         stored.principalId !== dispatch.principalId ||
-        canonical(stored.command) !== canonical(dispatch.command)
+        canonicalJsonText(stored.command) !== canonicalJsonText(dispatch.command)
       ) {
         throw new ImmutableSessionRuntimeDispatchConflictError(
           `runtime dispatch ${dispatch.command.idempotencyKey} conflicts with the immutable dispatch for ${dispatch.command.sessionId}`,
@@ -156,7 +142,7 @@ export async function enqueueSessionRuntimeDispatch(
         dispatch.command.sessionId,
         dispatch.command.idempotencyKey,
         dispatch.principalId,
-        canonical(dispatch),
+        canonicalJsonText(dispatch),
         dispatch.dispatchedAt,
       ],
     );
@@ -249,7 +235,7 @@ export async function claimSessionRuntimeDispatch(
       authority.sessionId,
       authority.generation,
       authority.leaseId,
-      canonical(authority.identity),
+      canonicalJsonText(authority.identity),
     ],
   );
   if (!result.rows[0]) return null;
@@ -267,7 +253,7 @@ export async function claimSessionRuntimeDispatch(
     dispatch.command.sessionId !== authority.sessionId ||
     dispatch.command.generation !== authority.generation ||
     dispatch.command.leaseId !== authority.leaseId ||
-    canonical(dispatch.snapshot.identity) !== canonical(authority.identity)
+    canonicalJsonText(dispatch.snapshot.identity) !== canonicalJsonText(authority.identity)
   ) {
     throw new Error("runtime claim returned a different session authority");
   }
@@ -325,7 +311,7 @@ export async function completeSessionRuntimeDispatch(
     );
     if (
       row.completed_by !== input.workerId ||
-      canonical(persistedCompletion) !== canonical(completion)
+      canonicalJsonText(persistedCompletion) !== canonicalJsonText(completion)
     ) {
       throw new ImmutableSessionRuntimeDispatchConflictError(
         `runtime dispatch ${input.dispatchId} already has a different immutable completion`,

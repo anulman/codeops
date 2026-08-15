@@ -20,6 +20,7 @@ import { Readable, Writable } from "node:stream";
 import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
+  canonicalJsonText,
   sessionPermissionOperationSchema,
   sessionTimelineUpdateSchema,
   workspaceManifestSchema,
@@ -80,21 +81,6 @@ function codeopsMcpServers(): acp.McpServer[] {
   ];
 }
 
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, nested]) => [key, normalize(nested)]),
-      );
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
-}
-
 function record(value: unknown): Record<string, unknown> | null {
   return value !== null && typeof value === "object" && !Array.isArray(value)
     ? value as Record<string, unknown>
@@ -115,7 +101,7 @@ export function renderAcpPermissionOperation(
       kind: "mcp",
       server: raw.server,
       tool: raw.tool,
-      argumentsJson: canonical(raw.arguments),
+      argumentsJson: canonicalJsonText(raw.arguments),
     });
   }
   if (
@@ -154,7 +140,7 @@ export function renderAcpPermissionOperation(
   ) {
     return sessionPermissionOperationSchema.parse({
       kind: "agent_permissions",
-      detailsJson: canonical(raw),
+      detailsJson: canonicalJsonText(raw),
     });
   }
   throw new Error("ACP permission has no safe operation renderer");
@@ -463,14 +449,14 @@ export function createAcpPermissionRelay(input: {
       }
       const operation = renderAcpPermissionOperation(request);
       const requestId = `permission-${createHash("sha256")
-        .update(canonical(operation))
+        .update(canonicalJsonText(operation))
         .update("\0")
         .update(dispatch.dispatchId)
         .update("\0")
         .update(request.toolCall.toolCallId)
         .digest("hex")}`;
       const operationDigest = `sha256:${createHash("sha256")
-        .update(canonical(operation))
+        .update(canonicalJsonText(operation))
         .digest("hex")}`;
       const title =
         request.toolCall.title?.trim() ||

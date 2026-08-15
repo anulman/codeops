@@ -44,7 +44,10 @@ function pullRequestResponse(sha = headSha) {
 test("fails closed when a pull-request head changes during the diff read", async () => {
   const responses = [
     pullRequestResponse(),
-    new Response("diff --git a/a b/a\n", { status: 200 }),
+    new Response("diff --git a/a b/a\n", {
+      status: 200,
+      headers: { "content-type": "application/vnd.github.diff" },
+    }),
     pullRequestResponse(changedHeadSha),
   ];
   const adapter = createGitHubReadAdapter({
@@ -67,7 +70,10 @@ test("fails closed when a pull-request head changes during the diff read", async
 test("returns only the byte-bounded diff for a stable exact head", async () => {
   const responses = [
     pullRequestResponse(),
-    new Response("123456789", { status: 200 }),
+    new Response("123456789", {
+      status: 200,
+      headers: { "content-type": "application/vnd.github.diff" },
+    }),
     pullRequestResponse(),
   ];
   const adapter = createGitHubReadAdapter({
@@ -111,7 +117,10 @@ test("does not forward the repository credential to a check-log redirect", async
           headers: { location: "https://results.example.test/logs/99" },
         });
       }
-      return new Response("check output", { status: 200 });
+      return new Response("check output", {
+        status: 200,
+        headers: { "content-type": "text/plain; charset=utf-8" },
+      });
     },
   });
 
@@ -124,6 +133,9 @@ test("does not forward the repository credential to a check-log redirect", async
   assert.equal(result.content, "check output");
   assert.match(String(calls[1].headers.Authorization), /^Bearer /);
   assert.equal("Authorization" in calls[2].headers, false);
+  assert.equal("Cookie" in calls[2].headers, false);
+  assert.equal("Accept" in calls[2].headers, false);
+  assert.equal("X-GitHub-Api-Version" in calls[2].headers, false);
   assert.equal(calls[2].url, "https://results.example.test/logs/99");
 });
 

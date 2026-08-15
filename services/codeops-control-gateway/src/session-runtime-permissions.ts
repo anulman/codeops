@@ -1,4 +1,5 @@
 import {
+  canonicalJsonText,
   sessionCommandResultSchema,
   sessionCommandSchema,
   sessionRuntimeDispatchSchema,
@@ -49,26 +50,11 @@ interface CompletionSnapshotRow extends StoredSessionRow {
   readonly result_json: unknown;
 }
 
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, nested]) => [key, normalize(nested)]),
-      );
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
-}
-
 function assertPermissionOperationIdentity(
   submission: ReturnType<typeof sessionRuntimePermissionSubmissionSchema.parse>,
   dispatchId: string,
 ): void {
-  const operationBytes = canonical(submission.request.operation);
+  const operationBytes = canonicalJsonText(submission.request.operation);
   const operationDigest = `sha256:${createHash("sha256")
     .update(operationBytes)
     .digest("hex")}`;
@@ -201,7 +187,7 @@ export async function submitSessionRuntimePermission(
       dispatchRow.dispatch_json,
     );
     if (
-      canonical(dispatch) !== canonical(discoveredDispatch) ||
+      canonicalJsonText(dispatch) !== canonicalJsonText(discoveredDispatch) ||
       dispatch.dispatchId !== input.dispatchId ||
       dispatch.command.type !== "prompt"
     ) {
@@ -232,7 +218,7 @@ export async function submitSessionRuntimePermission(
       );
       if (
         existing.rows[0].request_id !== submission.request.requestId ||
-        canonical(stored) !== canonical(submission)
+        canonicalJsonText(stored) !== canonicalJsonText(submission)
       ) {
         throw new SessionRuntimePermissionConflictError(
           "runtime permission request conflicts with its immutable stored identity",
@@ -245,7 +231,7 @@ export async function submitSessionRuntimePermission(
     const snapshot = sessionSnapshotSchema.parse(
       sessionRows.rows[0].snapshot_json,
     );
-    if (canonical(snapshot) !== canonical(dispatch.snapshot)) {
+    if (canonicalJsonText(snapshot) !== canonicalJsonText(dispatch.snapshot)) {
       throw new SessionRuntimePermissionConflictError(
         "runtime permission request no longer binds the dispatched snapshot",
       );
@@ -264,7 +250,7 @@ export async function submitSessionRuntimePermission(
         input.dispatchId,
         submission.request.requestId,
         dispatch.command.sessionId,
-        canonical(submission),
+        canonicalJsonText(submission),
         submission.request.requestedAt,
       ],
     );
@@ -279,7 +265,7 @@ export async function submitSessionRuntimePermission(
         transition.event.generation,
         transition.event.cursor,
         transition.event.type,
-        canonical(transition.event),
+        canonicalJsonText(transition.event),
         transition.event.occurredAt,
       ],
     );
@@ -293,7 +279,7 @@ export async function submitSessionRuntimePermission(
           AND generation = $6
           AND lease_id = $7`,
       [
-        canonical(transition.snapshot),
+        canonicalJsonText(transition.snapshot),
         transition.snapshot.generation,
         transition.snapshot.lease?.leaseId ?? null,
         transition.snapshot.updatedAt,
@@ -354,7 +340,7 @@ export async function resolveSessionRuntimeCompletionSnapshot(
   const row = result.rows[0];
   const current = sessionSnapshotSchema.parse(row.snapshot_json);
   if (row.request_id === null) {
-    if (canonical(current) !== canonical(input.dispatch.snapshot)) {
+    if (canonicalJsonText(current) !== canonicalJsonText(input.dispatch.snapshot)) {
       throw new SessionRuntimePermissionConflictError(
         "runtime completion snapshot drifted without a permission transition",
       );
@@ -393,7 +379,7 @@ export async function resolveSessionRuntimeCompletionSnapshot(
     commandResult.eventCursor !== input.dispatch.snapshot.eventCursor + 2 ||
     commandResult.snapshot.state !== "running" ||
     commandResult.snapshot.pendingPermission !== null ||
-    canonical(commandResult.snapshot) !== canonical(current)
+    canonicalJsonText(commandResult.snapshot) !== canonicalJsonText(current)
   ) {
     throw new SessionRuntimePermissionConflictError(
       "runtime completion does not follow the exact permission decision lineage",

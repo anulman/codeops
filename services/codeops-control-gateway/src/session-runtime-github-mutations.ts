@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  canonicalJsonText,
   githubMutationProviderRequestSchema,
   githubMutationResultSchema,
   sessionCommandResultSchema,
@@ -29,21 +30,6 @@ interface MutationAuthorizationRow extends Record<string, unknown> {
   readonly request_json: unknown;
   readonly command_json: unknown;
   readonly result_json: unknown;
-}
-
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, nested]) => [key, normalize(nested)]),
-      );
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
 }
 
 function digest(value: string): string {
@@ -91,7 +77,7 @@ function expectedPermissionOperation(request: SessionRuntimeGitHubMutationReques
     operation: request.operation,
     ...permissionTarget(request),
     expectedHeadSha: request.input.expectedHeadSha,
-    payloadJson: canonical(request.input),
+    payloadJson: canonicalJsonText(request.input),
   });
 }
 
@@ -156,7 +142,7 @@ export async function authorizeSessionRuntimeGitHubMutation(
   assertRepositoryScope(dispatch, request.input.repository);
 
   const expectedOperationId = `githubmutation-${createHash("sha256")
-    .update(canonical({
+    .update(canonicalJsonText({
       dispatchId: dispatch.dispatchId,
       operation: request.operation,
       input: request.input,
@@ -176,9 +162,9 @@ export async function authorizeSessionRuntimeGitHubMutation(
   const command = sessionCommandSchema.parse(row.command_json);
   const commandResult = sessionCommandResultSchema.parse(row.result_json);
   const operation = expectedPermissionOperation(request);
-  const operationDigest = digest(canonical(operation));
+  const operationDigest = digest(canonicalJsonText(operation));
   const expectedRequestId = `permission-${createHash("sha256")
-    .update(canonical(operation))
+    .update(canonicalJsonText(operation))
     .update("\0")
     .update(dispatch.dispatchId)
     .update("\0")
@@ -190,8 +176,8 @@ export async function authorizeSessionRuntimeGitHubMutation(
     permission.toolCallId !== request.operationId ||
     permission.request.requestId !== expectedRequestId ||
     permission.request.operationDigest !== operationDigest ||
-    canonical(permission.request.operation) !== canonical(operation) ||
-    canonical(permission.options) !== canonical([
+    canonicalJsonText(permission.request.operation) !== canonicalJsonText(operation) ||
+    canonicalJsonText(permission.options) !== canonicalJsonText([
       { optionId: "allow-once", acpOptionId: "allow-once" },
       { optionId: "deny", acpOptionId: "deny" },
     ]) ||
@@ -212,7 +198,7 @@ export async function authorizeSessionRuntimeGitHubMutation(
     );
   }
 
-  const payloadDigest = digest(canonical(request.input));
+  const payloadDigest = digest(canonicalJsonText(request.input));
   const providerRequest = githubMutationProviderRequestSchema.parse({
     version: "codeops.github-mutation-provider-request/v1",
     operation: request.operation,
@@ -267,7 +253,7 @@ export async function completeSessionRuntimeGitHubMutation(
         AND payload_digest = $5 AND permission_digest = $6
         AND status = 'started' AND result_json IS NULL`,
     [
-      canonical(result),
+      canonicalJsonText(result),
       (input.now ?? (() => new Date()))().toISOString(),
       request.operationId,
       request.provenance.dispatchId,

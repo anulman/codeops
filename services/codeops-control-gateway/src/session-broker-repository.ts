@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  canonicalJsonText,
   isWorkspaceSessionIdentity,
   projectSessionBudget,
   SESSION_BROKER_VERSION,
@@ -216,21 +217,6 @@ interface StoredSessionRow extends Record<string, unknown> {
   readonly active_children?: unknown;
 }
 
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, nested]) => [key, normalize(nested)]),
-      );
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
-}
-
 function requireResultIdentity(
   result: SessionCommandResult,
   command: SessionCommand,
@@ -255,7 +241,7 @@ function requireForkIdentity(
   const childIdentity = result.snapshot.identity;
   const sourceIdentityMatches = isWorkspaceSessionIdentity(parentIdentity)
     ? isWorkspaceSessionIdentity(childIdentity) &&
-      canonical(childIdentity.workspace) === canonical(parentIdentity.workspace)
+      canonicalJsonText(childIdentity.workspace) === canonicalJsonText(parentIdentity.workspace)
     : !isWorkspaceSessionIdentity(childIdentity) &&
       childIdentity.repository === parentIdentity.repository &&
       childIdentity.baseSha === parentIdentity.baseSha;
@@ -391,8 +377,8 @@ async function persistCommand(
       result.commandId,
       command.sessionId,
       command.idempotencyKey,
-      canonical(command),
-      canonical(result),
+      canonicalJsonText(command),
+      canonicalJsonText(result),
       principalId,
       result.committedAt,
     ],
@@ -416,7 +402,7 @@ async function persistEvents(
         event.generation,
         event.cursor,
         event.type,
-        canonical(event),
+        canonicalJsonText(event),
         commandId,
         event.occurredAt,
       ],
@@ -437,7 +423,7 @@ async function persistForkedSession(
       snapshot.sessionId,
       snapshot.generation,
       snapshot.lease?.leaseId ?? null,
-      canonical(snapshot),
+      canonicalJsonText(snapshot),
       snapshot.updatedAt,
     ],
   );
@@ -503,8 +489,8 @@ async function completeRuntimeReservation(
         AND claimed_by = $3
         AND claim_expires_at > $4::timestamptz`,
     [
-      canonical(reservation.completionJson),
-      canonical(result),
+      canonicalJsonText(reservation.completionJson),
+      canonicalJsonText(result),
       reservation.workerId,
       completedAt,
       reservation.dispatchId,
@@ -564,9 +550,9 @@ export async function executeSessionCommandTransaction(
         runtimeRow.status !== "claimed" ||
         runtimeRow.claim_token !== reservation.claimToken ||
         runtimeRow.claimed_by !== reservation.workerId ||
-        canonical(runtimeRow.dispatch_json) !==
-          canonical(reservation.dispatchJson) ||
-        canonical(snapshot) !== canonical(reservation.expectedSnapshot) ||
+        canonicalJsonText(runtimeRow.dispatch_json) !==
+          canonicalJsonText(reservation.dispatchJson) ||
+        canonicalJsonText(snapshot) !== canonicalJsonText(reservation.expectedSnapshot) ||
         new Date(String(runtimeRow.claim_expires_at)).getTime() <=
           Date.parse(committedAt)
       ) {
@@ -593,7 +579,7 @@ export async function executeSessionCommandTransaction(
       const storedCommand = sessionCommandSchema.parse(
         existing.rows[0].command_json,
       );
-      if (canonical(storedCommand) !== canonical(command)) {
+      if (canonicalJsonText(storedCommand) !== canonicalJsonText(command)) {
         throw new ImmutableSessionCommandConflictError(
           command.sessionId,
           command.idempotencyKey,
@@ -697,7 +683,7 @@ export async function executeSessionCommandTransaction(
                 AND generation = $6
                 AND lease_id = $7`,
             [
-              canonical(result.snapshot),
+              canonicalJsonText(result.snapshot),
               result.snapshot.generation,
               result.snapshot.lease?.leaseId ?? null,
               result.snapshot.updatedAt,

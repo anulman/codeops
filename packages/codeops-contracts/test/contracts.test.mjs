@@ -5,6 +5,8 @@ import {
   adversarialReviewSchema,
   agentJobDispatchRequestSchema,
   agentJobDispatchResultSchema,
+  canonicalJsonBytes,
+  canonicalJsonText,
   canonicalSerialize,
   codingRequestSchema,
   contractVersions,
@@ -28,6 +30,7 @@ import {
   readinessGateSchema,
   researchMutationBatchSchema,
   researchPacketSchema,
+  sha256CanonicalJsonDigest,
   researchPlaneMutationSchema,
   secretReferenceSchema,
   verifyPlaneWebhookSignature,
@@ -941,20 +944,73 @@ test("accepts every control command and all result states", () => {
 });
 
 test("canonical serialization and logical IDs are stable and order-independent", () => {
+  const value = {
+    z: 1,
+    unicode: "é😀\n",
+    array: [3, null, true],
+    a: { y: 2, x: 3 },
+  };
+  const expectedText =
+    '{"a":{"x":3,"y":2},"array":[3,null,true],"unicode":"é😀\\n","z":1}';
+  assert.equal(canonicalJsonText(value), expectedText);
+  assert.deepEqual(
+    canonicalJsonBytes(value),
+    Uint8Array.from(Buffer.from(
+      "7b2261223a7b2278223a332c2279223a327d2c226172726179223a5b332c6e756c6c2c747275655d2c22756e69636f6465223a2265cc81f09f98805c6e222c227a223a317d",
+      "hex",
+    )),
+  );
+  assert.equal(
+    sha256CanonicalJsonDigest(value),
+    "sha256:f02a7e21795ca73d58f07b0806759e1c71152c0ba60dba4ac6ac0e577b969d98",
+  );
   assert.equal(
     canonicalSerialize({ z: 1, a: { y: 2, x: 3 } }),
     canonicalSerialize({ a: { x: 3, y: 2 }, z: 1 }),
   );
-  assert.throws(() => canonicalSerialize({ invalid: undefined }));
-  assert.throws(() => canonicalSerialize(Number.NaN));
+  assert.equal(canonicalSerialize(value), canonicalJsonText(value));
+  const sparse = ["first", "third"];
+  delete sparse[1];
+  const symbolArray = [];
+  symbolArray[Symbol("hidden")] = "value";
+  const cycle = {};
+  cycle.self = cycle;
+  for (const invalid of [
+    undefined,
+    Number.NaN,
+    Number.POSITIVE_INFINITY,
+    Number.NEGATIVE_INFINITY,
+    1n,
+    Symbol("invalid"),
+    () => undefined,
+    { invalid: undefined },
+    [undefined],
+    sparse,
+    symbolArray,
+    cycle,
+    new Date("2026-08-15T00:00:00Z"),
+    new Map(),
+    Object.assign(Object.create({ inherited: true }), { value: 1 }),
+    { [Symbol("hidden")]: "value" },
+  ]) {
+    assert.throws(() => canonicalJsonText(invalid), TypeError);
+  }
   const first = createTransitionId({ workflowId: "workflow-123", transitionKey: "sequence-1" });
   const retry = createTransitionId({ transitionKey: "sequence-1", workflowId: "workflow-123" });
   const next = createTransitionId({ workflowId: "workflow-123", transitionKey: "sequence-2" });
   assert.equal(first, retry);
+  assert.equal(
+    first,
+    "transition:063d681424122ce5f7658e8128791dbf542d5d5e249762f93dfba4b4cffdf02e",
+  );
   assert.notEqual(first, next);
   assert.equal(
     createEventId({ workflowId: "workflow-123", transitionId: first }),
     createEventId({ workflowId: "workflow-123", transitionId: first }),
+  );
+  assert.equal(
+    createEventId({ workflowId: "workflow-123", transitionId: first }),
+    "event:22057186e0433555f72098411ed77baba29f8d6c2d7ab81bca0e19a1fde97857",
   );
   assert.notEqual(
     createEventId({ workflowId: "workflow-123", transitionId: first }),

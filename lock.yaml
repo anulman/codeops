@@ -42,6 +42,16 @@ importers:
       '@agentclientprotocol/codex-acp':
         specifier: 1.1.7
         version: 1.1.7
+      '@codeops/codeops-contracts':
+        specifier: workspace:*
+        version: link:../../packages/codeops-contracts
+    devDependencies:
+      '@types/node':
+        specifier: 25.7.0
+        version: 25.7.0
+      typescript:
+        specifier: 6.0.3
+        version: 6.0.3
 
   services/codeops-control-gateway:
     dependencies:

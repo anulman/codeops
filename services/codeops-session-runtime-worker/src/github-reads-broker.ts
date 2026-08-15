@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
+  canonicalJsonText,
   githubCheckLogsInputSchema,
   githubChecksInputSchema,
   githubProtectedBranchInputSchema,
@@ -29,28 +30,13 @@ const routes = new Map<string, GitHubReadOperation>([
   ["/v1/github/search", "search"],
 ]);
 
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, nested]) => [key, normalize(nested)]),
-      );
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
-}
-
 function readRequest(
   dispatchId: string,
   operation: GitHubReadOperation,
   rawInput: unknown,
 ): RuntimeGitHubReadRequest {
   const operationId = (input: unknown) => `githubread-${createHash("sha256")
-    .update(canonical({ dispatchId, operation, input }))
+    .update(canonicalJsonText({ dispatchId, operation, input }))
     .digest("hex")}`;
   switch (operation) {
     case "pull_request_get": {
