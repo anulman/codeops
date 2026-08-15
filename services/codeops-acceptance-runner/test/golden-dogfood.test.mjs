@@ -19,14 +19,14 @@ const requiredScenarioIds = [
   "stale-write-recovery",
   "validation-recovery",
   "cleanup-isolation",
-  "notification-delivery",
+  "lifecycle-relay",
 ];
 
 test("defines every limited-release golden scenario with all fake adapter classes", () => {
   assert.deepEqual(goldenScenarios.map(({ id }) => id), requiredScenarioIds);
   assert.deepEqual(
     [...new Set(goldenScenarios.flatMap(({ adapters }) => adapters))].sort(),
-    ["github", "model", "notification", "plane"],
+    ["github", "jetstream", "model", "plane"],
   );
   assert.equal(goldenScenarios.every(({ probes }) => probes.length > 0), true);
 });
@@ -47,8 +47,11 @@ test("reports only bounded operational measurements", async () => {
     },
   });
   assert.deepEqual(report, {
-    version: "codeops.golden-dogfood-report/v1",
-    adapterMode: "fake",
+    version: "codeops.golden-dogfood-report/v2",
+    evidence: {
+      kind: "simulated-provider",
+      providerMode: "fake",
+    },
     telemetry: "operational-only",
     passed: true,
     scenarioCount: requiredScenarioIds.length,
@@ -63,6 +66,8 @@ test("reports only bounded operational measurements", async () => {
   for (const forbidden of ["prompt", "body", "diff", "log", "attachment", "token"]) {
     assert.equal(serialized.includes(forbidden), false);
   }
+  assert.equal(serialized.includes("notification-delivery"), false);
+  assert.equal(serialized.includes("providerDelivery"), false);
 });
 
 test("fails the report without retaining probe output", async () => {

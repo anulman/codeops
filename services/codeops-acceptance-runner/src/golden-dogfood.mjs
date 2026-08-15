@@ -133,8 +133,8 @@ export const goldenScenarios = Object.freeze([
     )],
   }),
   Object.freeze({
-    id: "notification-delivery",
-    adapters: ["notification"],
+    id: "lifecycle-relay",
+    adapters: ["jetstream"],
     probes: [
       probe(
         "services/codeops-control-gateway/test/work-item-lifecycle-relay.test.mjs",
@@ -233,7 +233,7 @@ function assertManifest(scenarios) {
     }
     for (const adapter of scenario.adapters) adapters.add(adapter);
   }
-  for (const required of ["plane", "github", "model", "notification"]) {
+  for (const required of ["plane", "github", "model", "jetstream"]) {
     if (!adapters.has(required)) {
       throw new Error(`golden suite omits the fake ${required} adapter`);
     }
@@ -263,8 +263,11 @@ export async function runGoldenDogfood(input = {}) {
   }
 
   return Object.freeze({
-    version: "codeops.golden-dogfood-report/v1",
-    adapterMode: "fake",
+    version: "codeops.golden-dogfood-report/v2",
+    evidence: {
+      kind: "simulated-provider",
+      providerMode: "fake",
+    },
     telemetry: "operational-only",
     passed: results.every(({ status }) => status === "passed"),
     scenarioCount: results.length,
