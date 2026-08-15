@@ -2,7 +2,6 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
 import { validateSessionControlSecrets } from "./session-control-config.js";
-import { createModelProxyToken } from "@codeops/codeops-contracts/model-proxy";
 import {
   authorizeSessionRuntimeGitHubRead,
   createGitHubReadProviderClient,
@@ -51,6 +50,7 @@ import {
   initializeSessionFromJob,
   serveSessionJobInitialization,
 } from "./session-job-initialization.js";
+import { issueSessionModelAuthority } from "./session-model-authority.js";
 import {
   ImmutableSessionRuntimeDispatchConflictError,
   SessionRuntimeDispatchNotFoundError,
@@ -394,25 +394,18 @@ const server = createServer((request, response) => {
             const initialized = await initializeSessionFromJob(client, {
               request: initializationRequest,
             });
-            const modelPolicy =
-              "version" in initialized.snapshot.identity
-                ? initialized.snapshot.identity.policy.modelPolicy
-                : {
-                    provider: "openai" as const,
-                    model: "gpt-5.6-sol" as const,
-                    reasoningEffort: "high" as const,
-                  };
+            const issuedAt = new Date();
+            const modelAuthority = issueSessionModelAuthority({
+              snapshot: initialized.snapshot,
+              signingKey: modelProxySigningKey,
+              issuedAt,
+            });
             return {
               ...initialized,
-              ...(modelPolicy.provider === "none"
+              ...(modelAuthority.disposition === "disabled"
                 ? {}
                 : {
-                    modelProxyToken: createModelProxyToken({
-                      subject: initialized.snapshot.sessionId,
-                      signingKey: modelProxySigningKey,
-                      model: modelPolicy.model,
-                      reasoningEffort: modelPolicy.reasoningEffort,
-                    }),
+                    modelProxyToken: modelAuthority.modelProxyToken,
                   }),
             };
           } finally {

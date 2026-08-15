@@ -34,7 +34,6 @@ import {
   loadRepositoryRegistryFile,
   resolveRepositoryRoute,
 } from "./repository-registry.js";
-import { createModelProxyToken } from "@codeops/codeops-contracts/model-proxy";
 import { migrateSessionBroker } from "./session-broker-migration.js";
 import {
   InvalidSessionCommandRequestError,
@@ -54,6 +53,7 @@ import {
   initializeSessionFromJob,
   serveSessionJobInitialization,
 } from "./session-job-initialization.js";
+import { issueSessionModelAuthority } from "./session-model-authority.js";
 import {
   ImmutableSessionRuntimeDispatchConflictError,
   SessionRuntimeDispatchNotFoundError,
@@ -749,35 +749,18 @@ const server = createServer((request, response) => {
             const initialized = await initializeSessionFromJob(client, {
               request: initializationRequest,
             });
-            const modelPolicy =
-              "version" in initialized.snapshot.identity
-                ? initialized.snapshot.identity.policy.modelPolicy
-                : {
-                    provider: "openai" as const,
-                    model: "gpt-5.6-sol" as const,
-                    reasoningEffort: "high" as const,
-                  };
+            const issuedAt = new Date();
+            const modelAuthority = issueSessionModelAuthority({
+              snapshot: initialized.snapshot,
+              signingKey: modelAuth.signingKey,
+              issuedAt,
+            });
             return {
               ...initialized,
-              ...(modelPolicy.provider === "none"
+              ...(modelAuthority.disposition === "disabled"
                 ? {}
                 : {
-                    modelProxyToken: createModelProxyToken({
-                      subject: initialized.snapshot.sessionId,
-                      signingKey: modelAuth.signingKey,
-                      model: modelPolicy.model,
-                      reasoningEffort: modelPolicy.reasoningEffort,
-                      ...(initialized.snapshot.budget === undefined
-                        ? {}
-                        : {
-                            maximumRequests:
-                              initialized.snapshot.budget.remaining.modelRequests,
-                            maximumOutputTokens: Math.min(
-                              32_768,
-                              initialized.snapshot.budget.remaining.totalTokens,
-                            ),
-                          }),
-                    }),
+                    modelProxyToken: modelAuthority.modelProxyToken,
                   }),
             };
           } finally {

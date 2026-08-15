@@ -37,6 +37,7 @@ test("standalone entrypoint does not import broader controller authorities", asy
       "session-broker-http.ts",
       "session-broker-runtime-http.ts",
       "session-job-initialization.ts",
+      "session-model-authority.ts",
     ].map((name) => readFile(new URL(`../src/${name}`, import.meta.url), "utf8")),
   );
   const source = sources.join("\n");
