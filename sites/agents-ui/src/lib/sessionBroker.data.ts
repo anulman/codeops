@@ -2,6 +2,7 @@ import { createServerFn } from "@tanstack/react-start";
 import { setResponseHeader } from "@tanstack/react-start/server";
 import { z } from "zod";
 import { sessionCommandSchema } from "@codeops/codeops-contracts/session-broker";
+import { webPushSubscriptionSchema } from "@codeops/codeops-contracts/session-notification";
 import { agentsContextMiddleware } from "./agentsContext";
 import { sessionBrokerClient } from "./sessionBroker.server";
 import {
@@ -93,5 +94,34 @@ export const synthesizeSessionForks = createServerFn({ method: "POST" })
       targetSessionId: data.targetSessionId,
       candidateSessionIds: data.candidateSessionIds,
       idempotencyKey: data.idempotencyKey,
+    });
+  });
+
+export const getWebPushConfiguration = createServerFn({ method: "GET" })
+  .middleware([agentsContextMiddleware])
+  .handler(async () => {
+    protectResponse();
+    return (await sessionBrokerClient()).getWebPushConfiguration();
+  });
+
+export const registerWebPushSubscription = createServerFn({ method: "POST" })
+  .middleware([agentsContextMiddleware])
+  .inputValidator((value: unknown) => webPushSubscriptionSchema.parse(value))
+  .handler(async ({ data, context }) => {
+    protectResponse();
+    return (await sessionBrokerClient()).registerWebPushSubscription({
+      subscription: data,
+      principalId: context.agentsPrincipal,
+    });
+  });
+
+export const revokeWebPushSubscription = createServerFn({ method: "POST" })
+  .middleware([agentsContextMiddleware])
+  .inputValidator((value: unknown) => webPushSubscriptionSchema.parse(value))
+  .handler(async ({ data, context }) => {
+    protectResponse();
+    return (await sessionBrokerClient()).revokeWebPushSubscription({
+      subscription: data,
+      principalId: context.agentsPrincipal,
     });
   });

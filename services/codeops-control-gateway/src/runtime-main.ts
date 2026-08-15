@@ -80,6 +80,20 @@ import {
   serveWorkspaceLaunch,
 } from "./workspace-launch-http.js";
 import {
+  InvalidSessionNotificationRequestError,
+  serveSessionNotifications,
+} from "./session-notification-http.js";
+import {
+  registerWebPushSubscription,
+  revokeWebPushSubscription,
+} from "./session-notification-store.js";
+import { projectNextSessionNotification } from "./session-notification-projector.js";
+import {
+  acknowledgeWebPushDelivery,
+  claimWebPushDelivery,
+  sendClaimedWebPush,
+} from "./session-notification-delivery.js";
+import {
   admitWorkspaceLaunch,
   createCatalogSourceResolver,
 } from "./workspace-launch.js";
@@ -242,6 +256,50 @@ const sessionBrokerWriteToken = await secretFile(
 if (sessionBrokerWriteToken.length < 32 || sessionBrokerWriteToken.length > 4_096) {
   throw new Error("session broker write token length is invalid");
 }
+const webPushPublicKey = process.env.CODEOPS_WEB_PUSH_PUBLIC_KEY?.trim() || null;
+const webPushPrivateKeyFile =
+  process.env.CODEOPS_WEB_PUSH_PRIVATE_KEY_FILE?.trim() || null;
+const webPushSubject = process.env.CODEOPS_WEB_PUSH_SUBJECT?.trim() || null;
+if (
+  [webPushPublicKey, webPushPrivateKeyFile, webPushSubject].filter(
+    (value) => value !== null,
+  ).length !== 0 &&
+  [webPushPublicKey, webPushPrivateKeyFile, webPushSubject].some(
+    (value) => value === null,
+  )
+) {
+  throw new Error("Web Push configuration must provide public key, private key, and subject");
+}
+if (webPushSubject !== null) {
+  const subject = new URL(webPushSubject);
+  if (
+    !["https:", "mailto:"].includes(subject.protocol) ||
+    subject.username !== "" || subject.password !== "" || subject.hash !== ""
+  ) {
+    throw new Error("CODEOPS_WEB_PUSH_SUBJECT must be one credential-free HTTPS or mailto URL");
+  }
+}
+const webPushVapid = webPushPublicKey === null
+  ? null
+  : await (async () => {
+      const privateKey = await secretFile("CODEOPS_WEB_PUSH_PRIVATE_KEY_FILE");
+      if (
+        !/^[A-Za-z0-9_-]{80,128}$/.test(webPushPublicKey) ||
+        !/^[A-Za-z0-9_-]{40,64}$/.test(privateKey)
+      ) {
+        throw new Error("Web Push VAPID key material is invalid");
+      }
+      return {
+        subject: webPushSubject!,
+        publicKey: webPushPublicKey,
+        privateKey,
+      };
+    })();
+const webPushConfiguration = {
+  version: "codeops.web-push-configuration/v1" as const,
+  enabled: webPushPublicKey !== null,
+  publicKey: webPushPublicKey,
+};
 const sessionRuntimeWorkerToken = await secretFile(
   "CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE",
 );
@@ -528,11 +586,106 @@ const workspaceReconciliationTimer = setInterval(
 workspaceReconciliationTimer.unref();
 scheduleWorkspaceReconciliation();
 
+let sessionNotificationProjection: Promise<void> = Promise.resolve();
+function scheduleSessionNotificationProjection(): void {
+  if (webPushVapid === null) return;
+  sessionNotificationProjection = sessionNotificationProjection.then(async () => {
+    for (let projected = 0; projected < 50; projected += 1) {
+      const client = await database.connect();
+      try {
+        if (!await projectNextSessionNotification({ database: client })) break;
+      } finally {
+        client.release();
+      }
+    }
+  }).catch((error) => {
+    process.stderr.write(`${JSON.stringify({
+      event: "session_notification_projection_failed",
+      error: error instanceof Error ? error.message : String(error),
+    })}\n`);
+  });
+}
+const sessionNotificationProjectionTimer = setInterval(
+  scheduleSessionNotificationProjection,
+  2_000,
+);
+sessionNotificationProjectionTimer.unref();
+scheduleSessionNotificationProjection();
+
+const webPushWorkerId = "control-gateway:web-push";
+let webPushDelivery: Promise<void> = Promise.resolve();
+function scheduleWebPushDelivery(): void {
+  if (webPushVapid === null) return;
+  webPushDelivery = webPushDelivery.then(async () => {
+    for (let delivered = 0; delivered < 20; delivered += 1) {
+      const claim = await claimWebPushDelivery({
+        database,
+        workerId: webPushWorkerId,
+      });
+      if (claim === null) break;
+      const outcome = await sendClaimedWebPush({ claim, vapid: webPushVapid });
+      const client = await database.connect();
+      try {
+        await acknowledgeWebPushDelivery({ database: client, claim, outcome });
+      } finally {
+        client.release();
+      }
+    }
+  }).catch((error) => {
+    process.stderr.write(`${JSON.stringify({
+      event: "web_push_delivery_failed",
+      error: error instanceof Error ? error.message : String(error),
+    })}\n`);
+  });
+}
+const webPushDeliveryTimer = setInterval(scheduleWebPushDelivery, 1_000);
+webPushDeliveryTimer.unref();
+scheduleWebPushDelivery();
+
 let serial: Promise<unknown> = Promise.resolve();
 const server = createServer((request, response) => {
   void (async () => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    try {
+      const sessionNotifications = await serveSessionNotifications({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        readToken: sessionBrokerReadToken,
+        writeToken: sessionBrokerWriteToken,
+        configuration: webPushConfiguration,
+        readBody: () => readJson(request),
+        register: (subscription, principalId) =>
+          registerWebPushSubscription({
+            database,
+            principalId,
+            subscription,
+          }),
+        revoke: (subscription, principalId) =>
+          revokeWebPushSubscription({
+            database,
+            principalId,
+            subscription,
+          }),
+      });
+      if (sessionNotifications !== null) {
+        json(response, sessionNotifications.status, sessionNotifications.body);
+        return;
+      }
+    } catch (error) {
+      json(
+        response,
+        error instanceof InvalidSessionNotificationRequestError ? 400 : 503,
+        {
+          status:
+            error instanceof InvalidSessionNotificationRequestError
+              ? "invalid-request"
+              : "unavailable",
+        },
+      );
       return;
     }
     try {

@@ -43,6 +43,12 @@ controlGateway:
   storageClassName: ""
   storage: 2Gi
   kubernetesApiCidrs: []
+  webPush:
+    enabled: false
+    publicKey: ""
+    subject: ""
+    secretName: codeops-web-push
+    privateKeyKey: private-key
   resources:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }

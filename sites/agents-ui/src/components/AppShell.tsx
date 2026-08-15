@@ -13,7 +13,7 @@ interface AppShellProps {
 export function AppShell({ children, sessions = [], activeSessionId }: AppShellProps) {
   return (
     <div className="min-h-dvh bg-[#111113] text-[#f3f3f1] lg:grid lg:grid-cols-[304px_minmax(0,1fr)]">
-      <SessionNotifications initialSessions={sessions} />
+      <SessionNotifications />
       <aside className="sticky top-0 hidden h-dvh min-h-0 flex-col border-r border-white/[0.07] bg-[#171719] lg:flex">
         <SidebarHeader />
         <SessionNavigator sessions={sessions} activeSessionId={activeSessionId} />

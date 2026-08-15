@@ -11,15 +11,17 @@
     "typecheck": "tsc -p tsconfig.json"
   },
   "dependencies": {
+    "@codeops/codeops-contracts": "workspace:*",
     "@nats-io/jetstream": "3.4.0",
     "@nats-io/transport-node": "3.4.0",
-    "@codeops/codeops-contracts": "workspace:*",
     "pg": "8.22.0",
+    "web-push": "3.6.7",
     "zod": "3.25.76"
   },
   "devDependencies": {
     "@types/node": "25.7.0",
     "@types/pg": "8.20.3",
+    "@types/web-push": "3.6.4",
     "typescript": "6.0.3"
   }
 }

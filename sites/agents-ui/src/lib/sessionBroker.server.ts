@@ -10,6 +10,14 @@ import {
   type SessionSnapshot,
 } from "@codeops/codeops-contracts/session-broker";
 import { z } from "zod";
+import {
+  webPushConfigurationSchema,
+  webPushSubscriptionResultSchema,
+  webPushSubscriptionSchema,
+  type WebPushConfiguration,
+  type WebPushSubscription,
+  type WebPushSubscriptionResult,
+} from "@codeops/codeops-contracts/session-notification";
 
 const MAX_RESPONSE_BYTES = 4 * 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 5_000;
@@ -20,6 +28,11 @@ const identifier = z
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
 const limit = (maximum: number) =>
   z.number().int().min(1).max(maximum);
+const principal = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/);
 
 const fleetResponseSchema = z
   .object({
@@ -84,6 +97,15 @@ export interface SessionBrokerClient {
     readonly command: SessionCommand;
     readonly principalId: string;
   }): Promise<SessionCommandSubmission>;
+  getWebPushConfiguration(): Promise<WebPushConfiguration>;
+  registerWebPushSubscription(input: {
+    readonly subscription: WebPushSubscription;
+    readonly principalId: string;
+  }): Promise<WebPushSubscriptionResult>;
+  revokeWebPushSubscription(input: {
+    readonly subscription: WebPushSubscription;
+    readonly principalId: string;
+  }): Promise<WebPushSubscriptionResult>;
 }
 
 export function parseSessionBrokerBaseUrl(
@@ -141,7 +163,7 @@ export function createSessionBrokerClient(input: {
   const request = async (
     path: string,
     options: {
-      readonly method?: "GET" | "POST";
+      readonly method?: "GET" | "POST" | "DELETE";
       readonly token?: string;
       readonly principalId?: string;
       readonly body?: string;
@@ -215,12 +237,7 @@ export function createSessionBrokerClient(input: {
     },
     async executeCommand({ command, principalId }) {
       const parsedCommand = sessionCommandSchema.parse(command);
-      const parsedPrincipal = z
-        .string()
-        .min(1)
-        .max(256)
-        .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/)
-        .parse(principalId);
+      const parsedPrincipal = principal.parse(principalId);
       const result = sessionCommandSubmissionSchema.parse(
         await request(`/v1/sessions/${parsedCommand.sessionId}/commands`, {
           method: "POST",
@@ -239,6 +256,33 @@ export function createSessionBrokerClient(input: {
         throw new Error("session broker returned the wrong command identity");
       }
       return result;
+    },
+    async getWebPushConfiguration() {
+      return webPushConfigurationSchema.parse(
+        await request("/v1/session-notifications/config"),
+      );
+    },
+    async registerWebPushSubscription({ subscription, principalId }) {
+      const parsed = webPushSubscriptionSchema.parse(subscription);
+      return webPushSubscriptionResultSchema.parse(
+        await request("/v1/session-notifications/subscriptions", {
+          method: "POST",
+          token: input.writeToken,
+          principalId: principal.parse(principalId),
+          body: JSON.stringify(parsed),
+        }),
+      );
+    },
+    async revokeWebPushSubscription({ subscription, principalId }) {
+      const parsed = webPushSubscriptionSchema.parse(subscription);
+      return webPushSubscriptionResultSchema.parse(
+        await request("/v1/session-notifications/subscriptions", {
+          method: "DELETE",
+          token: input.writeToken,
+          principalId: principal.parse(principalId),
+          body: JSON.stringify(parsed),
+        }),
+      );
     },
   };
 }

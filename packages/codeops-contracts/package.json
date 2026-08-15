@@ -33,6 +33,10 @@
       "types": "./dist/session-budget.d.ts",
       "default": "./dist/session-budget.js"
     },
+    "./session-notification": {
+      "types": "./dist/session-notification.d.ts",
+      "default": "./dist/session-notification.js"
+    },
     "./workspace-context-node": {
       "types": "./dist/workspace-context-node.d.ts",
       "default": "./dist/workspace-context-node.js"

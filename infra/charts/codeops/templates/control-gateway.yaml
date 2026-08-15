@@ -138,6 +138,11 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_ID, value: {{ .Values.controlGateway.workerId | quote }} }
             - { name: CODEOPS_WORKSPACE_STORAGE_SIZE, value: {{ .Values.runtime.workspaceStorage | quote }} }
             - { name: CODEOPS_WORKSPACE_STORAGE_CLASS_NAME, value: {{ .Values.runtime.workspaceStorageClassName | quote }} }
+            {{- if .Values.controlGateway.webPush.enabled }}
+            - { name: CODEOPS_WEB_PUSH_PUBLIC_KEY, value: {{ .Values.controlGateway.webPush.publicKey | quote }} }
+            - { name: CODEOPS_WEB_PUSH_SUBJECT, value: {{ .Values.controlGateway.webPush.subject | quote }} }
+            - { name: CODEOPS_WEB_PUSH_PRIVATE_KEY_FILE, value: /var/run/secrets/codeops-web-push/private-key }
+            {{- end }}
             - { name: CODEOPS_HTTP_HOST, value: 0.0.0.0 }
             - { name: CODEOPS_HTTP_PORT, value: "8080" }
           ports: [{ name: http, containerPort: 8080 }]
@@ -156,6 +161,9 @@ spec:
             - { name: session-secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
             - { name: repository-registry, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-runtime-repositories, readOnly: true }
             - { name: model-proxy-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy, readOnly: true }
+            {{- if .Values.controlGateway.webPush.enabled }}
+            - { name: web-push-auth, mountPath: /var/run/secrets/codeops-web-push, readOnly: true }
+            {{- end }}
             - { name: temp, mountPath: /tmp }
       volumes:
         - { name: evidence, persistentVolumeClaim: { claimName: {{ include "codeops.fullname" . }}-control-gateway-evidence } }
@@ -189,6 +197,14 @@ spec:
             defaultMode: 256
             items:
               - { key: signing-key, path: signing-key }
+        {{- if .Values.controlGateway.webPush.enabled }}
+        - name: web-push-auth
+          secret:
+            secretName: {{ .Values.controlGateway.webPush.secretName }}
+            defaultMode: 256
+            items:
+              - { key: {{ .Values.controlGateway.webPush.privateKeyKey }}, path: private-key }
+        {{- end }}
         - name: temp
           emptyDir: { sizeLimit: 64Mi }
 ---
