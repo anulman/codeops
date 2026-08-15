@@ -242,10 +242,12 @@ test("accepts an identity-bound asynchronous runtime command submission", async 
 test("server functions bind the private UI service principal", async () => {
   const dataSource = await readFile(new URL("../src/lib/sessionBroker.data.ts", import.meta.url), "utf8");
   const contextSource = await readFile(new URL("../src/lib/agentsContext.ts", import.meta.url), "utf8");
-  assert.equal((dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length, 5);
+  assert.equal((dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length, 8);
   assert.match(dataSource, /synthesizeSessionForks/);
   assert.match(dataSource, /submitSessionForkSynthesis/);
   assert.match(dataSource, /principalId: context\.agentsPrincipal/);
+  assert.match(dataSource, /registerWebPushSubscription/);
+  assert.match(dataSource, /revokeWebPushSubscription/);
   assert.doesNotMatch(dataSource, /TOKEN_FILE|readFile/);
   assert.match(contextSource, /codeops:agents-ui/);
   assert.doesNotMatch(contextSource, /requestHeader|process\.env/i);

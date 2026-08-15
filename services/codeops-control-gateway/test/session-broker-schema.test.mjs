@@ -20,6 +20,8 @@ const workspaceLaunchUrl = new URL("../sql/workspace-launch.sql", import.meta.ur
 const workspaceLaunchRevertUrl = new URL("../sql/workspace-launch-revert.sql", import.meta.url);
 const workspaceArtifactsUrl = new URL("../sql/workspace-checkpoint-artifacts.sql", import.meta.url);
 const workspaceArtifactsRevertUrl = new URL("../sql/workspace-checkpoint-artifacts-revert.sql", import.meta.url);
+const sessionNotificationsUrl = new URL("../sql/session-notifications.sql", import.meta.url);
+const sessionNotificationsRevertUrl = new URL("../sql/session-notifications-revert.sql", import.meta.url);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");
@@ -167,6 +169,24 @@ test("retains bounded checkpoint payloads instead of digest-only evidence", asyn
   assert.match(sql, /artifact_bytes <= 16000000/);
   assert.match(sql, /REFERENCES codeops\.sessions\(session_id\)/);
   assert.match(revert, /DROP TABLE codeops\.workspace_checkpoint_artifacts/);
+});
+
+test("defines reversible principal-bound Web Push delivery state", async () => {
+  const sql = await readFile(sessionNotificationsUrl, "utf8");
+  const revert = await readFile(sessionNotificationsRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.web_push_subscriptions/);
+  assert.match(sql, /UNIQUE \(principal_id, device_id\)/);
+  assert.match(sql, /endpoint_digest text NOT NULL UNIQUE/);
+  assert.match(sql, /CREATE TABLE codeops\.session_notification_projections/);
+  assert.match(sql, /CREATE TABLE codeops\.session_notification_outbox/);
+  assert.match(sql, /CREATE TABLE codeops\.session_notification_deliveries/);
+  assert.match(sql, /attempt_count BETWEEN 0 AND 8/);
+  assert.match(sql, /CREATE INDEX session_notification_deliveries_available_idx/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(
+    revert,
+    /^BEGIN;[\s\S]*DROP TABLE IF EXISTS codeops\.session_notification_deliveries;[\s\S]*DROP TABLE IF EXISTS codeops\.web_push_subscriptions;[\s\S]*COMMIT;\n$/,
+  );
 });
 
 test("orders migration and reversion around foreign-key dependencies", async () => {

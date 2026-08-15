@@ -34,6 +34,9 @@ gateway sidecar, and session runtime worker. The default `full-managed` profile
 installs PostgreSQL, Temporal, JetStream, and Plane. Production profiles can
 connect to external services or disable optional capabilities.
 
+See [Web Push notifications](docs/operations/web-push.md) to enable background
+session notifications, including installed Home Screen app support on iOS.
+
 ## System requirements
 
 CodeOps requires a working Kubernetes cluster, Helm, `kubectl`, dynamic

@@ -46,6 +46,10 @@ const migrations = [
     name: "workspace-launch-v1",
     url: new URL("../sql/workspace-launch.sql", import.meta.url),
   },
+  {
+    name: "session-notifications-v1",
+    url: new URL("../sql/session-notifications.sql", import.meta.url),
+  },
 ] as const;
 
 function migrationDigest(sql: string): string {

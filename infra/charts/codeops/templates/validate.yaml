@@ -190,6 +190,20 @@
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .Values.controlGateway.repositoryAuthoritySecretName) -}}
 {{- fail "controlGateway.repositoryAuthoritySecretName must be one Kubernetes Secret name" -}}
 {{- end -}}
+{{- if .Values.controlGateway.webPush.enabled -}}
+{{- if not (regexMatch "^[A-Za-z0-9_-]{80,128}$" .Values.controlGateway.webPush.publicKey) -}}
+{{- fail "controlGateway.webPush.publicKey must be one VAPID public key" -}}
+{{- end -}}
+{{- if not (regexMatch "^(https://|mailto:)[^[:space:]#]+$" .Values.controlGateway.webPush.subject) -}}
+{{- fail "controlGateway.webPush.subject must be one HTTPS or mailto VAPID subject" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .Values.controlGateway.webPush.secretName) -}}
+{{- fail "controlGateway.webPush.secretName must be one Kubernetes Secret name" -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" .Values.controlGateway.webPush.privateKeyKey) -}}
+{{- fail "controlGateway.webPush.privateKeyKey must be one Secret data key" -}}
+{{- end -}}
+{{- end -}}
 {{- if eq (len .Values.controlGateway.kubernetesApiCidrs) 0 -}}
 {{- fail "controlGateway.kubernetesApiCidrs must contain the exact Kubernetes API endpoint CIDR" -}}
 {{- end -}}

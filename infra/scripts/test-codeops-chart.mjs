@@ -220,6 +220,25 @@ test("renders one portable CodeOps package with immutable images", () => {
   assert.notEqual(controlGatewayAccount.automountServiceAccountToken, false);
 });
 
+test("wires Web Push only from an explicit public configuration and private Secret", () => {
+  const resources = render([
+    "--set", "controlGateway.webPush.enabled=true",
+    "--set", `controlGateway.webPush.publicKey=${"A".repeat(87)}`,
+    "--set", "controlGateway.webPush.subject=mailto:ops@example.com",
+    "--set", "controlGateway.webPush.secretName=team-a-web-push",
+  ]);
+  const deployment = resource(resources, "Deployment", "team-a-codeops-control-gateway");
+  const container = deployment.spec.template.spec.containers[0];
+  const env = Object.fromEntries(container.env.map(({ name, value }) => [name, value]));
+  assert.equal(env.CODEOPS_WEB_PUSH_PUBLIC_KEY, "A".repeat(87));
+  assert.equal(env.CODEOPS_WEB_PUSH_SUBJECT, "mailto:ops@example.com");
+  assert.equal(env.CODEOPS_WEB_PUSH_PRIVATE_KEY_FILE, "/var/run/secrets/codeops-web-push/private-key");
+  const volume = deployment.spec.template.spec.volumes.find(({ name }) => name === "web-push-auth");
+  assert.equal(volume.secret.secretName, "team-a-web-push");
+  assert.equal(volume.secret.items[0].key, "private-key");
+  assert.equal(JSON.stringify(deployment).includes("privateKey"), false);
+});
+
 test("changes the immutable runtime image ConfigMap identity with image content", () => {
   const baseline = render();
   const changed = render([
