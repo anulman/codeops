@@ -3,45 +3,23 @@ import {
   canonicalJsonText,
   githubReadProviderRequestSchema,
   githubReadResultSchema,
-  sessionRuntimeDispatchSchema,
   sessionRuntimeGitHubReadRequestSchema,
   type GitHubReadProviderRequest,
   type GitHubReadResult,
-  type SessionRuntimeDispatch,
 } from "@codeops/codeops-contracts";
 import type { TransactionClient } from "./session-broker-repository.js";
-
-const workerPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
+import {
+  ClaimedDispatchAuthorityConflictError,
+  ClaimedDispatchAuthorityNotFoundError,
+  loadClaimedDispatchAuthority,
+  selectClaimedWorkspaceSource,
+} from "./claimed-dispatch-authority.js";
 
 export class SessionRuntimeGitHubReadNotFoundError extends Error {}
 export class SessionRuntimeGitHubReadConflictError extends Error {}
 
-interface ClaimRow extends Record<string, unknown> {
-  readonly dispatch_json: unknown;
-  readonly status: unknown;
-  readonly claim_token: unknown;
-  readonly claimed_by: unknown;
-  readonly claim_expires_at: unknown;
-}
-
 function digest(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
-}
-
-function assertRepositoryScope(
-  dispatch: SessionRuntimeDispatch,
-  repository: string,
-): void {
-  if (
-    !("version" in dispatch.snapshot.identity) ||
-    !dispatch.snapshot.identity.workspace.sources.some(
-      (source) => source.repository === repository,
-    )
-  ) {
-    throw new SessionRuntimeGitHubReadConflictError(
-      "GitHub repository is outside the exact workspace source scope",
-    );
-  }
 }
 
 export async function authorizeSessionRuntimeGitHubRead(
@@ -53,42 +31,30 @@ export async function authorizeSessionRuntimeGitHubRead(
     readonly now?: () => Date;
   },
 ): Promise<GitHubReadProviderRequest> {
-  if (!workerPattern.test(input.workerId)) {
-    throw new SessionRuntimeGitHubReadConflictError(
-      "runtime worker identity is invalid",
-    );
-  }
   const request = sessionRuntimeGitHubReadRequestSchema.parse(input.request);
-  const result = await client.query<ClaimRow>(
-    `SELECT dispatch_json, status, claim_token, claimed_by, claim_expires_at
-       FROM codeops.session_runtime_outbox
-      WHERE dispatch_id = $1`,
-    [input.dispatchId],
-  );
-  const row = result.rows[0];
-  if (row === undefined) {
-    throw new SessionRuntimeGitHubReadNotFoundError(
-      "runtime dispatch was not found",
-    );
+  let authority;
+  try {
+    authority = await loadClaimedDispatchAuthority(client, {
+      dispatchId: input.dispatchId,
+      workerId: input.workerId,
+      claimToken: request.claimToken,
+      now: input.now,
+    });
+    selectClaimedWorkspaceSource(authority, {
+      repository: request.input.repository,
+    });
+  } catch (error) {
+    if (error instanceof ClaimedDispatchAuthorityNotFoundError) {
+      throw new SessionRuntimeGitHubReadNotFoundError(
+        "runtime dispatch was not found",
+      );
+    }
+    if (error instanceof ClaimedDispatchAuthorityConflictError) {
+      throw new SessionRuntimeGitHubReadConflictError(error.message);
+    }
+    throw error;
   }
-  const now = (input.now ?? (() => new Date()))().getTime();
-  if (
-    row.status !== "claimed" ||
-    row.claim_token !== request.claimToken ||
-    row.claimed_by !== input.workerId ||
-    Date.parse(String(row.claim_expires_at)) <= now
-  ) {
-    throw new SessionRuntimeGitHubReadConflictError(
-      "GitHub read does not hold the exact live dispatch claim",
-    );
-  }
-  const dispatch = sessionRuntimeDispatchSchema.parse(row.dispatch_json);
-  if (dispatch.dispatchId !== input.dispatchId || dispatch.command.type !== "prompt") {
-    throw new SessionRuntimeGitHubReadConflictError(
-      "only the exact claimed prompt may read GitHub",
-    );
-  }
-  assertRepositoryScope(dispatch, request.input.repository);
+  const dispatch = authority.dispatch;
   const expectedOperationId = `githubread-${createHash("sha256")
     .update(canonicalJsonText({
       dispatchId: dispatch.dispatchId,

@@ -209,7 +209,7 @@ class Client {
 
   async query(text, values = []) {
     this.calls.push({ text, values });
-    if (text.includes("FROM codeops.session_runtime_outbox AS outbox")) {
+    if (text.includes("FROM codeops.session_runtime_outbox\n")) {
       return {
         rowCount: 1,
         rows: [{
@@ -218,6 +218,13 @@ class Client {
           claim_token: claimToken,
           claimed_by: workerId,
           claim_expires_at: "2026-08-14T15:30:00.000Z",
+        }],
+      };
+    }
+    if (text.includes("FROM codeops.session_runtime_outbox AS outbox")) {
+      return {
+        rowCount: 1,
+        rows: [{
           request_json: this.permissionValue,
           command_json: this.decisionValue.command,
           result_json: this.decisionValue.result,

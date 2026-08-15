@@ -116,6 +116,43 @@ function snapshot(overrides = {}) {
   };
 }
 
+function workspaceSnapshot(overrides = {}) {
+  const identity = {
+    version: "codeops.session-workspace-identity/v1",
+    policy: {
+      version: "codeops.session-policy/v1",
+      mode: "implement",
+      workspaceAccess: "bounded-writes",
+      modelCalls: "allowed",
+      modelPolicy: {
+        provider: "openai",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "medium",
+      },
+    },
+    workspace: {
+      version: "codeops.workspace/v1",
+      sources: [{
+        catalogKey: "example-repository",
+        repository,
+        checkoutPath: "sources/example-repository",
+        requestedRef: "main",
+        resolvedSha: sha,
+      }],
+      scratchPath: "scratch",
+    },
+    workflowId: "workspace-plane-1",
+    runId: "run-workspace-plane-1",
+    displayName: "Change the example repository",
+    workItemId,
+    agentRole: "coordinator",
+    round: 1,
+    parentSessionId: null,
+    forkedAtCursor: null,
+  };
+  return snapshot({ identity, ...overrides });
+}
+
 function request(overrides = {}) {
   const calls = [];
   return {
@@ -188,6 +225,45 @@ test("fails closed on unauthorized, drifting, missing, and ambiguous Plane targe
   }), AmbiguousPlaneSessionTargetError);
   assert.throws(() => resolvePlaneSessionTarget({
     sessions: [snapshot({ identity: { ...snapshot().identity, workItemId: "99999999-9999-4999-8999-999999999999" } })],
+    request: planeRequest(),
+    now: new Date("2026-08-14T00:10:00.000Z"),
+  }), PlaneSessionTargetNotFoundError);
+  assert.throws(() => resolvePlaneSessionTarget({
+    sessions: [snapshot()],
+    request: planeRequest({ baseSha: "b".repeat(40) }),
+    now: new Date("2026-08-14T00:10:00.000Z"),
+  }), PlaneSessionTargetNotFoundError);
+});
+
+test("binds workspace Plane steering to the matching repository source SHA", () => {
+  assert.equal(resolvePlaneSessionTarget({
+    sessions: [workspaceSnapshot()],
+    request: planeRequest(),
+    now: new Date("2026-08-14T00:10:00.000Z"),
+  }).sessionId, "ses_plane_1");
+
+  assert.throws(() => resolvePlaneSessionTarget({
+    sessions: [workspaceSnapshot({
+      identity: {
+        ...workspaceSnapshot().identity,
+        workspace: {
+          ...workspaceSnapshot().identity.workspace,
+          sources: [
+            {
+              ...workspaceSnapshot().identity.workspace.sources[0],
+              resolvedSha: "b".repeat(40),
+            },
+            {
+              catalogKey: "unrelated",
+              repository: "example-org/unrelated",
+              checkoutPath: "sources/unrelated",
+              requestedRef: "main",
+              resolvedSha: sha,
+            },
+          ],
+        },
+      },
+    })],
     request: planeRequest(),
     now: new Date("2026-08-14T00:10:00.000Z"),
   }), PlaneSessionTargetNotFoundError);

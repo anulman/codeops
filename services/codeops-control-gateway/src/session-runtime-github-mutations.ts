@@ -6,27 +6,25 @@ import {
   sessionCommandResultSchema,
   sessionCommandSchema,
   sessionPermissionOperationSchema,
-  sessionRuntimeDispatchSchema,
   sessionRuntimeGitHubMutationRequestSchema,
   sessionRuntimePermissionSubmissionSchema,
   type GitHubMutationProviderRequest,
   type GitHubMutationResult,
-  type SessionRuntimeDispatch,
   type SessionRuntimeGitHubMutationRequest,
 } from "@codeops/codeops-contracts";
 import type { TransactionClient } from "./session-broker-repository.js";
-
-const workerPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
+import {
+  ClaimedDispatchAuthorityConflictError,
+  ClaimedDispatchAuthorityNotFoundError,
+  loadClaimedDispatchAuthority,
+  selectClaimedWorkspaceSource,
+  type ClaimedDispatchAuthority,
+} from "./claimed-dispatch-authority.js";
 
 export class SessionRuntimeGitHubMutationNotFoundError extends Error {}
 export class SessionRuntimeGitHubMutationConflictError extends Error {}
 
 interface MutationAuthorizationRow extends Record<string, unknown> {
-  readonly dispatch_json: unknown;
-  readonly status: unknown;
-  readonly claim_token: unknown;
-  readonly claimed_by: unknown;
-  readonly claim_expires_at: unknown;
   readonly request_json: unknown;
   readonly command_json: unknown;
   readonly result_json: unknown;
@@ -36,19 +34,35 @@ function digest(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
 
-function assertRepositoryScope(
-  dispatch: SessionRuntimeDispatch,
-  repository: string,
-): void {
-  if (
-    !("version" in dispatch.snapshot.identity) ||
-    !dispatch.snapshot.identity.workspace.sources.some(
-      (source) => source.repository === repository,
-    )
-  ) {
-    throw new SessionRuntimeGitHubMutationConflictError(
-      "GitHub repository is outside the exact workspace source scope",
-    );
+async function loadMutationAuthority(
+  client: TransactionClient,
+  input: {
+    readonly dispatchId: string;
+    readonly workerId: string;
+    readonly claimToken: string;
+    readonly repository: string;
+    readonly now: Date;
+  },
+): Promise<ClaimedDispatchAuthority> {
+  try {
+    const authority = await loadClaimedDispatchAuthority(client, {
+      dispatchId: input.dispatchId,
+      workerId: input.workerId,
+      claimToken: input.claimToken,
+      now: () => input.now,
+    });
+    selectClaimedWorkspaceSource(authority, { repository: input.repository });
+    return authority;
+  } catch (error) {
+    if (error instanceof ClaimedDispatchAuthorityNotFoundError) {
+      throw new SessionRuntimeGitHubMutationNotFoundError(
+        "runtime dispatch was not found",
+      );
+    }
+    if (error instanceof ClaimedDispatchAuthorityConflictError) {
+      throw new SessionRuntimeGitHubMutationConflictError(error.message);
+    }
+    throw error;
   }
 }
 
@@ -90,16 +104,16 @@ export async function authorizeSessionRuntimeGitHubMutation(
     readonly now?: () => Date;
   },
 ): Promise<GitHubMutationProviderRequest> {
-  if (!workerPattern.test(input.workerId)) {
-    throw new SessionRuntimeGitHubMutationConflictError(
-      "runtime worker identity is invalid",
-    );
-  }
   const request = sessionRuntimeGitHubMutationRequestSchema.parse(input.request);
+  const dispatch = (await loadMutationAuthority(client, {
+    dispatchId: input.dispatchId,
+    workerId: input.workerId,
+    claimToken: request.claimToken,
+    repository: request.input.repository,
+    now: (input.now ?? (() => new Date()))(),
+  })).dispatch;
   const result = await client.query<MutationAuthorizationRow>(
-    `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
-            outbox.claimed_by, outbox.claim_expires_at,
-            permission.request_json, decision.command_json,
+    `SELECT permission.request_json, decision.command_json,
             decision.result_json
        FROM codeops.session_runtime_outbox AS outbox
        LEFT JOIN codeops.session_runtime_permission_requests AS permission
@@ -122,24 +136,6 @@ export async function authorizeSessionRuntimeGitHubMutation(
       "runtime dispatch was not found",
     );
   }
-  const now = (input.now ?? (() => new Date()))().getTime();
-  if (
-    row.status !== "claimed" ||
-    row.claim_token !== request.claimToken ||
-    row.claimed_by !== input.workerId ||
-    Date.parse(String(row.claim_expires_at)) <= now
-  ) {
-    throw new SessionRuntimeGitHubMutationConflictError(
-      "GitHub mutation does not hold the exact live dispatch claim",
-    );
-  }
-  const dispatch = sessionRuntimeDispatchSchema.parse(row.dispatch_json);
-  if (dispatch.dispatchId !== input.dispatchId || dispatch.command.type !== "prompt") {
-    throw new SessionRuntimeGitHubMutationConflictError(
-      "only the exact claimed prompt may mutate GitHub",
-    );
-  }
-  assertRepositoryScope(dispatch, request.input.repository);
 
   const expectedOperationId = `githubmutation-${createHash("sha256")
     .update(canonicalJsonText({

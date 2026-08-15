@@ -208,7 +208,6 @@ test("replays only the exact immutable permission request and rejects stale clai
   for (const client of [
     new SubmitClient({ token: "99999999-9999-4999-8999-999999999999" }),
     new SubmitClient({ expiresAt: null }),
-    new SubmitClient({ current: snapshot({ eventCursor: 2 }) }),
   ]) {
     await assert.rejects(submitSessionRuntimePermission(client, {
       dispatchId,
@@ -216,8 +215,23 @@ test("replays only the exact immutable permission request and rejects stale clai
       submission: submission(),
       now: () => new Date("2026-08-05T03:18:00.000Z"),
     }), SessionRuntimePermissionConflictError);
-    assert.equal(client.calls.at(-1).text, "ROLLBACK");
+    assert.equal(client.calls.length, 1);
   }
+
+  const snapshotDrift = new SubmitClient({
+    current: snapshot({ eventCursor: 2 }),
+  });
+  await assert.rejects(submitSessionRuntimePermission(snapshotDrift, {
+    dispatchId,
+    workerId,
+    submission: submission(),
+    now: () => new Date("2026-08-05T03:18:00.000Z"),
+  }), SessionRuntimePermissionConflictError);
+  assert.equal(snapshotDrift.calls.at(-1).text, "ROLLBACK");
+  assert.equal(
+    snapshotDrift.calls[2].text.includes("codeops.sessions"),
+    true,
+  );
 });
 
 function waitingSnapshot() {
