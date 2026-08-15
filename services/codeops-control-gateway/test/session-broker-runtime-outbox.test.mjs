@@ -319,16 +319,15 @@ class CompletionClient {
   }
   async query(text, values = []) {
     this.calls.push({ text, values });
-    if (text.includes("FROM codeops.sessions AS session")) {
+    if (text.includes("FROM codeops.session_runtime_permission_requests AS request")) {
       return {
-        rowCount: 1,
-        rows: [{
-          snapshot_json: this.current,
+        rowCount: this.permission ? 1 : 0,
+        rows: this.permission ? [{
           request_id: this.permission?.requestId ?? null,
           request_json: this.permission?.submission ?? null,
           command_json: this.permission?.command ?? null,
           result_json: this.permission?.result ?? null,
-        }],
+        }] : [],
       };
     }
     if (text.includes("WHERE dispatch_id = $1") && text.startsWith("SELECT")) {
@@ -392,9 +391,11 @@ test("atomically commits only an exact unexpired claim completion", async () => 
   });
   assert.equal(result.disposition, "committed");
   assert.equal(result.eventCursor, 186);
-  assert.equal(client.calls[2].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
-  assert.match(client.calls[3].text, /codeops\.sessions[\s\S]*FOR UPDATE/);
-  assert.match(client.calls[4].text, /session_runtime_outbox[\s\S]*FOR UPDATE/);
+  const transaction = client.calls.findIndex(({ text }) =>
+    text === "BEGIN ISOLATION LEVEL SERIALIZABLE");
+  assert.ok(transaction > 1);
+  assert.match(client.calls[transaction + 1].text, /codeops\.sessions[\s\S]*FOR UPDATE/);
+  assert.match(client.calls[transaction + 2].text, /session_runtime_outbox[\s\S]*FOR UPDATE/);
   const completed = client.calls.find(({ text }) =>
     text.startsWith("UPDATE codeops.session_runtime_outbox"));
   assert.match(completed.text, /status = 'completed'/);

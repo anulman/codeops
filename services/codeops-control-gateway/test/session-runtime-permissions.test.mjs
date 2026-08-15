@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   pollSessionRuntimePermission,
+  resolveSessionRuntimeCompletionSnapshot,
   SessionRuntimePermissionConflictError,
   submitSessionRuntimePermission,
 } from "../dist/session-runtime-permissions.js";
@@ -114,6 +115,71 @@ function submission(overrides = {}) {
   };
 }
 
+function alternateSubmission() {
+  const alternateOperation = {
+    kind: "command",
+    command: "npm run typecheck",
+    cwd: "/workspace",
+  };
+  const bytes = canonical(alternateOperation);
+  const alternateRequestId = `permission-${createHash("sha256")
+    .update(bytes)
+    .update("\0")
+    .update(dispatchId)
+    .update("\0")
+    .update("tool-call-2")
+    .digest("hex")}`;
+  return submission({
+    request: {
+      ...submission().request,
+      requestId: alternateRequestId,
+      operation: alternateOperation,
+      operationDigest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+      requestedAt: "2026-08-05T03:20:00.000Z",
+    },
+    toolCallId: "tool-call-2",
+  });
+}
+
+function canonical(value) {
+  const normalize = (entry) => {
+    if (Array.isArray(entry)) return entry.map(normalize);
+    if (entry !== null && typeof entry === "object") {
+      return Object.fromEntries(Object.entries(entry)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, nested]) => [key, normalize(nested)]));
+    }
+    return entry;
+  };
+  return JSON.stringify(normalize(value));
+}
+
+function receiptSubmission({ operation, requestId, toolCallId, acpSessionId }) {
+  const bytes = canonical(operation);
+  return {
+    version: "codeops.session-runtime-permission-submission/v1",
+    claimToken,
+    request: {
+      requestId,
+      title: "Allow exact operation?",
+      description: "One exact request-scoped operation.",
+      operation,
+      operationDigest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+      options: [
+        { optionId: "allow-once", label: "Allow once" },
+        { optionId: "deny", label: "Do not allow" },
+      ],
+      requestedAt: "2026-08-05T03:20:00.000Z",
+    },
+    acpSessionId,
+    toolCallId,
+    options: [
+      { optionId: "allow-once", acpOptionId: "allow-once" },
+      { optionId: "deny", acpOptionId: "deny" },
+    ],
+  };
+}
+
 class SubmitClient {
   constructor({ stored = null, current = snapshot(), updateCount = 1, token = claimToken, expiresAt = "2026-08-05T03:30:00.000Z" } = {}) {
     this.stored = stored;
@@ -140,6 +206,25 @@ class SubmitClient {
     }
     if (text.includes("FROM codeops.sessions")) {
       return { rowCount: 1, rows: [{ snapshot_json: this.current }] };
+    }
+    if (
+      text.includes("FROM codeops.session_runtime_permission_requests AS request") &&
+      text.includes("JOIN codeops.session_runtime_outbox AS outbox")
+    ) {
+      return {
+        rowCount: this.stored ? 1 : 0,
+        rows: this.stored ? [{
+          request_json: this.stored,
+          dispatch_json: dispatch(),
+          status: "claimed",
+          claim_token: this.token,
+          claimed_by: workerId,
+          claim_expires_at: this.expiresAt,
+          snapshot_json: this.current,
+          command_json: null,
+          result_json: null,
+        }] : [],
+      };
     }
     if (text.includes("FROM codeops.session_runtime_permission_requests")) {
       return {
@@ -179,7 +264,10 @@ test("atomically publishes one claim-bound permission request and waiting snapsh
 });
 
 test("replays only the exact immutable permission request and rejects stale claims", async () => {
-  const replay = new SubmitClient({ stored: submission() });
+  const replay = new SubmitClient({
+    stored: submission(),
+    current: waitingSnapshot(),
+  });
   assert.equal((await submitSessionRuntimePermission(replay, {
     dispatchId,
     workerId,
@@ -232,6 +320,125 @@ test("replays only the exact immutable permission request and rejects stale clai
     snapshotDrift.calls[2].text.includes("codeops.sessions"),
     true,
   );
+});
+
+test("a duplicate submission returns its exact durable decision", async () => {
+  const selected = decisionCommand({ outcome: "selected", optionId: "allow-once" });
+  const selectedResult = decisionResult(selected);
+  class DecidedReplayClient extends SubmitClient {
+    constructor() {
+      super({ stored: submission(), current: selectedResult.snapshot });
+    }
+
+    async query(text, values = []) {
+      if (
+        text.includes("FROM codeops.session_runtime_permission_requests AS request") &&
+        text.includes("JOIN codeops.session_runtime_outbox AS outbox")
+      ) {
+        this.calls.push({ text, values });
+        return {
+          rowCount: 1,
+          rows: [{
+            request_json: submission(),
+            dispatch_json: dispatch(),
+            status: "claimed",
+            claim_token: claimToken,
+            claimed_by: workerId,
+            claim_expires_at: "2026-08-05T03:30:00.000Z",
+            snapshot_json: selectedResult.snapshot,
+            command_json: selected,
+            result_json: selectedResult,
+          }],
+        };
+      }
+      return super.query(text, values);
+    }
+  }
+  const result = await submitSessionRuntimePermission(
+    new DecidedReplayClient(),
+    {
+      dispatchId,
+      workerId,
+      submission: submission(),
+      now: () => new Date("2026-08-05T03:20:00.000Z"),
+    },
+  );
+  assert.deepEqual(result.decision, {
+    outcome: "selected",
+    acpOptionId: "opaque-allow-once",
+  });
+});
+
+test("a post-commit replay read failure does not roll back committed identity", async () => {
+  class MissingReplayClient extends SubmitClient {
+    constructor() {
+      super({ stored: submission(), current: waitingSnapshot() });
+    }
+
+    async query(text, values = []) {
+      if (
+        text.includes("FROM codeops.session_runtime_permission_requests AS request") &&
+        text.includes("JOIN codeops.session_runtime_outbox AS outbox")
+      ) {
+        this.calls.push({ text, values });
+        return { rowCount: 0, rows: [] };
+      }
+      return super.query(text, values);
+    }
+  }
+  const client = new MissingReplayClient();
+  await assert.rejects(
+    submitSessionRuntimePermission(client, {
+      dispatchId,
+      workerId,
+      submission: submission(),
+      now: () => new Date("2026-08-05T03:20:00.000Z"),
+    }),
+    /was not found/,
+  );
+  assert.equal(client.calls.filter(({ text }) => text === "COMMIT").length, 1);
+  assert.equal(client.calls.some(({ text }) => text === "ROLLBACK"), false);
+});
+
+test("starts a second permission after the first exact decision returns to running", async () => {
+  const firstCommand = decisionCommand({ outcome: "selected", optionId: "allow-once" });
+  const firstResult = decisionResult(firstCommand);
+  class SequentialClient extends SubmitClient {
+    constructor() {
+      super({ current: firstResult.snapshot });
+    }
+
+    async query(text, values = []) {
+      if (text.includes("FROM codeops.session_runtime_permission_requests AS request")) {
+        this.calls.push({ text, values });
+        return {
+          rowCount: 1,
+          rows: [{
+            request_id: requestId,
+            request_json: submission(),
+            command_json: firstCommand,
+            result_json: firstResult,
+          }],
+        };
+      }
+      return super.query(text, values);
+    }
+  }
+  const client = new SequentialClient();
+  const second = alternateSubmission();
+  const result = await submitSessionRuntimePermission(client, {
+    dispatchId,
+    workerId,
+    submission: second,
+    now: () => new Date("2026-08-05T03:21:00.000Z"),
+  });
+  assert.equal(result.requestId, second.request.requestId);
+  const exactLookup = client.calls.find(({ text }) =>
+    text.includes("WHERE dispatch_id = $1 AND request_id = $2"));
+  assert.equal(exactLookup.values[1], second.request.requestId);
+  assert.ok(client.calls.some(({ text, values }) =>
+    text.includes("INSERT INTO codeops.session_runtime_permission_requests") &&
+    values[1] === second.request.requestId));
 });
 
 function waitingSnapshot() {
@@ -328,4 +535,149 @@ test("polls pending, denied, and opaque selected ACP decisions", async () => {
     outcome: "selected",
     acpOptionId: "opaque-allow-session",
   });
+});
+
+function permissionDecisionRow(
+  permissionSubmission,
+  cursor,
+  idempotency,
+  decision = { outcome: "selected", optionId: "allow-once" },
+) {
+  const command = {
+    ...decisionCommand(decision),
+    idempotencyKey: idempotency,
+    permissionRequestId: permissionSubmission.request.requestId,
+  };
+  const result = {
+    ...decisionResult(command),
+    idempotencyKey: idempotency,
+    eventCursor: cursor,
+    snapshot: snapshot({
+      eventCursor: cursor,
+      updatedAt: `2026-08-05T03:${String(10 + cursor).padStart(2, "0")}:00.000Z`,
+    }),
+  };
+  return {
+    request_id: permissionSubmission.request.requestId,
+    request_json: permissionSubmission,
+    command_json: command,
+    result_json: result,
+  };
+}
+
+class CompletionClient {
+  constructor(rows) {
+    this.rows = rows;
+    this.calls = [];
+  }
+
+  async query(text) {
+    this.calls.push(text);
+    if (text.includes("FROM codeops.sessions")) {
+      const latest = this.rows.findLast(({ result_json }) => result_json !== null);
+      return {
+        rowCount: 1,
+        rows: [{ snapshot_json: latest?.result_json.snapshot ?? snapshot() }],
+      };
+    }
+    if (text.includes("FROM codeops.session_runtime_permission_requests AS request")) {
+      return { rowCount: this.rows.length, rows: this.rows };
+    }
+    throw new Error(`unexpected query: ${text}`);
+  }
+}
+
+test("completion validates multiple ordered decisions without a fixed cursor", async () => {
+  const rows = [
+    permissionDecisionRow(
+      submission(),
+      5,
+      "77777777-7777-4777-8777-777777777777",
+    ),
+    permissionDecisionRow(
+      alternateSubmission(),
+      9,
+      "88888888-8888-4888-8888-888888888888",
+    ),
+  ];
+  const client = new CompletionClient(rows);
+  const current = await resolveSessionRuntimeCompletionSnapshot(
+    client,
+    { dispatch: dispatch(), claimToken },
+  );
+  assert.equal(current.eventCursor, 9);
+  const lineageQuery = client.calls.find((text) =>
+    text.includes("FROM codeops.session_runtime_permission_requests AS request"));
+  assert.match(
+    lineageQuery,
+    /ORDER BY request\.created_at ASC,\s+request\.request_id ASC/,
+  );
+
+  const pending = structuredClone(rows);
+  pending[1].command_json = null;
+  pending[1].result_json = null;
+  await assert.rejects(
+    resolveSessionRuntimeCompletionSnapshot(new CompletionClient(pending), {
+      dispatch: dispatch(),
+      claimToken,
+    }),
+    /every prompt permission to be decided/,
+  );
+
+  const substituted = structuredClone(rows);
+  substituted[1].command_json.permissionRequestId = requestId;
+  await assert.rejects(
+    resolveSessionRuntimeCompletionSnapshot(new CompletionClient(substituted), {
+      dispatch: dispatch(),
+      claimToken,
+    }),
+    /exact permission decision lineage/,
+  );
+});
+
+test("completion accepts a work-item receipt followed by a denied GitHub receipt", async () => {
+  const workItem = receiptSubmission({
+    operation: {
+      kind: "work_item",
+      repository: "example-org/example-repository",
+      operation: "comment",
+      targetWorkItemId: "99999999-9999-4999-8999-999999999999",
+      payloadJson: '{"comment":"status"}',
+    },
+    requestId: "workitem-comment-1",
+    toolCallId: "workitem-comment-1",
+    acpSessionId: "codeops-work-items",
+  });
+  const github = receiptSubmission({
+    operation: {
+      kind: "github_mutation",
+      repository: "example-org/example-repository",
+      operation: "check_rerun",
+      pullRequestNumber: null,
+      expectedHeadSha: "a".repeat(40),
+      targetId: "42",
+      payloadJson: '{"checkRunId":42}',
+    },
+    requestId: "permission-github-check-1",
+    toolCallId: "githubmutation-check-1",
+    acpSessionId: "codeops-github",
+  });
+  const rows = [
+    permissionDecisionRow(
+      workItem,
+      5,
+      "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    ),
+    permissionDecisionRow(
+      github,
+      8,
+      "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      { outcome: "denied" },
+    ),
+  ];
+  const current = await resolveSessionRuntimeCompletionSnapshot(
+    new CompletionClient(rows),
+    { dispatch: dispatch(), claimToken },
+  );
+  assert.equal(current.eventCursor, 8);
 });

@@ -45,7 +45,7 @@ interface PolledPermissionRow extends StoredDispatchRow, StoredSessionRow {
   readonly result_json: unknown;
 }
 
-interface CompletionSnapshotRow extends StoredSessionRow {
+interface PermissionDecisionRow extends Record<string, unknown> {
   readonly request_id: unknown;
   readonly request_json: unknown;
   readonly command_json: unknown;
@@ -112,6 +112,118 @@ function pendingResult(
     disposition: "pending",
     decision: null,
   });
+}
+
+async function loadPermissionDecisionRows(
+  client: TransactionClient,
+  dispatchId: string,
+): Promise<readonly PermissionDecisionRow[]> {
+  const result = await client.query<PermissionDecisionRow>(
+    `SELECT request.request_id, request.request_json,
+            decision.command_json, decision.result_json
+       FROM codeops.session_runtime_permission_requests AS request
+       LEFT JOIN codeops.session_commands AS decision
+         ON decision.session_id = request.session_id
+        AND decision.command_json->>'type' = 'respond_permission'
+        AND decision.command_json->>'permissionRequestId' = request.request_id
+      WHERE request.dispatch_id = $1
+      ORDER BY request.created_at ASC,
+               request.request_id ASC,
+               decision.committed_at ASC NULLS LAST,
+               decision.command_id ASC NULLS LAST`,
+    [dispatchId],
+  );
+  return result.rows;
+}
+
+function validatePermissionDecisionLineage(
+  rows: readonly PermissionDecisionRow[],
+  input: {
+    readonly dispatch: SessionRuntimeDispatch;
+    readonly claimToken: string;
+    readonly current: SessionSnapshot;
+  },
+): SessionSnapshot {
+  if (rows.length === 0) {
+    if (
+      canonicalJsonText(input.current) !==
+      canonicalJsonText(input.dispatch.snapshot)
+    ) {
+      throw new SessionRuntimePermissionConflictError(
+        "runtime completion snapshot drifted without a permission transition",
+      );
+    }
+    return input.current;
+  }
+  if (input.dispatch.command.type !== "prompt") {
+    throw new SessionRuntimePermissionConflictError(
+      "runtime permissions require one claimed prompt dispatch",
+    );
+  }
+  const seen = new Set<string>();
+  let previousCursor = input.dispatch.snapshot.eventCursor;
+  let finalSnapshot: SessionSnapshot | null = null;
+  for (const row of rows) {
+    if (
+      row.request_id === null ||
+      row.request_json === null ||
+      row.command_json === null ||
+      row.result_json === null
+    ) {
+      throw new SessionRuntimePermissionConflictError(
+        "runtime completion requires every prompt permission to be decided",
+      );
+    }
+    const requestId = String(row.request_id);
+    if (seen.has(requestId)) {
+      throw new SessionRuntimePermissionConflictError(
+        "runtime permission has more than one durable decision",
+      );
+    }
+    seen.add(requestId);
+    const submission = sessionRuntimePermissionSubmissionSchema.parse(
+      row.request_json,
+    );
+    const command = sessionCommandSchema.parse(row.command_json);
+    const commandResult = sessionCommandResultSchema.parse(row.result_json);
+    if (
+      requestId !== submission.request.requestId ||
+      submission.claimToken !== input.claimToken ||
+      command.type !== "respond_permission" ||
+      command.sessionId !== input.dispatch.command.sessionId ||
+      command.generation !== input.dispatch.command.generation ||
+      command.leaseId !== input.dispatch.command.leaseId ||
+      command.permissionRequestId !== requestId ||
+      commandResult.sessionId !== command.sessionId ||
+      commandResult.generation !== command.generation ||
+      commandResult.leaseId !== command.leaseId ||
+      commandResult.idempotencyKey !== command.idempotencyKey ||
+      commandResult.type !== command.type ||
+      commandResult.disposition !== "committed" ||
+      commandResult.eventCursor <= previousCursor ||
+      commandResult.snapshot.state !== "running" ||
+      commandResult.snapshot.pendingPermission !== null ||
+      commandResult.snapshot.generation !== input.dispatch.snapshot.generation ||
+      commandResult.snapshot.lease?.leaseId !== input.dispatch.command.leaseId ||
+      canonicalJsonText(commandResult.snapshot.identity) !==
+        canonicalJsonText(input.dispatch.snapshot.identity)
+    ) {
+      throw new SessionRuntimePermissionConflictError(
+        "runtime completion does not follow the exact permission decision lineage",
+      );
+    }
+    previousCursor = commandResult.eventCursor;
+    finalSnapshot = commandResult.snapshot;
+  }
+  if (
+    finalSnapshot === null ||
+    canonicalJsonText(finalSnapshot) !== canonicalJsonText(input.current)
+  ) {
+    throw new SessionRuntimePermissionConflictError(
+      "runtime completion does not end at the current session snapshot",
+    );
+  }
+  return input.current;
 }
 
 export async function submitSessionRuntimePermission(
@@ -183,7 +295,6 @@ export async function submitSessionRuntimePermission(
       workerId: input.workerId,
       claimToken: submission.claimToken,
       now: nowDate,
-      sessionSnapshot: sessionRows.rows[0].snapshot_json,
     });
     const dispatch = lockedAuthority.dispatch;
     if (
@@ -208,9 +319,9 @@ export async function submitSessionRuntimePermission(
     const existing = await client.query<StoredPermissionRow>(
       `SELECT request_id, request_json
          FROM codeops.session_runtime_permission_requests
-        WHERE dispatch_id = $1
+        WHERE dispatch_id = $1 AND request_id = $2
         FOR UPDATE`,
-      [input.dispatchId],
+      [input.dispatchId, submission.request.requestId],
     );
     if (existing.rows[0]) {
       const stored = sessionRuntimePermissionSubmissionSchema.parse(
@@ -225,17 +336,25 @@ export async function submitSessionRuntimePermission(
         );
       }
       await client.query("COMMIT");
-      return pendingResult(input.dispatchId, submission.request.requestId);
+      return pollSessionRuntimePermission(client, {
+        dispatchId: input.dispatchId,
+        workerId: input.workerId,
+        poll: {
+          version: "codeops.session-runtime-permission-poll/v1",
+          claimToken: submission.claimToken,
+          requestId: submission.request.requestId,
+        },
+        now: () => nowDate,
+      });
     }
 
     const snapshot = sessionSnapshotSchema.parse(
       sessionRows.rows[0].snapshot_json,
     );
-    if (canonicalJsonText(snapshot) !== canonicalJsonText(dispatch.snapshot)) {
-      throw new SessionRuntimePermissionConflictError(
-        "runtime permission request no longer binds the dispatched snapshot",
-      );
-    }
+    validatePermissionDecisionLineage(
+      await loadPermissionDecisionRows(client, input.dispatchId),
+      { dispatch, claimToken: submission.claimToken, current: snapshot },
+    );
     const transition = applyRuntimePermissionRequestTransition(
       snapshot,
       submission.request,
@@ -308,84 +427,22 @@ export async function resolveSessionRuntimeCompletionSnapshot(
     readonly claimToken: string;
   },
 ): Promise<SessionSnapshot> {
-  const result = await client.query<CompletionSnapshotRow>(
-    `SELECT session.snapshot_json,
-            request.request_id, request.request_json,
-            decision.command_json, decision.result_json
-       FROM codeops.sessions AS session
-       LEFT JOIN codeops.session_runtime_permission_requests AS request
-         ON request.dispatch_id = $1
-       LEFT JOIN LATERAL (
-         SELECT command_json, result_json
-           FROM codeops.session_commands
-          WHERE session_id = request.session_id
-            AND command_json->>'type' = 'respond_permission'
-            AND command_json->>'permissionRequestId' = request.request_id
-          ORDER BY committed_at ASC, command_id ASC
-          LIMIT 1
-       ) AS decision ON TRUE
-      WHERE session.session_id = $2`,
-    [input.dispatch.dispatchId, input.dispatch.command.sessionId],
+  const result = await client.query<StoredSessionRow>(
+    `SELECT snapshot_json
+       FROM codeops.sessions
+      WHERE session_id = $1`,
+    [input.dispatch.command.sessionId],
   );
   if (!result.rows[0]) {
     throw new SessionRuntimePermissionNotFoundError(
       `session ${input.dispatch.command.sessionId} was not found`,
     );
   }
-  if (result.rows.length !== 1) {
-    throw new SessionRuntimePermissionConflictError(
-      "runtime dispatch has more than one permission request",
-    );
-  }
-  const row = result.rows[0];
-  const current = sessionSnapshotSchema.parse(row.snapshot_json);
-  if (row.request_id === null) {
-    if (canonicalJsonText(current) !== canonicalJsonText(input.dispatch.snapshot)) {
-      throw new SessionRuntimePermissionConflictError(
-        "runtime completion snapshot drifted without a permission transition",
-      );
-    }
-    return current;
-  }
-  if (
-    input.dispatch.command.type !== "prompt" ||
-    row.request_json === null ||
-    row.command_json === null ||
-    row.result_json === null
-  ) {
-    throw new SessionRuntimePermissionConflictError(
-      "runtime completion requires one decided prompt permission",
-    );
-  }
-  const submission = sessionRuntimePermissionSubmissionSchema.parse(
-    row.request_json,
+  const current = sessionSnapshotSchema.parse(result.rows[0].snapshot_json);
+  return validatePermissionDecisionLineage(
+    await loadPermissionDecisionRows(client, input.dispatch.dispatchId),
+    { dispatch: input.dispatch, claimToken: input.claimToken, current },
   );
-  const command = sessionCommandSchema.parse(row.command_json);
-  const commandResult = sessionCommandResultSchema.parse(row.result_json);
-  if (
-    row.request_id !== submission.request.requestId ||
-    submission.claimToken !== input.claimToken ||
-    command.type !== "respond_permission" ||
-    command.sessionId !== input.dispatch.command.sessionId ||
-    command.generation !== input.dispatch.command.generation ||
-    command.leaseId !== input.dispatch.command.leaseId ||
-    command.permissionRequestId !== submission.request.requestId ||
-    commandResult.sessionId !== command.sessionId ||
-    commandResult.generation !== command.generation ||
-    commandResult.leaseId !== command.leaseId ||
-    commandResult.idempotencyKey !== command.idempotencyKey ||
-    commandResult.type !== command.type ||
-    commandResult.disposition !== "committed" ||
-    commandResult.eventCursor !== input.dispatch.snapshot.eventCursor + 2 ||
-    commandResult.snapshot.state !== "running" ||
-    commandResult.snapshot.pendingPermission !== null ||
-    canonicalJsonText(commandResult.snapshot) !== canonicalJsonText(current)
-  ) {
-    throw new SessionRuntimePermissionConflictError(
-      "runtime completion does not follow the exact permission decision lineage",
-    );
-  }
-  return current;
 }
 
 export async function pollSessionRuntimePermission(
