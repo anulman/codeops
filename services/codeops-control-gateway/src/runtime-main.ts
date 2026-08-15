@@ -1080,7 +1080,7 @@ const server = createServer((request, response) => {
     const qualificationMatch =
       request.method === "GET"
         ? repositoryRoute?.path.match(
-            /^\/pull-requests\/([1-9][0-9]{0,7})\/heads\/([0-9a-f]{40})\/qualification$/,
+            /^\/pull-requests\/([1-9][0-9]{0,7})\/heads\/([0-9a-f]{40})\/bases\/([0-9a-f]{40})\/refs\/([^/]{1,600})\/qualification$/,
           )
         : null;
     if (qualificationMatch && repositoryRoute !== null) {
@@ -1098,16 +1098,22 @@ const server = createServer((request, response) => {
       try {
         const pullRequestNumber = Number(qualificationMatch[1]);
         const headSha = qualificationMatch[2]!;
+        const baseSha = qualificationMatch[3]!;
+        const baseRef = decodeURIComponent(qualificationMatch[4]!);
         json(response, 200, {
           version: "codeops.github-pull-request-qualification/v1",
           repository: repositoryRoute.authority.repository,
           pullRequestNumber,
           headSha,
+          baseRef,
+          baseSha,
           qualified: await qualifyGitHubHead({
             repositoryUrl: repositoryRoute.authority.repositoryUrl,
             repositoryReadToken: repositoryRoute.authority.readToken,
             pullRequestNumber,
             headSha,
+            baseRef,
+            baseSha,
             requiredCheckNames: requiredReviewCheckNames,
           }),
         });

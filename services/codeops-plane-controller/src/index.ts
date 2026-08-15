@@ -26,6 +26,12 @@ export {
   type SchedulingDecision,
 } from "./scheduler.js";
 export {
+  evaluatePullRequestMaintenance,
+  type ExactPullRequestPosition,
+  type ExactPullRequestTarget,
+  type PullRequestMaintenanceDecision,
+} from "./pull-request-maintenance.js";
+export {
   reconcileProjectScheduling,
   type ProjectSchedulingAction,
 } from "./scheduler-reconciler.js";

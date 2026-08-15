@@ -17,6 +17,7 @@ const binding = {
   headSha: "a".repeat(40),
   headRef: "codeops/ticket-b",
   baseRef: "codeops/ticket-a",
+  baseSha: "c".repeat(40),
   baseTicketId: "77777777-7777-4777-8777-777777777777",
   qualified: true,
   updatedAt: "2026-07-30T21:00:00.000Z",
@@ -31,6 +32,7 @@ function event(overrides = {}) {
     headSha: binding.headSha,
     headRef: binding.headRef,
     baseRef: binding.baseRef,
+    baseSha: binding.baseSha,
     ...overrides,
   };
 }
@@ -103,7 +105,7 @@ test("ref drift never completes an otherwise matching merged PR", async () => {
   const run = harness();
   const result = await reconcileGitHubPullRequestEvent({
     ...run.input,
-    event: event({ baseRef: "main" }),
+    event: event({ baseRef: "main", baseSha: "0".repeat(40) }),
   });
   assert.equal(result.status, "attention-required");
   assert.deepEqual(run.calls.slice(0, 2), [
@@ -186,6 +188,7 @@ test("one native stack merge event completes every exact merged layer idempotent
     headSha: "c".repeat(40),
     headRef: "codeops/ticket-a",
     baseRef: "main",
+    baseSha: "0".repeat(40),
     baseTicketId: undefined,
     nativeStack: {
       number: 42,

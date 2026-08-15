@@ -15,6 +15,7 @@ export type PullRequestBinding = Readonly<{
   headSha: string;
   headRef: string;
   baseRef: string;
+  baseSha: string | null;
   baseTicketId?: string;
   nativeStack?: Readonly<{
     number: number;
@@ -109,6 +110,23 @@ function nativeStackStrategy(input: {
     : "branch-only";
 }
 
+function hasCurrentBase(input: {
+  pullRequest: PullRequestBinding;
+  tickets: ReadonlyMap<string, SchedulerTicket>;
+  protectedMainSha: string;
+}): boolean {
+  if (input.pullRequest.baseRef === "main") {
+    return input.pullRequest.baseSha === input.protectedMainSha;
+  }
+  if (input.pullRequest.baseTicketId === undefined) return false;
+  const parent = input.tickets.get(input.pullRequest.baseTicketId);
+  return (
+    parent?.pullRequest?.state === "open" &&
+    parent.pullRequest.headRef === input.pullRequest.baseRef &&
+    parent.pullRequest.headSha === input.pullRequest.baseSha
+  );
+}
+
 /**
  * Decide whether one ticket may start or continue. Plane/GitHub reconciliation
  * must provide a complete snapshot; missing or ambiguous state fails closed.
@@ -201,6 +219,13 @@ export function evaluateTicketScheduling(input: {
       !pullRequest.qualified
     ) {
       return holdOrCancel(ticket, `blocker-${parent.id}-has-no-qualified-open-pr`);
+    }
+    if (!hasCurrentBase({
+      pullRequest,
+      tickets: input.tickets,
+      protectedMainSha: input.protectedMainSha,
+    })) {
+      return holdOrCancel(ticket, `blocker-${parent.id}-base-moved`);
     }
     if (hasUnmergedReviewAncestor(parent.id, input.tickets)) {
       return holdOrCancel(ticket, "maximum-unmerged-stack-depth-reached");

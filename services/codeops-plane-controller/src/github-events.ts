@@ -62,6 +62,7 @@ const pullRequestEventSchema = z
         base: z
           .object({
             ref: z.string().min(1).max(200),
+            sha: z.string().regex(/^[0-9a-f]{40}$/),
           })
           .passthrough(),
         stack: githubPullRequestStackPositionSchema.nullable().optional(),
@@ -93,6 +94,7 @@ const pullRequestReviewEventSchema = z
         base: z
           .object({
             ref: z.string().min(1).max(200),
+            sha: z.string().regex(/^[0-9a-f]{40}$/),
           })
           .passthrough(),
         stack: githubPullRequestStackPositionSchema.nullable().optional(),
@@ -159,7 +161,12 @@ const pullRequestReviewCommentEventSchema = z
             ref: z.string().min(1).max(200),
           })
           .passthrough(),
-        base: z.object({ ref: z.string().min(1).max(200) }).passthrough(),
+        base: z
+          .object({
+            ref: z.string().min(1).max(200),
+            sha: z.string().regex(/^[0-9a-f]{40}$/),
+          })
+          .passthrough(),
       })
       .passthrough(),
     comment: z
@@ -195,6 +202,7 @@ export type GitHubPullRequestEvent = Readonly<{
   headSha: string;
   headRef: string;
   baseRef: string;
+  baseSha: string;
   stack: GitHubPullRequestStackPosition | null;
   title: string;
   url: string;
@@ -219,6 +227,7 @@ export type GitHubPullRequestReviewEvent = Readonly<{
   currentHeadSha: string;
   headRef: string;
   baseRef: string;
+  baseSha: string;
   stack: GitHubPullRequestStackPosition | null;
   submittedAt: string;
 }>;
@@ -258,6 +267,7 @@ export type GitHubPullRequestReviewCommentEvent = Readonly<{
   currentHeadSha: string;
   headRef: string;
   baseRef: string;
+  baseSha: string;
   actorId: number;
   actorLogin: string;
   actorType: "User" | "Bot";
@@ -312,6 +322,7 @@ export function parseGitHubEvent(input: {
       headSha: payload.pull_request.head.sha,
       headRef: payload.pull_request.head.ref,
       baseRef: payload.pull_request.base.ref,
+      baseSha: payload.pull_request.base.sha,
       stack: payload.pull_request.stack ?? null,
       title: payload.pull_request.title,
       url: payload.pull_request.html_url,
@@ -338,6 +349,7 @@ export function parseGitHubEvent(input: {
       currentHeadSha: payload.pull_request.head.sha,
       headRef: payload.pull_request.head.ref,
       baseRef: payload.pull_request.base.ref,
+      baseSha: payload.pull_request.base.sha,
       stack: payload.pull_request.stack ?? null,
       submittedAt: payload.review.submitted_at,
     };
@@ -381,6 +393,7 @@ export function parseGitHubEvent(input: {
       currentHeadSha: payload.pull_request.head.sha,
       headRef: payload.pull_request.head.ref,
       baseRef: payload.pull_request.base.ref,
+      baseSha: payload.pull_request.base.sha,
       actorId: payload.comment.user.id,
       actorLogin: payload.comment.user.login,
       actorType: payload.comment.user.type,

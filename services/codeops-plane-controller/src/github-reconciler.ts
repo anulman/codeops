@@ -44,6 +44,7 @@ function exactNativeStack(
     binding.nativeStack.number === stack.number &&
     binding.nativeStack.position === stack.position &&
     binding.nativeStack.base.ref === stack.base.ref &&
+    binding.nativeStack.base.sha === stack.base.sha &&
     stack.size >= binding.nativeStack.size
   );
 }
@@ -96,7 +97,8 @@ export async function reconcileGitHubPullRequestEvent(input: {
   const exactHead = binding.headSha === input.event.headSha;
   const exactRefs =
     binding.headRef === input.event.headRef &&
-    binding.baseRef === input.event.baseRef;
+    binding.baseRef === input.event.baseRef &&
+    binding.baseSha === input.event.baseSha;
   const exactStack = exactNativeStack(binding, input.event);
   if (
     input.event.action === "closed" &&
@@ -150,6 +152,7 @@ export async function reconcileGitHubPullRequestEvent(input: {
     state: input.event.action === "closed" ? "closed" : "open",
     headSha: input.event.headSha,
     baseRef: input.event.baseRef,
+    baseSha: input.event.baseSha,
     ...(updatedNativeStack(binding, input.event) === undefined
       ? {}
       : { nativeStack: updatedNativeStack(binding, input.event) }),
@@ -235,6 +238,7 @@ export async function reconcileGitHubPullRequestMergeGroup(input: {
           headSha: pullRequest.head.sha,
           headRef: pullRequest.head.ref,
           baseRef: pullRequest.base.ref,
+          baseSha: pullRequest.base.sha,
           title: input.event.title,
           url: input.event.url,
           actorId: input.event.actorId,

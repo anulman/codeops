@@ -20,6 +20,7 @@ const binding = {
   headSha: "b".repeat(40),
   headRef: "feat/agents-ui",
   baseRef: "feat/codeops-contracts-ci",
+  baseSha: "a".repeat(40),
   qualified: false,
   updatedAt: "2026-08-09T17:00:00.000Z",
 };
@@ -32,6 +33,7 @@ function currentPullRequest(overrides = {}) {
     headSha: binding.headSha,
     headRef: binding.headRef,
     baseRef: binding.baseRef,
+    baseSha: binding.baseSha,
     ...overrides,
   };
 }
@@ -97,6 +99,7 @@ test("steers one allowlisted bound PR comment with deterministic identity", asyn
     assert.equal(calls[0].event.currentHeadSha, binding.headSha);
     assert.equal(calls[0].event.headRef, binding.headRef);
     assert.equal(calls[0].event.baseRef, binding.baseRef);
+    assert.equal(calls[0].event.baseSha, binding.baseSha);
 
     const duplicate = await reconcileGitHubSessionEvent(input);
     assert.equal(duplicate.duplicate, true);
@@ -126,6 +129,7 @@ test("rejects stale inline comments and unauthorized actors before steering", as
         currentHeadSha: binding.headSha,
         headRef: binding.headRef,
         baseRef: binding.baseRef,
+        baseSha: binding.baseSha,
         actorId: 6723643628,
         actorLogin: "anulman",
         actorType: "User",
@@ -188,6 +192,31 @@ test("rejects a SHA-less comment when the live pull-request head moved", async (
       ledger,
       async resolveCurrentPullRequest() {
         return currentPullRequest({ headSha: "c".repeat(40) });
+      },
+      async steer() {
+        steers += 1;
+        return { sessionId: "must-not-run" };
+      },
+    });
+    assert.deepEqual(result, {
+      status: "ignored",
+      reason: "event-does-not-match-bound-current-head",
+    });
+    assert.equal(steers, 0);
+  });
+});
+
+test("rejects a SHA-less comment when the live pull-request base moved", async () => {
+  await withLedger(async (ledger) => {
+    let steers = 0;
+    const result = await reconcileGitHubSessionEvent({
+      event: comment({ commentId: 7006 }),
+      receivedAt: "2026-08-09T17:13:30.000Z",
+      allowedActorIds: new Set([6723643628]),
+      bindings: { async getByPullRequest() { return binding; } },
+      ledger,
+      async resolveCurrentPullRequest() {
+        return currentPullRequest({ baseSha: "c".repeat(40) });
       },
       async steer() {
         steers += 1;

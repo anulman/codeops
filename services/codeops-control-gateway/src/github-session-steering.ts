@@ -22,6 +22,7 @@ const requestSchema = z
         headSha: gitSha,
         headRef: z.string().min(1).max(200),
         baseRef: z.string().min(1).max(200),
+        baseSha: gitSha,
       })
       .passthrough(),
     event: z
@@ -39,6 +40,7 @@ const requestSchema = z
         currentHeadSha: gitSha,
         headRef: z.string().min(1).max(200),
         baseRef: z.string().min(1).max(200),
+        baseSha: gitSha,
       })
       .passthrough(),
     prompt: z.string().min(1).max(65_536),
@@ -61,6 +63,7 @@ const requestSchema = z
       request.event.currentHeadSha !== request.binding.headSha ||
       request.event.headRef !== request.binding.headRef ||
       request.event.baseRef !== request.binding.baseRef ||
+      request.event.baseSha !== request.binding.baseSha ||
       (request.event.headSha !== undefined &&
         request.event.headSha !== request.event.currentHeadSha)
     ) {

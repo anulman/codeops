@@ -27,6 +27,7 @@ const binding = {
   headSha: "a".repeat(40),
   headRef: "codeops/a",
   baseRef: "main",
+  baseSha: "0".repeat(40),
   qualified: true,
   updatedAt: "2026-07-30T21:00:00.000Z",
 };

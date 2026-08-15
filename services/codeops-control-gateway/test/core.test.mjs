@@ -98,6 +98,8 @@ test("qualifies only an approved exact PR head with passing checks and resolved 
     repositoryReadToken: "r".repeat(32),
     pullRequestNumber: 155,
     headSha: "a".repeat(40),
+    baseRef: "main",
+    baseSha: "0".repeat(40),
     requiredCheckNames: ["PR Guardrails", "Release"],
     fetch: async (url, init) => {
       calls.push({ url: String(url), init });
@@ -132,6 +134,8 @@ test("qualifies only an approved exact PR head with passing checks and resolved 
                 state: "OPEN",
                 isDraft: false,
                 headRefOid: "a".repeat(40),
+                baseRefName: "main",
+                baseRefOid: "0".repeat(40),
                 reviewDecision: "APPROVED",
                 reviewThreads: {
                   nodes: [{ isResolved: true }],
@@ -164,6 +168,8 @@ test("rejects approval qualification while any review thread is unresolved", asy
       repositoryReadToken: "r".repeat(32),
       pullRequestNumber: 155,
       headSha: "a".repeat(40),
+      baseRef: "main",
+      baseSha: "0".repeat(40),
       requiredCheckNames: ["PR Guardrails"],
       fetch: async () => {
         calls += 1;
@@ -191,6 +197,8 @@ test("rejects approval qualification while any review thread is unresolved", asy
                       state: "OPEN",
                       isDraft: false,
                       headRefOid: "a".repeat(40),
+                      baseRefName: "main",
+                      baseRefOid: "0".repeat(40),
                       reviewDecision: "APPROVED",
                       reviewThreads: {
                         nodes: [{ isResolved: false }],
@@ -374,6 +382,7 @@ test("resolves only the exact GitHub main ref through the read-only boundary", a
 test("resolves one exact current pull-request head through the read-only boundary", async () => {
   const calls = [];
   const headSha = "d".repeat(40);
+  const baseSha = "b".repeat(40);
   const result = await resolveGitHubPullRequestHead({
     repositoryUrl: "https://github.com/example-org/example-repository",
     repositoryReadToken: "r".repeat(32),
@@ -384,7 +393,7 @@ test("resolves one exact current pull-request head through the read-only boundar
         number: 159,
         state: "open",
         head: { sha: headSha, ref: "feat/agents-ui" },
-        base: { ref: "feat/codeops-contracts-ci" },
+        base: { sha: baseSha, ref: "feat/codeops-contracts-ci" },
       });
     },
   });
@@ -395,6 +404,7 @@ test("resolves one exact current pull-request head through the read-only boundar
     headSha,
     headRef: "feat/agents-ui",
     baseRef: "feat/codeops-contracts-ci",
+    baseSha,
   });
   assert.equal(
     calls[0].url,
@@ -411,7 +421,7 @@ test("resolves one exact current pull-request head through the read-only boundar
         number: 160,
         state: "open",
         head: { sha: headSha, ref: "feat/agents-ui" },
-        base: { ref: "feat/codeops-contracts-ci" },
+        base: { sha: baseSha, ref: "feat/codeops-contracts-ci" },
       }),
     }),
   );

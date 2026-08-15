@@ -161,6 +161,7 @@ export interface GitHubPullRequestHead {
   readonly headSha: string;
   readonly headRef: string;
   readonly baseRef: string;
+  readonly baseSha: string;
 }
 
 function parseGitHubRepositoryUrl(value: string): {
@@ -231,7 +232,10 @@ export async function resolveGitHubPullRequestHead(input: {
         })
         .passthrough(),
       base: z
-        .object({ ref: z.string().min(1).max(200) })
+        .object({
+          ref: z.string().min(1).max(200),
+          sha: z.string().regex(/^[0-9a-f]{40}$/),
+        })
         .passthrough(),
     })
     .passthrough()
@@ -243,6 +247,7 @@ export async function resolveGitHubPullRequestHead(input: {
     headSha: pullRequest.head.sha,
     headRef: pullRequest.head.ref,
     baseRef: pullRequest.base.ref,
+    baseSha: pullRequest.base.sha,
   };
 }
 
@@ -328,6 +333,8 @@ export async function qualifyGitHubHead(input: {
   repositoryReadToken: string;
   pullRequestNumber: number;
   headSha: string;
+  baseRef: string;
+  baseSha: string;
   requiredCheckNames: readonly string[];
   fetch?: typeof fetch;
 }): Promise<boolean> {
@@ -339,6 +346,13 @@ export async function qualifyGitHubHead(input: {
     .max(10_000_000)
     .parse(input.pullRequestNumber);
   const headSha = z.string().regex(/^[0-9a-f]{40}$/).parse(input.headSha);
+  const baseRef = z
+    .string()
+    .min(1)
+    .max(200)
+    .regex(/^(?!\/|.*(?:\/\/|@\{|\\|\.\.))(?!.*\/$)[A-Za-z0-9._/-]+$/)
+    .parse(input.baseRef);
+  const baseSha = z.string().regex(/^[0-9a-f]{40}$/).parse(input.baseSha);
   const required = new Set(
     z
       .array(z.string().min(1).max(200))
@@ -419,7 +433,7 @@ export async function qualifyGitHubHead(input: {
         "query CodeOpsPullRequestQualification($owner: String!, $name: String!, $number: Int!) {",
         "  repository(owner: $owner, name: $name) {",
         "    pullRequest(number: $number) {",
-        "      number state isDraft headRefOid reviewDecision",
+        "      number state isDraft headRefOid baseRefName baseRefOid reviewDecision",
         "      reviewThreads(first: 100) {",
         "        nodes { isResolved }",
         "        pageInfo { hasNextPage }",
@@ -449,6 +463,8 @@ export async function qualifyGitHubHead(input: {
                   state: z.literal("OPEN"),
                   isDraft: z.boolean(),
                   headRefOid: z.string().regex(/^[0-9a-f]{40}$/),
+                  baseRefName: z.string().min(1).max(200),
+                  baseRefOid: z.string().regex(/^[0-9a-f]{40}$/),
                   reviewDecision: z
                     .enum(["APPROVED", "CHANGES_REQUESTED", "REVIEW_REQUIRED"])
                     .nullable(),
@@ -484,6 +500,8 @@ export async function qualifyGitHubHead(input: {
     pullRequest !== null &&
     pullRequest.number === pullRequestNumber &&
     pullRequest.headRefOid === headSha &&
+    pullRequest.baseRefName === baseRef &&
+    pullRequest.baseRefOid === baseSha &&
     !pullRequest.isDraft &&
     pullRequest.reviewDecision === "APPROVED" &&
     !pullRequest.reviewThreads.pageInfo.hasNextPage &&

@@ -685,6 +685,8 @@ const listener = createPlaneWebhookRequestListener({
             qualifyGitHubHead({
               pullRequestNumber: review.number,
               headSha: review.reviewedHeadSha,
+              baseRef: review.baseRef,
+              baseSha: review.baseSha,
             }),
           reevaluateProject: async () => {
             // Review invalidation cancels descendants above. Positive admission
