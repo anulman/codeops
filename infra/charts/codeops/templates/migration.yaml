@@ -60,6 +60,8 @@ spec:
             - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/codeops/database-url }
             - { name: CODEOPS_RUNTIME_DATABASE_URL_FILE, value: /var/run/secrets/codeops/runtime-database-url }
             - { name: CODEOPS_RUNTIME_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops/runtime-database-role }
+            - { name: CODEOPS_MODEL_PROXY_DATABASE_URL_FILE, value: /var/run/secrets/codeops-model-proxy/database-url }
+            - { name: CODEOPS_MODEL_PROXY_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops-model-proxy/database-role }
             {{- if eq .Values.jetstream.driver "jetstream" }}
             - { name: CODEOPS_LIFECYCLE_RELAY_DATABASE_URL_FILE, value: /var/run/secrets/codeops-relay/database-url }
             - { name: CODEOPS_LIFECYCLE_RELAY_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops-relay/database-role }
@@ -73,6 +75,7 @@ spec:
             capabilities: { drop: [ALL] }
           volumeMounts:
             - { name: secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
+            - { name: model-proxy-authority, mountPath: /var/run/secrets/codeops-model-proxy, readOnly: true }
             {{- if eq .Values.jetstream.driver "jetstream" }}
             - { name: relay-authority, mountPath: /var/run/secrets/codeops-relay, readOnly: true }
             {{- end }}
@@ -95,6 +98,13 @@ spec:
               - { key: {{ .Values.lifecycleRelay.databaseUrlKey }}, path: database-url }
               - { key: {{ .Values.lifecycleRelay.databaseRoleKey }}, path: database-role }
         {{- end }}
+        - name: model-proxy-authority
+          secret:
+            secretName: {{ .Values.modelProxy.secretName }}
+            defaultMode: 256
+            items:
+              - { key: {{ .Values.modelProxy.databaseUrlKey }}, path: database-url }
+              - { key: {{ .Values.modelProxy.databaseRoleKey }}, path: database-role }
         - name: temp
           emptyDir: { sizeLimit: 32Mi }
 {{- end }}

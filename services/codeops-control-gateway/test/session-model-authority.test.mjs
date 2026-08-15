@@ -32,6 +32,7 @@ function snapshot(options = {}) {
     : defaultBudget;
   return {
     sessionId: "ses_model_authority_1",
+    generation: 3,
     identity: {
       version: "codeops.session-workspace-identity/v1",
       policy: sessionPolicyForMode(mode),
@@ -68,6 +69,8 @@ test("both initialization paths issue byte-identical model authority", () => {
   assert.deepEqual(payload(runtimeAuthority.modelProxyToken), {
     aud: "codeops-model-proxy",
     sub: "ses_model_authority_1",
+    budgetId: "ses_model_authority_1",
+    generation: 3,
     model: "gpt-5.6-sol",
     reasoningEffort: "medium",
     maximumRequests: 17,

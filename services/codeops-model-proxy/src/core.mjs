@@ -1,5 +1,9 @@
-import { createHmac, timingSafeEqual } from "node:crypto";
+import { createHash, createHmac, randomUUID, timingSafeEqual } from "node:crypto";
 import { Readable } from "node:stream";
+import {
+  ModelBudgetAuthorityError,
+  ModelBudgetExhaustedError,
+} from "./model-budget-ledger.mjs";
 
 const MAX_BODY_BYTES = 20 * 1024 * 1024;
 const MAX_TOKEN_TTL_SECONDS = 75 * 60;
@@ -219,14 +223,26 @@ export function validateModelProxyToken(input) {
     return null;
   }
   const now = Math.floor((input.now ?? Date.now()) / 1_000);
+  const payloadKeys = payload !== null && typeof payload === "object"
+    ? Object.keys(payload).sort().join(",")
+    : "";
+  const hasSessionBudgetAuthority = payloadKeys ===
+    "aud,budgetId,exp,generation,iat,maximumOutputTokens,maximumRequests,model,reasoningEffort,sub";
+  const hasLegacyAuthority = payloadKeys ===
+    "aud,exp,iat,maximumOutputTokens,maximumRequests,model,reasoningEffort,sub";
   if (
     payload === null ||
     typeof payload !== "object" ||
-    Object.keys(payload).sort().join(",") !==
-      "aud,exp,iat,maximumOutputTokens,maximumRequests,model,reasoningEffort,sub" ||
+    (!hasSessionBudgetAuthority && !hasLegacyAuthority) ||
     payload.aud !== "codeops-model-proxy" ||
     typeof payload.sub !== "string" ||
     !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(payload.sub) ||
+    (hasSessionBudgetAuthority && (
+      typeof payload.budgetId !== "string" ||
+      !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(payload.budgetId) ||
+      !Number.isSafeInteger(payload.generation) ||
+      payload.generation < 1
+    )) ||
     typeof payload.model !== "string" ||
     !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(payload.model) ||
     !["none", "low", "medium", "high", "xhigh"].includes(
@@ -248,6 +264,11 @@ export function validateModelProxyToken(input) {
   }
   return {
     runId: payload.sub,
+    budgetId: hasSessionBudgetAuthority ? payload.budgetId : null,
+    generation: hasSessionBudgetAuthority ? payload.generation : null,
+    modelTokenId: hasSessionBudgetAuthority
+      ? `sha256:${createHash("sha256").update(input.token).digest("hex")}`
+      : null,
     expiresAt: payload.exp,
     model: payload.model,
     reasoningEffort: payload.reasoningEffort,
@@ -271,6 +292,189 @@ async function readBody(request) {
   return { body: Buffer.concat(chunks), bytes };
 }
 
+async function readBoundedProviderBody(upstream) {
+  if (upstream.body === null) return Buffer.alloc(0);
+  const chunks = [];
+  let bytes = 0;
+  for await (const chunk of Readable.fromWeb(upstream.body)) {
+    const buffer = Buffer.from(chunk);
+    bytes += buffer.length;
+    if (bytes > MAX_BODY_BYTES) {
+      throw new Error("provider response exceeds 20 MiB");
+    }
+    chunks.push(buffer);
+  }
+  return Buffer.concat(chunks);
+}
+
+function providerRequestId(upstream, responseBody = null) {
+  const candidate =
+    upstream.headers.get("request-id") ??
+    upstream.headers.get("x-request-id") ??
+    responseBody?.id ??
+    null;
+  return typeof candidate === "string" &&
+    /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/.test(candidate)
+    ? candidate
+    : null;
+}
+
+function provedUsage(responseBody) {
+  const usage = responseBody?.usage;
+  if (
+    usage === null ||
+    typeof usage !== "object" ||
+    !Number.isSafeInteger(usage.input_tokens) ||
+    usage.input_tokens < 0 ||
+    !Number.isSafeInteger(usage.output_tokens) ||
+    usage.output_tokens < 0 ||
+    !Number.isSafeInteger(usage.total_tokens) ||
+    usage.total_tokens !== usage.input_tokens + usage.output_tokens
+  ) {
+    return null;
+  }
+  return {
+    inputTokens: usage.input_tokens,
+    outputTokens: usage.output_tokens,
+    totalTokens: usage.total_tokens,
+  };
+}
+
+function parseJson(buffer) {
+  try {
+    return JSON.parse(buffer.toString("utf8"));
+  } catch {
+    return null;
+  }
+}
+
+function unknownFailureClass(error) {
+  return error?.name === "TimeoutError" || error?.name === "AbortError"
+    ? "timeout"
+    : "transport";
+}
+
+function sseSeparator(buffer) {
+  const lf = buffer.indexOf("\n\n");
+  const crlf = buffer.indexOf("\r\n\r\n");
+  if (lf === -1) return crlf === -1 ? null : { index: crlf, length: 4 };
+  if (crlf === -1 || lf < crlf) return { index: lf, length: 2 };
+  return { index: crlf, length: 4 };
+}
+
+function completedStreamEvent(block) {
+  let text;
+  try {
+    text = new TextDecoder("utf-8", { fatal: true }).decode(block);
+  } catch {
+    return { invalid: true };
+  }
+  const data = text
+    .split(/\r?\n/u)
+    .filter((line) => line.startsWith("data:"))
+    .map((line) => line.slice(5).trimStart())
+    .join("\n");
+  if (data === "" || data === "[DONE]") return null;
+  let event;
+  try {
+    event = JSON.parse(data);
+  } catch {
+    return { invalid: true };
+  }
+  if (event?.type !== "response.completed") return null;
+  const usage = provedUsage(event.response);
+  return usage === null
+    ? { invalid: true }
+    : { invalid: false, usage, response: event.response };
+}
+
+async function writeChunk(response, chunk) {
+  if (response.write(chunk)) return;
+  await new Promise((resolve, reject) => {
+    response.once("drain", resolve);
+    response.once("error", reject);
+  });
+}
+
+async function relaySettledStream(input) {
+  let pending = Buffer.alloc(0);
+  let terminal = null;
+  const trailingBlocks = [];
+  let invalidTerminal = false;
+  let truncated = false;
+  let bytes = 0;
+  input.response.writeHead(input.upstream.status, input.responseHeaders);
+  try {
+    if (input.upstream.body !== null) {
+      for await (const chunk of Readable.fromWeb(input.upstream.body)) {
+        const next = Buffer.from(chunk);
+        bytes += next.length;
+        if (bytes > MAX_BODY_BYTES) {
+          invalidTerminal = true;
+          break;
+        }
+        pending = Buffer.concat([pending, next]);
+        let separator;
+        while ((separator = sseSeparator(pending)) !== null) {
+          const end = separator.index + separator.length;
+          const block = pending.subarray(0, end);
+          pending = pending.subarray(end);
+          const completed = completedStreamEvent(block);
+          if (completed?.invalid === true) {
+            invalidTerminal = true;
+            continue;
+          }
+          if (completed !== null) {
+            if (terminal !== null) {
+              invalidTerminal = true;
+              continue;
+            }
+            terminal = { block, ...completed };
+            continue;
+          }
+          if (terminal !== null) {
+            trailingBlocks.push(block);
+            continue;
+          }
+          await writeChunk(input.response, block);
+        }
+      }
+    }
+  } catch {
+    truncated = true;
+  }
+  if (pending.toString("utf8").trim() !== "") invalidTerminal = true;
+  const requestId = providerRequestId(input.upstream, terminal?.response);
+  if (terminal === null || invalidTerminal) {
+    await input.ledger.settle({
+      reservationId: input.reservationId,
+      state: "charged_unknown",
+      providerRequestId: requestId,
+      provedInputTokens: null,
+      provedOutputTokens: null,
+      provedTotalTokens: null,
+      failureClass: truncated
+        ? "truncated_stream"
+        : terminal === null
+          ? "missing_terminal_usage"
+          : "invalid_terminal_usage",
+    });
+  } else {
+    await input.ledger.settle({
+      reservationId: input.reservationId,
+      state: "settled",
+      providerRequestId: requestId,
+      provedInputTokens: terminal.usage.inputTokens,
+      provedOutputTokens: terminal.usage.outputTokens,
+      provedTotalTokens: terminal.usage.totalTokens,
+      failureClass: null,
+    });
+    await writeChunk(input.response, terminal.block);
+    for (const block of trailingBlocks) await writeChunk(input.response, block);
+  }
+  input.response.end();
+}
+
 export function createModelProxyRequestListener(input) {
   if (
     typeof input.openAiApiKey !== "string" ||
@@ -278,6 +482,13 @@ export function createModelProxyRequestListener(input) {
     /\s/.test(input.openAiApiKey)
   ) {
     throw new Error("OpenAI API key is invalid");
+  }
+  if (
+    input.modelBudgetLedger === null ||
+    typeof input.modelBudgetLedger?.reserve !== "function" ||
+    typeof input.modelBudgetLedger?.settle !== "function"
+  ) {
+    throw new Error("model budget ledger is invalid");
   }
   const inFlightByRun = new Map();
   const requestsByRun = new Map();
@@ -389,35 +600,37 @@ export function createModelProxyRequestListener(input) {
         );
         return;
       }
-      const priorUsage = requestsByRun.get(authority.runId);
-      const requestCount =
-        priorUsage && priorUsage.expiresAt === authority.expiresAt
-          ? priorUsage.count + 1
-          : 1;
-      const admittedMaximumRequests = Math.min(
-        maxRequestsPerRun,
-        authority.maximumRequests,
-      );
-      if (requestCount > admittedMaximumRequests) {
-        release();
-        log({
-          event: "model_proxy_request_stop_loss",
-          subject: authority.runId,
-          requestCount: requestCount - 1,
-          maximumRequests: admittedMaximumRequests,
-        });
-        json(
-          response,
-          429,
-          { error: "model proxy request stop-loss reached" },
-          { "Retry-After": "60" },
+      if (authority.budgetId === null) {
+        const priorUsage = requestsByRun.get(authority.runId);
+        const requestCount =
+          priorUsage && priorUsage.expiresAt === authority.expiresAt
+            ? priorUsage.count + 1
+            : 1;
+        const admittedMaximumRequests = Math.min(
+          maxRequestsPerRun,
+          authority.maximumRequests,
         );
-        return;
+        if (requestCount > admittedMaximumRequests) {
+          release();
+          log({
+            event: "model_proxy_request_stop_loss",
+            subject: authority.runId,
+            requestCount: requestCount - 1,
+            maximumRequests: admittedMaximumRequests,
+          });
+          json(
+            response,
+            429,
+            { error: "model proxy request stop-loss reached" },
+            { "Retry-After": "60" },
+          );
+          return;
+        }
+        requestsByRun.set(authority.runId, {
+          count: requestCount,
+          expiresAt: authority.expiresAt,
+        });
       }
-      requestsByRun.set(authority.runId, {
-        count: requestCount,
-        expiresAt: authority.expiresAt,
-      });
       const startedAt = Date.now();
       let status = 502;
       let requestBytes = 0;
@@ -436,6 +649,40 @@ export function createModelProxyRequestListener(input) {
           allowedModels,
           Math.min(maxOutputTokens, authority.maximumOutputTokens),
         );
+        const reservationId = authority.budgetId === null ? null : randomUUID();
+        if (reservationId !== null) {
+          try {
+            await input.modelBudgetLedger.reserve({
+              reservationId,
+              modelTokenId: authority.modelTokenId,
+              sessionId: authority.runId,
+              budgetId: authority.budgetId,
+              generation: authority.generation,
+              provider: "openai",
+              model: authority.model,
+              reasoningEffort: authority.reasoningEffort,
+              requestedOutputTokens: admittedBody.max_output_tokens,
+              reservedOutputTokens: admittedBody.max_output_tokens,
+            });
+          } catch (error) {
+            if (error instanceof ModelBudgetExhaustedError) {
+              status = 429;
+              json(
+                response,
+                status,
+                { error: "model budget exhausted", limit: error.limit },
+                { "Retry-After": "60" },
+              );
+              return;
+            }
+            if (error instanceof ModelBudgetAuthorityError) {
+              status = 403;
+              json(response, status, { error: "model budget authority invalid" });
+              return;
+            }
+            throw error;
+          }
+        }
         const upstreamBody = Buffer.from(JSON.stringify(admittedBody));
         if (requestBytes >= WARN_BODY_BYTES) {
           log({
@@ -455,16 +702,32 @@ export function createModelProxyRequestListener(input) {
           const value = request.headers[name];
           if (typeof value === "string" && value.length <= 1_024) headers.set(name, value);
         }
-        const upstream = await (input.fetch ?? fetch)(
-          "https://api.openai.com/v1/responses",
-          {
-            method: "POST",
-            redirect: "error",
-            headers,
-            body: upstreamBody,
-            signal: AbortSignal.timeout(10 * 60 * 1_000),
-          },
-        );
+        let upstream;
+        try {
+          upstream = await (input.fetch ?? fetch)(
+            "https://api.openai.com/v1/responses",
+            {
+              method: "POST",
+              redirect: "error",
+              headers,
+              body: upstreamBody,
+              signal: AbortSignal.timeout(10 * 60 * 1_000),
+            },
+          );
+        } catch (error) {
+          if (reservationId !== null) {
+            await input.modelBudgetLedger.settle({
+              reservationId,
+              state: "charged_unknown",
+              providerRequestId: null,
+              provedInputTokens: null,
+              provedOutputTokens: null,
+              provedTotalTokens: null,
+              failureClass: unknownFailureClass(error),
+            });
+          }
+          throw error;
+        }
         status = upstream.status;
         const responseHeaders = {
           "Cache-Control": "no-store",
@@ -474,14 +737,82 @@ export function createModelProxyRequestListener(input) {
           const value = upstream.headers.get(name);
           if (value !== null) responseHeaders[name] = value;
         }
-        response.writeHead(upstream.status, responseHeaders);
-        if (upstream.body === null) {
-          response.end();
+        if (reservationId === null) {
+          response.writeHead(upstream.status, responseHeaders);
+          if (upstream.body === null) {
+            response.end();
+            return;
+          }
+          await new Promise((resolve, reject) => {
+            Readable.fromWeb(upstream.body)
+              .once("error", reject)
+              .pipe(response)
+              .once("finish", resolve)
+              .once("error", reject);
+          });
           return;
         }
-        await new Promise((resolve, reject) => {
-          Readable.fromWeb(upstream.body).once("error", reject).pipe(response).once("finish", resolve).once("error", reject);
-        });
+        if (upstream.ok && admittedBody.stream === true) {
+          await relaySettledStream({
+            upstream,
+            response,
+            responseHeaders,
+            ledger: input.modelBudgetLedger,
+            reservationId,
+          });
+          return;
+        }
+        const providerBody = await readBoundedProviderBody(upstream);
+        const providerJson = parseJson(providerBody);
+        const requestId = providerRequestId(upstream, providerJson);
+        if (upstream.status >= 400 && upstream.status < 500) {
+          await input.modelBudgetLedger.settle({
+            reservationId,
+            state: "provider_rejected",
+            providerRequestId: requestId,
+            provedInputTokens: null,
+            provedOutputTokens: null,
+            provedTotalTokens: null,
+            failureClass: "provider_rejected",
+          });
+        } else if (upstream.ok && admittedBody.stream !== true) {
+          const usage = provedUsage(providerJson);
+          await input.modelBudgetLedger.settle(
+            usage === null
+              ? {
+                  reservationId,
+                  state: "charged_unknown",
+                  providerRequestId: requestId,
+                  provedInputTokens: null,
+                  provedOutputTokens: null,
+                  provedTotalTokens: null,
+                  failureClass: providerJson === null
+                    ? "invalid_terminal_usage"
+                    : "missing_terminal_usage",
+                }
+              : {
+                  reservationId,
+                  state: "settled",
+                  providerRequestId: requestId,
+                  provedInputTokens: usage.inputTokens,
+                  provedOutputTokens: usage.outputTokens,
+                  provedTotalTokens: usage.totalTokens,
+                  failureClass: null,
+                },
+          );
+        } else {
+          await input.modelBudgetLedger.settle({
+            reservationId,
+            state: "charged_unknown",
+            providerRequestId: requestId,
+            provedInputTokens: null,
+            provedOutputTokens: null,
+            provedTotalTokens: null,
+            failureClass: "transport",
+          });
+        }
+        response.writeHead(upstream.status, responseHeaders);
+        response.end(providerBody);
       } catch (error) {
         if (error instanceof RequestBodyLimitError) status = 413;
         else if (error instanceof RequestPolicyError) status = 400;

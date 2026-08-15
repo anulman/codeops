@@ -136,6 +136,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "applied",
     "applied",
     "applied",
+    "applied",
   ]);
   const inserts = client.calls
     .filter(({ text }) => text.includes("INSERT INTO codeops.schema_migrations"))
@@ -153,6 +154,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "session-notifications-v1",
     "session-model-budget-ledger-v2",
     "session-model-budget-ledger-functions-v1",
+    "session-model-budget-recovery-v1",
   ]);
 });
 
@@ -168,6 +170,7 @@ test("grants the model proxy only fixed ledger function execution", async () => 
   assert.match(sql, /REVOKE ALL ON ALL TABLES IN SCHEMA codeops/);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION codeops\.reserve_session_model_budget/);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION codeops\.settle_session_model_budget/);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION codeops\.charge_stale_session_model_budget_reservations/);
   assert.doesNotMatch(sql, /GRANT (SELECT|INSERT|UPDATE|DELETE)/);
   assert.equal(client.calls.at(-1).text, "COMMIT");
 });

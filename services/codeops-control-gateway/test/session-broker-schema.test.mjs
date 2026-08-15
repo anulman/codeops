@@ -26,6 +26,8 @@ const modelBudgetLedgerUrl = new URL("../sql/session-model-budget-ledger-v2.sql"
 const modelBudgetLedgerRevertUrl = new URL("../sql/session-model-budget-ledger-v2-revert.sql", import.meta.url);
 const modelBudgetFunctionsUrl = new URL("../sql/session-model-budget-ledger-functions-v1.sql", import.meta.url);
 const modelBudgetFunctionsRevertUrl = new URL("../sql/session-model-budget-ledger-functions-v1-revert.sql", import.meta.url);
+const modelBudgetRecoveryUrl = new URL("../sql/session-model-budget-recovery-v1.sql", import.meta.url);
+const modelBudgetRecoveryRevertUrl = new URL("../sql/session-model-budget-recovery-v1-revert.sql", import.meta.url);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");
@@ -253,6 +255,27 @@ test("defines a least-privilege model budget state machine", async () => {
     revert.indexOf("settle_session_model_budget") <
       revert.indexOf("reserve_session_model_budget"),
   );
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
+});
+
+test("charges stale proxy reservations through one fixed recovery function", async () => {
+  const sql = await readFile(modelBudgetRecoveryUrl, "utf8");
+  const revert = await readFile(modelBudgetRecoveryRevertUrl, "utf8");
+  assert.match(
+    sql,
+    /CREATE FUNCTION codeops\.charge_stale_session_model_budget_reservations\(\)/,
+  );
+  assert.match(sql, /interval '15 minutes'/);
+  assert.match(sql, /failure_class = 'proxy_stopped'/);
+  assert.ok(
+    sql.indexOf("FROM codeops.session_model_budgets AS budgets") <
+      sql.indexOf("FROM codeops.session_model_budget_reservations AS reservations\n     WHERE reservations.reservation_id"),
+  );
+  assert.match(sql, /SECURITY DEFINER/);
+  assert.match(sql, /SET search_path = pg_catalog, codeops/);
+  assert.match(sql, /REVOKE ALL ON FUNCTION/);
+  assert.match(revert, /DROP FUNCTION IF EXISTS/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });

@@ -589,7 +589,16 @@ function BudgetFacts({ session }: Readonly<{ session: SessionSnapshot }>) {
   if (!budget) return null;
   const ratio = (current: number, limit: number) =>
     `${current.toLocaleString()} / ${limit.toLocaleString()}`;
-  return <>
+  return budget.version === "codeops.session-budget/v2" ? <>
+    <Fact label="Elapsed" value={`${Math.ceil(budget.usage.elapsedSeconds / 60).toLocaleString()} / ${Math.ceil(budget.limits.elapsedSeconds / 60).toLocaleString()} min`} />
+    <Fact label="Provider requests (hard)" value={ratio(budget.usage.providerRequests, budget.limits.providerRequests)} />
+    <Fact label="Output tokens (hard)" value={ratio(budget.usage.outputTokens + budget.reserved.outputTokens, budget.limits.outputTokens)} />
+    <Fact label="Reserved output" value={budget.reserved.outputTokens.toLocaleString()} />
+    <Fact label="Observed input" value={budget.usage.observedInputTokens.toLocaleString()} />
+    <Fact label="Observed total" value={budget.usage.observedTotalTokens.toLocaleString()} />
+    <Fact label="Active children" value={ratio(budget.usage.activeChildren, budget.limits.activeChildren)} />
+    <Fact label="Exhausted limit" value={budget.exhaustedLimit?.replaceAll("_", " ") ?? "None"} tone={budget.exhaustedLimit ? "warning" : "success"} />
+  </> : <>
     <Fact label="Elapsed" value={`${Math.ceil(budget.usage.elapsedSeconds / 60).toLocaleString()} / ${Math.ceil(budget.limits.elapsedSeconds / 60).toLocaleString()} min`} />
     <Fact label="Tokens" value={ratio(budget.usage.totalTokens, budget.limits.totalTokens)} />
     <Fact label="Model requests" value={ratio(budget.usage.modelRequests, budget.limits.modelRequests)} />

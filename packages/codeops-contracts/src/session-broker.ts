@@ -1,6 +1,9 @@
 import { z } from "zod";
 import { sessionPolicySchema } from "./session-policy.js";
-import { sessionBudgetProjectionSchema } from "./session-budget.js";
+import {
+  sessionBudgetProjectionSchema,
+  sessionBudgetV2ProjectionSchema,
+} from "./session-budget.js";
 import {
   workspaceContextAttachmentDescriptorsSchema,
   workspaceContextAttachmentsSchema,
@@ -431,7 +434,9 @@ export const sessionSnapshotSchema = z
     lease: sessionLeaseSchema.nullable(),
     checkpoint: sessionCheckpointSchema.nullable(),
     pendingPermission: sessionPermissionRequestSchema.nullable(),
-    budget: sessionBudgetProjectionSchema.optional(),
+    budget: z
+      .union([sessionBudgetProjectionSchema, sessionBudgetV2ProjectionSchema])
+      .optional(),
     eventCursor: z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER),
     capabilities: z.array(sessionCapabilitySchema).length(
       sessionActionTypeSchema.options.length,

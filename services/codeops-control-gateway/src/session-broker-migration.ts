@@ -61,6 +61,13 @@ const migrations = [
       import.meta.url,
     ),
   },
+  {
+    name: "session-model-budget-recovery-v1",
+    url: new URL(
+      "../sql/session-model-budget-recovery-v1.sql",
+      import.meta.url,
+    ),
+  },
 ] as const;
 
 function migrationDigest(sql: string): string {
@@ -263,6 +270,9 @@ export async function grantModelProxyLedgerAccess(
     );
     await client.query(
       `GRANT EXECUTE ON FUNCTION codeops.settle_session_model_budget(uuid, text, text, bigint, bigint, bigint, text) TO ${identifier}`,
+    );
+    await client.query(
+      `GRANT EXECUTE ON FUNCTION codeops.charge_stale_session_model_budget_reservations() TO ${identifier}`,
     );
     await client.query("COMMIT");
   } catch (error) {

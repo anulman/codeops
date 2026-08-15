@@ -93,7 +93,10 @@ installation, the operator must create these Secrets:
   named receipt-only role and a 32–256 character URL-safe password. Its host,
   port, and database must match `database-url`; it must not use the gateway
   database role;
-- `codeops-model-proxy-credentials`: `openai-api-key`, `signing-key`;
+- `codeops-model-proxy-credentials`: `openai-api-key`, `signing-key`,
+  `database-url`, and `database-role`. The database URL uses the named
+  execute-only ledger role and a 32–256 character URL-safe password. Its host,
+  port, and database must match the gateway database URL;
 - `codeops-control-gateway-secrets`: `dispatch-token`,
   `repository-head-token`, `github-mutation-token`, `publication-token`.
 - `codeops-controller-secrets`: `research-projection-token`.
@@ -166,8 +169,10 @@ runtime ServiceAccount does not receive a Kubernetes API token or RBAC grant.
 The gateway and model proxy mount the same `signing-key` from
 `codeops-model-proxy-credentials`. No copied key or equality check is
 required. The coding-agent container receives only a 75-minute session-bound
-proxy token. It never mounts the reusable OpenAI credential or reusable Codex
-state.
+proxy token. The proxy role can execute only the fixed budget reservation and
+settlement functions. It cannot read or write ledger tables directly. The
+coding-agent container never mounts the reusable OpenAI credential, database
+credential, or reusable Codex state.
 
 Coding agents use cached Codex web search for ordinary research. Codex
 auto-review evaluates exceptional command-level network requests without a

@@ -3,6 +3,7 @@ import {
   canonicalJsonText,
   isWorkspaceSessionIdentity,
   projectSessionBudget,
+  projectSessionBudgetV2,
   SESSION_BROKER_VERSION,
   sessionCommandResultSchema,
   sessionCommandSchema,
@@ -59,6 +60,16 @@ export async function loadSessionSnapshot(
   const result = await client.query<StoredSessionRow>(
     `SELECT parent.snapshot_json,
             CURRENT_TIMESTAMP AS observed_at,
+            budget.budget_id AS model_budget_id,
+            budget.started_at AS model_budget_started_at,
+            budget.provider_requests_limit,
+            budget.output_tokens_limit,
+            budget.committed_provider_requests,
+            budget.settled_output_tokens,
+            budget.reserved_output_tokens,
+            budget.observed_input_tokens,
+            budget.observed_total_tokens,
+            budget.revision AS model_budget_revision,
             (SELECT count(*)::integer
                FROM codeops.sessions AS child
               WHERE child.snapshot_json->'identity'->>'parentSessionId' = parent.session_id
@@ -66,6 +77,8 @@ export async function loadSessionSnapshot(
                     ('queued', 'running', 'waiting_permission', 'checkpointing', 'hibernated'))
               AS active_children
        FROM codeops.sessions AS parent
+       LEFT JOIN codeops.session_model_budgets AS budget
+         ON budget.session_id = parent.session_id
       WHERE parent.session_id = $1`,
     [sessionId],
   );
@@ -85,6 +98,16 @@ export async function listSessionSnapshots(
   const result = await client.query<StoredSessionRow>(
     `SELECT parent.snapshot_json,
             CURRENT_TIMESTAMP AS observed_at,
+            budget.budget_id AS model_budget_id,
+            budget.started_at AS model_budget_started_at,
+            budget.provider_requests_limit,
+            budget.output_tokens_limit,
+            budget.committed_provider_requests,
+            budget.settled_output_tokens,
+            budget.reserved_output_tokens,
+            budget.observed_input_tokens,
+            budget.observed_total_tokens,
+            budget.revision AS model_budget_revision,
             (SELECT count(*)::integer
                FROM codeops.sessions AS child
               WHERE child.snapshot_json->'identity'->>'parentSessionId' = parent.session_id
@@ -92,6 +115,8 @@ export async function listSessionSnapshots(
                     ('queued', 'running', 'waiting_permission', 'checkpointing', 'hibernated'))
               AS active_children
        FROM codeops.sessions AS parent
+       LEFT JOIN codeops.session_model_budgets AS budget
+         ON budget.session_id = parent.session_id
       ORDER BY parent.updated_at DESC, parent.session_id ASC
       LIMIT $1`,
     [limit],
@@ -110,6 +135,62 @@ function projectStoredSessionBudget(row: StoredSessionRow): SessionSnapshot {
   const activeChildren = Number(row.active_children ?? 0);
   if (!Number.isSafeInteger(activeChildren) || activeChildren < 0) {
     throw new Error("stored active child session count is invalid");
+  }
+  if (row.model_budget_id !== undefined && row.model_budget_id !== null) {
+    const count = (value: unknown, name: string): number => {
+      const parsed = Number(value);
+      if (!Number.isSafeInteger(parsed) || parsed < 0) {
+        throw new Error(`stored model budget ${name} is invalid`);
+      }
+      return parsed;
+    };
+    const startedAt = row.model_budget_started_at instanceof Date
+      ? row.model_budget_started_at.toISOString()
+      : String(row.model_budget_started_at);
+    const elapsedSeconds = snapshot.budget?.limits.elapsedSeconds;
+    const activeChildrenLimit = snapshot.budget?.limits.activeChildren;
+    if (elapsedSeconds === undefined || activeChildrenLimit === undefined) {
+      throw new Error("stored model budget is missing session limits");
+    }
+    return sessionSnapshotSchema.parse({
+      ...snapshot,
+      budget: projectSessionBudgetV2({
+        budgetId: String(row.model_budget_id),
+        revision: count(row.model_budget_revision, "revision"),
+        startedAt,
+        observedAt,
+        limits: {
+          elapsedSeconds,
+          providerRequests: count(
+            row.provider_requests_limit,
+            "provider request limit",
+          ),
+          outputTokens: count(row.output_tokens_limit, "output token limit"),
+          activeChildren: activeChildrenLimit,
+        },
+        providerRequests: count(
+          row.committed_provider_requests,
+          "provider requests",
+        ),
+        outputTokens: count(row.settled_output_tokens, "output tokens"),
+        reservedOutputTokens: count(
+          row.reserved_output_tokens,
+          "reserved output tokens",
+        ),
+        observedInputTokens: count(
+          row.observed_input_tokens,
+          "observed input tokens",
+        ),
+        observedTotalTokens: count(
+          row.observed_total_tokens,
+          "observed total tokens",
+        ),
+        activeChildren,
+      }),
+    });
+  }
+  if (snapshot.budget.version !== "codeops.session-budget/v1") {
+    throw new Error("durable model budget row is missing");
   }
   return sessionSnapshotSchema.parse({
     ...snapshot,
@@ -215,6 +296,16 @@ interface StoredSessionRow extends Record<string, unknown> {
   readonly snapshot_json: unknown;
   readonly observed_at?: unknown;
   readonly active_children?: unknown;
+  readonly model_budget_id?: unknown;
+  readonly model_budget_started_at?: unknown;
+  readonly provider_requests_limit?: unknown;
+  readonly output_tokens_limit?: unknown;
+  readonly committed_provider_requests?: unknown;
+  readonly settled_output_tokens?: unknown;
+  readonly reserved_output_tokens?: unknown;
+  readonly observed_input_tokens?: unknown;
+  readonly observed_total_tokens?: unknown;
+  readonly model_budget_revision?: unknown;
 }
 
 function requireResultIdentity(
@@ -320,14 +411,28 @@ async function commandBudgetRejection(
     }
     activeChildren = count;
   }
-  const budget = projectSessionBudget({
-    startedAt: snapshot.budget.startedAt,
-    observedAt,
-    limits: snapshot.budget.limits,
-    totalTokens: snapshot.budget.usage.totalTokens,
-    modelRequests: snapshot.budget.usage.modelRequests,
-    activeChildren,
-  });
+  const budget = snapshot.budget.version === "codeops.session-budget/v2"
+    ? projectSessionBudgetV2({
+        budgetId: snapshot.budget.budgetId,
+        revision: snapshot.budget.revision,
+        startedAt: snapshot.budget.startedAt,
+        observedAt,
+        limits: snapshot.budget.limits,
+        providerRequests: snapshot.budget.usage.providerRequests,
+        outputTokens: snapshot.budget.usage.outputTokens,
+        reservedOutputTokens: snapshot.budget.reserved.outputTokens,
+        observedInputTokens: snapshot.budget.usage.observedInputTokens,
+        observedTotalTokens: snapshot.budget.usage.observedTotalTokens,
+        activeChildren,
+      })
+    : projectSessionBudget({
+        startedAt: snapshot.budget.startedAt,
+        observedAt,
+        limits: snapshot.budget.limits,
+        totalTokens: snapshot.budget.usage.totalTokens,
+        modelRequests: snapshot.budget.usage.modelRequests,
+        activeChildren,
+      });
   const hardReason = (() => {
     if (
       ["prompt", "resume", "fork"].includes(command.type) &&
@@ -337,13 +442,20 @@ async function commandBudgetRejection(
     }
     if (
       command.type === "prompt" &&
-      budget.usage.totalTokens >= budget.limits.totalTokens
+      (budget.version === "codeops.session-budget/v2"
+        ? budget.usage.outputTokens + budget.reserved.outputTokens >=
+          budget.limits.outputTokens
+        : budget.usage.totalTokens >= budget.limits.totalTokens)
     ) {
-      return "The token budget is exhausted.";
+      return budget.version === "codeops.session-budget/v2"
+        ? "The output-token budget is exhausted."
+        : "The token budget is exhausted.";
     }
     if (
       command.type === "prompt" &&
-      budget.usage.modelRequests >= budget.limits.modelRequests
+      (budget.version === "codeops.session-budget/v2"
+        ? budget.usage.providerRequests >= budget.limits.providerRequests
+        : budget.usage.modelRequests >= budget.limits.modelRequests)
     ) {
       return "The model-request budget is exhausted.";
     }
@@ -430,6 +542,35 @@ async function persistForkedSession(
   if (inserted.rowCount !== 1) {
     throw new SessionForkConflictError(
       `fork child session ${snapshot.sessionId} already exists`,
+    );
+  }
+  if (snapshot.budget !== undefined) {
+    const providerRequestsLimit = snapshot.budget.version === "codeops.session-budget/v2"
+      ? snapshot.budget.limits.providerRequests
+      : snapshot.budget.limits.modelRequests;
+    const outputTokensLimit = snapshot.budget.version === "codeops.session-budget/v2"
+      ? snapshot.budget.limits.outputTokens
+      : snapshot.budget.limits.totalTokens;
+    const budgetId = snapshot.budget.version === "codeops.session-budget/v2"
+      ? snapshot.budget.budgetId
+      : snapshot.sessionId;
+    await client.query(
+      `INSERT INTO codeops.session_model_budgets (
+         session_id, budget_id, started_at, provider_requests_limit,
+         output_tokens_limit, committed_provider_requests,
+         settled_output_tokens, reserved_output_tokens,
+         observed_input_tokens, observed_total_tokens, revision, updated_at
+       ) VALUES (
+         $1, $2, $3::timestamptz, $4, $5, 0, 0, 0, 0, 0, 1,
+         $3::timestamptz
+       )`,
+      [
+        snapshot.sessionId,
+        budgetId,
+        snapshot.budget.startedAt,
+        providerRequestsLimit,
+        outputTokensLimit,
+      ],
     );
   }
 }
@@ -521,16 +662,35 @@ export async function executeSessionCommandTransaction(
     // for one session a single serialization point, including two first-time
     // requests racing with the same key.
     const locked = await client.query<StoredSessionRow>(
-      `SELECT snapshot_json
-         FROM codeops.sessions
-        WHERE session_id = $1
-        FOR UPDATE`,
+      `SELECT parent.snapshot_json,
+              CURRENT_TIMESTAMP AS observed_at,
+              budget.budget_id AS model_budget_id,
+              budget.started_at AS model_budget_started_at,
+              budget.provider_requests_limit,
+              budget.output_tokens_limit,
+              budget.committed_provider_requests,
+              budget.settled_output_tokens,
+              budget.reserved_output_tokens,
+              budget.observed_input_tokens,
+              budget.observed_total_tokens,
+              budget.revision AS model_budget_revision,
+              (SELECT count(*)::integer
+                 FROM codeops.sessions AS child
+                WHERE child.snapshot_json->'identity'->>'parentSessionId' = parent.session_id
+                  AND child.snapshot_json->>'state' IN
+                      ('queued', 'running', 'waiting_permission', 'checkpointing', 'hibernated'))
+                AS active_children
+         FROM codeops.sessions AS parent
+         LEFT JOIN codeops.session_model_budgets AS budget
+           ON budget.session_id = parent.session_id
+        WHERE parent.session_id = $1
+        FOR UPDATE OF parent`,
       [command.sessionId],
     );
     if (!locked.rows[0]) {
       throw new SessionNotFoundError(`session ${command.sessionId} not found`);
     }
-    const snapshot = sessionSnapshotSchema.parse(locked.rows[0].snapshot_json);
+    const snapshot = projectStoredSessionBudget(locked.rows[0]);
 
     const reservedRuntimeDispatch = await client.query<StoredRuntimeDispatchRow>(
       `SELECT dispatch_id, dispatch_json, status, claim_token, claimed_by,

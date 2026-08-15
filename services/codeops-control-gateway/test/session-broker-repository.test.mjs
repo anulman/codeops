@@ -170,6 +170,67 @@ test("projects current elapsed time and active children on every snapshot read",
   assert.deepEqual(listed[0].budget, loaded.budget);
 });
 
+test("projects hard model limits and observed telemetry from the durable ledger", async () => {
+  const stored = snapshot({
+    budget: {
+      version: "codeops.session-budget/v1",
+      startedAt: "2026-08-04T03:00:00.000Z",
+      observedAt: "2026-08-04T03:01:00.000Z",
+      limits: {
+        elapsedSeconds: 3600,
+        totalTokens: 10_000,
+        modelRequests: 10,
+        activeChildren: 4,
+      },
+      usage: {
+        elapsedSeconds: 60,
+        totalTokens: 1_000,
+        modelRequests: 2,
+        activeChildren: 0,
+      },
+      remaining: {
+        elapsedSeconds: 3540,
+        totalTokens: 9_000,
+        modelRequests: 8,
+        activeChildren: 4,
+      },
+      exhaustedLimit: null,
+    },
+  });
+  const row = {
+    snapshot_json: stored,
+    observed_at: new Date("2026-08-04T03:10:00.000Z"),
+    active_children: 2,
+    model_budget_id: stored.sessionId,
+    model_budget_started_at: new Date("2026-08-04T03:00:00.000Z"),
+    provider_requests_limit: "10",
+    output_tokens_limit: "10000",
+    committed_provider_requests: "3",
+    settled_output_tokens: "1200",
+    reserved_output_tokens: "300",
+    observed_input_tokens: "4500",
+    observed_total_tokens: "5700",
+    model_budget_revision: "7",
+  };
+  const loaded = await loadSessionSnapshot(new FakeReadClient([row]), stored.sessionId);
+  assert.equal(loaded.budget.version, "codeops.session-budget/v2");
+  assert.deepEqual(loaded.budget.usage, {
+    elapsedSeconds: 600,
+    providerRequests: 3,
+    outputTokens: 1_200,
+    observedInputTokens: 4_500,
+    observedTotalTokens: 5_700,
+    activeChildren: 2,
+  });
+  assert.deepEqual(loaded.budget.reserved, { outputTokens: 300 });
+  assert.deepEqual(loaded.budget.remaining, {
+    elapsedSeconds: 3_000,
+    providerRequests: 7,
+    outputTokens: 8_500,
+    activeChildren: 2,
+  });
+});
+
 test("bounds and revalidates the fleet snapshot read", async () => {
   const client = new FakeReadClient([{ snapshot_json: snapshot() }]);
   assert.equal((await listSessionSnapshots(client, 25)).length, 1);

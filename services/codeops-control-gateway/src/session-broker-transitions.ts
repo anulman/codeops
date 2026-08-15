@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import {
   isWorkspaceSessionIdentity,
   projectSessionBudget,
+  projectSessionBudgetV2,
   SESSION_BROKER_VERSION,
   allowedSessionActionsForState,
   sessionActionTypeSchema,
@@ -366,17 +367,31 @@ export function applyPromptSessionTransition(
   );
   const budget = snapshot.budget === undefined
     ? undefined
-    : projectSessionBudget({
-        startedAt: snapshot.budget.startedAt,
-        observedAt: occurredAt,
-        limits: snapshot.budget.limits,
-        totalTokens: Math.max(
-          snapshot.budget.usage.totalTokens,
-          latestUsage?.kind === "usage" ? latestUsage.usedTokens : 0,
-        ),
-        modelRequests: snapshot.budget.usage.modelRequests + 1,
-        activeChildren: snapshot.budget.usage.activeChildren,
-      });
+    : snapshot.budget.version === "codeops.session-budget/v2"
+      ? projectSessionBudgetV2({
+          budgetId: snapshot.budget.budgetId,
+          revision: snapshot.budget.revision,
+          startedAt: snapshot.budget.startedAt,
+          observedAt: occurredAt,
+          limits: snapshot.budget.limits,
+          providerRequests: snapshot.budget.usage.providerRequests,
+          outputTokens: snapshot.budget.usage.outputTokens,
+          reservedOutputTokens: snapshot.budget.reserved.outputTokens,
+          observedInputTokens: snapshot.budget.usage.observedInputTokens,
+          observedTotalTokens: snapshot.budget.usage.observedTotalTokens,
+          activeChildren: snapshot.budget.usage.activeChildren,
+        })
+      : projectSessionBudget({
+          startedAt: snapshot.budget.startedAt,
+          observedAt: occurredAt,
+          limits: snapshot.budget.limits,
+          totalTokens: Math.max(
+            snapshot.budget.usage.totalTokens,
+            latestUsage?.kind === "usage" ? latestUsage.usedTokens : 0,
+          ),
+          modelRequests: snapshot.budget.usage.modelRequests,
+          activeChildren: snapshot.budget.usage.activeChildren,
+        });
   const nextSnapshot = sessionSnapshotSchema.parse({
     ...snapshot,
     ...(budget === undefined ? {} : { budget }),
@@ -601,11 +616,21 @@ export function applyForkSessionTransition(
     },
     checkpoint: null,
     pendingPermission: null,
-    budget: projectSessionBudget({
-      startedAt: occurredAt,
-      observedAt: occurredAt,
-      ...(snapshot.budget === undefined ? {} : { limits: snapshot.budget.limits }),
-    }),
+    budget: snapshot.budget?.version === "codeops.session-budget/v2"
+      ? projectSessionBudgetV2({
+          budgetId: material.sessionId,
+          revision: 1,
+          startedAt: occurredAt,
+          observedAt: occurredAt,
+          limits: snapshot.budget.limits,
+        })
+      : projectSessionBudget({
+          startedAt: occurredAt,
+          observedAt: occurredAt,
+          ...(snapshot.budget === undefined
+            ? {}
+            : { limits: snapshot.budget.limits }),
+        }),
     eventCursor: 1,
     capabilities: sessionCapabilitiesFor("running", false),
     updatedAt: occurredAt,

@@ -1,5 +1,5 @@
 import type { SessionSnapshot } from "@codeops/codeops-contracts";
-import { createModelProxyToken } from "@codeops/codeops-contracts/model-proxy";
+import { createSessionModelProxyToken } from "@codeops/codeops-contracts/model-proxy";
 
 export interface SessionModelAuthorityInput {
   readonly snapshot: SessionSnapshot;
@@ -36,10 +36,14 @@ export function issueSessionModelAuthority(
       "enabled session model authority requires a budget",
     );
   }
-  const maximumRequests = budget.remaining.modelRequests;
+  const maximumRequests = budget.version === "codeops.session-budget/v2"
+    ? budget.remaining.providerRequests
+    : budget.remaining.modelRequests;
   const maximumOutputTokens = Math.min(
     32_768,
-    budget.remaining.totalTokens,
+    budget.version === "codeops.session-budget/v2"
+      ? budget.remaining.outputTokens
+      : budget.remaining.totalTokens,
   );
   if (maximumRequests === 0 || maximumOutputTokens === 0) {
     throw new ExhaustedSessionModelBudgetError(
@@ -49,8 +53,12 @@ export function issueSessionModelAuthority(
 
   return {
     disposition: "issued",
-    modelProxyToken: createModelProxyToken({
+    modelProxyToken: createSessionModelProxyToken({
       subject: input.snapshot.sessionId,
+      budgetId: budget.version === "codeops.session-budget/v2"
+        ? budget.budgetId
+        : input.snapshot.sessionId,
+      generation: input.snapshot.generation,
       signingKey: input.signingKey,
       model: modelPolicy.model,
       reasoningEffort: modelPolicy.reasoningEffort,

@@ -33,8 +33,14 @@ test(
     let firstPoolEnded = false;
     try {
       await ownerPool.query(
-        `INSERT INTO codeops.sessions (session_id, snapshot_json, updated_at)
-         VALUES ('ses_concurrency_proof', '{"generation":7}'::jsonb, clock_timestamp())`,
+        `INSERT INTO codeops.sessions
+           (session_id, generation, lease_id, snapshot_json, updated_at)
+         VALUES (
+           'ses_concurrency_proof', 7,
+           '11111111-1111-4111-8111-111111111111',
+           '{"version":"codeops.session-snapshot/v1","sessionId":"ses_concurrency_proof","generation":7,"state":"running","lease":{"leaseId":"11111111-1111-4111-8111-111111111111","generation":7,"status":"active"},"pendingPermission":null,"updatedAt":"2026-08-15T18:25:00.000Z"}'::jsonb,
+           '2026-08-15T18:25:00.000Z'::timestamptz
+         )`,
       );
       await ownerPool.query(
         `INSERT INTO codeops.session_model_budgets (
@@ -153,8 +159,14 @@ test(
     });
     try {
       await ownerPool.query(
-        `INSERT INTO codeops.sessions (session_id, snapshot_json, updated_at)
-         VALUES ('ses_settlement_proof', '{"generation":2}'::jsonb, clock_timestamp())`,
+        `INSERT INTO codeops.sessions
+           (session_id, generation, lease_id, snapshot_json, updated_at)
+         VALUES (
+           'ses_settlement_proof', 2,
+           '22222222-2222-4222-8222-222222222222',
+           '{"version":"codeops.session-snapshot/v1","sessionId":"ses_settlement_proof","generation":2,"state":"running","lease":{"leaseId":"22222222-2222-4222-8222-222222222222","generation":2,"status":"active"},"pendingPermission":null,"updatedAt":"2026-08-15T18:25:00.000Z"}'::jsonb,
+           '2026-08-15T18:25:00.000Z'::timestamptz
+         )`,
       );
       await ownerPool.query(
         `INSERT INTO codeops.session_model_budgets (
@@ -222,6 +234,76 @@ test(
         observed_input_tokens: "30",
         observed_total_tokens: "70",
         revision: "5",
+      });
+    } finally {
+      await ledgerPool.end();
+      await ownerPool.end();
+    }
+  },
+);
+
+test(
+  "charges a stale reservation after a proxy crash",
+  { skip: !ledgerDatabaseUrl || !ownerDatabaseUrl },
+  async () => {
+    const ledgerPool = new pg.Pool({ connectionString: ledgerDatabaseUrl, max: 1 });
+    const ownerPool = new pg.Pool({ connectionString: ownerDatabaseUrl, max: 1 });
+    const reservationId = randomUUID();
+    try {
+      await ownerPool.query(
+        `INSERT INTO codeops.sessions
+           (session_id, generation, lease_id, snapshot_json, updated_at)
+         VALUES (
+           'ses_recovery_proof', 1,
+           '33333333-3333-4333-8333-333333333333',
+           '{"version":"codeops.session-snapshot/v1","sessionId":"ses_recovery_proof","generation":1,"state":"running","lease":{"leaseId":"33333333-3333-4333-8333-333333333333","generation":1,"status":"active"},"pendingPermission":null,"updatedAt":"2026-08-15T18:25:00.000Z"}'::jsonb,
+           '2026-08-15T18:25:00.000Z'::timestamptz
+         )`,
+      );
+      await ownerPool.query(
+        `INSERT INTO codeops.session_model_budgets (
+           session_id, budget_id, started_at, provider_requests_limit,
+           output_tokens_limit, committed_provider_requests,
+           reserved_output_tokens, revision, updated_at
+         ) VALUES (
+           'ses_recovery_proof', 'budget_recovery_proof',
+           clock_timestamp() - interval '1 hour', 3, 100, 1, 70, 2,
+           clock_timestamp() - interval '1 hour'
+         )`,
+      );
+      await ownerPool.query(
+        `INSERT INTO codeops.session_model_budget_reservations (
+           reservation_id, model_token_id, session_id, budget_id, generation,
+           provider, model, reasoning_effort, requested_output_tokens,
+           reserved_output_tokens, state, reserved_at
+         ) VALUES (
+           $1, $2, 'ses_recovery_proof', 'budget_recovery_proof', 1,
+           'openai', 'gpt-5.6-sol', 'high', 70, 70, 'reserved',
+           clock_timestamp() - interval '16 minutes'
+         )`,
+        [reservationId, `sha256:${"c".repeat(64)}`],
+      );
+
+      assert.deepEqual(await createModelBudgetLedger(ledgerPool).recover(), {
+        chargedReservations: 1,
+      });
+      const durable = await ownerPool.query(
+        `SELECT budgets.settled_output_tokens,
+                budgets.reserved_output_tokens,
+                budgets.revision,
+                reservations.state,
+                reservations.failure_class
+           FROM codeops.session_model_budgets budgets
+           JOIN codeops.session_model_budget_reservations reservations
+             ON reservations.session_id = budgets.session_id
+          WHERE budgets.session_id = 'ses_recovery_proof'`,
+      );
+      assert.deepEqual(durable.rows[0], {
+        settled_output_tokens: "70",
+        reserved_output_tokens: "0",
+        revision: "3",
+        state: "charged_unknown",
+        failure_class: "proxy_stopped",
       });
     } finally {
       await ledgerPool.end();
