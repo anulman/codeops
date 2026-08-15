@@ -9,6 +9,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "pg": "8.22.0",
     "varlock": "1.16.1"
   },
   "engines": {

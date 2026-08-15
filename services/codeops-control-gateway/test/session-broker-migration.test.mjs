@@ -4,9 +4,11 @@ import test from "node:test";
 import {
   applySessionBrokerMigration,
   grantLifecycleRelayAccess,
+  grantModelProxyLedgerAccess,
   grantSessionRuntimeReceiptAccess,
   migrateSessionBroker,
   lifecycleRelayDatabaseCredentials,
+  modelProxyDatabaseCredentials,
   sessionRuntimeDatabaseCredentials,
   stripTransactionEnvelope,
 } from "../dist/session-broker-migration.js";
@@ -121,7 +123,20 @@ test("records a caller-supplied immutable migration identity", async () => {
 test("applies broker runtime, lifecycle journal, launches, and notifications in order", async () => {
   const client = fakeClient();
   const results = await migrateSessionBroker(client);
-  assert.deepEqual(results, ["applied", "applied", "applied", "applied", "applied", "applied", "applied", "applied", "applied", "applied"]);
+  assert.deepEqual(results, [
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+  ]);
   const inserts = client.calls
     .filter(({ text }) => text.includes("INSERT INTO codeops.schema_migrations"))
     .map(({ values }) => values[0]);
@@ -136,7 +151,25 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "work-item-lifecycle-journal-v1",
     "workspace-launch-v1",
     "session-notifications-v1",
+    "session-model-budget-ledger-v2",
+    "session-model-budget-ledger-functions-v1",
   ]);
+});
+
+test("grants the model proxy only fixed ledger function execution", async () => {
+  const client = fakeClient();
+  await grantModelProxyLedgerAccess(
+    client,
+    "codeops_model_proxy",
+    "proxy_password_0123456789abcdefghi",
+  );
+  const sql = client.calls.map(({ text }) => text).join("\n");
+  assert.match(sql, /CREATE ROLE "codeops_model_proxy" LOGIN PASSWORD/);
+  assert.match(sql, /REVOKE ALL ON ALL TABLES IN SCHEMA codeops/);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION codeops\.reserve_session_model_budget/);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION codeops\.settle_session_model_budget/);
+  assert.doesNotMatch(sql, /GRANT (SELECT|INSERT|UPDATE|DELETE)/);
+  assert.equal(client.calls.at(-1).text, "COMMIT");
 });
 
 test("grants the runtime role only receipt and checkpoint-artifact access", async () => {
@@ -224,5 +257,27 @@ test("binds the relay-only role to the authoritative database", () => {
       "postgresql://agents:control_password@qualification-codeops-postgresql:5432/agents",
     ),
     /relay-only boundary/,
+  );
+});
+
+test("binds the ledger-only role to the authoritative database", () => {
+  assert.deepEqual(
+    modelProxyDatabaseCredentials(
+      "postgres://codeops_model_proxy:proxy_password_0123456789abcdefghi@qualification-codeops-postgresql:5432/agents",
+      "codeops_model_proxy",
+      "postgresql://agents:control_password@qualification-codeops-postgresql:5432/agents",
+    ),
+    {
+      role: "codeops_model_proxy",
+      password: "proxy_password_0123456789abcdefghi",
+    },
+  );
+  assert.throws(
+    () => modelProxyDatabaseCredentials(
+      "postgres://other:proxy_password_0123456789abcdefghi@example.com:5432/agents",
+      "codeops_model_proxy",
+      "postgresql://agents:control_password@qualification-codeops-postgresql:5432/agents",
+    ),
+    /ledger-only boundary/,
   );
 });

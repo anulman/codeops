@@ -2,8 +2,11 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEFAULT_SESSION_BUDGET_LIMITS,
+  DEFAULT_SESSION_BUDGET_V2_LIMITS,
   projectSessionBudget,
+  projectSessionBudgetV2,
   sessionBudgetProjectionSchema,
+  sessionBudgetV2ProjectionSchema,
 } from "../dist/session-budget.js";
 
 test("projects exact current, limit, remaining, and exhausted budget state", () => {
@@ -47,6 +50,59 @@ test("projects exact current, limit, remaining, and exhausted budget state", () 
     observedAt: startedAt,
     activeChildren: 4,
   }).exhaustedLimit, "active_children");
+});
+
+test("projects hard provider and output limits separately from telemetry", () => {
+  const projection = projectSessionBudgetV2({
+    budgetId: "session-123",
+    revision: 7,
+    startedAt: "2026-08-14T18:00:00.000Z",
+    observedAt: "2026-08-14T18:01:30.000Z",
+    providerRequests: 3,
+    outputTokens: 1_200,
+    reservedOutputTokens: 300,
+    observedInputTokens: 8_000,
+    observedTotalTokens: 9_200,
+    activeChildren: 2,
+  });
+  assert.deepEqual(projection.limits, DEFAULT_SESSION_BUDGET_V2_LIMITS);
+  assert.deepEqual(projection.usage, {
+    elapsedSeconds: 90,
+    providerRequests: 3,
+    outputTokens: 1_200,
+    observedInputTokens: 8_000,
+    observedTotalTokens: 9_200,
+    activeChildren: 2,
+  });
+  assert.deepEqual(projection.reserved, { outputTokens: 300 });
+  assert.equal(projection.remaining.providerRequests, 197);
+  assert.equal(projection.remaining.outputTokens, 998_500);
+  assert.equal(projection.exhaustedLimit, null);
+});
+
+test("counts reserved output against the hard version 2 ceiling", () => {
+  const exact = projectSessionBudgetV2({
+    budgetId: "session-123",
+    revision: 1,
+    startedAt: "2026-08-14T18:00:00.000Z",
+    observedAt: "2026-08-14T18:00:00.000Z",
+    limits: {
+      ...DEFAULT_SESSION_BUDGET_V2_LIMITS,
+      outputTokens: 2_000,
+    },
+    outputTokens: 1_200,
+    reservedOutputTokens: 800,
+  });
+  assert.equal(exact.remaining.outputTokens, 0);
+  assert.equal(exact.exhaustedLimit, "output_tokens");
+  assert.throws(
+    () =>
+      sessionBudgetV2ProjectionSchema.parse({
+        ...exact,
+        remaining: { ...exact.remaining, outputTokens: 1 },
+      }),
+    /remaining value/,
+  );
 });
 
 test("rejects forged remaining values and exhausted limits", () => {
