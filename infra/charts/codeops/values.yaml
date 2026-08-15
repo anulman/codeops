@@ -59,6 +59,8 @@ modelProxy:
     repository: ghcr.io/anulman/codeops/model-proxy
     digest: ""
   secretName: codeops-model-proxy-credentials
+  databaseUrlKey: database-url
+  databaseRoleKey: database-role
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }

@@ -51,6 +51,18 @@ test("reserves through only the fixed ledger function", async () => {
   assert.doesNotMatch(database.calls[0].text, /INSERT|UPDATE|FOR UPDATE/);
 });
 
+test("charges stale reservations through only the fixed recovery function", async () => {
+  const database = databaseWith({ charged_reservations: "2" });
+  assert.deepEqual(await createModelBudgetLedger(database).recover(), {
+    chargedReservations: 2,
+  });
+  assert.match(
+    database.calls[0].text,
+    /codeops\.charge_stale_session_model_budget_reservations/,
+  );
+  assert.doesNotMatch(database.calls[0].text, /INSERT|UPDATE|FOR UPDATE/);
+});
+
 test("settles proved usage and unknown usage through one fixed function", async () => {
   for (const input of [
     {

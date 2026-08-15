@@ -19,6 +19,15 @@ test("fleet and cockpit routes use the live broker while retaining the v1 operat
   assert.match(shell, /SessionNavigator/);
   assert.match(shell, /lg:grid-cols-\[304px_minmax\(0,1fr\)\]/);
   assert.match(cockpit, /SessionComposer/);
+  for (const label of [
+    "Provider requests (hard)",
+    "Output tokens (hard)",
+    "Reserved output",
+    "Observed input",
+    "Observed total",
+  ]) {
+    assert.ok(cockpit.includes(label));
+  }
   assert.match(cockpit, /MessageRow/);
   assert.match(cockpit, /ExecutionRow/);
   assert.match(cockpit, /ActionRow/);

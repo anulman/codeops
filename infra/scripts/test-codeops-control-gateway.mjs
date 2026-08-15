@@ -11,6 +11,13 @@ const template = await readFile(
   ),
   "utf8",
 );
+const modelProxyLedgerGrants = await readFile(
+  new URL(
+    "../k8s/codeops/trial0/model-proxy-ledger-grants.sql",
+    import.meta.url,
+  ),
+  "utf8",
+);
 const input = {
   controlGatewayDigest: `sha256:${"a".repeat(64)}`,
   modelProxyDigest: `sha256:${"d".repeat(64)}`,
@@ -84,6 +91,12 @@ test("renders one namespace-scoped authenticated gateway", () => {
     ).valueFrom.secretKeyRef.name,
     "codeops-model-proxy-credentials",
   );
+  assert.equal(
+    proxy.spec.template.spec.containers[0].env.find(
+      (entry) => entry.name === "CODEOPS_MODEL_PROXY_DATABASE_URL",
+    ).valueFrom.secretKeyRef.key,
+    "database-url",
+  );
   const proxyPolicy = values.find(
     (resource) =>
       resource.kind === "NetworkPolicy" &&
@@ -93,6 +106,7 @@ test("renders one namespace-scoped authenticated gateway", () => {
     proxyPolicy.spec.ingress[0].from[0].podSelector.matchExpressions[0].values,
     ["codeops-agent", "codeops-session-runtime-worker"],
   );
+  assert.equal(JSON.stringify(proxyPolicy.spec.egress).includes("codeops-postgres-cnpg-pgbouncer"), true);
   const databaseVolume = deployment.spec.template.spec.volumes.find(
     (volume) => volume.name === "session-broker-database",
   );
@@ -202,6 +216,22 @@ test("renders one namespace-scoped authenticated gateway", () => {
     initializationAuthVolume.secret.secretName,
     workerAuthVolume.secret.secretName,
   );
+});
+
+test("grants the static model proxy only fixed ledger function authority", () => {
+  assert.match(modelProxyLedgerGrants, /ALTER ROLE :"proxy_role"/);
+  assert.match(modelProxyLedgerGrants, /REVOKE ALL ON ALL TABLES IN SCHEMA codeops/);
+  assert.match(modelProxyLedgerGrants, /reserve_session_model_budget/);
+  assert.match(modelProxyLedgerGrants, /settle_session_model_budget/);
+  assert.match(
+    modelProxyLedgerGrants,
+    /charge_stale_session_model_budget_reservations/,
+  );
+  assert.doesNotMatch(
+    modelProxyLedgerGrants,
+    /GRANT (SELECT|INSERT|UPDATE|DELETE)/,
+  );
+  assert.match(modelProxyLedgerGrants, /^\\set ON_ERROR_STOP on[\s\S]*COMMIT;\n$/);
 });
 
 test("grants only fixed run-resource and log operations", () => {

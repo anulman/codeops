@@ -411,6 +411,11 @@ spec:
                 secretKeyRef:
                   name: codeops-model-proxy-credentials
                   key: signing-key
+            - name: CODEOPS_MODEL_PROXY_DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: codeops-model-proxy-credentials
+                  key: database-url
             - name: CODEOPS_MODEL_PROXY_HOST
               value: 0.0.0.0
             - name: CODEOPS_MODEL_PROXY_PORT
@@ -481,6 +486,12 @@ spec:
       ports:
         - { protocol: TCP, port: 8080 }
   egress:
+    - to:
+        - podSelector:
+            matchLabels:
+              cnpg.io/poolerName: codeops-postgres-cnpg-pgbouncer
+      ports:
+        - { protocol: TCP, port: 5432 }
     - to:
         - namespaceSelector:
             matchLabels:

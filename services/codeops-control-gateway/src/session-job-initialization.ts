@@ -3,7 +3,7 @@ import type { IncomingHttpHeaders } from "node:http";
 import {
   canonicalJsonText,
   SESSION_BROKER_VERSION,
-  projectSessionBudget,
+  projectSessionBudgetV2,
   sessionEventSchema,
   sessionJobInitializationRequestSchema,
   sessionJobInitializationResponseSchema,
@@ -68,7 +68,9 @@ export async function initializeSessionFromJob(
     },
     checkpoint: null,
     pendingPermission: null,
-    budget: projectSessionBudget({
+    budget: projectSessionBudgetV2({
+      budgetId: request.sessionId,
+      revision: 1,
       startedAt: initializedAt,
       observedAt: initializedAt,
     }),
@@ -105,6 +107,27 @@ export async function initializeSessionFromJob(
       ],
     );
     if (inserted.rowCount === 1) {
+      const budget = proposed.budget!;
+      if (budget.version !== "codeops.session-budget/v2") {
+        throw new Error("new session budget must use version 2");
+      }
+      await client.query(
+        `INSERT INTO codeops.session_model_budgets (
+           session_id, budget_id, started_at, provider_requests_limit,
+           output_tokens_limit, committed_provider_requests,
+           settled_output_tokens, reserved_output_tokens,
+           observed_input_tokens, observed_total_tokens, revision, updated_at
+         ) VALUES (
+           $1, $1, $2::timestamptz, $3, $4, 0, 0, 0, 0, 0, 1,
+           $2::timestamptz
+         )`,
+        [
+          proposed.sessionId,
+          budget.startedAt,
+          budget.limits.providerRequests,
+          budget.limits.outputTokens,
+        ],
+      );
       await client.query(
         `INSERT INTO codeops.session_events
            (event_id, session_id, generation, cursor, event_type, event_json,

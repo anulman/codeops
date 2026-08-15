@@ -123,6 +123,26 @@ export function createModelBudgetLedger(database) {
     throw new Error("model budget database is invalid");
   }
   return {
+    async recover() {
+      try {
+        const result = await database.query(
+          "SELECT * FROM codeops.charge_stale_session_model_budget_reservations()",
+        );
+        const row = result.rows[0];
+        if (!row || result.rows.length !== 1) {
+          throw new Error("model budget recovery result is invalid");
+        }
+        return {
+          chargedReservations: parseCount(
+            row.charged_reservations,
+            "charged reservations",
+          ),
+        };
+      } catch (error) {
+        throw translateDatabaseError(error);
+      }
+    },
+
     async reserve(rawInput) {
       const input = reservationInput(rawInput);
       try {

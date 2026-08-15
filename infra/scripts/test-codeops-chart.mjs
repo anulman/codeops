@@ -142,6 +142,8 @@ test("renders one portable CodeOps package with immutable images", () => {
   assert.match(proxySource, /team-a-codeops-model-proxy-credentials/);
   assert.match(proxySource, /openai-api-key/);
   assert.match(proxySource, /signing-key/);
+  assert.match(proxySource, /CODEOPS_MODEL_PROXY_DATABASE_URL/);
+  assert.match(proxySource, /database-url/);
   assert.equal(
     modelProxy.spec.template.spec.containers[0].env.find(
       ({ name }) => name === "CODEOPS_MODEL_PROXY_PRIVACY_MODE",
@@ -179,6 +181,10 @@ test("renders one portable CodeOps package with immutable images", () => {
     migration.spec.template.spec.volumes.find(({ name }) => name === "relay-authority").secret.items.map(({ key }) => key).sort(),
     ["database-role", "database-url"],
   );
+  assert.deepEqual(
+    migration.spec.template.spec.volumes.find(({ name }) => name === "model-proxy-authority").secret.items.map(({ key }) => key).sort(),
+    ["database-role", "database-url"],
+  );
   const relay = resource(resources, "Deployment", "team-a-codeops-lifecycle-relay");
   assert.equal(relay.spec.template.spec.containers[0].image, controlGateway.spec.template.spec.containers[0].image);
   assert.equal(
@@ -196,6 +202,10 @@ test("renders one portable CodeOps package with immutable images", () => {
   assert.equal(
     relay.spec.template.spec.containers[0].volumeMounts.some(({ name }) => name === "migration-authority"),
     false,
+  );
+  assert.equal(
+    relay.spec.template.spec.initContainers[0].volumeMounts.some(({ name }) => name === "model-proxy-authority"),
+    true,
   );
   assert.match(JSON.stringify(relay), /CODEOPS_JETSTREAM_MANAGE_STREAM/);
   assert.equal(resources.some(({ metadata }) => metadata?.name === "team-a-codeops-codex-auth"), false);
@@ -462,6 +472,10 @@ test("defaults to deny and opens only explicit component paths", () => {
   assert.deepEqual(
     modelProxy.spec.ingress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)),
     ["TCP:8080"],
+  );
+  assert.deepEqual(
+    modelProxy.spec.egress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)).sort(),
+    ["TCP:443", "TCP:53", "TCP:5432", "UDP:53"],
   );
   const materializer = resource(
     resources,

@@ -209,7 +209,7 @@ test("ACP runtime permission request durably pauses one running session", () => 
   );
 });
 
-test("projects signed model-request and token usage after each prompt", () => {
+test("treats ACP usage updates as context telemetry, not provider requests", () => {
   const current = {
     ...snapshot({ checkpoint: false }),
     budget: {
@@ -254,13 +254,13 @@ test("projects signed model-request and token usage after each prompt", () => {
   assert.deepEqual(result.snapshot.budget.usage, {
     elapsedSeconds: 900,
     totalTokens: 12_500,
-    modelRequests: 2,
+    modelRequests: 1,
     activeChildren: 1,
   });
   assert.deepEqual(result.snapshot.budget.remaining, {
     elapsedSeconds: 2700,
     totalTokens: 37_500,
-    modelRequests: 2,
+    modelRequests: 3,
     activeChildren: 1,
   });
   assert.equal(result.snapshot.budget.exhaustedLimit, null);

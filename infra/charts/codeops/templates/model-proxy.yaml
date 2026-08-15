@@ -40,6 +40,9 @@ spec:
             - name: CODEOPS_MODEL_PROXY_SIGNING_KEY
               valueFrom:
                 secretKeyRef: { name: {{ .Values.modelProxy.secretName }}, key: signing-key }
+            - name: CODEOPS_MODEL_PROXY_DATABASE_URL
+              valueFrom:
+                secretKeyRef: { name: {{ .Values.modelProxy.secretName }}, key: {{ .Values.modelProxy.databaseUrlKey }} }
             - { name: CODEOPS_MODEL_PROXY_HOST, value: 0.0.0.0 }
             - { name: CODEOPS_MODEL_PROXY_PORT, value: "8080" }
             - { name: CODEOPS_MODEL_PROXY_PRIVACY_MODE, value: strict-v1 }

@@ -43,6 +43,8 @@ spec:
             - { name: CODEOPS_RUNTIME_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops-migration/runtime-database-role }
             - { name: CODEOPS_LIFECYCLE_RELAY_DATABASE_URL_FILE, value: /var/run/secrets/codeops-relay/database-url }
             - { name: CODEOPS_LIFECYCLE_RELAY_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops-relay/database-role }
+            - { name: CODEOPS_MODEL_PROXY_DATABASE_URL_FILE, value: /var/run/secrets/codeops-model-proxy/database-url }
+            - { name: CODEOPS_MODEL_PROXY_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops-model-proxy/database-role }
           resources:
             requests: { cpu: 25m, memory: 64Mi }
             limits: { cpu: 250m, memory: 256Mi }
@@ -53,6 +55,7 @@ spec:
           volumeMounts:
             - { name: migration-authority, mountPath: /var/run/secrets/codeops-migration, readOnly: true }
             - { name: relay-authority, mountPath: /var/run/secrets/codeops-relay, readOnly: true }
+            - { name: model-proxy-authority, mountPath: /var/run/secrets/codeops-model-proxy, readOnly: true }
             - { name: temp, mountPath: /tmp }
       containers:
         - name: lifecycle-relay
@@ -102,6 +105,13 @@ spec:
               - { key: {{ .Values.lifecycleRelay.databaseUrlKey }}, path: database-url }
               - { key: {{ .Values.lifecycleRelay.databaseRoleKey }}, path: database-role }
               - { key: {{ .Values.lifecycleRelay.natsTokenKey }}, path: nats-token }
+        - name: model-proxy-authority
+          secret:
+            secretName: {{ .Values.modelProxy.secretName }}
+            defaultMode: 256
+            items:
+              - { key: {{ .Values.modelProxy.databaseUrlKey }}, path: database-url }
+              - { key: {{ .Values.modelProxy.databaseRoleKey }}, path: database-role }
         - name: temp
           emptyDir: { sizeLimit: 32Mi }
 {{- end }}

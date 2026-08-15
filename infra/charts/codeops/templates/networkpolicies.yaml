@@ -349,6 +349,9 @@ spec:
       ports: [{ protocol: TCP, port: 8080 }]
   egress:
     - to:
+        - {{ include "codeops.postgresqlEgressTarget" . | nindent 10 | trim }}
+      ports: [{ protocol: TCP, port: 5432 }]
+    - to:
         - namespaceSelector:
             matchLabels: { kubernetes.io/metadata.name: kube-system }
       ports:

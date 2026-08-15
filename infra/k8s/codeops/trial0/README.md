@@ -53,6 +53,10 @@ Required Secret names and keys:
 - `codeops-session-runtime-worker-database`: `database-url`. This DSN must use
   the dedicated receipt-only role provisioned by
   `session-runtime-worker-grants.sql`; it must not reuse the broker owner DSN.
+- `codeops-model-proxy-credentials`: `openai-api-key`, `signing-key`, and
+  `database-url`. The database DSN must use the execute-only ledger role
+  provisioned by `model-proxy-ledger-grants.sql`; it must not reuse the broker
+  owner DSN.
 
 The candidate has no Kubernetes credential. Cleanup must remove the Helm
 release, namespace, PVCs, copied TLS material, generated Secrets, node label,
@@ -163,8 +167,19 @@ a maximum lifetime of 75 minutes. The coding-agent container uses an isolated
 temporary Codex home and never mounts a reusable model credential. Network
 policy admits the proxy only from Agent Pods. The proxy has no Kubernetes
 ServiceAccount token and is not exposed outside the cluster. Create the
-`codeops-model-proxy-credentials` Secret separately with `openai-api-key` and
-`signing-key` keys. Use the same signing key in the trusted gateway and proxy.
+`codeops-model-proxy-credentials` Secret separately with `openai-api-key`,
+`signing-key`, and `database-url` keys. Use the same signing key in the trusted
+gateway and proxy. Use a distinct database login in `database-url`. After the
+gateway migration creates the ledger functions, grant that login only the
+fixed function authority:
+
+```bash
+psql "$CODEOPS_SESSION_BROKER_ADMIN_DSN" \
+  --set=proxy_role=codeops_model_proxy \
+  --file=infra/k8s/codeops/trial0/model-proxy-ledger-grants.sql
+```
+
+The proxy role cannot select, insert, update, or delete ledger table rows.
 
 The gateway may create/delete, but never read or list, one immutable
 request-digest-derived repository Secret. Its namespace Role may

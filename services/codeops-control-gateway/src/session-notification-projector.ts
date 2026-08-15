@@ -158,9 +158,8 @@ export async function projectNextSessionNotification(input: {
     if (!Number.isSafeInteger(activeChildren) || activeChildren < 0) {
       throw new Error("stored active child session count is invalid");
     }
-    const snapshot = storedSnapshot.budget === undefined
-      ? storedSnapshot
-      : sessionSnapshotSchema.parse({
+    const snapshot = storedSnapshot.budget?.version === "codeops.session-budget/v1"
+      ? sessionSnapshotSchema.parse({
           ...storedSnapshot,
           budget: projectSessionBudget({
             startedAt: storedSnapshot.budget.startedAt,
@@ -170,7 +169,8 @@ export async function projectNextSessionNotification(input: {
             modelRequests: storedSnapshot.budget.usage.modelRequests,
             activeChildren,
           }),
-        });
+        })
+      : storedSnapshot;
     const previous = row.projected_generation === null || row.projected_generation === undefined
       ? null
       : {

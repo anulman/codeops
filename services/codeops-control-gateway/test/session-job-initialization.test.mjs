@@ -54,13 +54,26 @@ test("creates one running root session and one commandless creation event", asyn
   assert.equal(result.snapshot.state, "running");
   assert.equal(result.snapshot.eventCursor, 1);
   assert.equal(result.snapshot.lease.holderId, request.holderId);
+  assert.equal(result.snapshot.budget.version, "codeops.session-budget/v2");
+  assert.equal(result.snapshot.budget.budgetId, request.sessionId);
   assert.deepEqual(result.snapshot.budget.usage, {
     elapsedSeconds: 0,
-    totalTokens: 0,
-    modelRequests: 0,
+    providerRequests: 0,
+    outputTokens: 0,
+    observedInputTokens: 0,
+    observedTotalTokens: 0,
     activeChildren: 0,
   });
   assert.equal(result.snapshot.budget.exhaustedLimit, null);
+  const budget = database.calls.find(({ text }) =>
+    text.includes("INSERT INTO codeops.session_model_budgets"),
+  );
+  assert.deepEqual(budget.values, [
+    request.sessionId,
+    "2026-08-05T03:00:00.000Z",
+    200,
+    1_000_000,
+  ]);
   const event = database.calls.find(({ text }) =>
     text.includes("INSERT INTO codeops.session_events"),
   );
