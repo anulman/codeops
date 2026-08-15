@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
+  canonicalJsonText,
   sessionPolicyForMode,
   workspaceLaunchRequestSchema,
   workspaceLaunchSchema,
@@ -14,28 +15,13 @@ import { workspaceContextAttachmentDescriptors } from "@codeops/codeops-contract
 const MAX_ACTIVE_PER_PRINCIPAL = 2;
 const MAX_ACTIVE_GLOBAL = 8;
 
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, nested]) => [key, normalize(nested)]),
-      );
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
-}
-
 function digest(value: unknown): string {
-  return `sha256:${createHash("sha256").update(canonical(value)).digest("hex")}`;
+  return `sha256:${createHash("sha256").update(canonicalJsonText(value)).digest("hex")}`;
 }
 
 function launchId(principalId: string, idempotencyKey: string): string {
   return `launch-${createHash("sha256")
-    .update(canonical({ principalId, idempotencyKey }))
+    .update(canonicalJsonText({ principalId, idempotencyKey }))
     .digest("hex")
     .slice(0, 24)}`;
 }

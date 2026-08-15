@@ -8,31 +8,12 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import { canonicalJsonText } from "@codeops/codeops-contracts/canonical-json";
 
 function required(name) {
   const value = process.env[name];
   if (!value) throw new Error(`${name} is required`);
   return value;
-}
-
-function canonicalSerialize(value) {
-  if (
-    value === undefined ||
-    typeof value === "bigint" ||
-    typeof value === "function" ||
-    typeof value === "symbol" ||
-    (typeof value === "number" && !Number.isFinite(value))
-  ) {
-    throw new TypeError("value is not representable as canonical JSON");
-  }
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalSerialize).join(",")}]`;
-  }
-  return `{${Object.keys(value)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalSerialize(value[key])}`)
-    .join(",")}}`;
 }
 
 function decode(name) {
@@ -93,7 +74,7 @@ if (
 }
 const { digest, ...identity } = projectContext;
 const computedContextDigest = `sha256:${createHash("sha256")
-  .update(canonicalSerialize(identity))
+  .update(canonicalJsonText(identity))
   .digest("hex")}`;
 if (digest !== computedContextDigest) {
   throw new Error("project context digest mismatch");

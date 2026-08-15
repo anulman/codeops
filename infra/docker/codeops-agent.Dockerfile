@@ -1,14 +1,37 @@
+FROM node:24-bookworm-slim AS build
+WORKDIR /repo
+
+COPY tsconfig.json ./tsconfig.json
+COPY packages/codeops-contracts/package.json ./packages/codeops-contracts/
+COPY packages/codeops-contracts/tsconfig.json packages/codeops-contracts/tsconfig.build.json ./packages/codeops-contracts/
+COPY packages/codeops-contracts/src ./packages/codeops-contracts/src
+
+COPY services/codeops-agent/package.json services/codeops-agent/package-lock.json ./services/codeops-agent/
+COPY infra/scripts/rewrite-workspace-dependency-for-npm.mjs ./infra/scripts/
+RUN node infra/scripts/rewrite-workspace-dependency-for-npm.mjs services/codeops-agent/package.json \
+  && npm ci --ignore-scripts --prefix services/codeops-agent \
+  && ln -s services/codeops-agent/node_modules node_modules \
+  && services/codeops-agent/node_modules/.bin/tsc packages/codeops-contracts/src/canonical-json.ts \
+    --declaration --module NodeNext --moduleResolution NodeNext --outDir packages/codeops-contracts/dist \
+    --ignoreConfig --sourceMap --strict --target ES2022 --types node \
+  && npm prune --omit=dev --prefix services/codeops-agent \
+  && rm services/codeops-agent/node_modules/@codeops/codeops-contracts \
+  && mkdir services/codeops-agent/node_modules/@codeops/codeops-contracts \
+  && cp packages/codeops-contracts/package.json services/codeops-agent/node_modules/@codeops/codeops-contracts/ \
+  && cp -R packages/codeops-contracts/dist services/codeops-agent/node_modules/@codeops/codeops-contracts/
+
 FROM node:24-bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/anulman/codeops" \
       org.opencontainers.image.licenses="AGPL-3.0-only"
 
 WORKDIR /opt/codeops-agent
 COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/licenses/codeops/
-COPY services/codeops-agent/package.json services/codeops-agent/package-lock.json ./
+COPY --from=build /repo/services/codeops-agent/package.json ./
+COPY --from=build /repo/services/codeops-agent/package-lock.json ./
+COPY --from=build /repo/services/codeops-agent/node_modules ./node_modules
 RUN apt-get update \
   && apt-get install -y --no-install-recommends ca-certificates git socat \
-  && rm -rf /var/lib/apt/lists/* \
-  && npm ci --omit=dev --ignore-scripts
+  && rm -rf /var/lib/apt/lists/*
 
 COPY services/codeops-agent/entrypoint.sh /usr/local/bin/codeops-agent-entrypoint
 COPY services/codeops-agent/prepare-project-context.mjs /opt/codeops-agent/prepare-project-context.mjs

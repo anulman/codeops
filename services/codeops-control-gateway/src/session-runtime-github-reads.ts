@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  canonicalJsonText,
   githubReadProviderRequestSchema,
   githubReadResultSchema,
   sessionRuntimeDispatchSchema,
@@ -21,21 +22,6 @@ interface ClaimRow extends Record<string, unknown> {
   readonly claim_token: unknown;
   readonly claimed_by: unknown;
   readonly claim_expires_at: unknown;
-}
-
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, nested]) => [key, normalize(nested)]),
-      );
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
 }
 
 function digest(value: string): string {
@@ -104,7 +90,7 @@ export async function authorizeSessionRuntimeGitHubRead(
   }
   assertRepositoryScope(dispatch, request.input.repository);
   const expectedOperationId = `githubread-${createHash("sha256")
-    .update(canonical({
+    .update(canonicalJsonText({
       dispatchId: dispatch.dispatchId,
       operation: request.operation,
       input: request.input,
@@ -120,7 +106,7 @@ export async function authorizeSessionRuntimeGitHubRead(
     operation: request.operation,
     operationId: request.operationId,
     input: request.input,
-    payloadDigest: digest(canonical(request.input)),
+    payloadDigest: digest(canonicalJsonText(request.input)),
     provenance: {
       sessionId: dispatch.command.sessionId,
       dispatchId: dispatch.dispatchId,

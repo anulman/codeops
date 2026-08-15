@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import {
+  canonicalJsonText,
   sessionCommandSchema,
   sessionRuntimeDispatchSchema,
   sessionRuntimePermissionSubmissionSchema,
@@ -52,21 +53,6 @@ interface ClaimRow extends Record<string, unknown> {
   readonly command_json: unknown;
 }
 
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, nested]) => [key, normalize(nested)]),
-      );
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
-}
-
 function digest(value: string): string {
   return `sha256:${createHash("sha256").update(value).digest("hex")}`;
 }
@@ -79,9 +65,9 @@ export function assertWorkItemPermissionIdentity(
 ): void {
   const rendered = permission.request.operation;
   const expectedOperationId = `workitem-${createHash("sha256")
-    .update(canonical({ dispatchId: dispatch.dispatchId, operation, workItem: input }))
+    .update(canonicalJsonText({ dispatchId: dispatch.dispatchId, operation, workItem: input }))
     .digest("hex")}`;
-  const expectedDigest = digest(canonical(rendered));
+  const expectedDigest = digest(canonicalJsonText(rendered));
   if (
     permission.acpSessionId !== "codeops-work-items" ||
     permission.request.requestId !== expectedOperationId ||
@@ -90,7 +76,7 @@ export function assertWorkItemPermissionIdentity(
     rendered.operation !== operation ||
     rendered.repository !== input.repository ||
     rendered.targetWorkItemId !== ("workItemId" in input ? input.workItemId : null) ||
-    rendered.payloadJson !== canonical(input)
+    rendered.payloadJson !== canonicalJsonText(input)
   ) {
     throw new SessionRuntimeWorkItemConflictError(
       `work-item ${operation} permission does not bind the exact operation`,
@@ -196,7 +182,7 @@ export async function authorizeSessionRuntimeWorkItemCreate(
       );
     }
   }
-  const payload = canonical(request.input);
+  const payload = canonicalJsonText(request.input);
   return workItemProviderCreateRequestSchema.parse({
     version: "codeops.work-item-provider-create-request/v1",
     provider: "plane",
@@ -323,7 +309,7 @@ function providerEnvelope(
   return {
     provider: "plane",
     operationId: request.operationId,
-    payloadDigest: digest(canonical(request.input)),
+    payloadDigest: digest(canonicalJsonText(request.input)),
     provenance: {
       sessionId: dispatch.command.sessionId,
       dispatchId: dispatch.dispatchId,

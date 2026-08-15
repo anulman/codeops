@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import {
+  canonicalJsonText,
   SESSION_BROKER_VERSION,
   projectSessionBudget,
   sessionEventSchema,
@@ -18,21 +19,6 @@ interface StoredSessionRow extends Record<string, unknown> {
   readonly snapshot_json: unknown;
 }
 
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, nested]) => [key, normalize(nested)]),
-      );
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
-}
-
 function eventId(body: Readonly<Record<string, unknown>>): string {
   return `sha256:${createHash("sha256").update(JSON.stringify(body)).digest("hex")}`;
 }
@@ -43,7 +29,7 @@ function sameRootIdentity(
 ): boolean {
   return (
     existing.sessionId === proposed.sessionId &&
-    canonical(existing.identity) === canonical(proposed.identity)
+    canonicalJsonText(existing.identity) === canonicalJsonText(proposed.identity)
   );
 }
 
@@ -114,7 +100,7 @@ export async function initializeSessionFromJob(
         proposed.sessionId,
         proposed.generation,
         proposed.lease!.leaseId,
-        canonical(proposed),
+        canonicalJsonText(proposed),
         proposed.updatedAt,
       ],
     );
@@ -130,7 +116,7 @@ export async function initializeSessionFromJob(
           event.generation,
           event.cursor,
           event.type,
-          canonical(event),
+          canonicalJsonText(event),
           event.occurredAt,
         ],
       );

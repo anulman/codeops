@@ -1,32 +1,20 @@
-import { createHash } from "node:crypto";
 import {
+  canonicalJsonText,
   githubMutationProviderRequestSchema,
   githubMutationResultSchema,
   sessionPermissionOperationSchema,
+  sha256CanonicalJsonDigest,
   type GitHubMutationProviderRequest,
   type GitHubMutationResult,
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
+import {
+  decodeProviderResponseText,
+  readProviderResponse,
+} from "./provider-response.js";
 import type { RepositoryAuthority } from "./repository-registry.js";
 
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(
-        Object.entries(entry as Record<string, unknown>)
-          .sort(([left], [right]) => left.localeCompare(right))
-          .map(([key, nested]) => [key, normalize(nested)]),
-      );
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
-}
-
-function digest(value: string): string {
-  return `sha256:${createHash("sha256").update(value).digest("hex")}`;
-}
+const MAX_GITHUB_JSON_BYTES = 1 * 1_024 * 1_024;
 
 function repositoryParts(authority: RepositoryAuthority): {
   readonly owner: string;
@@ -77,20 +65,25 @@ async function githubJson(
   requestFetch: typeof fetch,
   init: RequestInit = {},
 ): Promise<unknown> {
-  const response = await requestFetch(url, {
-    ...init,
-    redirect: "error",
-    headers: { ...headers(authority), ...(init.headers ?? {}) },
-    signal: AbortSignal.timeout(30_000),
+  const response = await readProviderResponse({
+    fetch: requestFetch,
+    url,
+    init: {
+      ...init,
+      headers: { ...headers(authority), ...(init.headers ?? {}) },
+    },
+    maxBytes: MAX_GITHUB_JSON_BYTES,
+    statuses: [200, 201, 202, 204],
+    mediaTypes: ["json"],
   });
-  if (!response.ok) {
-    throw new Error(`GitHub mutation request failed with HTTP ${response.status}`);
-  }
-  if (response.status === 204 || response.headers.get("content-length") === "0") {
+  if (response.bytes.byteLength === 0) {
     return null;
   }
-  const text = await response.text();
-  return text === "" ? null : JSON.parse(text);
+  try {
+    return JSON.parse(decodeProviderResponseText(response.bytes));
+  } catch (error) {
+    throw new Error("GitHub mutation response is not valid JSON", { cause: error });
+  }
 }
 
 const pullRequestResponse = z
@@ -141,15 +134,15 @@ function expectedPermissionOperation(request: GitHubMutationProviderRequest) {
     operation: request.operation,
     ...target,
     expectedHeadSha: request.input.expectedHeadSha,
-    payloadJson: canonical(request.input),
+    payloadJson: canonicalJsonText(request.input),
   });
 }
 
 function assertProviderDigests(request: GitHubMutationProviderRequest): void {
   if (
-    request.payloadDigest !== digest(canonical(request.input)) ||
+    request.payloadDigest !== sha256CanonicalJsonDigest(request.input) ||
     request.permissionDigest !==
-      digest(canonical(expectedPermissionOperation(request)))
+      sha256CanonicalJsonDigest(expectedPermissionOperation(request))
   ) {
     throw new Error(
       "GitHub mutation payload and durable permission digests do not match",

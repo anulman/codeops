@@ -13,6 +13,10 @@
       "types": "./dist/managed-content.d.ts",
       "default": "./dist/managed-content.js"
     },
+    "./canonical-json": {
+      "types": "./dist/canonical-json.d.ts",
+      "default": "./dist/canonical-json.js"
+    },
     "./adversarial-review": {
       "types": "./dist/adversarial-review.d.ts",
       "default": "./dist/adversarial-review.js"

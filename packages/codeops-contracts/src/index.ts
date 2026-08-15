@@ -4,6 +4,13 @@ import {
   timingSafeEqual,
 } from "node:crypto";
 import { z } from "zod";
+import { canonicalJsonText } from "./canonical-json.js";
+export {
+  canonicalJsonBytes,
+  canonicalJsonText,
+  canonicalSerialize,
+  sha256CanonicalJsonDigest,
+} from "./canonical-json.js";
 import {
   adversarialReviewSchema,
   candidateCheckpointSchema,
@@ -664,7 +671,7 @@ export function createProjectContextDigest(
 ): string {
   const parsed = projectContextIdentitySchema.parse(input);
   return `sha256:${createHash("sha256")
-    .update(canonicalSerialize(parsed))
+    .update(canonicalJsonText(parsed))
     .digest("hex")}`;
 }
 
@@ -733,8 +740,8 @@ function validateRequestProjectContext(
   if (
     request.workspaceId !== request.projectContext.project.workspaceId ||
     request.projectId !== request.projectContext.project.projectId ||
-    canonicalSerialize(request.repository) !==
-      canonicalSerialize(request.projectContext.repository) ||
+    canonicalJsonText(request.repository) !==
+      canonicalJsonText(request.projectContext.repository) ||
     request.controlPlaneSha !== request.projectContext.controlPlaneSha ||
     request.baseSha !== request.projectContext.baseSha
   ) {
@@ -759,32 +766,9 @@ export const workflowStateSchema = z.enum([
   "timed_out",
 ]);
 
-export function canonicalSerialize(value: unknown): string {
-  if (
-    value === undefined ||
-    typeof value === "bigint" ||
-    typeof value === "function" ||
-    typeof value === "symbol" ||
-    (typeof value === "number" && !Number.isFinite(value))
-  ) {
-    throw new TypeError("value is not representable as canonical JSON");
-  }
-  if (value === null || typeof value !== "object") {
-    return JSON.stringify(value);
-  }
-  if (Array.isArray(value)) {
-    return `[${value.map(canonicalSerialize).join(",")}]`;
-  }
-  const record = value as Record<string, unknown>;
-  return `{${Object.keys(record)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${canonicalSerialize(record[key])}`)
-    .join(",")}}`;
-}
-
 function logicalId(namespace: string, parts: Readonly<Record<string, string>>): string {
   const digest = createHash("sha256")
-    .update(canonicalSerialize({ namespace, ...parts }))
+    .update(canonicalJsonText({ namespace, ...parts }))
     .digest("hex");
   return `${namespace}:${digest}`;
 }
@@ -973,7 +957,7 @@ export const workItemLifecycleEventSchema = z
     }
     if (
       event.previousState !== null &&
-      canonicalSerialize(event.previousState) === canonicalSerialize(event.state)
+      canonicalJsonText(event.previousState) === canonicalJsonText(event.state)
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -1600,8 +1584,8 @@ export const agentJobDispatchRequestSchema = z
           value.revision.review.workflowId !== value.workflowId ||
           value.revision.review.workItemId !== value.workItemId ||
           value.revision.review.baseSha !== value.baseSha ||
-          canonicalSerialize(value.revision.review.candidate) !==
-            canonicalSerialize(value.revision.candidate) ||
+          canonicalJsonText(value.revision.review.candidate) !==
+            canonicalJsonText(value.revision.candidate) ||
           value.revision.review.verdict !== "revision-required"
         ) {
           context.addIssue({

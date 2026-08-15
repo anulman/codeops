@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
+  canonicalJsonText,
   githubCheckRerunInputSchema,
   githubMutationResultSchema,
   githubPullRequestUpdateBranchInputSchema,
@@ -23,21 +24,8 @@ const routes = new Map<string, GitHubMutationOperation>([
   ["/v1/github-mutations/check/rerun", "check_rerun"],
 ]);
 
-function canonical(value: unknown): string {
-  const normalize = (entry: unknown): unknown => {
-    if (Array.isArray(entry)) return entry.map(normalize);
-    if (entry !== null && typeof entry === "object") {
-      return Object.fromEntries(Object.entries(entry as Record<string, unknown>)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, nested]) => [key, normalize(nested)]));
-    }
-    return entry;
-  };
-  return JSON.stringify(normalize(value));
-}
-
 function digest(value: unknown): string {
-  return `sha256:${createHash("sha256").update(canonical(value)).digest("hex")}`;
+  return `sha256:${createHash("sha256").update(canonicalJsonText(value)).digest("hex")}`;
 }
 
 function mutationRequest(
@@ -55,7 +43,7 @@ function mutationRequest(
   return {
     operation,
     operationId: `githubmutation-${createHash("sha256")
-      .update(canonical({ dispatchId, operation, input })).digest("hex")}`,
+      .update(canonicalJsonText({ dispatchId, operation, input })).digest("hex")}`,
     input,
   } as RuntimeGitHubMutationRequest;
 }
@@ -136,10 +124,10 @@ export class GitHubMutationsBroker {
         operation,
         ...target,
         expectedHeadSha: mutation.input.expectedHeadSha,
-        payloadJson: canonical(mutation.input),
+        payloadJson: canonicalJsonText(mutation.input),
       });
       const permissionRequestId = `permission-${createHash("sha256")
-        .update(canonical(permissionOperation))
+        .update(canonicalJsonText(permissionOperation))
         .update("\0")
         .update(active.dispatch.dispatchId)
         .update("\0")

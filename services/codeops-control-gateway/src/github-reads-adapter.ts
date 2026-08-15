@@ -5,7 +5,12 @@ import {
   type GitHubReadResult,
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
+import {
+  decodeProviderResponseText,
+  readProviderResponse,
+} from "./provider-response.js";
 
+const MAX_GITHUB_JSON_BYTES = 1 * 1_024 * 1_024;
 const MAX_UPSTREAM_TEXT_BYTES = 2 * 1_024 * 1_024;
 
 interface GitHubReadAuthority {
@@ -71,20 +76,26 @@ async function githubJson(
   requestFetch: typeof fetch,
   init: RequestInit = {},
 ): Promise<unknown> {
-  const response = await requestFetch(url, {
-    ...init,
-    redirect: "error",
-    headers: { ...headers(authority), ...(init.headers ?? {}) },
-    signal: AbortSignal.timeout(30_000),
+  const response = await readProviderResponse({
+    fetch: requestFetch,
+    url,
+    init: {
+      ...init,
+      headers: { ...headers(authority), ...(init.headers ?? {}) },
+    },
+    maxBytes: MAX_GITHUB_JSON_BYTES,
+    statuses: [200],
+    mediaTypes: ["json"],
   });
-  if (!response.ok) {
-    throw new Error(`GitHub read failed with HTTP ${response.status}`);
+  try {
+    return JSON.parse(decodeProviderResponseText(response.bytes));
+  } catch (error) {
+    throw new Error("GitHub read response is not valid JSON", { cause: error });
   }
-  return response.json();
 }
 
 async function boundedText(
-  response: Response,
+  source: Uint8Array,
   maxBytes: number,
 ): Promise<{
   readonly content: string;
@@ -92,16 +103,15 @@ async function boundedText(
   readonly sourceBytes: number;
   readonly truncated: boolean;
 }> {
-  if (!response.ok) {
-    throw new Error(`GitHub text read failed with HTTP ${response.status}`);
+  const sourceText = decodeProviderResponseText(source);
+  let content = "";
+  let contentBytes = 0;
+  for (const character of sourceText) {
+    const characterBytes = Buffer.byteLength(character);
+    if (contentBytes + characterBytes > maxBytes) break;
+    content += character;
+    contentBytes += characterBytes;
   }
-  const source = Buffer.from(await response.arrayBuffer());
-  if (source.byteLength > MAX_UPSTREAM_TEXT_BYTES) {
-    throw new Error("GitHub text response exceeds 2 MiB");
-  }
-  let content = source.subarray(0, Math.min(source.byteLength, maxBytes)).toString("utf8");
-  while (Buffer.byteLength(content) > maxBytes) content = content.slice(0, -1);
-  const contentBytes = Buffer.byteLength(content);
   return {
     content,
     contentBytes,
@@ -186,15 +196,17 @@ export function createGitHubReadAdapter(input: {
         if (identity.head.sha !== request.input.expectedHeadSha) {
           throw new Error("GitHub pull-request head changed before diff read");
         }
-        const response = await requestFetch(
-          apiUrl(authority, `/pulls/${request.input.pullRequestNumber}`),
-          {
-            redirect: "error",
+        const response = await readProviderResponse({
+          fetch: requestFetch,
+          url: apiUrl(authority, `/pulls/${request.input.pullRequestNumber}`),
+          init: {
             headers: headers(authority, "application/vnd.github.diff"),
-            signal: AbortSignal.timeout(30_000),
           },
-        );
-        const diff = await boundedText(response, request.input.maxBytes);
+          maxBytes: MAX_UPSTREAM_TEXT_BYTES,
+          statuses: [200],
+          mediaTypes: ["application/vnd.github.diff", "text"],
+        });
+        const diff = await boundedText(response.bytes, request.input.maxBytes);
         const confirmedIdentity = await pullRequest(
           authority,
           request.input.pullRequestNumber,
@@ -351,32 +363,23 @@ export function createGitHubReadAdapter(input: {
           requestFetch,
         ));
         void identity;
-        let response = await requestFetch(
-          apiUrl(authority, `/check-runs/${request.input.checkRunId}/logs`),
-          {
-            redirect: "manual",
+        const response = await readProviderResponse({
+          fetch: requestFetch,
+          url: apiUrl(authority, `/check-runs/${request.input.checkRunId}/logs`),
+          init: {
             headers: headers(authority),
-            signal: AbortSignal.timeout(30_000),
           },
-        );
-        if ([301, 302, 303, 307, 308].includes(response.status)) {
-          const location = response.headers.get("location");
-          if (location === null) throw new Error("GitHub check-log redirect is missing");
-          const redirect = new URL(location);
-          if (redirect.protocol !== "https:" || redirect.username || redirect.password) {
-            throw new Error("GitHub check-log redirect is unsafe");
-          }
-          response = await requestFetch(redirect, {
-            redirect: "error",
-            signal: AbortSignal.timeout(30_000),
-          });
-        }
+          maxBytes: MAX_UPSTREAM_TEXT_BYTES,
+          statuses: [200],
+          mediaTypes: ["text", "application/octet-stream"],
+          allowGitHubCheckLogRedirect: true,
+        });
         return githubReadResultSchema.parse({
           version: "codeops.github-check-logs-result/v1",
           repository: authority.repository,
           headSha: request.input.headSha,
           checkRunId: request.input.checkRunId,
-          ...(await boundedText(response, request.input.maxBytes)),
+          ...(await boundedText(response.bytes, request.input.maxBytes)),
         });
       }
       case "protected_branch": {
