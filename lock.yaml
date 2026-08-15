@@ -89,6 +89,9 @@ importers:
 
   services/codeops-model-proxy:
     dependencies:
+      pg:
+        specifier: 8.22.0
+        version: 8.22.0
       varlock:
         specifier: 1.16.1
         version: 1.16.1

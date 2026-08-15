@@ -54,6 +54,13 @@ const migrations = [
     name: "session-model-budget-ledger-v2",
     url: new URL("../sql/session-model-budget-ledger-v2.sql", import.meta.url),
   },
+  {
+    name: "session-model-budget-ledger-functions-v1",
+    url: new URL(
+      "../sql/session-model-budget-ledger-functions-v1.sql",
+      import.meta.url,
+    ),
+  },
 ] as const;
 
 function migrationDigest(sql: string): string {
@@ -218,6 +225,52 @@ export async function grantLifecycleRelayAccess(
   }
 }
 
+export async function grantModelProxyLedgerAccess(
+  client: TransactionClient,
+  role: string,
+  password: string,
+): Promise<void> {
+  if (!/^[a-z_][a-z0-9_]{0,62}$/.test(role)) {
+    throw new Error("model proxy database role is invalid");
+  }
+  if (!/^[A-Za-z0-9._~-]{32,256}$/.test(password)) {
+    throw new Error("model proxy database password is invalid");
+  }
+  const identifier = `"${role}"`;
+  await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
+    await client.query(
+      "SELECT pg_advisory_xact_lock(hashtextextended('codeops.model-proxy-role', 0))",
+    );
+    const existing = await client.query(
+      "SELECT 1 FROM pg_catalog.pg_roles WHERE rolname = $1",
+      [role],
+    );
+    const verb = existing.rows[0] ? "ALTER" : "CREATE";
+    await client.query(
+      `${verb} ROLE ${identifier} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+    );
+    await client.query(`REVOKE ALL ON SCHEMA codeops FROM ${identifier}`);
+    await client.query(
+      `REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM ${identifier}`,
+    );
+    await client.query(
+      `REVOKE ALL ON ALL SEQUENCES IN SCHEMA codeops FROM ${identifier}`,
+    );
+    await client.query(`GRANT USAGE ON SCHEMA codeops TO ${identifier}`);
+    await client.query(
+      `GRANT EXECUTE ON FUNCTION codeops.reserve_session_model_budget(uuid, text, text, text, bigint, text, text, text, bigint, bigint) TO ${identifier}`,
+    );
+    await client.query(
+      `GRANT EXECUTE ON FUNCTION codeops.settle_session_model_budget(uuid, text, text, bigint, bigint, bigint, text) TO ${identifier}`,
+    );
+    await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
 export function sessionRuntimeDatabaseCredentials(
   databaseUrl: string,
   role: string,
@@ -276,6 +329,25 @@ export function lifecycleRelayDatabaseCredentials(
   } catch (error) {
     throw new Error(
       "lifecycle relay database URL is outside the relay-only boundary",
+      { cause: error },
+    );
+  }
+}
+
+export function modelProxyDatabaseCredentials(
+  databaseUrl: string,
+  role: string,
+  controlPlaneDatabaseUrl: string,
+): { readonly role: string; readonly password: string } {
+  try {
+    return sessionRuntimeDatabaseCredentials(
+      databaseUrl,
+      role,
+      controlPlaneDatabaseUrl,
+    );
+  } catch (error) {
+    throw new Error(
+      "model proxy database URL is outside the ledger-only boundary",
       { cause: error },
     );
   }
