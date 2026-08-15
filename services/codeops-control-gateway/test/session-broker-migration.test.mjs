@@ -121,7 +121,19 @@ test("records a caller-supplied immutable migration identity", async () => {
 test("applies broker runtime, lifecycle journal, launches, and notifications in order", async () => {
   const client = fakeClient();
   const results = await migrateSessionBroker(client);
-  assert.deepEqual(results, ["applied", "applied", "applied", "applied", "applied", "applied", "applied", "applied", "applied", "applied"]);
+  assert.deepEqual(results, [
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+    "applied",
+  ]);
   const inserts = client.calls
     .filter(({ text }) => text.includes("INSERT INTO codeops.schema_migrations"))
     .map(({ values }) => values[0]);
@@ -136,6 +148,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "work-item-lifecycle-journal-v1",
     "workspace-launch-v1",
     "session-notifications-v1",
+    "session-model-budget-ledger-v2",
   ]);
 });
 

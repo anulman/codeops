@@ -22,6 +22,8 @@ const workspaceArtifactsUrl = new URL("../sql/workspace-checkpoint-artifacts.sql
 const workspaceArtifactsRevertUrl = new URL("../sql/workspace-checkpoint-artifacts-revert.sql", import.meta.url);
 const sessionNotificationsUrl = new URL("../sql/session-notifications.sql", import.meta.url);
 const sessionNotificationsRevertUrl = new URL("../sql/session-notifications-revert.sql", import.meta.url);
+const modelBudgetLedgerUrl = new URL("../sql/session-model-budget-ledger-v2.sql", import.meta.url);
+const modelBudgetLedgerRevertUrl = new URL("../sql/session-model-budget-ledger-v2-revert.sql", import.meta.url);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");
@@ -196,6 +198,35 @@ test("orders migration and reversion around foreign-key dependencies", async () 
   assert.ok(sql.indexOf("codeops.session_commands") < sql.indexOf("codeops.session_events"));
   assert.ok(revert.indexOf("codeops.session_events") < revert.indexOf("codeops.session_commands"));
   assert.ok(revert.indexOf("codeops.session_commands") < revert.indexOf("codeops.sessions"));
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
+});
+
+test("defines a reversible durable model budget ledger", async () => {
+  const sql = await readFile(modelBudgetLedgerUrl, "utf8");
+  const revert = await readFile(modelBudgetLedgerRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.session_model_budgets/);
+  assert.match(sql, /CREATE TABLE codeops\.session_model_budget_reservations/);
+  assert.match(
+    sql,
+    /FOREIGN KEY \(session_id, budget_id\)[\s\S]*REFERENCES codeops\.session_model_budgets\(session_id, budget_id\)/,
+  );
+  assert.match(sql, /committed_provider_requests <= provider_requests_limit/);
+  assert.match(
+    sql,
+    /settled_output_tokens \+ reserved_output_tokens <= output_tokens_limit/,
+  );
+  assert.match(
+    sql,
+    /state IN \('reserved', 'settled', 'provider_rejected', 'charged_unknown'\)/,
+  );
+  assert.match(sql, /snapshot_json#>>'\{budget,version\}' = 'codeops\.session-budget\/v1'/);
+  assert.match(sql, /ON CONFLICT \(session_id\) DO NOTHING/);
+  assert.match(revert, /codeops\.session-budget\/v2/);
+  assert.ok(
+    revert.indexOf("session_model_budget_reservations") <
+      revert.indexOf("session_model_budgets"),
+  );
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });

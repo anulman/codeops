@@ -50,6 +50,10 @@ const migrations = [
     name: "session-notifications-v1",
     url: new URL("../sql/session-notifications.sql", import.meta.url),
   },
+  {
+    name: "session-model-budget-ledger-v2",
+    url: new URL("../sql/session-model-budget-ledger-v2.sql", import.meta.url),
+  },
 ] as const;
 
 function migrationDigest(sql: string): string {
