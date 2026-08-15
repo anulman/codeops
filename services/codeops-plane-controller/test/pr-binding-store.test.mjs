@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
@@ -20,6 +20,7 @@ const binding = {
   headSha: "a".repeat(40),
   headRef: "feat/a",
   baseRef: "main",
+  baseSha: "0".repeat(40),
   qualified: true,
   updatedAt: "2026-07-30T21:00:00.000Z",
 };
@@ -46,6 +47,33 @@ test("persists and resolves one immutable PR identity by ticket or PR", async ()
       binding,
     );
   });
+});
+
+test("migrates a legacy binding to unqualified unknown-base authority", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-pr-store-"));
+  try {
+    const { baseSha: _baseSha, ...legacy } = binding;
+    await writeFile(
+      path.join(root, `${binding.workItemId}.json`),
+      `${JSON.stringify(legacy)}\n`,
+      { encoding: "utf8", mode: 0o600 },
+    );
+    const store = createFilePullRequestBindingStore({ rootDirectory: root });
+    const migrated = await store.getByWorkItem(binding.workItemId);
+    assert.equal(migrated.baseSha, null);
+    assert.equal(migrated.qualified, false);
+    await store.put({
+      ...migrated,
+      baseSha: binding.baseSha,
+      updatedAt: "2026-07-30T21:01:00.000Z",
+    });
+    assert.equal(
+      (await store.getByWorkItem(binding.workItemId)).baseSha,
+      binding.baseSha,
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("requires stacked bindings to identify their base ticket", () => {
@@ -143,6 +171,33 @@ test("requires head changes to clear qualification before later requalification"
     await store.put({
       ...binding,
       headSha: "b".repeat(40),
+      qualified: true,
+      updatedAt: "2026-07-30T23:00:00.000Z",
+    });
+    assert.equal((await store.getByWorkItem(binding.workItemId)).qualified, true);
+  });
+});
+
+test("requires base changes to clear qualification before later requalification", async () => {
+  await withStore(async (store) => {
+    await store.put(binding);
+    await assert.rejects(
+      store.put({
+        ...binding,
+        baseSha: "b".repeat(40),
+        updatedAt: "2026-07-30T22:00:00.000Z",
+      }),
+      /must be requalified/,
+    );
+    await store.put({
+      ...binding,
+      baseSha: "b".repeat(40),
+      qualified: false,
+      updatedAt: "2026-07-30T22:00:00.000Z",
+    });
+    await store.put({
+      ...binding,
+      baseSha: "b".repeat(40),
       qualified: true,
       updatedAt: "2026-07-30T23:00:00.000Z",
     });

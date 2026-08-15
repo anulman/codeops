@@ -13,6 +13,7 @@ const leaseId = "11111111-1111-4111-8111-111111111111";
 const idempotencyKey = "22222222-2222-4222-8222-222222222222";
 const workItemId = "33333333-3333-4333-8333-333333333333";
 const headSha = "a".repeat(40);
+const baseSha = "b".repeat(40);
 const actions = [
   "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
   "resume", "fork", "archive",
@@ -68,6 +69,7 @@ function body(overrides = {}) {
       headSha,
       headRef: "feat/agents-ui",
       baseRef: "feat/codeops-contracts-ci",
+      baseSha,
     },
     event: {
       kind: "issue_comment",
@@ -78,6 +80,7 @@ function body(overrides = {}) {
       currentHeadSha: headSha,
       headRef: "feat/agents-ui",
       baseRef: "feat/codeops-contracts-ci",
+      baseSha,
     },
     prompt: "Please fix the exact permission label.",
     idempotencyKey,

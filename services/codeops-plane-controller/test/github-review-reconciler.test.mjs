@@ -102,6 +102,7 @@ const binding = {
   headSha: reviewHead,
   headRef: "codeops/original",
   baseRef: "main",
+  baseSha: "0".repeat(40),
   qualified: true,
   updatedAt: "2026-07-30T22:30:00.000Z",
 };
@@ -122,6 +123,7 @@ function event(overrides = {}) {
     currentHeadSha: reviewHead,
     headRef: binding.headRef,
     baseRef: binding.baseRef,
+    baseSha: binding.baseSha,
     submittedAt: reviewedAt,
     ...overrides,
   };
@@ -292,6 +294,28 @@ test("requires exact allowlisted approval and passing qualification", async () =
       ["binding", true],
       ["reevaluate"],
     ]);
+
+    const movedBase = await reconcileGitHubPullRequestReviewEvent({
+      event: event({ reviewId: 9004, state: "approved", baseSha: "1".repeat(40) }),
+      receivedAt: "2026-07-30T22:48:00.000Z",
+      allowedReviewerIds: new Set([6723643628]),
+      bindings: {
+        async getByPullRequest() {
+          return stored;
+        },
+      },
+      ledger,
+      loadComments: async () => [],
+      loadInitialRequest: (id) => requests.getInitialByWorkItem(id),
+      enqueueRevision: async () => "enqueued",
+      beginRevision: async () => {},
+      qualify: async () => true,
+      reevaluateProject: async () => {},
+    });
+    assert.deepEqual(movedBase, {
+      status: "ignored",
+      reason: "review-does-not-match-bound-current-head",
+    });
 
     const ignored = await reconcileGitHubPullRequestReviewEvent({
       event: event({ reviewId: 9003, reviewerId: 1 }),

@@ -84,6 +84,7 @@ test("resolves the current pull-request head only through the bounded reader", a
         headSha: "b".repeat(40),
         headRef: "feat/agents-ui",
         baseRef: "feat/codeops-contracts-ci",
+        baseSha: "a".repeat(40),
       });
     },
   });
@@ -110,6 +111,7 @@ test("resolves the current pull-request head only through the bounded reader", a
         headSha: "b".repeat(40),
         headRef: "feat/agents-ui",
         baseRef: "feat/codeops-contracts-ci",
+        baseSha: "a".repeat(40),
       }),
   });
   await assert.rejects(
@@ -149,6 +151,7 @@ test("projects one normalized GitHub event only through the internal session gat
     headSha: "b".repeat(40),
     headRef: "feat/agents-ui",
     baseRef: "feat/codeops-contracts-ci",
+    baseSha: "a".repeat(40),
     qualified: false,
     updatedAt: "2026-08-09T17:00:00.000Z",
   };
@@ -359,6 +362,8 @@ test("qualifies one exact pull request and head through the bounded internal rea
           repository: "example-org/example-repository",
           pullRequestNumber: 155,
           headSha: "a".repeat(40),
+          baseRef: "feat/base",
+          baseSha: "b".repeat(40),
           qualified: true,
         }),
         { status: 200, headers: { "Content-Type": "application/json" } },
@@ -369,12 +374,14 @@ test("qualifies one exact pull request and head through the bounded internal rea
     await qualify({
       pullRequestNumber: 155,
       headSha: "a".repeat(40),
+      baseRef: "feat/base",
+      baseSha: "b".repeat(40),
     }),
     true,
   );
   assert.equal(
     calls[0].url,
-    `http://codeops-control-gateway:8080/v1/repositories/example-org/example-repository/pull-requests/155/heads/${"a".repeat(40)}/qualification`,
+    `http://codeops-control-gateway:8080/v1/repositories/example-org/example-repository/pull-requests/155/heads/${"a".repeat(40)}/bases/${"b".repeat(40)}/refs/feat%2Fbase/qualification`,
   );
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${"r".repeat(64)}`);
 });
@@ -694,7 +701,7 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
       updated_at: "2026-07-30T22:45:00.000Z",
       merged: true,
       head: { sha: "a".repeat(40), ref: "feat/a" },
-      base: { ref: "main" },
+      base: { ref: "main", sha: "0".repeat(40) },
     },
     sender: { id: 6723643628, login: "anulman", type: "User" },
   });
@@ -750,7 +757,7 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
       pull_request: {
         number: 158,
         head: { sha: "b".repeat(40), ref: "feat/reviewed" },
-        base: { ref: "main" },
+        base: { ref: "main", sha: "0".repeat(40) },
       },
       review: {
         id: 9001,
@@ -786,6 +793,7 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
           headSha: "a".repeat(40),
           headRef: "feat/a",
           baseRef: "main",
+          baseSha: "0".repeat(40),
           stack: null,
           title: "Bounded PR",
           url: "https://github.com/example-org/example-repository/pull/158",
@@ -812,6 +820,7 @@ test("accepts only signed bounded GitHub pull-request events", async () => {
           currentHeadSha: "b".repeat(40),
           headRef: "feat/reviewed",
           baseRef: "main",
+          baseSha: "0".repeat(40),
           stack: null,
           submittedAt: "2026-07-30T22:45:00.000Z",
         },

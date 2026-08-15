@@ -40,23 +40,32 @@ const nativeStack = z
     "pull-request stack position must not exceed its size",
   );
 
+const pullRequestBindingShape = {
+  version: z.literal("codeops.pull-request-binding/v1"),
+  workspaceId: uuid,
+  projectId: uuid,
+  workItemId: uuid,
+  workflowId: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
+  repository,
+  number: z.number().int().positive().max(10_000_000),
+  state: z.enum(["open", "closed", "merged"]),
+  headSha: gitSha,
+  headRef: gitRef,
+  baseRef: gitRef,
+  baseTicketId: uuid.optional(),
+  nativeStack: nativeStack.optional(),
+  qualified: z.boolean(),
+  updatedAt: z.string().datetime({ offset: true }),
+};
+
+const legacyStoredPullRequestBindingSchema = z
+  .object(pullRequestBindingShape)
+  .strict();
+
 export const storedPullRequestBindingSchema = z
   .object({
-    version: z.literal("codeops.pull-request-binding/v1"),
-    workspaceId: uuid,
-    projectId: uuid,
-    workItemId: uuid,
-    workflowId: z.string().regex(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
-    repository,
-    number: z.number().int().positive().max(10_000_000),
-    state: z.enum(["open", "closed", "merged"]),
-    headSha: gitSha,
-    headRef: gitRef,
-    baseRef: gitRef,
-    baseTicketId: uuid.optional(),
-    nativeStack: nativeStack.optional(),
-    qualified: z.boolean(),
-    updatedAt: z.string().datetime({ offset: true }),
+    ...pullRequestBindingShape,
+    baseSha: gitSha.nullable(),
   })
   .strict()
   .superRefine((binding, context) => {
@@ -72,6 +81,13 @@ export const storedPullRequestBindingSchema = z
         code: z.ZodIssueCode.custom,
         path: ["qualified"],
         message: "only an open PR may be qualified for stacking",
+      });
+    }
+    if (binding.baseSha === null && binding.qualified) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["qualified"],
+        message: "a binding without exact base authority cannot be qualified",
       });
     }
     if (binding.nativeStack?.active === false && binding.qualified) {
@@ -119,9 +135,17 @@ export function createFilePullRequestBindingStore(input: {
     workItemId: string,
   ): Promise<StoredPullRequestBinding | null> {
     try {
-      const binding = storedPullRequestBindingSchema.parse(
-        JSON.parse(await readFile(bindingPath(workItemId), "utf8")) as unknown,
-      );
+      const raw = JSON.parse(
+        await readFile(bindingPath(workItemId), "utf8"),
+      ) as unknown;
+      const current = storedPullRequestBindingSchema.safeParse(raw);
+      const binding = current.success
+        ? current.data
+        : storedPullRequestBindingSchema.parse({
+            ...legacyStoredPullRequestBindingSchema.parse(raw),
+            baseSha: null,
+            qualified: false,
+          });
       if (binding.workItemId !== workItemId) {
         throw new Error("pull-request binding work-item identity mismatch");
       }
@@ -204,6 +228,11 @@ export function createFilePullRequestBindingStore(input: {
         if (existing.headSha !== binding.headSha && binding.qualified) {
           throw new Error(
             "changed pull-request head must be requalified before stacking",
+          );
+        }
+        if (existing.baseSha !== binding.baseSha && binding.qualified) {
+          throw new Error(
+            "changed pull-request base must be requalified before stacking",
           );
         }
       }

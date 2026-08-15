@@ -67,6 +67,7 @@ test("uses one native stack and branch-only fallback for direct Ready siblings",
       headSha: A_HEAD,
       headRef: "feat/a",
       baseRef: "main",
+      baseSha: MAIN,
       qualified: true,
     },
   });
@@ -93,6 +94,26 @@ test("uses one native stack and branch-only fallback for direct Ready siblings",
   }
 });
 
+test("holds dependents when protected main advances beyond a qualified parent base", () => {
+  const parent = ticket("A", {
+    state: "needs_attention",
+    pullRequest: {
+      repository: "example-org/example-repository",
+      number: 158,
+      state: "open",
+      headSha: A_HEAD,
+      headRef: "feat/a",
+      baseRef: "main",
+      baseSha: "0".repeat(40),
+      qualified: true,
+    },
+  });
+  assert.deepEqual(
+    decide("B", [parent, ticket("B", { blockedBy: ["A"] })]),
+    { action: "hold", reason: "blocker-A-base-moved" },
+  );
+});
+
 test("requires a qualified exact open PR instead of trusting Needs attention alone", () => {
   for (const pullRequest of [
     undefined,
@@ -103,6 +124,7 @@ test("requires a qualified exact open PR instead of trusting Needs attention alo
       headSha: A_HEAD,
       headRef: "feat/a",
       baseRef: "main",
+      baseSha: MAIN,
       qualified: true,
     },
     {
@@ -112,6 +134,7 @@ test("requires a qualified exact open PR instead of trusting Needs attention alo
       headSha: A_HEAD,
       headRef: "feat/a",
       baseRef: "main",
+      baseSha: MAIN,
       qualified: false,
     },
   ]) {
@@ -135,6 +158,7 @@ test("prohibits a third unmerged PR in one dependency chain", () => {
       headSha: A_HEAD,
       headRef: "feat/a",
       baseRef: "main",
+      baseSha: MAIN,
       qualified: true,
     },
   });
@@ -148,6 +172,7 @@ test("prohibits a third unmerged PR in one dependency chain", () => {
       headSha: B_HEAD,
       headRef: "feat/b",
       baseRef: "feat/a",
+      baseSha: A_HEAD,
       baseTicketId: "A",
       qualified: true,
     },
@@ -170,13 +195,14 @@ test("fails closed when a review parent has any unresolved ancestor state", () =
       headSha: B_HEAD,
       headRef: "feat/b",
       baseRef: "feat/a",
+      baseSha: A_HEAD,
       baseTicketId: "A",
       qualified: true,
     },
   });
   assert.deepEqual(
     decide("D", [a, b, ticket("D", { blockedBy: ["B"] })]),
-    { action: "hold", reason: "maximum-unmerged-stack-depth-reached" },
+    { action: "hold", reason: "blocker-B-base-moved" },
   );
 });
 
@@ -190,6 +216,7 @@ test("allows the next stack after the older ancestor becomes Complete", () => {
       headSha: A_HEAD,
       headRef: "feat/a",
       baseRef: "main",
+      baseSha: MAIN,
       qualified: true,
     },
   });
@@ -203,6 +230,7 @@ test("allows the next stack after the older ancestor becomes Complete", () => {
       headSha: B_HEAD,
       headRef: "feat/b",
       baseRef: "main",
+      baseSha: MAIN,
       qualified: true,
     },
   });
@@ -230,6 +258,7 @@ test("retains integration provenance when a completed child landed in an open pa
       headSha: UPDATED_A_HEAD,
       headRef: "feat/a",
       baseRef: "main",
+      baseSha: MAIN,
       qualified: true,
     },
   });
@@ -243,6 +272,7 @@ test("retains integration provenance when a completed child landed in an open pa
       headSha: B_HEAD,
       headRef: "feat/b",
       baseRef: "feat/a",
+      baseSha: A_HEAD,
       baseTicketId: "A",
       qualified: true,
     },
@@ -272,6 +302,7 @@ test("extends a native stack only from its exact current top", () => {
         headSha: A_HEAD,
         headRef: "feat/a",
         baseRef: "main",
+        baseSha: MAIN,
         nativeStack: {
           number: 42,
           position,
@@ -320,6 +351,7 @@ test("fails closed when multiple qualified review blockers imply unrelated bases
         headSha,
         headRef: `feat/${id.toLowerCase()}`,
         baseRef: "main",
+        baseSha: MAIN,
         qualified: true,
       },
     });
@@ -355,6 +387,7 @@ test("marks only an exact bound merged PR complete", () => {
       headSha: A_HEAD,
       headRef: "feat/a",
       baseRef: "main",
+      baseSha: MAIN,
       qualified: true,
     },
   });
@@ -400,6 +433,7 @@ test("never completes a closed-unmerged or rewritten PR", () => {
       headSha: A_HEAD,
       headRef: "feat/a",
       baseRef: "main",
+      baseSha: MAIN,
       qualified: true,
     },
   });

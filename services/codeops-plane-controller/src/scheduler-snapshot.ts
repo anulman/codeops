@@ -91,6 +91,7 @@ export async function compileSchedulerProjectSnapshot(input: {
               headSha: binding.headSha,
               headRef: binding.headRef,
               baseRef: binding.baseRef,
+              baseSha: binding.baseSha,
               ...(binding.baseTicketId === undefined
                 ? {}
                 : { baseTicketId: binding.baseTicketId }),

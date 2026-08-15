@@ -212,6 +212,8 @@ export function createGitHubHeadQualifier(input: {
 }): (input: {
   pullRequestNumber: number;
   headSha: string;
+  baseRef: string;
+  baseSha: string;
 }) => Promise<boolean> {
   const origin = internalServiceOrigin(
     input.origin,
@@ -236,11 +238,16 @@ export function createGitHubHeadQualifier(input: {
       .string()
       .regex(/^[0-9a-f]{40}$/)
       .parse(value.headSha);
+    const baseRef = z.string().min(1).max(200).parse(value.baseRef);
+    const baseSha = z
+      .string()
+      .regex(/^[0-9a-f]{40}$/)
+      .parse(value.baseSha);
     const response = await (input.fetch ?? fetch)(
       new URL(
         repositoryRoute(
           repository,
-          `/pull-requests/${pullRequestNumber}/heads/${headSha}/qualification`,
+          `/pull-requests/${pullRequestNumber}/heads/${headSha}/bases/${baseSha}/refs/${encodeURIComponent(baseRef)}/qualification`,
         ),
         origin,
       ),
@@ -262,6 +269,8 @@ export function createGitHubHeadQualifier(input: {
         repository: z.string().regex(REPOSITORY_IDENTITY),
         pullRequestNumber: z.number().int().positive().max(10_000_000),
         headSha: z.string().regex(/^[0-9a-f]{40}$/),
+        baseRef: z.string().min(1).max(200),
+        baseSha: z.string().regex(/^[0-9a-f]{40}$/),
         qualified: z.boolean(),
       })
       .strict()
@@ -269,6 +278,8 @@ export function createGitHubHeadQualifier(input: {
     if (
       result.pullRequestNumber !== pullRequestNumber ||
       result.headSha !== headSha ||
+      result.baseRef !== baseRef ||
+      result.baseSha !== baseSha ||
       result.repository !== repository
     ) {
       throw new Error("GitHub qualification identity mismatch");
@@ -284,6 +295,7 @@ export interface GitHubCurrentPullRequest {
   readonly headSha: string;
   readonly headRef: string;
   readonly baseRef: string;
+  readonly baseSha: string;
 }
 
 export function createGitHubCurrentPullRequestResolver(input: {
@@ -341,6 +353,7 @@ export function createGitHubCurrentPullRequestResolver(input: {
         headSha: z.string().regex(/^[0-9a-f]{40}$/),
         headRef: z.string().min(1).max(200),
         baseRef: z.string().min(1).max(200),
+        baseSha: z.string().regex(/^[0-9a-f]{40}$/),
       })
       .strict()
       .parse(await response.json());

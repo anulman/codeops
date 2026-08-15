@@ -34,6 +34,7 @@ export interface GitHubSessionSteeringRequest {
         readonly currentHeadSha: string;
         readonly headRef: string;
         readonly baseRef: string;
+        readonly baseSha: string;
       });
   readonly prompt: string;
   readonly idempotencyKey: string;
@@ -89,6 +90,7 @@ function matchesBinding(
     headSha: string;
     headRef: string;
     baseRef: string;
+    baseSha: string;
   }>,
 ): boolean {
   if (
@@ -104,7 +106,8 @@ function matchesBinding(
       currentPullRequest?.state === "open" &&
       binding.headSha === currentPullRequest.headSha &&
       binding.headRef === currentPullRequest.headRef &&
-      binding.baseRef === currentPullRequest.baseRef
+      binding.baseRef === currentPullRequest.baseRef &&
+      binding.baseSha === currentPullRequest.baseSha
     );
   }
   if (event.kind === "pull_request_review_comment") {
@@ -113,14 +116,16 @@ function matchesBinding(
       event.commentHeadSha === event.currentHeadSha &&
       binding.headSha === event.currentHeadSha &&
       binding.headRef === event.headRef &&
-      binding.baseRef === event.baseRef
+      binding.baseRef === event.baseRef &&
+      binding.baseSha === event.baseSha
     );
   }
   return (
     event.action !== "closed" &&
     binding.headSha === event.headSha &&
     binding.headRef === event.headRef &&
-    binding.baseRef === event.baseRef
+    binding.baseRef === event.baseRef &&
+    binding.baseSha === event.baseSha
   );
 }
 
@@ -140,6 +145,7 @@ export async function reconcileGitHubSessionEvent(input: {
     headSha: string;
     headRef: string;
     baseRef: string;
+    baseSha: string;
   }>>;
   steer: (request: GitHubSessionSteeringRequest) => Promise<{ sessionId: string }>;
 }): Promise<GitHubSessionReconciliationResult> {
@@ -206,6 +212,7 @@ export async function reconcileGitHubSessionEvent(input: {
               currentHeadSha: currentPullRequest!.headSha,
               headRef: currentPullRequest!.headRef,
               baseRef: currentPullRequest!.baseRef,
+              baseSha: currentPullRequest!.baseSha,
             }
           : input.event,
       prompt: eventPrompt(input.event),

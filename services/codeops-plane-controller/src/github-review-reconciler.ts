@@ -163,6 +163,7 @@ export async function reconcileGitHubPullRequestReviewEvent(input: {
     binding.headSha !== input.event.reviewedHeadSha ||
     binding.headRef !== input.event.headRef ||
     binding.baseRef !== input.event.baseRef ||
+    binding.baseSha !== input.event.baseSha ||
     (binding.nativeStack === undefined
       ? (input.event.stack ?? null) !== null
       : !binding.nativeStack.active ||
@@ -170,6 +171,7 @@ export async function reconcileGitHubPullRequestReviewEvent(input: {
         binding.nativeStack.number !== input.event.stack!.number ||
         binding.nativeStack.position !== input.event.stack!.position ||
         binding.nativeStack.base.ref !== input.event.stack!.base.ref ||
+        binding.nativeStack.base.sha !== input.event.stack!.base.sha ||
         input.event.stack!.size < binding.nativeStack.size)
   ) {
     return { status: "ignored", reason: "review-does-not-match-bound-current-head" };
