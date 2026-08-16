@@ -1,0 +1,135 @@
+{{- if .Values.runtimeEgressProxy.enabled }}
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ include "codeops.fullname" . }}-runtime-egress-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime-egress-proxy
+automountServiceAccountToken: false
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "codeops.fullname" . }}-runtime-egress-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime-egress-proxy
+data:
+  squid.conf: |
+{{ include "codeops.runtimeEgressProxyConfig" . | nindent 4 }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "codeops.fullname" . }}-runtime-egress-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime-egress-proxy
+spec:
+  replicas: {{ .Values.runtimeEgressProxy.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-runtime-egress-proxy }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "codeops.fullname" . }}-runtime-egress-proxy
+        app.kubernetes.io/component: runtime-egress-proxy
+        app.kubernetes.io/part-of: codeops
+      annotations:
+        checksum/squid-config: {{ include "codeops.runtimeEgressProxyConfig" . | sha256sum }}
+    spec:
+      serviceAccountName: {{ include "codeops.fullname" . }}-runtime-egress-proxy
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        {{- include "codeops.imagePullSecrets" . | nindent 8 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 13
+        runAsGroup: 13
+        fsGroup: 13
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: squid
+          image: {{ include "codeops.image" .Values.runtimeEgressProxy.image | quote }}
+          imagePullPolicy: IfNotPresent
+          args: [-N, -f, /etc/squid/squid.conf]
+          ports: [{ name: proxy, containerPort: 3128 }]
+          startupProbe: { tcpSocket: { port: proxy }, periodSeconds: 2, failureThreshold: 30 }
+          readinessProbe: { tcpSocket: { port: proxy }, periodSeconds: 5 }
+          livenessProbe: { tcpSocket: { port: proxy }, periodSeconds: 10, failureThreshold: 6 }
+          resources:
+            {{- toYaml .Values.runtimeEgressProxy.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: config, mountPath: /etc/squid/squid.conf, subPath: squid.conf, readOnly: true }
+            - { name: logs, mountPath: /var/log/squid }
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "codeops.fullname" . }}-runtime-egress-proxy
+            defaultMode: 292
+        - name: temp
+          emptyDir: { sizeLimit: 64Mi }
+        - name: logs
+          emptyDir: { sizeLimit: 128Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "codeops.fullname" . }}-runtime-egress-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime-egress-proxy
+spec:
+  selector: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-runtime-egress-proxy }
+  ports: [{ name: proxy, protocol: TCP, port: 3128, targetPort: proxy }]
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ include "codeops.fullname" . }}-runtime-egress-proxy
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: runtime-egress-proxy
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-runtime-egress-proxy }
+  policyTypes: [Ingress, Egress]
+  ingress:
+    - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/component: runtime }
+      ports: [{ protocol: TCP, port: 3128 }]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: kube-system }
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except: [0.0.0.0/8, 10.0.0.0/8, 100.64.0.0/10, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.0.0.0/24, 192.168.0.0/16, 198.18.0.0/15, 198.51.100.0/24, 203.0.113.0/24, 224.0.0.0/4, 240.0.0.0/4]
+      ports:
+        {{- range .Values.runtimeEgressProxy.allowedConnectPorts }}
+        - { protocol: TCP, port: {{ . }} }
+        {{- end }}
+        {{- if .Values.runtimeEgressProxy.allowPlainHttp }}
+        - { protocol: TCP, port: 80 }
+        {{- end }}
+{{- end }}

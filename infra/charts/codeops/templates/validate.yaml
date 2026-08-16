@@ -1,6 +1,39 @@
 {{- if not (has .Values.profile (list "full-managed" "full-external" "custom")) -}}
 {{- fail "profile must be full-managed, full-external, or custom" -}}
 {{- end -}}
+{{- if .Values.runtimeEgressProxy.enabled -}}
+{{- if not (regexMatch "^[a-z0-9._/-]+$" .Values.runtimeEgressProxy.image.repository) -}}
+{{- fail "runtime egress proxy image repository is invalid" -}}
+{{- end -}}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" .Values.runtimeEgressProxy.image.digest) -}}
+{{- fail "runtime egress proxy requires one immutable image digest" -}}
+{{- end -}}
+{{- if eq (len .Values.runtimeEgressProxy.allowedDomains) 0 -}}
+{{- fail "runtime egress proxy requires at least one exact allowed domain" -}}
+{{- end -}}
+{{- if gt (len .Values.runtimeEgressProxy.allowedDomains) 64 -}}
+{{- fail "runtime egress proxy allows at most 64 exact domains" -}}
+{{- end -}}
+{{- range .Values.runtimeEgressProxy.allowedDomains -}}
+{{- if or (ne . (lower .)) (gt (len .) 253) (contains "*" .) (contains "/" .) (contains ":" .) (contains ".." .) (hasPrefix "." .) (hasSuffix "." .) (not (regexMatch "^[a-z0-9][a-z0-9.-]*[a-z0-9]$" .)) -}}
+{{- fail "runtime egress proxy allowed domains must be exact lowercase DNS names without wildcards" -}}
+{{- end -}}
+{{- end -}}
+{{- if eq (len .Values.runtimeEgressProxy.allowedConnectPorts) 0 -}}
+{{- fail "runtime egress proxy requires at least one CONNECT port" -}}
+{{- end -}}
+{{- if gt (len .Values.runtimeEgressProxy.allowedConnectPorts) 16 -}}
+{{- fail "runtime egress proxy allows at most 16 CONNECT ports" -}}
+{{- end -}}
+{{- range .Values.runtimeEgressProxy.allowedConnectPorts -}}
+{{- if or (lt (int .) 1) (gt (int .) 65535) -}}
+{{- fail "runtime egress proxy CONNECT ports must be between 1 and 65535" -}}
+{{- end -}}
+{{- end -}}
+{{- if lt (int .Values.runtimeEgressProxy.replicas) 1 -}}
+{{- fail "runtime egress proxy requires at least one replica" -}}
+{{- end -}}
+{{- end -}}
 {{- if not (has .Values.postgresql.deployment (list "managed" "external")) -}}
 {{- fail "postgresql.deployment must be managed or external" -}}
 {{- end -}}

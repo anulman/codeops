@@ -80,6 +80,7 @@ test("provisions fixed resources, waits for the exact session, and sends one pro
   let current = launch;
   const ensured = [];
   const enqueued = [];
+  const observations = [];
   let runtimeEnsured = false;
   const identity = workspaceLaunchRuntimeIdentity(launch);
   const dependencies = {
@@ -124,6 +125,20 @@ test("provisions fixed resources, waits for the exact session, and sends one pro
     loadJob: async (name) => name.endsWith("-materialize")
       ? { status: { succeeded: 1 } }
       : { status: { active: 1 } },
+    listRuntimePods: async () => [{
+      metadata: {
+        uid: "runtime-pod-uid",
+        labels: { "codeops.example/run-id": identity.runId },
+        ownerReferences: [{
+          apiVersion: "batch/v1",
+          kind: "Job",
+          name: `workspace-${launch.launchId.slice("launch-".length)}`,
+          controller: true,
+        }],
+      },
+      status: { podIP: "10.42.1.8" },
+    }],
+    recordRuntimePodObservations: async (entries) => observations.push(...entries),
     removeResource: async (resource) => ensured.push(`deleted:${resource.kind}`),
     enqueuePrompt: async (input) => {
       enqueued.push(input);
@@ -149,6 +164,13 @@ test("provisions fixed resources, waits for the exact session, and sends one pro
   assert.equal(enqueued[0].command.prompt, request.prompt);
   assert.deepEqual(enqueued[0].command.contextAttachments, request.contextAttachments);
   assert.equal(enqueued[0].command.idempotencyKey, identity.promptIdempotencyKey);
+  assert.deepEqual(observations, [{
+    sessionId: identity.sessionId,
+    generation: 1,
+    podUid: "runtime-pod-uid",
+    podIp: "10.42.1.8",
+    observedAt: now().toISOString(),
+  }]);
 });
 
 test("keeps provisioning durable until the root session initializes", async () => {

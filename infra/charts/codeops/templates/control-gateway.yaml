@@ -135,6 +135,10 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_SERVICE_ACCOUNT_NAME, value: {{ printf "%s-runtime" (include "codeops.fullname" .) | quote }} }
             - { name: CODEOPS_SESSION_SECRETS_NAME, value: {{ .Values.gateway.secretName | quote }} }
             - { name: CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN, value: http://{{ include "codeops.fullname" . }}-session-control-gateway:8080 }
+            {{- if .Values.runtimeEgressProxy.enabled }}
+            - { name: CODEOPS_RUNTIME_EGRESS_PROXY_ORIGIN, value: http://{{ include "codeops.fullname" . }}-runtime-egress-proxy:3128 }
+            - { name: CODEOPS_RUNTIME_EGRESS_PROXY_SERVICE_NAME, value: {{ printf "%s-runtime-egress-proxy" (include "codeops.fullname" .) | quote }} }
+            {{- end }}
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_ID, value: {{ .Values.controlGateway.workerId | quote }} }
             - { name: CODEOPS_WORKSPACE_STORAGE_SIZE, value: {{ .Values.runtime.workspaceStorage | quote }} }
             - { name: CODEOPS_WORKSPACE_STORAGE_CLASS_NAME, value: {{ .Values.runtime.workspaceStorageClassName | quote }} }

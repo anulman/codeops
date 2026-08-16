@@ -18,6 +18,10 @@ import {
   buildWorkspaceResources,
   type WorkspaceResourceConfig,
 } from "./workspace-resources.js";
+import {
+  workspaceRuntimePodObservations,
+  type RuntimeEgressPodObservation,
+} from "./runtime-egress-audit.js";
 
 function deterministicUuid(value: string): string {
   const hex = createHash("sha256").update(value).digest("hex").slice(0, 32);
@@ -54,6 +58,12 @@ export interface WorkspaceLaunchControllerDependencies {
   ) => Promise<void>;
   readonly loadSession: (sessionId: string) => Promise<SessionSnapshot | null>;
   readonly loadJob: (name: string) => Promise<Record<string, unknown>>;
+  readonly listRuntimePods: (
+    runId: string,
+  ) => Promise<readonly Record<string, unknown>[]>;
+  readonly recordRuntimePodObservations: (
+    observations: readonly RuntimeEgressPodObservation[],
+  ) => Promise<void>;
   readonly removeResource: (resource: Record<string, unknown>) => Promise<void>;
   readonly enqueuePrompt: (input: {
     readonly command: Readonly<Record<string, unknown>>;
@@ -208,6 +218,18 @@ export async function reconcileWorkspaceLaunch(
         "workspace launch session identity drifted from provisioning",
       );
     }
+    const runtimeName = (runtimeJob.metadata as { readonly name: string }).name;
+    const observedAt = (dependencies.now ?? (() => new Date()))().toISOString();
+    await dependencies.recordRuntimePodObservations(
+      workspaceRuntimePodObservations({
+        pods: await dependencies.listRuntimePods(identity.runId),
+        sessionId: session.sessionId,
+        generation: session.generation,
+        runId: identity.runId,
+        jobName: runtimeName,
+        observedAt,
+      }),
+    );
     await dependencies.removeResource(sourceSecret);
     failureCode = "initial-prompt-failed";
     const dispatch = await dependencies.enqueuePrompt({
