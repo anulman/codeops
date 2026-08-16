@@ -77,6 +77,11 @@ test("builds isolated materializer and runtime Jobs on bounded persistent storag
   assert.equal(storage.spec.resources.requests.storage, "10Gi");
   assert.equal(materializer.spec.template.spec.automountServiceAccountToken, false);
   assert.equal(runtime.spec.template.spec.automountServiceAccountToken, false);
+  assert.equal(runtime.metadata.labels["codeops.example/run-id"], config().runId);
+  assert.equal(
+    runtime.spec.template.metadata.labels["codeops.example/run-id"],
+    config().runId,
+  );
   assert.equal(materializer.spec.template.spec.containers[0].name, "workspace-builder");
   assert.equal(JSON.stringify(runtime).includes("https://github.com/"), false);
   assert.equal(JSON.stringify(runtime).includes("read-token-codeops"), false);
@@ -133,6 +138,37 @@ test("binds workspace mounts and Codex configuration to the immutable session po
   );
   assert.equal(reviewCodexConfig.model, "gpt-5.6-sol");
   assert.equal(reviewCodexConfig.model_reasoning_effort, "high");
+});
+
+test("routes runtime HTTP traffic through only the exact internal egress proxy", () => {
+  const proxied = config();
+  proxied.runtimeEgressProxyOrigin = "http://agents-system-runtime-egress-proxy:3128";
+  proxied.runtimeEgressProxyServiceName = "agents-system-runtime-egress-proxy";
+  const runtime = buildWorkspaceResources(proxied)[3];
+  for (const container of runtime.spec.template.spec.containers) {
+    const env = Object.fromEntries(container.env.map(({ name, value }) => [name, value]));
+    assert.equal(env.HTTP_PROXY, proxied.runtimeEgressProxyOrigin);
+    assert.equal(env.HTTPS_PROXY, proxied.runtimeEgressProxyOrigin);
+    assert.equal(env.http_proxy, proxied.runtimeEgressProxyOrigin);
+    assert.equal(env.https_proxy, proxied.runtimeEgressProxyOrigin);
+    assert.equal(env.NO_PROXY, env.no_proxy);
+    assert.match(env.NO_PROXY, /agents-system-session-control-gateway/);
+    assert.match(env.NO_PROXY, /agents-system-model-proxy/);
+  }
+  assert.throws(
+    () => buildWorkspaceResources({
+      ...proxied,
+      runtimeEgressProxyOrigin: "http://attacker.example:3128",
+    }),
+    /exact internal service/,
+  );
+  assert.throws(
+    () => buildWorkspaceResources({
+      ...config(),
+      runtimeEgressProxyOrigin: proxied.runtimeEgressProxyOrigin,
+    }),
+    /authority is incomplete/,
+  );
 });
 
 test("puts exact source authority only in the init-only immutable Secret", () => {

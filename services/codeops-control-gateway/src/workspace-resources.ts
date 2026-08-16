@@ -39,6 +39,8 @@ export interface WorkspaceResourceConfig {
   readonly sessionSecretsName: string;
   readonly sessionGatewayOrigin: string;
   readonly modelProxyOrigin: string;
+  readonly runtimeEgressProxyOrigin?: string;
+  readonly runtimeEgressProxyServiceName?: string;
   readonly workspaceStorageSize: string;
   readonly workspaceStorageClassName?: string;
 }
@@ -56,6 +58,52 @@ function exactOrigin(value: string): string {
     throw new Error("workspace runtime gateway must be one credential-free HTTP origin");
   }
   return origin.origin;
+}
+
+function runtimeEgressProxyEnvironment(raw: WorkspaceResourceConfig) {
+  if (
+    (raw.runtimeEgressProxyOrigin === undefined) !==
+    (raw.runtimeEgressProxyServiceName === undefined)
+  ) {
+    throw new Error("workspace runtime egress proxy authority is incomplete");
+  }
+  if (
+    raw.runtimeEgressProxyOrigin === undefined ||
+    raw.runtimeEgressProxyServiceName === undefined
+  ) {
+    return [];
+  }
+  if (!dnsLabel.test(raw.runtimeEgressProxyServiceName)) {
+    throw new Error("workspace runtime egress proxy service is invalid");
+  }
+  const proxy = new URL(raw.runtimeEgressProxyOrigin);
+  if (
+    proxy.protocol !== "http:" ||
+    proxy.hostname !== raw.runtimeEgressProxyServiceName ||
+    proxy.port !== "3128" ||
+    proxy.username ||
+    proxy.password ||
+    proxy.pathname !== "/" ||
+    proxy.search ||
+    proxy.hash
+  ) {
+    throw new Error("workspace runtime egress proxy must be the exact internal service");
+  }
+  const noProxy = [
+    "localhost",
+    "127.0.0.1",
+    "::1",
+    new URL(exactOrigin(raw.sessionGatewayOrigin)).hostname,
+    new URL(exactOrigin(raw.modelProxyOrigin)).hostname,
+  ].join(",");
+  return [
+    { name: "HTTP_PROXY", value: proxy.origin },
+    { name: "HTTPS_PROXY", value: proxy.origin },
+    { name: "NO_PROXY", value: noProxy },
+    { name: "http_proxy", value: proxy.origin },
+    { name: "https_proxy", value: proxy.origin },
+    { name: "no_proxy", value: noProxy },
+  ];
 }
 
 const materializeScript = String.raw`
@@ -92,6 +140,7 @@ export function buildWorkspaceResources(
   const contextAttachments = workspaceContextAttachmentDescriptorsSchema.parse(
     raw.contextAttachments ?? [],
   );
+  const proxyEnvironment = runtimeEgressProxyEnvironment(raw);
   if (policy.modelPolicy.provider !== "openai") {
     throw new Error("interactive workspace runtime requires one model policy");
   }
@@ -294,6 +343,7 @@ export function buildWorkspaceResources(
           "app.kubernetes.io/name": "codeops-workspace-runtime",
           "app.kubernetes.io/component": "runtime",
           "codeops.example/resource-role": "workspace-runtime",
+          "codeops.example/run-id": raw.runId,
         },
         annotations,
       },
@@ -307,6 +357,7 @@ export function buildWorkspaceResources(
               ...commonLabels,
               "app.kubernetes.io/name": "codeops-workspace-runtime",
               "app.kubernetes.io/component": "runtime",
+              "codeops.example/run-id": raw.runId,
             },
           },
           spec: {
@@ -330,6 +381,7 @@ export function buildWorkspaceResources(
               image: raw.runtimeWorkerImage,
               imagePullPolicy: "IfNotPresent",
               env: [
+                ...proxyEnvironment,
                 { name: "CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN", value: exactOrigin(raw.sessionGatewayOrigin) },
                 { name: "CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE", value: "/var/run/codeops-session/runtime-worker-token" },
                 { name: "CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE", value: "/var/run/codeops-session/initialization-token" },
@@ -369,6 +421,7 @@ export function buildWorkspaceResources(
               image: raw.agentImage,
               imagePullPolicy: "IfNotPresent",
               env: [
+                ...proxyEnvironment,
                 { name: "CODEX_HOME", value: "/tmp/codex-home" },
                 { name: "CODEOPS_MODEL_PROXY_TOKEN_FILE", value: "/run/codeops/model-proxy-token" },
                 { name: "DEFAULT_AUTH_REQUEST", value: '{"methodId":"api-key"}' },

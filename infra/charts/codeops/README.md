@@ -69,6 +69,47 @@ access. If the installation needs public UI or webhook routes, the deployment
 consumer must create the Ingress, TLS, and edge authentication resources. Use
 the distinct webhook Secrets from the same values file.
 
+## Optional runtime egress proxy
+
+Set `runtimeEgressProxy.enabled=true` to route workspace runtime HTTP and HTTPS
+traffic through one internal Squid Service. When enabled, the chart removes
+direct public TCP 443 egress from runtime Pods. It permits runtime Pods to
+reach the proxy and required internal Services. The proxy accepts only exact
+lowercase domain names and configured destination ports. Its generated
+configuration denies private, loopback, link-local, metadata, multicast, and
+reserved IPv4 destinations after DNS resolution. The final Squid rule denies
+all remaining requests.
+
+Use an immutable Squid image digest and an explicit allowlist:
+
+```yaml
+runtimeEgressProxy:
+  enabled: true
+  image:
+    repository: ubuntu/squid
+    digest: sha256:<64-lowercase-hex-characters>
+  allowedDomains:
+    - registry.npmjs.org
+    - pypi.org
+  allowedConnectPorts: [443]
+  allowPlainHttp: false
+  externalLogRetentionNotice: "Retained by the cluster log collector for 30 days."
+```
+
+The proxy does not intercept TLS. Its JSON access record contains only the
+timestamp, client Pod IP, method, destination host and port, result, upstream
+status, transferred byte count, and duration. CodeOps stores the corresponding
+session ID, generation, Pod UID, Pod IP, and observation time in
+`codeops.runtime_egress_pod_observations`. Join a proxy record to that table by
+Pod IP and the observation time interval. Configure a cluster log collector if
+the records must survive Pod deletion.
+
+This feature is an audit and allowlist control. It is not data-loss prevention.
+A runtime can send data to an allowed HTTPS destination or encode data in DNS
+queries. CONNECT can also carry a non-HTTPS protocol on an allowed port. Keep
+the allowlist narrow. Use only trusted repositories. If the feature is
+disabled, the chart keeps the existing monitored direct public HTTPS policy.
+
 Helm uninstall retains the quickstart Secrets and PostgreSQL data PVC. Delete
 them explicitly only when you intend to destroy the installation identity and
 stored data.

@@ -130,6 +130,39 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- end -}}
 {{- end -}}
 
+{{- define "codeops.runtimeEgressProxyConfig" -}}
+http_port 3128
+max_filedescriptors 1024
+
+acl runtime_clients src 10.0.0.0/8 172.16.0.0/12 192.168.0.0/16
+acl safe_ports port{{ range .Values.runtimeEgressProxy.allowedConnectPorts }} {{ . }}{{ end }}{{ if .Values.runtimeEgressProxy.allowPlainHttp }} 80{{ end }}
+acl tls_ports port{{ range .Values.runtimeEgressProxy.allowedConnectPorts }} {{ . }}{{ end }}
+acl connect method CONNECT
+acl allowed_domains dstdomain{{ range .Values.runtimeEgressProxy.allowedDomains }} {{ . }}{{ end }}
+acl forbidden_destinations dst 0.0.0.0/8 10.0.0.0/8 100.64.0.0/10 127.0.0.0/8 169.254.0.0/16 172.16.0.0/12 192.0.0.0/24 192.168.0.0/16 198.18.0.0/15 198.51.100.0/24 203.0.113.0/24 224.0.0.0/4 240.0.0.0/4
+
+http_access deny !safe_ports
+http_access deny connect !tls_ports
+http_access deny forbidden_destinations
+http_access allow runtime_clients allowed_domains
+http_access deny all
+
+cache deny all
+cache_mem 32 MB
+maximum_object_size_in_memory 512 KB
+workers 1
+pinger_enable off
+forwarded_for delete
+request_header_access X-Forwarded-For deny all
+request_header_access Via deny all
+
+logformat codeops_json {"timestamp":"%ts.%03tu","clientPodIp":"%>a","method":"%".16rm","destination":"%".320>rd:%>rP","result":"%Ss","upstreamStatus":%>Hs,"bytes":%<st,"durationMs":%tr}
+access_log stdio:/var/log/squid/access.log codeops_json
+cache_log stdio:/var/log/squid/cache.log
+pid_filename none
+coredump_dir /tmp
+{{- end -}}
+
 {{- define "codeops.postgresqlEgressTarget" -}}
 {{- if eq .Values.postgresql.deployment "managed" -}}
 podSelector:

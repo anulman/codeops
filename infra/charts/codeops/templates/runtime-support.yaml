@@ -14,3 +14,4 @@ data:
   session-gateway-image: {{ include "codeops.image" .Values.runtime.sessionGatewayImage | quote }}
   session-gateway-origin: http://{{ include "codeops.fullname" . }}-session-control-gateway:8080
   model-proxy-origin: http://{{ include "codeops.fullname" . }}-model-proxy:8080
+  runtime-egress-proxy-origin: {{ ternary (printf "http://%s-runtime-egress-proxy:3128" (include "codeops.fullname" .)) "" .Values.runtimeEgressProxy.enabled | quote }}

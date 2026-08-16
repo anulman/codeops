@@ -104,6 +104,7 @@ import {
   loadWorkspaceLaunchRequest,
   updateWorkspaceLaunch,
 } from "./workspace-launch-store.js";
+import { recordRuntimeEgressPodObservations } from "./runtime-egress-audit.js";
 import {
   PermanentWorkspaceLaunchError,
   reconcileWorkspaceLaunch,
@@ -487,6 +488,15 @@ function workspaceResourceConfig(
     ),
     sessionGatewayOrigin: required("CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN"),
     modelProxyOrigin: modelAuth.origin,
+    ...(process.env.CODEOPS_RUNTIME_EGRESS_PROXY_ORIGIN?.trim()
+      ? {
+          runtimeEgressProxyOrigin:
+            process.env.CODEOPS_RUNTIME_EGRESS_PROXY_ORIGIN.trim(),
+          runtimeEgressProxyServiceName: kubernetesObjectName(
+            "CODEOPS_RUNTIME_EGRESS_PROXY_SERVICE_NAME",
+          ),
+        }
+      : {}),
     workspaceStorageSize: required("CODEOPS_WORKSPACE_STORAGE_SIZE"),
     ...(process.env.CODEOPS_WORKSPACE_STORAGE_CLASS_NAME?.trim()
       ? {
@@ -536,6 +546,15 @@ async function reconcileOneWorkspaceLaunch(launchId: string): Promise<void> {
       }
     },
     loadJob: (name) => kubernetes.getJob(name),
+    listRuntimePods: (runId) => kubernetes.listRunPods(runId),
+    recordRuntimePodObservations: async (observations) => {
+      const client = await database.connect();
+      try {
+        await recordRuntimeEgressPodObservations(client, observations);
+      } finally {
+        client.release();
+      }
+    },
     removeResource: (resource) => kubernetes.delete(resource as never),
     enqueuePrompt: async (input) => {
       const client = await database.connect();

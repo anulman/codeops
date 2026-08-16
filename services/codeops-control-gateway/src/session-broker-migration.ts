@@ -54,6 +54,13 @@ const migrations = [
     url: new URL("../sql/workspace-launch.sql", import.meta.url),
   },
   {
+    name: "runtime-egress-pod-observations-v1",
+    url: new URL(
+      "../sql/runtime-egress-pod-observations-v1.sql",
+      import.meta.url,
+    ),
+  },
+  {
     name: "session-notifications-v1",
     url: new URL("../sql/session-notifications.sql", import.meta.url),
   },

@@ -249,6 +249,75 @@ test("wires Web Push only from an explicit public configuration and private Secr
   assert.equal(JSON.stringify(deployment).includes("privateKey"), false);
 });
 
+test("renders the optional runtime egress proxy as one fail-closed boundary", () => {
+  const resources = render([
+    "--set", "runtimeEgressProxy.enabled=true",
+    "--set", `runtimeEgressProxy.image.digest=sha256:${"6".repeat(64)}`,
+    "--set", "runtimeEgressProxy.allowedDomains[0]=registry.npmjs.org",
+    "--set", "runtimeEgressProxy.allowedDomains[1]=pypi.org",
+  ]);
+  const proxy = resource(resources, "Deployment", "team-a-codeops-runtime-egress-proxy");
+  assert.equal(
+    proxy.spec.template.spec.containers[0].image,
+    `ubuntu/squid@sha256:${"6".repeat(64)}`,
+  );
+  assert.equal(proxy.spec.template.spec.automountServiceAccountToken, false);
+  assert.equal(
+    proxy.spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem,
+    true,
+  );
+  const config = resource(resources, "ConfigMap", "team-a-codeops-runtime-egress-proxy");
+  assert.match(config.data["squid.conf"], /http_access allow runtime_clients allowed_domains/);
+  assert.match(config.data["squid.conf"], /http_access deny all\s*$/m);
+  assert.doesNotMatch(
+    config.data["squid.conf"].match(/^\s*logformat\s+codeops_json\s+(.+)$/m)?.[1] ?? "",
+    /Authorization|Cookie|request_body|reply_body|%ru/,
+  );
+  assert.match(config.data["squid.conf"], /%\"\.16rm/);
+  assert.match(config.data["squid.conf"], /%\"\.320>rd/);
+  const proxyPolicy = resource(
+    resources,
+    "NetworkPolicy",
+    "team-a-codeops-runtime-egress-proxy",
+  );
+  assert.match(JSON.stringify(proxyPolicy), /100\.64\.0\.0\/10/);
+  assert.match(JSON.stringify(proxyPolicy), /169\.254\.0\.0\/16/);
+  const runtimePolicy = resource(resources, "NetworkPolicy", "team-a-codeops-runtime");
+  const runtimePolicyText = JSON.stringify(runtimePolicy);
+  assert.match(runtimePolicyText, /team-a-codeops-runtime-egress-proxy/);
+  assert.doesNotMatch(runtimePolicyText, /"cidr":"0\.0\.0\.0\/0"/);
+  const controlGateway = resource(resources, "Deployment", "team-a-codeops-control-gateway");
+  const env = Object.fromEntries(
+    controlGateway.spec.template.spec.containers[0].env.map(({ name, value }) => [name, value]),
+  );
+  assert.equal(
+    env.CODEOPS_RUNTIME_EGRESS_PROXY_ORIGIN,
+    "http://team-a-codeops-runtime-egress-proxy:3128",
+  );
+  assert.equal(
+    env.CODEOPS_RUNTIME_EGRESS_PROXY_SERVICE_NAME,
+    "team-a-codeops-runtime-egress-proxy",
+  );
+});
+
+test("keeps the documented direct runtime HTTPS policy when the proxy is disabled", () => {
+  const resources = render();
+  assert.equal(
+    resources.some(({ metadata }) =>
+      metadata?.name === "team-a-codeops-runtime-egress-proxy"
+    ),
+    false,
+  );
+  const runtimePolicy = resource(resources, "NetworkPolicy", "team-a-codeops-runtime");
+  assert.match(JSON.stringify(runtimePolicy), /"cidr":"0\.0\.0\.0\/0"/);
+  const controlGateway = resource(resources, "Deployment", "team-a-codeops-control-gateway");
+  const environment = new Map(
+    controlGateway.spec.template.spec.containers[0].env.map((entry) => [entry.name, entry]),
+  );
+  assert.equal(environment.has("CODEOPS_RUNTIME_EGRESS_PROXY_ORIGIN"), false);
+  assert.equal(environment.has("CODEOPS_RUNTIME_EGRESS_PROXY_SERVICE_NAME"), false);
+});
+
 test("changes the immutable runtime image ConfigMap identity with image content", () => {
   const baseline = render();
   const changed = render([
@@ -668,6 +737,21 @@ test("accepts arbitrary namespaces and fails closed on invalid configuration", (
   for (const extra of cases) {
     assert.throws(() => helm([
       "template", "team-a", chart,
+      ...digestSets.flatMap((value) => ["--set", value]),
+      ...extra,
+    ]));
+  }
+  for (const extra of [
+    ["--set", "runtimeEgressProxy.enabled=true"],
+    [
+      "--set", "runtimeEgressProxy.enabled=true",
+      "--set", `runtimeEgressProxy.image.digest=sha256:${"6".repeat(64)}`,
+      "--set", "runtimeEgressProxy.allowedDomains[0]=*",
+    ],
+  ]) {
+    assert.throws(() => helm([
+      "template", "team-a", chart,
+      "--namespace", "engineering",
       ...digestSets.flatMap((value) => ["--set", value]),
       ...extra,
     ]));
