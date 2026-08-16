@@ -1,13 +1,21 @@
 import { useMemo, useState } from "react";
-import { Link, createFileRoute } from "@tanstack/react-router";
+import { Link, createFileRoute, useRouter } from "@tanstack/react-router";
+import { useServerFn } from "@tanstack/react-start";
 import { AppShell } from "@/components/AppShell";
 import { StatusBadge } from "@/components/StatusBadge";
-import { getSessionFleet } from "@/lib/sessionBroker.data";
+import { getProviderEffectFleet, getSessionFleet, reconcileProviderEffect } from "@/lib/sessionBroker.data";
 import { sessionDisplayName, sessionSearchText, sessionWorkspaceDetail, sessionWorkspaceLabel } from "@/lib/sessionIdentity";
 import type { SessionSnapshot } from "@codeops/codeops-contracts/session-broker";
+import type { ProviderEffectReceipt } from "@codeops/codeops-contracts/github-mutations";
 
 export const Route = createFileRoute("/")({
-  loader: () => getSessionFleet(),
+  loader: async () => {
+    const [sessions, providerEffects] = await Promise.all([
+      getSessionFleet(),
+      getProviderEffectFleet(),
+    ]);
+    return { sessions, providerEffects };
+  },
   component: SessionsPage,
 });
 
@@ -15,20 +23,21 @@ const filters = ["all", "running", "attention", "completed", "archived"] as cons
 type Filter = (typeof filters)[number];
 
 function SessionsPage() {
-  const sessions = Route.useLoaderData();
+  const { sessions, providerEffects } = Route.useLoaderData();
   return (
     <AppShell sessions={sessions}>
-      <DesktopOverview sessions={sessions} />
-      <MobileFleet sessions={sessions} />
+      <DesktopOverview sessions={sessions} providerEffects={providerEffects} />
+      <MobileFleet sessions={sessions} providerEffects={providerEffects} />
     </AppShell>
   );
 }
 
-function DesktopOverview({ sessions }: Readonly<{ sessions: readonly SessionSnapshot[] }>) {
+function DesktopOverview({ sessions, providerEffects }: Readonly<{ sessions: readonly SessionSnapshot[]; providerEffects: readonly ProviderEffectReceipt[] }>) {
   const counts = stateCounts(sessions);
   const attention = sessions.filter((session) => matchesFilter(session, "attention"));
   const active = sessions.filter((session) => matchesFilter(session, "running"));
   const recent = sessions.filter((session) => !attention.includes(session) && !active.includes(session)).slice(0, 6);
+  const unknownEffects = providerEffects.filter((effect) => effect.state === "unknown" || effect.state === "attempting");
   return (
     <main className="hidden min-h-dvh bg-[#111113] lg:block">
       <div className="flex h-13 items-center justify-between border-b border-white/[0.07] px-5">
@@ -53,6 +62,7 @@ function DesktopOverview({ sessions }: Readonly<{ sessions: readonly SessionSnap
           <div className="space-y-8">
             <OverviewGroup title="Working now" description="Sessions with an active or pending runtime." sessions={active} empty="No agents are working right now." />
             {attention.length > 0 ? <OverviewGroup title="Needs attention" description="Permission requests and failed sessions." sessions={attention} tone="attention" /> : null}
+            {unknownEffects.length > 0 ? <ProviderEffectAttention effects={unknownEffects} /> : null}
           </div>
           <section>
             <div className="mb-3 flex items-center justify-between"><h2 className="text-xs font-semibold text-white/72">Recent history</h2><span className="text-[10px] text-white/24">Latest first</span></div>
@@ -67,7 +77,7 @@ function DesktopOverview({ sessions }: Readonly<{ sessions: readonly SessionSnap
   );
 }
 
-function MobileFleet({ sessions }: Readonly<{ sessions: readonly SessionSnapshot[] }>) {
+function MobileFleet({ sessions, providerEffects }: Readonly<{ sessions: readonly SessionSnapshot[]; providerEffects: readonly ProviderEffectReceipt[] }>) {
   const [filter, setFilter] = useState<Filter>("all");
   const [query, setQuery] = useState("");
   const counts = stateCounts(sessions);
@@ -92,7 +102,59 @@ function MobileFleet({ sessions }: Readonly<{ sessions: readonly SessionSnapshot
         {visibleSessions.map((session) => <MobileSessionRow key={session.sessionId} session={session} />)}
         {visibleSessions.length === 0 ? <div className="py-20 text-center text-sm text-white/30">No sessions match this view.</div> : null}
       </div>
+      {providerEffects.some((effect) => effect.state === "unknown" || effect.state === "attempting") ? (
+        <div className="mt-8">
+          <ProviderEffectAttention effects={providerEffects.filter((effect) => effect.state === "unknown" || effect.state === "attempting")} />
+        </div>
+      ) : null}
     </main>
+  );
+}
+
+function ProviderEffectAttention({ effects }: Readonly<{ effects: readonly ProviderEffectReceipt[] }>) {
+  return (
+    <section>
+      <div className="mb-3"><h2 className="text-xs font-semibold text-[#ffae8d]">Provider effects need reconciliation</h2><p className="mt-1 text-[11px] text-white/32">CodeOps will not retry these GitHub mutations automatically.</p></div>
+      <div className="divide-y divide-white/[0.055] overflow-hidden rounded-xl border border-[#ff9b73]/18 bg-[#151517]">
+        {effects.map((effect) => (
+          <div key={effect.effectId} className="px-4 py-3.5">
+            <div className="flex items-center justify-between gap-3"><span className="truncate text-sm font-medium text-white/78">{effect.repository} · {effect.operation.replaceAll("_", " ")}</span><span className="rounded-md bg-[#ff9b73]/10 px-2 py-1 text-[10px] font-semibold uppercase tracking-[0.08em] text-[#ffae8d]">{effect.state}</span></div>
+            <div className="mt-2 grid gap-1 font-mono text-[10px] text-white/32 sm:grid-cols-2">
+              <span>Target: {effect.pullRequestNumber === null ? effect.targetId : `PR #${effect.pullRequestNumber}`}</span>
+              <span>Expected: {effect.expectedHeadSha.slice(0, 12)}</span>
+              <span>Attempt: {effect.attemptedAt ?? "not started"}</span>
+              <span>Action: {effect.reconciliationAction.replaceAll("_", " ")}</span>
+            </div>
+            {effect.state === "unknown" ? <ReconcileEffectButton effectId={effect.effectId} /> : null}
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+function ReconcileEffectButton({ effectId }: Readonly<{ effectId: string }>) {
+  const router = useRouter();
+  const reconcile = useServerFn(reconcileProviderEffect);
+  const [status, setStatus] = useState<"idle" | "working" | "failed">("idle");
+  return (
+    <button
+      type="button"
+      disabled={status === "working"}
+      onClick={async () => {
+        setStatus("working");
+        try {
+          await reconcile({ data: { effectId } });
+          await router.invalidate();
+          setStatus("idle");
+        } catch {
+          setStatus("failed");
+        }
+      }}
+      className="mt-3 rounded-lg border border-[#ff9b73]/25 bg-[#ff9b73]/8 px-3 py-1.5 text-[11px] font-semibold text-[#ffbc9f] transition hover:bg-[#ff9b73]/14 disabled:opacity-45"
+    >
+      {status === "working" ? "Reconciling…" : status === "failed" ? "Reconciliation failed — retry read" : "Run reconciliation read"}
+    </button>
   );
 }
 

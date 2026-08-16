@@ -1,11 +1,13 @@
 import {
   canonicalJsonText,
   githubMutationProviderRequestSchema,
+  githubMutationReconciliationResultSchema,
   githubMutationResultSchema,
   sessionPermissionOperationSchema,
   sha256CanonicalJsonDigest,
   type GitHubMutationProviderRequest,
   type GitHubMutationResult,
+  type GitHubMutationReconciliationResult,
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
 import {
@@ -15,6 +17,28 @@ import {
 import type { RepositoryAuthority } from "./repository-registry.js";
 
 const MAX_GITHUB_JSON_BYTES = 1 * 1_024 * 1_024;
+
+export class GitHubMutationPreflightNoEffectError extends Error {}
+
+export function githubEffectMarker(operationId: string): string {
+  if (!/^githubmutation-[0-9a-f]{64}$/.test(operationId)) {
+    throw new Error("GitHub effect marker operation identity is invalid");
+  }
+  return `<!-- codeops-provider-effect:${operationId} -->`;
+}
+
+async function preflight<T>(operation: () => Promise<T>): Promise<T> {
+  try {
+    return await operation();
+  } catch (error) {
+    throw new GitHubMutationPreflightNoEffectError(
+      `GitHub mutation preflight proved that no remote effect occurred: ${
+        error instanceof Error ? error.message : "unknown preflight failure"
+      }`,
+      { cause: error },
+    );
+  }
+}
 
 function repositoryParts(authority: RepositoryAuthority): {
   readonly owner: string;
@@ -161,6 +185,17 @@ const reviewThreadIdentityResponse = z
             headRefOid: z.string(),
             repository: z.object({ nameWithOwner: z.string() }).passthrough(),
           }).passthrough(),
+          comments: z
+            .object({
+              nodes: z.array(z.object({
+                databaseId: z.number().int().positive(),
+                url: z.string(),
+                body: z.string(),
+              }).passthrough().nullable()).max(100),
+              pageInfo: z.object({ hasPreviousPage: z.boolean() }).passthrough(),
+            })
+            .passthrough()
+            .optional(),
         })
         .passthrough()
         .nullable(),
@@ -184,6 +219,7 @@ async function reviewThreadIdentity(
           "  node(id: $threadId) {",
           "    ... on PullRequestReviewThread {",
           "      id pullRequest { number headRefOid repository { nameWithOwner } }",
+          "      comments(last: 100) { nodes { databaseId url body } pageInfo { hasPreviousPage } }",
           "    }",
           "  }",
           "}",
@@ -192,6 +228,124 @@ async function reviewThreadIdentity(
       }),
     }),
   );
+}
+
+export function createGitHubMutationReconciler(input: {
+  readonly resolve: (repository: string) => RepositoryAuthority;
+  readonly fetch?: typeof fetch;
+  readonly consistencyWindowMs?: number;
+}): (
+  request: GitHubMutationProviderRequest,
+  attemptedAt: Date,
+  observedAt?: Date,
+) => Promise<GitHubMutationReconciliationResult> {
+  const requestFetch = input.fetch ?? fetch;
+  const consistencyWindowMs = input.consistencyWindowMs ?? 60_000;
+  if (!Number.isSafeInteger(consistencyWindowMs) || consistencyWindowMs < 1_000 || consistencyWindowMs > 300_000) {
+    throw new Error("GitHub reconciliation consistency window is invalid");
+  }
+  return async (rawRequest, attemptedAt, observedAt = new Date()) => {
+    const request = githubMutationProviderRequestSchema.parse(rawRequest);
+    assertProviderDigests(request);
+    if (!Number.isFinite(attemptedAt.getTime()) || !Number.isFinite(observedAt.getTime()) || observedAt < attemptedAt) {
+      throw new Error("GitHub reconciliation time identity is invalid");
+    }
+    const authority = input.resolve(request.input.repository);
+    const windowElapsed = observedAt.getTime() - attemptedAt.getTime() >= consistencyWindowMs;
+    const result = await (async () => {
+    switch (request.operation) {
+      case "pull_request_update": {
+        const current = await pullRequest(authority, request.input.pullRequestNumber, requestFetch);
+        const satisfied =
+          current.number === request.input.pullRequestNumber &&
+          current.head.sha === request.input.expectedHeadSha &&
+          (request.input.title === undefined || current.title === request.input.title) &&
+          (request.input.body === undefined || (current.body ?? "") === request.input.body) &&
+          (request.input.baseBranch === undefined || current.base.ref === request.input.baseBranch);
+        if (!satisfied) {
+          return {
+            state: "unknown",
+            result: null,
+            summary: "The requested pull-request fields are not all present; the exact prior metadata was not retained.",
+          };
+        }
+        const result = githubMutationResultSchema.parse({
+          version: "codeops.github-pull-request-update-result/v1",
+          repository: authority.repository,
+          operationId: request.operationId,
+          pullRequestNumber: current.number,
+          headSha: current.head.sha,
+          baseSha: current.base.sha,
+          title: current.title,
+          body: current.body ?? "",
+          baseBranch: current.base.ref,
+          url: current.html_url,
+        });
+        return {
+          state: "reconciled_satisfied",
+          result,
+          summary: "The exact pull-request identity and every requested field match.",
+        };
+      }
+      case "review_thread_reply": {
+        const current = await reviewThreadIdentity(authority, request.input.threadId, requestFetch);
+        const thread = current.data.node;
+        if (
+          current.errors !== undefined ||
+          thread === null ||
+          thread.pullRequest.number !== request.input.pullRequestNumber ||
+          thread.pullRequest.repository.nameWithOwner !== authority.repository
+        ) {
+          return { state: "unknown", result: null, summary: "The review-thread identity cannot be proved." };
+        }
+        const marker = githubEffectMarker(request.operationId);
+        const comment = thread.comments?.nodes.find((entry) =>
+          entry?.body.split(/\r?\n/).includes(marker),
+        ) ?? null;
+        if (comment !== null) {
+          return {
+            state: "reconciled_satisfied",
+            result: githubMutationResultSchema.parse({
+              version: "codeops.github-review-thread-reply-result/v1",
+              repository: authority.repository,
+              operationId: request.operationId,
+              pullRequestNumber: thread.pullRequest.number,
+              headSha: thread.pullRequest.headRefOid,
+              threadId: request.input.threadId,
+              commentId: comment.databaseId,
+              url: comment.url,
+            }),
+            summary: "The exact hidden operation marker is present in the review thread.",
+          };
+        }
+        if (thread.comments?.pageInfo.hasPreviousPage !== false) {
+          return { state: "unknown", result: null, summary: "The bounded review-thread page cannot prove that the operation marker is absent." };
+        }
+        return windowElapsed
+          ? { state: "reconciled_not_observed", result: null, summary: "The exact operation marker is absent after the provider consistency window." }
+          : { state: "unknown", result: null, summary: "The provider consistency window has not elapsed." };
+      }
+      case "pull_request_update_branch": {
+        const current = await pullRequest(authority, request.input.pullRequestNumber, requestFetch);
+        if (current.head.sha === request.input.expectedHeadSha && windowElapsed) {
+          return { state: "reconciled_not_observed", result: null, summary: "The exact prior pull-request head remains after the provider consistency window." };
+        }
+        return { state: "unknown", result: null, summary: "A pull-request head change cannot be attributed to this operation." };
+      }
+      case "check_rerun":
+        await githubJson(
+          authority,
+          apiUrl(authority, `/check-runs/${request.input.checkRunId}`),
+          requestFetch,
+        );
+        return { state: "unknown", result: null, summary: "The check-run evidence cannot attribute a rerun to this operation." };
+    }
+    })();
+    return githubMutationReconciliationResultSchema.parse({
+      version: "codeops.github-mutation-reconciliation-result/v1",
+      ...result,
+    });
+  };
 }
 
 const reviewReplyResponse = z
@@ -239,17 +393,20 @@ export function createGitHubMutationAdapter(input: {
 
     switch (request.operation) {
       case "pull_request_update_branch": {
-        const before = await pullRequest(
-          authority,
-          request.input.pullRequestNumber,
-          requestFetch,
-        );
-        if (
-          before.number !== request.input.pullRequestNumber ||
-          before.head.sha !== request.input.expectedHeadSha
-        ) {
-          throw new Error("GitHub pull-request head changed before update-branch");
-        }
+        await preflight(async () => {
+          const value = await pullRequest(
+            authority,
+            request.input.pullRequestNumber,
+            requestFetch,
+          );
+          if (
+            value.number !== request.input.pullRequestNumber ||
+            value.head.sha !== request.input.expectedHeadSha
+          ) {
+            throw new Error("GitHub pull-request head changed before update-branch");
+          }
+          return value;
+        });
         await githubJson(
           authority,
           apiUrl(authority, `/pulls/${request.input.pullRequestNumber}/update-branch`),
@@ -278,18 +435,21 @@ export function createGitHubMutationAdapter(input: {
         });
       }
       case "pull_request_update": {
-        const before = await pullRequest(
-          authority,
-          request.input.pullRequestNumber,
-          requestFetch,
-        );
-        if (
-          before.number !== request.input.pullRequestNumber ||
-          before.head.sha !== request.input.expectedHeadSha ||
-          before.base.sha !== request.input.expectedBaseSha
-        ) {
-          throw new Error("GitHub pull-request identity changed before update");
-        }
+        await preflight(async () => {
+          const value = await pullRequest(
+            authority,
+            request.input.pullRequestNumber,
+            requestFetch,
+          );
+          if (
+            value.number !== request.input.pullRequestNumber ||
+            value.head.sha !== request.input.expectedHeadSha ||
+            value.base.sha !== request.input.expectedBaseSha
+          ) {
+            throw new Error("GitHub pull-request identity changed before update");
+          }
+          return value;
+        });
         const patch = {
           ...(request.input.title === undefined
             ? {}
@@ -342,22 +502,25 @@ export function createGitHubMutationAdapter(input: {
         });
       }
       case "review_thread_reply": {
-        const before = await reviewThreadIdentity(
-          authority,
-          request.input.threadId,
-          requestFetch,
-        );
-        const thread = before.data.node;
-        if (
-          before.errors !== undefined ||
-          thread === null ||
-          thread.id !== request.input.threadId ||
-          thread.pullRequest.number !== request.input.pullRequestNumber ||
-          thread.pullRequest.headRefOid !== request.input.expectedHeadSha ||
-          thread.pullRequest.repository.nameWithOwner !== authority.repository
-        ) {
-          throw new Error("GitHub review-thread identity changed before reply");
-        }
+        await preflight(async () => {
+          const value = await reviewThreadIdentity(
+            authority,
+            request.input.threadId,
+            requestFetch,
+          );
+          const thread = value.data.node;
+          if (
+            value.errors !== undefined ||
+            thread === null ||
+            thread.id !== request.input.threadId ||
+            thread.pullRequest.number !== request.input.pullRequestNumber ||
+            thread.pullRequest.headRefOid !== request.input.expectedHeadSha ||
+            thread.pullRequest.repository.nameWithOwner !== authority.repository
+          ) {
+            throw new Error("GitHub review-thread identity changed before reply");
+          }
+          return value;
+        });
         const reply = reviewReplyResponse.parse(
           await githubJson(
             authority,
@@ -376,7 +539,7 @@ export function createGitHubMutationAdapter(input: {
                 ].join("\n"),
                 variables: {
                   threadId: request.input.threadId,
-                  body: request.input.body,
+                  body: `${request.input.body}\n\n${githubEffectMarker(request.operationId)}`,
                 },
               }),
             },
@@ -404,19 +567,22 @@ export function createGitHubMutationAdapter(input: {
         });
       }
       case "check_rerun": {
-        const before = checkRunResponse.parse(
-          await githubJson(
-            authority,
-            apiUrl(authority, `/check-runs/${request.input.checkRunId}`),
-            requestFetch,
-          ),
-        );
-        if (
-          before.id !== request.input.checkRunId ||
-          before.head_sha !== request.input.expectedHeadSha
-        ) {
-          throw new Error("GitHub check identity changed before rerun");
-        }
+        await preflight(async () => {
+          const value = checkRunResponse.parse(
+            await githubJson(
+              authority,
+              apiUrl(authority, `/check-runs/${request.input.checkRunId}`),
+              requestFetch,
+            ),
+          );
+          if (
+            value.id !== request.input.checkRunId ||
+            value.head_sha !== request.input.expectedHeadSha
+          ) {
+            throw new Error("GitHub check identity changed before rerun");
+          }
+          return value;
+        });
         await githubJson(
           authority,
           apiUrl(authority, `/check-runs/${request.input.checkRunId}/rerequest`),

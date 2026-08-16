@@ -3,8 +3,13 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   authorizeSessionRuntimeGitHubMutation,
+  beginSessionRuntimeGitHubMutationAttempt,
   completeSessionRuntimeGitHubMutation,
   createGitHubMutationProviderClient,
+  createGitHubMutationReconciliationProviderClient,
+  executeAuthorizedSessionRuntimeGitHubMutation,
+  GitHubMutationProviderNoEffectError,
+  recordSessionRuntimeGitHubMutationFailure,
   SessionRuntimeGitHubMutationConflictError,
 } from "../dist/session-runtime-github-mutations.js";
 
@@ -232,16 +237,16 @@ class Client {
         }],
       };
     }
-    if (text.includes("INSERT INTO codeops.session_runtime_github_mutations")) {
+    if (text.includes("INSERT INTO codeops.provider_effect_receipts")) {
       return { rowCount: this.insertCount, rows: [] };
     }
-    if (text.includes("FROM codeops.session_runtime_github_mutations")) {
+    if (text.includes("FROM codeops.provider_effect_receipts")) {
       return {
         rowCount: this.storedMutation ? 1 : 0,
         rows: this.storedMutation ? [this.storedMutation] : [],
       };
     }
-    if (text.includes("UPDATE codeops.session_runtime_github_mutations")) {
+    if (text.includes("UPDATE codeops.provider_effect_receipts")) {
       return { rowCount: 1, rows: [] };
     }
     throw new Error(`unexpected query: ${text}`);
@@ -264,7 +269,7 @@ test("consumes one exact durable permission before returning provider authority"
   assert.match(provider.permissionDigest, /^sha256:[0-9a-f]{64}$/);
   assert.equal("claimToken" in provider, false);
   assert.ok(client.calls.some(({ text }) =>
-    text.includes("INSERT INTO codeops.session_runtime_github_mutations")));
+    text.includes("INSERT INTO codeops.provider_effect_receipts")));
   const authorizationQuery = client.calls.find(({ text }) =>
     text.includes("FROM codeops.session_runtime_outbox AS outbox"));
   assert.match(authorizationQuery.text, /permission\.request_id = \$2/);
@@ -278,6 +283,10 @@ test("consumes one exact durable permission before returning provider authority"
     checkRunId: 1234,
     accepted: true,
   };
+  await beginSessionRuntimeGitHubMutationAttempt(client, {
+    request: provider,
+    now: () => new Date("2026-08-14T15:07:30.000Z"),
+  });
   assert.deepEqual(
     await completeSessionRuntimeGitHubMutation(client, {
       request: provider,
@@ -348,8 +357,8 @@ test("replays an exact completed operation without granting provider authority",
         dispatch_id: dispatchId,
         payload_digest: payloadDigest,
         permission_digest: operationDigest,
-        status: "completed",
-        result_json: result,
+        state: "succeeded",
+        evidence_json: result,
       },
     }),
     {
@@ -370,8 +379,8 @@ test("replays an exact completed operation without granting provider authority",
           dispatch_id: dispatchId,
           payload_digest: payloadDigest,
           permission_digest: operationDigest,
-          status: "started",
-          result_json: null,
+          state: "unknown",
+          evidence_json: null,
         },
       }),
       {
@@ -383,6 +392,33 @@ test("replays an exact completed operation without granting provider authority",
     ),
     /outcome is not known/,
   );
+});
+
+test("resumes the exact authorization when no provider attempt was committed", async () => {
+  const request = runtimeRequest();
+  const permissionSubmission = permission(request);
+  const authorization = await authorizeSessionRuntimeGitHubMutation(
+    new Client({
+      insertCount: 0,
+      permissionValue: permissionSubmission,
+      storedMutation: {
+        dispatch_id: dispatchId,
+        payload_digest: digest(canonical(request.input)),
+        permission_digest: permissionSubmission.request.operationDigest,
+        state: "authorized",
+        evidence_json: null,
+      },
+    }),
+    {
+      dispatchId,
+      workerId,
+      request,
+      now: () => new Date("2026-08-14T15:07:00.000Z"),
+    },
+  );
+
+  assert.equal(authorization.disposition, "authorized");
+  assert.equal(authorization.request.operationId, request.operationId);
 });
 
 test("calls only the internal mutation route with a distinct provider bearer", async () => {
@@ -424,4 +460,158 @@ test("calls only the internal mutation route with a distinct provider bearer", a
     origin: "https://api.github.com",
     token: "github-mutation-provider-token-with-distinct-authority",
   }));
+});
+
+test("calls only the internal read-only reconciliation route", async () => {
+  const authorization = await authorizeSessionRuntimeGitHubMutation(new Client(), {
+    dispatchId,
+    workerId,
+    request: runtimeRequest(),
+    now: () => new Date("2026-08-14T15:07:00.000Z"),
+  });
+  const calls = [];
+  const reconcile = createGitHubMutationReconciliationProviderClient({
+    origin: "http://team-a-codeops-control-gateway:8080",
+    token: "github-mutation-provider-token-with-distinct-authority",
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init, body: JSON.parse(init.body) });
+      return new Response(JSON.stringify({
+        version: "codeops.github-mutation-reconciliation-result/v1",
+        state: "unknown",
+        result: null,
+        summary: "Attribution remains ambiguous.",
+      }), { status: 200, headers: { "content-type": "application/json" } });
+    },
+  });
+  const attemptedAt = new Date("2026-08-14T15:07:01.000Z");
+  assert.equal((await reconcile({ request: authorization.request, attemptedAt })).state, "unknown");
+  assert.equal(
+    calls[0].url,
+    "http://team-a-codeops-control-gateway:8080/v1/repositories/anulman/codeops/github-mutations/reconcile",
+  );
+  assert.equal(calls[0].body.attemptedAt, attemptedAt.toISOString());
+  assert.equal(calls[0].init.headers.authorization, "Bearer github-mutation-provider-token-with-distinct-authority");
+});
+
+test("commits attempting before outcomes and never retries unknown effects", async () => {
+  const client = new Client();
+  const authorization = await authorizeSessionRuntimeGitHubMutation(client, {
+    dispatchId,
+    workerId,
+    request: runtimeRequest(),
+    now: () => new Date("2026-08-14T15:07:00.000Z"),
+  });
+  assert.equal(authorization.disposition, "authorized");
+  await beginSessionRuntimeGitHubMutationAttempt(client, {
+    request: authorization.request,
+    now: () => new Date("2026-08-14T15:07:01.000Z"),
+  });
+  await recordSessionRuntimeGitHubMutationFailure(client, {
+    request: authorization.request,
+    outcome: "unknown",
+    now: () => new Date("2026-08-14T15:07:02.000Z"),
+  });
+  const updates = client.calls.filter(({ text }) =>
+    text.includes("UPDATE codeops.provider_effect_receipts"));
+  assert.match(updates[0].text, /state = 'attempting'/);
+  assert.match(updates[1].text, /SET state = \$1/);
+  assert.equal(updates[1].values[0], "unknown");
+  assert.equal(updates[1].values[2], "inspect_check_attempts");
+  assert.equal(updates[1].values[3], null);
+});
+
+test("distinguishes a proved no-effect provider response from ambiguity", async () => {
+  const authorization = await authorizeSessionRuntimeGitHubMutation(new Client(), {
+    dispatchId,
+    workerId,
+    request: runtimeRequest(),
+    now: () => new Date("2026-08-14T15:07:00.000Z"),
+  });
+  assert.equal(authorization.disposition, "authorized");
+  const mutate = createGitHubMutationProviderClient({
+    origin: "http://team-a-codeops-control-gateway:8080",
+    token: "github-mutation-provider-token-with-distinct-authority",
+    fetch: async () => new Response('{"status":"no-effect"}', { status: 409 }),
+  });
+  await assert.rejects(
+    mutate(authorization.request),
+    GitHubMutationProviderNoEffectError,
+  );
+});
+
+test("does not call the provider when the attempting commit fails", async () => {
+  const authorization = await authorizeSessionRuntimeGitHubMutation(new Client(), {
+    dispatchId,
+    workerId,
+    request: runtimeRequest(),
+    now: () => new Date("2026-08-14T15:07:00.000Z"),
+  });
+  let providerCalls = 0;
+  const client = new Client();
+  const originalQuery = client.query.bind(client);
+  client.query = async (text, values) =>
+    text.includes("SET state = 'attempting'")
+      ? { rowCount: 0, rows: [] }
+      : originalQuery(text, values);
+  await assert.rejects(
+    executeAuthorizedSessionRuntimeGitHubMutation(client, {
+      request: authorization.request,
+      provider: async () => {
+        providerCalls += 1;
+        throw new Error("must not run");
+      },
+    }),
+    /does not match one authorized effect/,
+  );
+  assert.equal(providerCalls, 0);
+});
+
+test("records unknown when the provider outcome or completion commit is ambiguous", async () => {
+  const authorization = await authorizeSessionRuntimeGitHubMutation(new Client(), {
+    dispatchId,
+    workerId,
+    request: runtimeRequest(),
+    now: () => new Date("2026-08-14T15:07:00.000Z"),
+  });
+  const providerFailure = new Client();
+  await assert.rejects(
+    executeAuthorizedSessionRuntimeGitHubMutation(providerFailure, {
+      request: authorization.request,
+      provider: async () => { throw new Error("connection reset after write"); },
+      now: () => new Date("2026-08-14T15:07:01.000Z"),
+    }),
+    /connection reset/,
+  );
+  assert.equal(
+    providerFailure.calls.find(({ text }) => text.includes("SET state = $1"))
+      .values[0],
+    "unknown",
+  );
+
+  const completionFailure = new Client();
+  const originalQuery = completionFailure.query.bind(completionFailure);
+  completionFailure.query = async (text, values) =>
+    text.includes("SET state = 'succeeded'")
+      ? { rowCount: 0, rows: [] }
+      : originalQuery(text, values);
+  await assert.rejects(
+    executeAuthorizedSessionRuntimeGitHubMutation(completionFailure, {
+      request: authorization.request,
+      provider: async () => ({
+        version: "codeops.github-check-rerun-result/v1",
+        repository,
+        operationId: authorization.request.operationId,
+        headSha: "a".repeat(40),
+        checkRunId: 1234,
+        accepted: true,
+      }),
+      now: () => new Date("2026-08-14T15:07:02.000Z"),
+    }),
+    /completion does not match/,
+  );
+  assert.equal(
+    completionFailure.calls.find(({ text }) => text.includes("SET state = $1"))
+      .values[0],
+    "unknown",
+  );
 });

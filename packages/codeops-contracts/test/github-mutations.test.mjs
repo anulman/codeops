@@ -5,6 +5,7 @@ import {
   githubMutationProviderRequestSchema,
   githubMutationResultSchema,
   githubPullRequestUpdateBranchResultSchema,
+  providerEffectReceiptSchema,
   sessionRuntimeGitHubMutationRequestSchema,
   sessionPermissionOperationSchema,
 } from "../dist/index.js";
@@ -172,5 +173,56 @@ test("rejects result identity drift and undeclared mutation responses", () => {
     repository,
     operationId,
     body: { token: "must-not-pass" },
+  }));
+});
+
+test("models authorization separately from every provider effect outcome", () => {
+  const authorized = {
+    version: "codeops.provider-effect-receipt/v1",
+    effectId: operationId,
+    provider: "github",
+    repository,
+    operation: "review_thread_reply",
+    pullRequestNumber: 27,
+    targetId: "PRRT_kwDO-thread",
+    expectedHeadSha,
+    payloadDigest: `sha256:${"d".repeat(64)}`,
+    permissionDigest: `sha256:${"e".repeat(64)}`,
+    sessionId: "session-1",
+    dispatchId: "22222222-2222-4222-8222-222222222222",
+    state: "authorized",
+    authorizedAt: "2026-08-16T00:00:00.000Z",
+    attemptedAt: null,
+    resolvedAt: null,
+    reconciliationAction: "none",
+    resolutionSummary: null,
+  };
+  assert.equal(providerEffectReceiptSchema.parse(authorized).state, "authorized");
+  assert.equal(providerEffectReceiptSchema.parse({
+    ...authorized,
+    state: "unknown",
+    attemptedAt: "2026-08-16T00:00:01.000Z",
+    reconciliationAction: "search_review_thread_marker",
+  }).state, "unknown");
+  assert.equal(providerEffectReceiptSchema.parse({
+    ...authorized,
+    state: "reconciled_satisfied",
+    attemptedAt: "2026-08-16T00:00:01.000Z",
+    resolvedAt: "2026-08-16T00:01:00.000Z",
+    reconciliationAction: "none",
+    resolutionSummary: "The exact operation marker is present in the review thread.",
+  }).state, "reconciled_satisfied");
+  assert.throws(() => providerEffectReceiptSchema.parse({
+    ...authorized,
+    state: "unknown",
+  }));
+  assert.throws(() => providerEffectReceiptSchema.parse({
+    ...authorized,
+    state: "succeeded",
+    attemptedAt: "2026-08-16T00:00:01.000Z",
+  }));
+  assert.throws(() => providerEffectReceiptSchema.parse({
+    ...authorized,
+    rawProviderBody: "must-not-pass",
   }));
 });

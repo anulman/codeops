@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import {
   canonicalJsonText,
   githubMutationProviderRequestSchema,
+  githubMutationReconciliationProviderRequestSchema,
+  githubMutationReconciliationResultSchema,
   githubMutationResultSchema,
   sessionCommandResultSchema,
   sessionCommandSchema,
@@ -10,6 +12,7 @@ import {
   sessionRuntimePermissionSubmissionSchema,
   type GitHubMutationProviderRequest,
   type GitHubMutationResult,
+  type GitHubMutationReconciliationResult,
   type SessionRuntimeGitHubMutationRequest,
 } from "@codeops/codeops-contracts";
 import type { TransactionClient } from "./session-broker-repository.js";
@@ -34,9 +37,11 @@ interface StoredMutationRow extends Record<string, unknown> {
   readonly dispatch_id: unknown;
   readonly payload_digest: unknown;
   readonly permission_digest: unknown;
-  readonly status: unknown;
-  readonly result_json: unknown;
+  readonly state: unknown;
+  readonly evidence_json: unknown;
 }
+
+export class GitHubMutationProviderNoEffectError extends Error {}
 
 export type SessionRuntimeGitHubMutationAuthorization =
   | {
@@ -99,6 +104,21 @@ function permissionTarget(request: SessionRuntimeGitHubMutationRequest): {
       };
     case "check_rerun":
       return { pullRequestNumber: null, targetId: String(request.input.checkRunId) };
+  }
+}
+
+function reconciliationAction(
+  operation: GitHubMutationProviderRequest["operation"],
+): string {
+  switch (operation) {
+    case "pull_request_update":
+      return "inspect_pull_request";
+    case "review_thread_reply":
+      return "search_review_thread_marker";
+    case "pull_request_update_branch":
+      return "compare_pull_request_head";
+    case "check_rerun":
+      return "inspect_check_attempts";
   }
 }
 
@@ -227,18 +247,34 @@ export async function authorizeSessionRuntimeGitHubMutation(
       principalDigest: digest(dispatch.principalId),
     },
   });
+  const target = permissionTarget(request);
   const inserted = await client.query(
-    `INSERT INTO codeops.session_runtime_github_mutations
-       (operation_id, dispatch_id, payload_digest, permission_digest, status)
-     VALUES ($1, $2, $3, $4, 'started')
+    `INSERT INTO codeops.provider_effect_receipts
+       (effect_id, provider, repository, operation, pull_request_number,
+        target_id, expected_head_sha, session_id, dispatch_id, payload_digest,
+        permission_digest, state, reconciliation_action, authorized_at)
+     VALUES ($1, 'github', $2, $3, $4, $5, $6, $7, $8, $9, $10,
+             'authorized', 'none', $11::timestamptz)
      ON CONFLICT DO NOTHING`,
-    [request.operationId, dispatch.dispatchId, payloadDigest, operationDigest],
+    [
+      request.operationId,
+      request.input.repository,
+      request.operation,
+      target.pullRequestNumber,
+      target.targetId,
+      request.input.expectedHeadSha,
+      dispatch.command.sessionId,
+      dispatch.dispatchId,
+      payloadDigest,
+      operationDigest,
+      (input.now ?? (() => new Date()))().toISOString(),
+    ],
   );
   if (inserted.rowCount !== 1) {
     const stored = await client.query<StoredMutationRow>(
-      `SELECT dispatch_id, payload_digest, permission_digest, status, result_json
-         FROM codeops.session_runtime_github_mutations
-        WHERE operation_id = $1`,
+      `SELECT dispatch_id, payload_digest, permission_digest, state, evidence_json
+         FROM codeops.provider_effect_receipts
+        WHERE effect_id = $1`,
       [request.operationId],
     );
     const replay = stored.rows[0];
@@ -252,12 +288,32 @@ export async function authorizeSessionRuntimeGitHubMutation(
         "GitHub mutation operation conflicts with its immutable stored identity",
       );
     }
-    if (replay.status !== "completed" || replay.result_json === null) {
+    if (replay.state === "authorized" && replay.evidence_json === null) {
+      return { disposition: "authorized", request: providerRequest };
+    }
+    if (replay.state === "attempting") {
+      await client.query(
+        `UPDATE codeops.provider_effect_receipts
+            SET state = 'unknown',
+                reconciliation_action = $2,
+                updated_at = $3::timestamptz
+          WHERE effect_id = $1 AND state = 'attempting'`,
+        [
+          request.operationId,
+          reconciliationAction(providerRequest.operation),
+          (input.now ?? (() => new Date()))().toISOString(),
+        ],
+      );
+    }
+    if (
+      !["succeeded", "reconciled_satisfied"].includes(String(replay.state)) ||
+      replay.evidence_json === null
+    ) {
       throw new SessionRuntimeGitHubMutationConflictError(
         "GitHub mutation outcome is not known and cannot be retried",
       );
     }
-    const parsedReplay = githubMutationResultSchema.safeParse(replay.result_json);
+    const parsedReplay = githubMutationResultSchema.safeParse(replay.evidence_json);
     if (!parsedReplay.success) {
       throw new SessionRuntimeGitHubMutationConflictError(
         "stored GitHub mutation result is invalid",
@@ -275,6 +331,111 @@ export async function authorizeSessionRuntimeGitHubMutation(
     return { disposition: "replayed", result: replayed };
   }
   return { disposition: "authorized", request: providerRequest };
+}
+
+export async function beginSessionRuntimeGitHubMutationAttempt(
+  client: TransactionClient,
+  input: {
+    readonly request: GitHubMutationProviderRequest;
+    readonly now?: () => Date;
+  },
+): Promise<void> {
+  const request = githubMutationProviderRequestSchema.parse(input.request);
+  const attemptedAt = (input.now ?? (() => new Date()))().toISOString();
+  const updated = await client.query(
+    `UPDATE codeops.provider_effect_receipts
+        SET state = 'attempting', attempted_at = $1::timestamptz,
+            updated_at = $1::timestamptz
+      WHERE effect_id = $2 AND dispatch_id = $3
+        AND payload_digest = $4 AND permission_digest = $5
+        AND state = 'authorized' AND attempted_at IS NULL`,
+    [
+      attemptedAt,
+      request.operationId,
+      request.provenance.dispatchId,
+      request.payloadDigest,
+      request.permissionDigest,
+    ],
+  );
+  if (updated.rowCount !== 1) {
+    throw new SessionRuntimeGitHubMutationConflictError(
+      "GitHub mutation attempt does not match one authorized effect",
+    );
+  }
+}
+
+export async function recordSessionRuntimeGitHubMutationFailure(
+  client: TransactionClient,
+  input: {
+    readonly request: GitHubMutationProviderRequest;
+    readonly outcome: "failed" | "unknown";
+    readonly now?: () => Date;
+  },
+): Promise<void> {
+  const request = githubMutationProviderRequestSchema.parse(input.request);
+  const observedAt = (input.now ?? (() => new Date()))().toISOString();
+  const failed = input.outcome === "failed";
+  const updated = await client.query(
+    `UPDATE codeops.provider_effect_receipts
+        SET state = $1,
+            resolution_summary = $2,
+            reconciliation_action = $3,
+            resolved_at = $4::timestamptz,
+            updated_at = $4::timestamptz
+      WHERE effect_id = $5 AND dispatch_id = $6
+        AND payload_digest = $7 AND permission_digest = $8
+        AND state = 'attempting' AND attempted_at IS NOT NULL`,
+    [
+      input.outcome,
+      failed ? "Provider preflight proved that no remote effect occurred." : null,
+      failed ? "none" : reconciliationAction(request.operation),
+      failed ? observedAt : null,
+      request.operationId,
+      request.provenance.dispatchId,
+      request.payloadDigest,
+      request.permissionDigest,
+    ],
+  );
+  if (updated.rowCount !== 1) {
+    throw new SessionRuntimeGitHubMutationConflictError(
+      "GitHub mutation failure does not match one attempting effect",
+    );
+  }
+}
+
+export async function executeAuthorizedSessionRuntimeGitHubMutation(
+  client: TransactionClient,
+  input: {
+    readonly request: GitHubMutationProviderRequest;
+    readonly provider: (
+      request: GitHubMutationProviderRequest,
+    ) => Promise<GitHubMutationResult>;
+    readonly now?: () => Date;
+  },
+): Promise<GitHubMutationResult> {
+  const request = githubMutationProviderRequestSchema.parse(input.request);
+  await beginSessionRuntimeGitHubMutationAttempt(client, {
+    request,
+    now: input.now,
+  });
+  try {
+    const result = await input.provider(request);
+    return await completeSessionRuntimeGitHubMutation(client, {
+      request,
+      result,
+      now: input.now,
+    });
+  } catch (error) {
+    await recordSessionRuntimeGitHubMutationFailure(client, {
+      request,
+      outcome:
+        error instanceof GitHubMutationProviderNoEffectError
+          ? "failed"
+          : "unknown",
+      now: input.now,
+    });
+    throw error;
+  }
 }
 
 export async function completeSessionRuntimeGitHubMutation(
@@ -296,12 +457,15 @@ export async function completeSessionRuntimeGitHubMutation(
     );
   }
   const updated = await client.query(
-    `UPDATE codeops.session_runtime_github_mutations
-        SET status = 'completed', result_json = $1::jsonb,
-            completed_at = $2::timestamptz
-      WHERE operation_id = $3 AND dispatch_id = $4
+    `UPDATE codeops.provider_effect_receipts
+        SET state = 'succeeded', evidence_json = $1::jsonb,
+            resolution_summary = 'Provider result and postcondition validated.',
+            reconciliation_action = 'none', resolved_at = $2::timestamptz,
+            updated_at = $2::timestamptz
+      WHERE effect_id = $3 AND dispatch_id = $4
         AND payload_digest = $5 AND permission_digest = $6
-        AND status = 'started' AND result_json IS NULL`,
+        AND state = 'attempting' AND evidence_json IS NULL
+        AND attempted_at IS NOT NULL`,
     [
       canonicalJsonText(result),
       (input.now ?? (() => new Date()))().toISOString(),
@@ -313,7 +477,7 @@ export async function completeSessionRuntimeGitHubMutation(
   );
   if (updated.rowCount !== 1) {
     throw new SessionRuntimeGitHubMutationConflictError(
-      "GitHub mutation completion does not match one started operation",
+      "GitHub mutation completion does not match one attempting effect",
     );
   }
   return result;
@@ -361,9 +525,73 @@ export function createGitHubMutationProviderClient(input: {
         signal: AbortSignal.timeout(30_000),
       },
     );
+    if (response.status === 409) {
+      throw new GitHubMutationProviderNoEffectError(
+        "GitHub mutation provider proved that no remote effect occurred",
+      );
+    }
     if (!response.ok) {
       throw new Error(`GitHub mutation provider returned HTTP ${response.status}`);
     }
     return githubMutationResultSchema.parse(await response.json());
+  };
+}
+
+export function createGitHubMutationReconciliationProviderClient(input: {
+  readonly origin: string;
+  readonly token: string;
+  readonly fetch?: typeof fetch;
+}): (input: {
+  readonly request: GitHubMutationProviderRequest;
+  readonly attemptedAt: Date;
+}) => Promise<GitHubMutationReconciliationResult> {
+  const origin = new URL(input.origin);
+  if (
+    origin.protocol !== "http:" ||
+    !origin.hostname.endsWith("-control-gateway") ||
+    origin.port !== "8080" ||
+    origin.pathname !== "/" ||
+    origin.username ||
+    origin.password ||
+    origin.search ||
+    origin.hash
+  ) {
+    throw new Error(
+      "GitHub mutation reconciliation origin must be the internal control gateway",
+    );
+  }
+  if (input.token.length < 32 || input.token.length > 4_096) {
+    throw new Error("GitHub mutation reconciliation token is invalid");
+  }
+  return async ({ request: rawRequest, attemptedAt }) => {
+    const request = githubMutationProviderRequestSchema.parse(rawRequest);
+    const body = githubMutationReconciliationProviderRequestSchema.parse({
+      version: "codeops.github-mutation-reconciliation-provider-request/v1",
+      request,
+      attemptedAt: attemptedAt.toISOString(),
+    });
+    const [owner, name] = request.input.repository.split("/");
+    const response = await (input.fetch ?? fetch)(
+      new URL(
+        `/v1/repositories/${encodeURIComponent(owner!)}/${encodeURIComponent(name!)}/github-mutations/reconcile`,
+        origin,
+      ),
+      {
+        method: "POST",
+        redirect: "error",
+        headers: {
+          authorization: `Bearer ${input.token}`,
+          "content-type": "application/json; charset=utf-8",
+        },
+        body: JSON.stringify(body),
+        signal: AbortSignal.timeout(30_000),
+      },
+    );
+    if (!response.ok) {
+      throw new Error(
+        `GitHub mutation reconciliation provider returned HTTP ${response.status}`,
+      );
+    }
+    return githubMutationReconciliationResultSchema.parse(await response.json());
   };
 }

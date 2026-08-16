@@ -12,12 +12,17 @@ import {
 import {
   candidatePublicationSchema,
   githubMutationProviderRequestSchema,
+  githubMutationReconciliationProviderRequestSchema,
   githubReadProviderRequestSchema,
   githubPullRequestStackLinkSchema,
   type WorkspaceLaunch,
 } from "@codeops/codeops-contracts";
 import { createGitHubReadAdapter } from "./github-reads-adapter.js";
-import { createGitHubMutationAdapter } from "./github-mutations-adapter.js";
+import {
+  createGitHubMutationAdapter,
+  createGitHubMutationReconciler,
+  GitHubMutationPreflightNoEffectError,
+} from "./github-mutations-adapter.js";
 import {
   linkGitHubPullRequestStack,
   loadGitHubPullRequestStack,
@@ -401,6 +406,9 @@ const readGitHub = createGitHubReadAdapter({
   resolve: (repository) => repositoryRegistry.resolve(repository),
 });
 const mutateGitHub = createGitHubMutationAdapter({
+  resolve: (repository) => repositoryRegistry.resolve(repository),
+});
+const reconcileGitHubMutation = createGitHubMutationReconciler({
   resolve: (repository) => repositoryRegistry.resolve(repository),
 });
 const database = new Pool({
@@ -998,6 +1006,48 @@ const server = createServer((request, response) => {
     }
     if (
       request.method === "POST" &&
+      repositoryRoute?.path === "/github-mutations/reconcile"
+    ) {
+      if (
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          githubMutationToken,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      if (!request.headers["content-type"]?.startsWith("application/json")) {
+        json(response, 415, { status: "unsupported-media-type" });
+        return;
+      }
+      try {
+        const reconciliation = githubMutationReconciliationProviderRequestSchema.parse(
+          await readJson(request),
+        );
+        if (
+          reconciliation.request.input.repository !==
+          repositoryRoute.authority.repository
+        ) {
+          throw new Error("GitHub reconciliation repository does not match its route");
+        }
+        json(
+          response,
+          200,
+          await reconcileGitHubMutation(
+            reconciliation.request,
+            new Date(reconciliation.attemptedAt),
+          ),
+        );
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
+      return;
+    }
+    if (
+      request.method === "POST" &&
       repositoryRoute?.path === "/github-mutations"
     ) {
       if (
@@ -1026,8 +1076,12 @@ const server = createServer((request, response) => {
           throw new Error("GitHub mutation repository does not match its route");
         }
         json(response, 200, await mutateGitHub(githubMutation));
-      } catch {
-        json(response, 503, { status: "unavailable" });
+      } catch (error) {
+        if (error instanceof GitHubMutationPreflightNoEffectError) {
+          json(response, 409, { status: "no-effect" });
+        } else {
+          json(response, 503, { status: "unavailable" });
+        }
       }
       return;
     }

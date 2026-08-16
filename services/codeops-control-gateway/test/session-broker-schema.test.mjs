@@ -16,6 +16,8 @@ const githubMutationsUrl = new URL("../sql/session-runtime-github-mutations.sql"
 const githubMutationsRevertUrl = new URL("../sql/session-runtime-github-mutations-revert.sql", import.meta.url);
 const requestScopedGithubMutationsUrl = new URL("../sql/session-runtime-github-mutations-request-scoped-v2.sql", import.meta.url);
 const requestScopedGithubMutationsRevertUrl = new URL("../sql/session-runtime-github-mutations-request-scoped-v2-revert.sql", import.meta.url);
+const providerEffectReceiptsUrl = new URL("../sql/provider-effect-receipts-v1.sql", import.meta.url);
+const providerEffectReceiptsRevertUrl = new URL("../sql/provider-effect-receipts-v1-revert.sql", import.meta.url);
 const lifecycleJournalUrl = new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url);
 const lifecycleJournalRevertUrl = new URL("../sql/work-item-lifecycle-journal-revert.sql", import.meta.url);
 const workspaceLaunchUrl = new URL("../sql/workspace-launch.sql", import.meta.url);
@@ -163,6 +165,24 @@ test("permits request-scoped GitHub mutations while preserving every row", async
   assert.match(revert, /ADD CONSTRAINT session_runtime_github_mutations_dispatch_id_key/);
   assert.match(revert, /UNIQUE \(dispatch_id\)/);
   assert.doesNotMatch(revert, /DELETE|TRUNCATE|DROP TABLE/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
+});
+
+test("migrates authorization consumption into explicit provider effect state", async () => {
+  const sql = await readFile(providerEffectReceiptsUrl, "utf8");
+  const revert = await readFile(providerEffectReceiptsRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.provider_effect_receipts/);
+  assert.match(sql, /'authorized',[\s\S]*'attempting',[\s\S]*'succeeded',[\s\S]*'failed',[\s\S]*'unknown'/);
+  assert.match(sql, /'reconciled_satisfied',[\s\S]*'reconciled_not_observed',[\s\S]*'operator_resolved'/);
+  assert.match(sql, /CASE legacy\.status WHEN 'completed' THEN 'succeeded' ELSE 'unknown' END/);
+  assert.match(sql, /provider effect migration could not recover every authorization identity/);
+  assert.match(sql, /DROP TABLE codeops\.session_runtime_github_mutations/);
+  assert.doesNotMatch(sql, /DELETE|TRUNCATE/);
+  assert.match(revert, /states that the legacy schema cannot represent/);
+  assert.match(revert, /CREATE TABLE codeops\.session_runtime_github_mutations/);
+  assert.match(revert, /CASE state WHEN 'succeeded' THEN 'completed' ELSE 'started' END/);
+  assert.doesNotMatch(revert, /DELETE|TRUNCATE/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });

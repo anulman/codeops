@@ -62,6 +62,13 @@ function fleet() {
   };
 }
 
+function providerEffectFleet() {
+  return {
+    version: "codeops.provider-effect-fleet/v1",
+    effects: [],
+  };
+}
+
 async function listen(server) {
   server.listen(0, "127.0.0.1");
   await once(server, "listening");
@@ -90,6 +97,11 @@ const broker = createServer((request, response) => {
   if (request.url === "/v1/sessions?limit=100" && request.headers.authorization === `Bearer ${token}`) {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(fleet()));
+    return;
+  }
+  if (request.url === "/v1/provider-effects?limit=100" && request.headers.authorization === `Bearer ${token}`) {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(providerEffectFleet()));
     return;
   }
   response.writeHead(404, { "content-type": "application/json" });

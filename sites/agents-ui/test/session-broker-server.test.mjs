@@ -103,6 +103,71 @@ test("keeps the read token server-side and validates all fleet snapshots", async
   await assert.rejects(client.listSessions(201));
 });
 
+test("loads only bounded provider effect projections with the read credential", async () => {
+  const calls = [];
+  const effect = {
+    version: "codeops.provider-effect-receipt/v1",
+    effectId: `githubmutation-${"a".repeat(64)}`,
+    provider: "github",
+    repository: "anulman/codeops",
+    operation: "check_rerun",
+    pullRequestNumber: null,
+    targetId: "1234",
+    expectedHeadSha: "b".repeat(40),
+    payloadDigest: `sha256:${"c".repeat(64)}`,
+    permissionDigest: `sha256:${"d".repeat(64)}`,
+    sessionId: "ses_91a4",
+    dispatchId: "44444444-4444-4444-8444-444444444444",
+    state: "unknown",
+    authorizedAt: "2026-08-04T03:00:00.000Z",
+    attemptedAt: "2026-08-04T03:00:01.000Z",
+    resolvedAt: null,
+    reconciliationAction: "inspect_check_attempts",
+    resolutionSummary: null,
+  };
+  const client = createSessionBrokerClient({
+    baseUrl: new URL("https://broker.example/"),
+    readToken: token,
+    writeToken,
+    async fetch(url, init) {
+      calls.push({ url: String(url), init });
+      return json({ version: "codeops.provider-effect-fleet/v1", effects: [effect] });
+    },
+  });
+  assert.equal((await client.listProviderEffects(25))[0].state, "unknown");
+  assert.equal(calls[0].url, "https://broker.example/v1/provider-effects?limit=25");
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${token}`);
+});
+
+test("uses the separate write credential for an explicit provider reconciliation read", async () => {
+  const calls = [];
+  const effectId = `githubmutation-${"a".repeat(64)}`;
+  const client = createSessionBrokerClient({
+    baseUrl: new URL("https://broker.example/"),
+    readToken: token,
+    writeToken,
+    async fetch(url, init) {
+      calls.push({ url: String(url), init });
+      return json({
+        version: "codeops.github-mutation-reconciliation-result/v1",
+        state: "unknown",
+        result: null,
+        summary: "Attribution remains ambiguous.",
+      });
+    },
+  });
+  assert.equal((await client.reconcileProviderEffect({
+    effectId,
+    principalId: "codeops:agents-ui",
+  })).state, "unknown");
+  assert.equal(calls[0].url, `https://broker.example/v1/provider-effects/${effectId}/reconcile`);
+  assert.equal(calls[0].init.headers.Authorization, `Bearer ${writeToken}`);
+  assert.equal(calls[0].init.headers["X-CodeOps-Principal"], "codeops:agents-ui");
+  assert.deepEqual(JSON.parse(calls[0].init.body), {
+    version: "codeops.provider-effect-reconciliation-command/v1",
+  });
+});
+
 test("rejects wrong identities and discontinuous event pages", async () => {
   const wrongSession = createSessionBrokerClient({
     baseUrl: new URL("https://broker.example/"),
@@ -242,12 +307,13 @@ test("accepts an identity-bound asynchronous runtime command submission", async 
 test("server functions bind the private UI service principal", async () => {
   const dataSource = await readFile(new URL("../src/lib/sessionBroker.data.ts", import.meta.url), "utf8");
   const contextSource = await readFile(new URL("../src/lib/agentsContext.ts", import.meta.url), "utf8");
-  assert.equal((dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length, 8);
+  assert.equal((dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length, 10);
   assert.match(dataSource, /synthesizeSessionForks/);
   assert.match(dataSource, /submitSessionForkSynthesis/);
   assert.match(dataSource, /principalId: context\.agentsPrincipal/);
   assert.match(dataSource, /registerWebPushSubscription/);
   assert.match(dataSource, /revokeWebPushSubscription/);
+  assert.match(dataSource, /reconcileProviderEffect/);
   assert.doesNotMatch(dataSource, /TOKEN_FILE|readFile/);
   assert.match(contextSource, /codeops:agents-ui/);
   assert.doesNotMatch(contextSource, /requestHeader|process\.env/i);
