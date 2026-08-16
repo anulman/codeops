@@ -4,6 +4,7 @@ import { z } from "zod";
 import { sessionCommandSchema } from "@codeops/codeops-contracts/session-broker";
 import { webPushSubscriptionSchema } from "@codeops/codeops-contracts/session-notification";
 import { agentsContextMiddleware } from "./agentsContext";
+import { sessionOwnerContextMiddleware } from "./sessionOwnerContext";
 import { sessionBrokerClient } from "./sessionBroker.server";
 import {
   submitSessionForkSynthesis,
@@ -21,21 +22,25 @@ function protectResponse(): void {
 }
 
 export const getSessionFleet = createServerFn({ method: "GET" })
-  .middleware([agentsContextMiddleware])
-  .handler(async () => {
+  .middleware([sessionOwnerContextMiddleware])
+  .handler(async ({ context }) => {
     protectResponse();
-    return (await sessionBrokerClient()).listSessions();
+    return (await sessionBrokerClient()).listSessions(
+      context.sessionOwnerPrincipal,
+    );
   });
 
 export const getProviderEffectFleet = createServerFn({ method: "GET" })
-  .middleware([agentsContextMiddleware])
-  .handler(async () => {
+  .middleware([sessionOwnerContextMiddleware])
+  .handler(async ({ context }) => {
     protectResponse();
-    return (await sessionBrokerClient()).listProviderEffects();
+    return (await sessionBrokerClient()).listProviderEffects(
+      context.sessionOwnerPrincipal,
+    );
   });
 
 export const reconcileProviderEffect = createServerFn({ method: "POST" })
-  .middleware([agentsContextMiddleware])
+  .middleware([sessionOwnerContextMiddleware])
   .inputValidator((value: unknown) =>
     z.object({
       effectId: z.string().regex(/^githubmutation-[0-9a-f]{64}$/),
@@ -45,22 +50,25 @@ export const reconcileProviderEffect = createServerFn({ method: "POST" })
     protectResponse();
     return (await sessionBrokerClient()).reconcileProviderEffect({
       effectId: data.effectId,
-      principalId: context.agentsPrincipal,
+      principalId: context.sessionOwnerPrincipal,
     });
   });
 
 export const getSessionDetail = createServerFn({ method: "GET" })
-  .middleware([agentsContextMiddleware])
+  .middleware([sessionOwnerContextMiddleware])
   .inputValidator((value: unknown) =>
     z.object({ sessionId: sessionIdSchema }).strict().parse(value),
   )
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     protectResponse();
-    return (await sessionBrokerClient()).getSession(data.sessionId);
+    return (await sessionBrokerClient()).getSession(
+      data.sessionId,
+      context.sessionOwnerPrincipal,
+    );
   });
 
 export const getSessionEvents = createServerFn({ method: "GET" })
-  .middleware([agentsContextMiddleware])
+  .middleware([sessionOwnerContextMiddleware])
   .inputValidator((value: unknown) =>
     z
       .object({
@@ -71,24 +79,27 @@ export const getSessionEvents = createServerFn({ method: "GET" })
       .strict()
       .parse(value),
   )
-  .handler(async ({ data }) => {
+  .handler(async ({ data, context }) => {
     protectResponse();
-    return (await sessionBrokerClient()).getEvents(data);
+    return (await sessionBrokerClient()).getEvents({
+      ...data,
+      principalId: context.sessionOwnerPrincipal,
+    });
   });
 
 export const executeSessionCommand = createServerFn({ method: "POST" })
-  .middleware([agentsContextMiddleware])
+  .middleware([sessionOwnerContextMiddleware])
   .inputValidator((value: unknown) => sessionCommandSchema.parse(value))
   .handler(async ({ data, context }) => {
     protectResponse();
     return (await sessionBrokerClient()).executeCommand({
       command: data,
-      principalId: context.agentsPrincipal,
+      principalId: context.sessionOwnerPrincipal,
     });
   });
 
 export const synthesizeSessionForks = createServerFn({ method: "POST" })
-  .middleware([agentsContextMiddleware])
+  .middleware([sessionOwnerContextMiddleware])
   .inputValidator((value: unknown) =>
     z
       .object({
@@ -112,7 +123,7 @@ export const synthesizeSessionForks = createServerFn({ method: "POST" })
     protectResponse();
     return submitSessionForkSynthesis({
       broker: await sessionBrokerClient(),
-      principalId: context.agentsPrincipal,
+      principalId: context.sessionOwnerPrincipal,
       targetSessionId: data.targetSessionId,
       candidateSessionIds: data.candidateSessionIds,
       idempotencyKey: data.idempotencyKey,

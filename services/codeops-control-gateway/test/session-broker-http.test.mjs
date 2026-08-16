@@ -103,7 +103,10 @@ function request(database, url, overrides = {}) {
   return serveSessionBrokerRead({
     method: "GET",
     url,
-    headers: { authorization: `Bearer ${token}` },
+    headers: {
+      authorization: `Bearer ${token}`,
+      "x-codeops-principal": "access:aidan@example.com",
+    },
     token,
     database,
     ...overrides,
@@ -116,7 +119,7 @@ test("authenticates and bounds the fleet read", async () => {
   assert.equal(result.status, 200);
   assert.equal(result.body.version, "codeops.session-fleet/v1");
   assert.equal(result.body.sessions.length, 1);
-  assert.deepEqual(database.calls[0].values, [25]);
+  assert.deepEqual(database.calls[0].values, [25, "access:aidan@example.com"]);
 
   const unauthorized = await request(database, "/v1/sessions", { headers: {} });
   assert.deepEqual(unauthorized, { status: 401, body: { status: "unauthorized" } });
@@ -144,7 +147,9 @@ test("loads one strict cursor page and exposes its committed next cursor", async
   assert.equal(result.status, 200);
   assert.equal(result.body.nextCursor, 185);
   assert.equal(result.body.events[0].cursor, 185);
-  assert.deepEqual(database.calls[0].values, ["ses_91a4", 184, 50]);
+  assert.deepEqual(database.calls[0].values, [
+    "ses_91a4", 184, 50, "access:aidan@example.com",
+  ]);
   await assert.rejects(request(database, "/v1/sessions/ses_91a4/events?afterCursor=-1"), /integer/);
   await assert.rejects(request(database, "/v1/sessions/ses_91a4/events?limit=1&limit=2"), /one integer/);
 });
@@ -156,6 +161,6 @@ test("lists bounded provider effects with unknown outcomes first", async () => {
   assert.equal(result.body.version, "codeops.provider-effect-fleet/v1");
   assert.equal(result.body.effects[0].state, "unknown");
   assert.equal(result.body.effects[0].reconciliationAction, "inspect_check_attempts");
-  assert.deepEqual(database.calls[0].values, [25]);
+  assert.deepEqual(database.calls[0].values, [25, "access:aidan@example.com"]);
   await assert.rejects(request(database, "/v1/provider-effects?limit=201"));
 });

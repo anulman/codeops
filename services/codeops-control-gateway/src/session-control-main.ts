@@ -294,7 +294,10 @@ const database = new Pool({
 });
 const migrationClient = await database.connect();
 try {
-  await migrateSessionBroker(migrationClient);
+  await migrateSessionBroker(migrationClient, {
+    legacySessionOwnerPrincipalId:
+      process.env.CODEOPS_LEGACY_SESSION_OWNER_PRINCIPAL_ID?.trim() || undefined,
+  });
 } finally {
   migrationClient.release();
 }
@@ -626,6 +629,7 @@ const server = createServer((request, response) => {
             const authority = await loadUnknownProviderEffectReconciliation(
               client,
               effectId,
+              principalId,
             );
             const reconciliation =
               await configuredGitHubMutationReconciliationProvider(authority);
@@ -682,7 +686,10 @@ const server = createServer((request, response) => {
         enqueueRuntime: async (input) => {
           const client = await database.connect();
           try {
-            return await enqueueSessionRuntimeDispatch(client, input);
+            return await enqueueSessionRuntimeDispatch(client, {
+              ...input,
+              ownerPrincipalId: input.principalId,
+            });
           } finally {
             client.release();
           }

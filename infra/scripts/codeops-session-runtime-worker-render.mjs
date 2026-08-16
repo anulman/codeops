@@ -6,6 +6,7 @@ const DNS = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const LABEL = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$/;
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+const PRINCIPAL = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 const REPOSITORY = "https://github.com/example-org/example-repository";
 
 const TOKENS = {
@@ -16,6 +17,7 @@ const TOKENS = {
   __CODEOPS_REPOSITORY_URL__: "repository",
   __CODEOPS_RUN_ID__: "runId",
   __CODEOPS_SESSION_ID__: "sessionId",
+  __CODEOPS_SESSION_OWNER_PRINCIPAL_ID__: "ownerPrincipalId",
   __CODEOPS_SESSION_RUNTIME_WORKER_DIGEST__: "workerDigest",
   __CODEOPS_SESSION_SUFFIX__: "sessionSuffix",
   __CODEOPS_WORKFLOW_ID__: "workflowId",
@@ -49,6 +51,9 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
   }
   if (!UUID.test(input.leaseId ?? "")) {
     throw new Error("lease ID must be one lowercase UUID");
+  }
+  if (!PRINCIPAL.test(input.ownerPrincipalId ?? "")) {
+    throw new Error("session owner principal is invalid");
   }
   if (
     typeof input.branch !== "string" ||
@@ -120,6 +125,7 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
     env.CODEOPS_SESSION_RUNTIME_ACP_SOCKET_PATH !== "/run/codeops/agent.sock" ||
     env.CODEOPS_SESSION_RUNTIME_WORKSPACE !== "/workspace" ||
     env.CODEOPS_SESSION_ID !== input.sessionId ||
+    env.CODEOPS_SESSION_OWNER_PRINCIPAL_ID !== input.ownerPrincipalId ||
     env.CODEOPS_SESSION_BASE_SHA !== input.baseSha ||
     env.CODEOPS_SESSION_LEASE_ID !== input.leaseId
   ) {

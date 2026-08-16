@@ -51,6 +51,8 @@ spec:
               value: /var/run/secrets/codeops-session-read/token
             - name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE
               value: /var/run/secrets/codeops-session-write/token
+            - name: CODEOPS_SESSION_OWNER_FIXED_PRINCIPAL
+              value: codeops:agents-ui
           ports:
             - name: http
               containerPort: 3000

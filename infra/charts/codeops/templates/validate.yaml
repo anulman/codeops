@@ -34,6 +34,17 @@
 {{- fail "runtime egress proxy requires at least one replica" -}}
 {{- end -}}
 {{- end -}}
+{{- $fixedSessionOwner := trim .Values.agentsUi.authentication.fixedPrincipal -}}
+{{- $sessionOwnerHeader := trim .Values.agentsUi.authentication.principalHeader -}}
+{{- if eq (empty $fixedSessionOwner) (empty $sessionOwnerHeader) -}}
+{{- fail "agentsUi.authentication requires exactly one fixedPrincipal or principalHeader" -}}
+{{- end -}}
+{{- if and (not (empty $fixedSessionOwner)) (not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$" $fixedSessionOwner)) -}}
+{{- fail "agentsUi.authentication.fixedPrincipal is invalid" -}}
+{{- end -}}
+{{- if and (not (empty $sessionOwnerHeader)) (not (regexMatch "^[a-z0-9][a-z0-9._-]{0,127}$" $sessionOwnerHeader)) -}}
+{{- fail "agentsUi.authentication.principalHeader must be one lowercase trusted header name" -}}
+{{- end -}}
 {{- if not (has .Values.postgresql.deployment (list "managed" "external")) -}}
 {{- fail "postgresql.deployment must be managed or external" -}}
 {{- end -}}

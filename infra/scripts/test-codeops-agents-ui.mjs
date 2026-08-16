@@ -30,6 +30,11 @@ test("packages one immutable tokenless internal UI", () => {
   );
   assert.equal(pod.containers[0].securityContext.readOnlyRootFilesystem, true);
   assert.deepEqual(pod.containers[0].securityContext.capabilities.drop, ["ALL"]);
+  assert.deepEqual(
+    pod.containers[0].env.find((entry) =>
+      entry.name === "CODEOPS_SESSION_OWNER_FIXED_PRINCIPAL"),
+    { name: "CODEOPS_SESSION_OWNER_FIXED_PRINCIPAL", value: "codeops:agents-ui" },
+  );
 });
 
 test("mounts only distinct session read and write capabilities", () => {

@@ -112,7 +112,7 @@ class FakeReadClient {
 test("loads one strict session snapshot without locking", async () => {
   const client = new FakeReadClient([{ snapshot_json: snapshot() }]);
   assert.equal((await loadSessionSnapshot(client, "ses_91a4")).sessionId, "ses_91a4");
-  assert.deepEqual(client.calls[0].values, ["ses_91a4"]);
+  assert.deepEqual(client.calls[0].values, ["ses_91a4", null]);
   assert.doesNotMatch(client.calls[0].text, /FOR UPDATE/);
   assert.equal(await loadSessionSnapshot(new FakeReadClient([]), "ses_missing"), null);
   await assert.rejects(loadSessionSnapshot(client, "../unsafe"), /identifier/);
@@ -234,7 +234,7 @@ test("projects hard model limits and observed telemetry from the durable ledger"
 test("bounds and revalidates the fleet snapshot read", async () => {
   const client = new FakeReadClient([{ snapshot_json: snapshot() }]);
   assert.equal((await listSessionSnapshots(client, 25)).length, 1);
-  assert.deepEqual(client.calls[0].values, [25]);
+  assert.deepEqual(client.calls[0].values, [25, null]);
   assert.match(client.calls[0].text, /parent\.updated_at DESC, parent\.session_id ASC/);
   await assert.rejects(listSessionSnapshots(client, 201), /between 1 and 200/);
   await assert.rejects(
@@ -250,8 +250,8 @@ test("loads strict ordered events after one bounded cursor", async () => {
     limit: 50,
   });
   assert.equal(events[0].cursor, 185);
-  assert.deepEqual(client.calls[0].values, ["ses_91a4", 184, 50]);
-  assert.match(client.calls[0].text, /cursor > \$2[\s\S]*ORDER BY cursor ASC/);
+  assert.deepEqual(client.calls[0].values, ["ses_91a4", 184, 50, null]);
+  assert.match(client.calls[0].text, /cursor > \$2[\s\S]*ORDER BY event\.cursor ASC/);
   await assert.rejects(
     loadSessionEvents(client, { sessionId: "ses_91a4", afterCursor: -1 }),
     /cursor/,
@@ -270,18 +270,25 @@ test("loads strict ordered events after one bounded cursor", async () => {
 });
 
 class FakeClient {
-  constructor({ current = snapshot(), existing = null, reservedRuntimeDispatch = null, updateCount = 1, forkInsertCount = 1 } = {}) {
+  constructor({ current = snapshot(), existing = null, reservedRuntimeDispatch = null, updateCount = 1, forkInsertCount = 1, ownerPrincipalId = "user:aidan" } = {}) {
     this.current = current;
     this.existing = existing;
     this.reservedRuntimeDispatch = reservedRuntimeDispatch;
     this.updateCount = updateCount;
     this.forkInsertCount = forkInsertCount;
+    this.ownerPrincipalId = ownerPrincipalId;
     this.calls = [];
   }
   async query(text, values = []) {
     this.calls.push({ text, values });
     if (text.includes("FROM codeops.sessions")) {
-      return { rowCount: 1, rows: [{ snapshot_json: this.current }] };
+      if (values[1] !== null && values[1] !== undefined && values[1] !== this.ownerPrincipalId) {
+        return { rowCount: 0, rows: [] };
+      }
+      return { rowCount: 1, rows: [{
+        snapshot_json: this.current,
+        owner_principal_id: this.ownerPrincipalId,
+      }] };
     }
     if (text.includes("FROM codeops.session_commands")) {
       return { rowCount: this.existing ? 1 : 0, rows: this.existing ? [this.existing] : [] };
@@ -307,6 +314,7 @@ class FakeClient {
 const execute = (client, overrides = {}) => executeSessionCommandTransaction(client, {
   command: command(),
   principalId: "user:aidan",
+  ownerPrincipalId: "user:aidan",
   now: () => new Date("2026-08-04T03:04:01.000Z"),
   commandId: () => "55555555-5555-4555-8555-555555555555",
   mutate: () => mutation(),
@@ -331,6 +339,16 @@ test("rejects a local command that collides with a reserved runtime dispatch", a
   const client = new FakeClient({ reservedRuntimeDispatch: dispatchId });
   await assert.rejects(execute(client), ImmutableSessionCommandConflictError);
   assert.equal(client.calls.at(-1).text, "ROLLBACK");
+});
+
+test("hides an owned session from a different command principal", async () => {
+  const client = new FakeClient({ ownerPrincipalId: "user:mallory" });
+  await assert.rejects(execute(client), /not found/);
+  assert.equal(client.calls.at(-1).text, "ROLLBACK");
+  assert.equal(
+    client.calls.some(({ text }) => text.startsWith("INSERT INTO codeops.session_commands")),
+    false,
+  );
 });
 
 test("replays an identical idempotency key without invoking the mutator", async () => {
@@ -539,6 +557,7 @@ test("atomically inserts a fork child without overwriting its parent", async () 
     false,
   );
   assert.equal(client.calls[insertIndex].values[0], "ses_child");
+  assert.equal(client.calls[insertIndex].values[5], "user:aidan");
   assert.equal(client.calls.at(-1).text, "COMMIT");
 });
 

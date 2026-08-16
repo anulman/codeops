@@ -94,6 +94,7 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_WORKSPACE, value: "/workspace" }
             - { name: CODEOPS_SESSION_RUNTIME_ACP_STATE_PATH, value: "/var/lib/codeops-session/state.json" }
             - { name: CODEOPS_SESSION_ID, value: "__CODEOPS_SESSION_ID__" }
+            - { name: CODEOPS_SESSION_OWNER_PRINCIPAL_ID, value: "__CODEOPS_SESSION_OWNER_PRINCIPAL_ID__" }
             - { name: CODEOPS_SESSION_REPOSITORY, value: "example-org/example-repository" }
             - { name: CODEOPS_SESSION_BRANCH, value: "__CODEOPS_BRANCH__" }
             - { name: CODEOPS_SESSION_BASE_SHA, value: "__CODEOPS_BASE_SHA__" }

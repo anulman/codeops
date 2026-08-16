@@ -4,7 +4,7 @@ import {
   workspaceLaunchRequestSchema,
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
-import { agentsContextMiddleware } from "./agentsContext";
+import { sessionOwnerContextMiddleware } from "./sessionOwnerContext";
 import { workspaceLaunchClient } from "./workspaceLaunch.server";
 
 const launchIdSchema = z
@@ -20,25 +20,25 @@ function protectResponse(): void {
 }
 
 export const getWorkspaceCatalog = createServerFn({ method: "GET" })
-  .middleware([agentsContextMiddleware])
+  .middleware([sessionOwnerContextMiddleware])
   .handler(async () => {
     protectResponse();
     return (await workspaceLaunchClient()).getCatalog();
   });
 
 export const createWorkspaceLaunch = createServerFn({ method: "POST" })
-  .middleware([agentsContextMiddleware])
+  .middleware([sessionOwnerContextMiddleware])
   .inputValidator((value: unknown) => workspaceLaunchRequestSchema.parse(value))
   .handler(async ({ data, context }) => {
     protectResponse();
     return (await workspaceLaunchClient()).createLaunch({
       request: data,
-      principalId: context.agentsPrincipal,
+      principalId: context.sessionOwnerPrincipal,
     });
   });
 
 export const getWorkspaceLaunch = createServerFn({ method: "GET" })
-  .middleware([agentsContextMiddleware])
+  .middleware([sessionOwnerContextMiddleware])
   .inputValidator((value: unknown) =>
     z.object({ launchId: launchIdSchema }).strict().parse(value),
   )
@@ -46,6 +46,6 @@ export const getWorkspaceLaunch = createServerFn({ method: "GET" })
     protectResponse();
     return (await workspaceLaunchClient()).getLaunch({
       launchId: data.launchId,
-      principalId: context.agentsPrincipal,
+      principalId: context.sessionOwnerPrincipal,
     });
   });

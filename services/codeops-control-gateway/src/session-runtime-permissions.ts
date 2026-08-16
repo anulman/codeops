@@ -28,10 +28,12 @@ interface StoredDispatchRow extends Record<string, unknown> {
   readonly claim_token: unknown;
   readonly claimed_by: unknown;
   readonly claim_expires_at: unknown;
+  readonly owner_principal_id: unknown;
 }
 
 interface StoredSessionRow extends Record<string, unknown> {
   readonly snapshot_json: unknown;
+  readonly owner_principal_id: unknown;
 }
 
 interface StoredPermissionRow extends Record<string, unknown> {
@@ -246,9 +248,13 @@ export async function submitSessionRuntimePermission(
   // the lock order matches completion ingestion: session first, outbox second.
   // The locked row is revalidated byte-for-byte below.
   const discovered = await client.query<StoredDispatchRow>(
-    `SELECT dispatch_json, status, claim_token, claimed_by, claim_expires_at
-       FROM codeops.session_runtime_outbox
-      WHERE dispatch_id = $1`,
+    `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
+            outbox.claimed_by, outbox.claim_expires_at,
+            session.owner_principal_id
+       FROM codeops.session_runtime_outbox AS outbox
+       JOIN codeops.sessions AS session
+         ON session.session_id = outbox.session_id
+      WHERE outbox.dispatch_id = $1`,
     [input.dispatchId],
   );
   if (!discovered.rows[0]) {
@@ -267,7 +273,7 @@ export async function submitSessionRuntimePermission(
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
     const sessionRows = await client.query<StoredSessionRow>(
-      `SELECT snapshot_json
+      `SELECT snapshot_json, owner_principal_id
          FROM codeops.sessions
         WHERE session_id = $1
         FOR UPDATE`,
@@ -279,10 +285,14 @@ export async function submitSessionRuntimePermission(
       );
     }
     const dispatchRows = await client.query<StoredDispatchRow>(
-      `SELECT dispatch_json, status, claim_token, claimed_by, claim_expires_at
-         FROM codeops.session_runtime_outbox
-        WHERE dispatch_id = $1
-        FOR UPDATE`,
+      `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
+              outbox.claimed_by, outbox.claim_expires_at,
+              session.owner_principal_id
+         FROM codeops.session_runtime_outbox AS outbox
+         JOIN codeops.sessions AS session
+           ON session.session_id = outbox.session_id
+        WHERE outbox.dispatch_id = $1
+        FOR UPDATE OF outbox`,
       [input.dispatchId],
     );
     if (!dispatchRows.rows[0]) {
@@ -461,6 +471,7 @@ export async function pollSessionRuntimePermission(
             outbox.dispatch_json, outbox.status, outbox.claim_token,
             outbox.claimed_by, outbox.claim_expires_at,
             session.snapshot_json,
+            session.owner_principal_id,
             decision.command_json, decision.result_json
        FROM codeops.session_runtime_permission_requests AS request
        JOIN codeops.session_runtime_outbox AS outbox

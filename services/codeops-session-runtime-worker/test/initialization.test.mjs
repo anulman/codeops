@@ -23,6 +23,7 @@ function request() {
     },
     leaseId,
     holderId: "session-job:video-proof-1",
+    ownerPrincipalId: "access:aidan@example.com",
   };
 }
 

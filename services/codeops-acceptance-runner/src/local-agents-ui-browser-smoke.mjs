@@ -15,6 +15,7 @@ const repositoryRoot = path.resolve(
 );
 const token = "r".repeat(64);
 const writeToken = "w".repeat(64);
+const ownerPrincipal = "codeops:agents-ui";
 const brokerRequests = [];
 
 function fleet() {
@@ -93,13 +94,25 @@ async function waitForUi(origin, child) {
 }
 
 const broker = createServer((request, response) => {
-  brokerRequests.push({ url: request.url, authorization: request.headers.authorization });
-  if (request.url === "/v1/sessions?limit=100" && request.headers.authorization === `Bearer ${token}`) {
+  brokerRequests.push({
+    url: request.url,
+    authorization: request.headers.authorization,
+    principal: request.headers["x-codeops-principal"],
+  });
+  if (
+    request.url === "/v1/sessions?limit=100" &&
+    request.headers.authorization === `Bearer ${token}` &&
+    request.headers["x-codeops-principal"] === ownerPrincipal
+  ) {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(fleet()));
     return;
   }
-  if (request.url === "/v1/provider-effects?limit=100" && request.headers.authorization === `Bearer ${token}`) {
+  if (
+    request.url === "/v1/provider-effects?limit=100" &&
+    request.headers.authorization === `Bearer ${token}` &&
+    request.headers["x-codeops-principal"] === ownerPrincipal
+  ) {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(JSON.stringify(providerEffectFleet()));
     return;
@@ -130,6 +143,7 @@ try {
       CODEOPS_SESSION_BROKER_URL: `http://127.0.0.1:${brokerPort}`,
       CODEOPS_SESSION_BROKER_READ_TOKEN_FILE: readTokenPath,
       CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE: writeTokenPath,
+      CODEOPS_SESSION_OWNER_FIXED_PRINCIPAL: ownerPrincipal,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

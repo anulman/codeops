@@ -15,6 +15,7 @@ process.stdout.write(renderSessionRuntimeWorkerManifest(template, {
   repository: process.env.CODEOPS_REPOSITORY ?? "",
   runId: process.env.CODEOPS_RUN_ID ?? "",
   sessionId: process.env.CODEOPS_SESSION_ID ?? "",
+  ownerPrincipalId: process.env.CODEOPS_SESSION_OWNER_PRINCIPAL_ID ?? "",
   sessionSuffix: process.env.CODEOPS_SESSION_SUFFIX ?? "",
   workflowId: process.env.CODEOPS_WORKFLOW_ID ?? "",
 }));

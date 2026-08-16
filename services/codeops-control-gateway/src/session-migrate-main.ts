@@ -54,7 +54,10 @@ const database = new Pool({ connectionString: databaseUrl, max: 1 });
 try {
   const client = await database.connect();
   try {
-    const results = await migrateSessionBroker(client);
+    const results = await migrateSessionBroker(client, {
+      legacySessionOwnerPrincipalId:
+        process.env.CODEOPS_LEGACY_SESSION_OWNER_PRINCIPAL_ID?.trim() || undefined,
+    });
     await grantSessionRuntimeReceiptAccess(
       client,
       runtimeCredentials.role,

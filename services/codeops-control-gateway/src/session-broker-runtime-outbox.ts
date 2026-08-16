@@ -26,6 +26,7 @@ export class SessionRuntimeDispatchNotFoundError extends Error {}
 
 interface StoredSessionRow extends Record<string, unknown> {
   readonly snapshot_json: unknown;
+  readonly owner_principal_id: unknown;
 }
 
 interface StoredDispatchRow extends Record<string, unknown> {
@@ -64,24 +65,33 @@ export async function enqueueSessionRuntimeDispatch(
   input: {
     readonly command: unknown;
     readonly principalId: string;
+    readonly ownerPrincipalId?: string;
     readonly now?: () => Date;
     readonly dispatchId?: () => string;
   },
 ): Promise<SessionRuntimeDispatch> {
+  if (
+    input.ownerPrincipalId !== undefined &&
+    !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(input.ownerPrincipalId)
+  ) {
+    throw new Error("runtime dispatch owner principal is invalid");
+  }
   const dispatchedAt = (input.now ?? (() => new Date()))().toISOString();
   const dispatchId = (input.dispatchId ?? randomUUID)();
 
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
     const locked = await client.query<StoredSessionRow>(
-      `SELECT snapshot_json
+      `SELECT snapshot_json, owner_principal_id
          FROM codeops.sessions
         WHERE session_id = $1
+          AND ($2::text IS NULL OR owner_principal_id = $2)
         FOR UPDATE`,
       [
         typeof input.command === "object" && input.command !== null
           ? (input.command as { readonly sessionId?: unknown }).sessionId
           : null,
+        input.ownerPrincipalId ?? null,
       ],
     );
     if (!locked.rows[0]) {

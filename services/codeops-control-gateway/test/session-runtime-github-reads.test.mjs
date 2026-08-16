@@ -123,6 +123,7 @@ class Client {
       claim_token: claimToken,
       claimed_by: workerId,
       claim_expires_at: "2026-08-14T15:30:00.000Z",
+      owner_principal_id: "access:aidan@example.com",
       ...overrides,
     };
   }

@@ -6,6 +6,7 @@ const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const IDENTIFIER = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const LABEL = /^[A-Za-z0-9](?:[A-Za-z0-9._-]{0,61}[A-Za-z0-9])?$/;
 const DNS = /^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/;
+const PRINCIPAL = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 
 const tokens = {
   __CODEOPS_AGENT_DIGEST__: "agentDigest",
@@ -14,6 +15,7 @@ const tokens = {
   __CODEOPS_LEASE_ID__: "leaseId",
   __CODEOPS_RUN_ID__: "runId",
   __CODEOPS_SESSION_ID__: "sessionId",
+  __CODEOPS_SESSION_OWNER_PRINCIPAL_ID__: "ownerPrincipalId",
   __CODEOPS_SESSION_RUNTIME_WORKER_DIGEST__: "workerDigest",
   __CODEOPS_SESSION_SUFFIX__: "sessionSuffix",
   __CODEOPS_WORKFLOW_ID__: "workflowId",
@@ -25,6 +27,7 @@ export function renderAgentsSystemRootSession(template, input) {
   }
   if (!SHA.test(input.baseSha ?? "")) throw new Error("baseSha must be one exact commit");
   if (!UUID.test(input.leaseId ?? "")) throw new Error("leaseId must be one UUID");
+  if (!PRINCIPAL.test(input.ownerPrincipalId ?? "")) throw new Error("ownerPrincipalId is invalid");
   if (!IDENTIFIER.test(input.sessionId ?? "") || !LABEL.test(input.sessionId ?? "")) throw new Error("sessionId is invalid");
   for (const key of ["sessionSuffix", "workflowId", "runId"]) {
     if (!DNS.test(input[key] ?? "")) throw new Error(`${key} must be DNS-safe`);
@@ -51,6 +54,9 @@ export function renderAgentsSystemRootSession(template, input) {
     throw new Error("trusted root Job image identity drifted");
   }
   const worker = pod.containers.find((container) => container.name === "runtime-worker");
+  if (worker?.env.find((entry) => entry.name === "CODEOPS_SESSION_OWNER_PRINCIPAL_ID")?.value !== input.ownerPrincipalId) {
+    throw new Error("trusted root session owner drifted");
+  }
   const mountedKeys = pod.volumes.find((volume) => volume.name === "session-secrets")?.secret?.items?.map((item) => item.key).sort();
   if (worker?.env.find((entry) => entry.name === "CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN")?.value !== "http://agents-session-control-gateway:8080" || JSON.stringify(mountedKeys) !== JSON.stringify(["initialization-token", "runtime-database-url", "runtime-worker-token"])) {
     throw new Error("trusted root initialization authority drifted");

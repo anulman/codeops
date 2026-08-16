@@ -96,6 +96,7 @@ export async function executeLocalSessionCommandTransaction(
 ): Promise<SessionCommandResult> {
   return executeSessionCommandTransaction(client, {
     ...input,
+    ownerPrincipalId: input.principalId,
     mutate: applyLocalSessionCommandMutation,
   });
 }

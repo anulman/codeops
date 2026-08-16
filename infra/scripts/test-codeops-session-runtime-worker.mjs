@@ -21,6 +21,7 @@ const input = {
   repository: "https://github.com/example-org/example-repository",
   runId: "video-proof-1",
   sessionId: "ses_video_1",
+  ownerPrincipalId: "codeops:agents-ui",
   sessionSuffix: "video-1",
   workflowId: "video-proof-1",
 };

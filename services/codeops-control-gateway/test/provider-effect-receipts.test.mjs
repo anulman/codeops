@@ -33,12 +33,13 @@ test("projects bounded provider effect attention without raw provider evidence",
       calls.push({ text, values });
       return { rowCount: 1, rows: [row] };
     },
-  }, 25);
+  }, 25, "operator@example.com");
   assert.equal(effects[0].state, "unknown");
   assert.equal(effects[0].reconciliationAction, "search_review_thread_marker");
   assert.equal("evidenceJson" in effects[0], false);
-  assert.deepEqual(calls[0].values, [25]);
+  assert.deepEqual(calls[0].values, [25, "operator@example.com"]);
   assert.match(calls[0].text, /WHEN 'unknown' THEN 0/);
+  assert.match(calls[0].text, /session\.owner_principal_id = \$2/);
   await assert.rejects(listProviderEffectReceipts({ query() {} }, 201));
 });
 
@@ -63,6 +64,7 @@ test("stores only bounded operator resolution evidence behind the unknown fence"
     resolution: "accepted_unknown",
   });
   assert.equal(calls[0].values[2], "operator@example.com");
+  assert.match(calls[0].text, /session\.owner_principal_id = \$3/);
   await assert.rejects(operatorResolveProviderEffect({ query() {} }, {
     effectId: row.effect_id,
     principalId: "operator@example.com",
@@ -110,6 +112,7 @@ test("records only a bounded terminal reconciliation behind the unknown-state fe
   assert.match(calls[0].text, /state = 'unknown'/);
   assert.equal(calls[0].values[0], "reconciled_not_observed");
   assert.equal(calls[0].values[3], "codeops:agents-ui");
+  assert.match(calls[0].text, /session\.owner_principal_id = \$4/);
 
   calls.length = 0;
   await recordProviderEffectReconciliation({ query() { throw new Error("must not write"); } }, {

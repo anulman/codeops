@@ -110,6 +110,20 @@ queries. CONNECT can also carry a non-HTTPS protocol on an allowed port. Keep
 the allowlist narrow. Use only trusted repositories. If the feature is
 disabled, the chart keeps the existing monitored direct public HTTPS policy.
 
+Each session has one immutable owner principal. The private chart default sets
+`agentsUi.authentication.fixedPrincipal=codeops:agents-ui`, which preserves a
+single shared operator identity. For multiple operators, clear
+`fixedPrincipal` and set `agentsUi.authentication.principalHeader` to the
+lowercase name of a trusted edge-authentication header. The edge must remove
+any client-supplied copy of that header and write the authenticated principal
+before it forwards the request. Configure exactly one of these two values.
+
+On the first upgrade that adds session ownership, set
+`sessionOwner.legacyPrincipalId` if the database contains existing sessions.
+The migration assigns that explicit principal to every legacy session. It
+fails closed if existing sessions are present and the value is empty or
+invalid. After the migration succeeds, remove the value from later upgrades.
+
 Helm uninstall retains the quickstart Secrets and PostgreSQL data PVC. Delete
 them explicitly only when you intend to destroy the installation identity and
 stored data.

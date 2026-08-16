@@ -39,10 +39,17 @@ export class SessionForkConflictError extends Error {}
 export class SessionRuntimeClaimConflictError extends Error {}
 
 const sessionIdentifier = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
+const ownerPrincipal = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 
 function requireSessionIdentifier(sessionId: string): void {
   if (!sessionIdentifier.test(sessionId)) {
     throw new Error("session identifier is invalid");
+  }
+}
+
+function requireOwnerPrincipal(ownerPrincipalId: string): void {
+  if (!ownerPrincipal.test(ownerPrincipalId)) {
+    throw new Error("session owner principal is invalid");
   }
 }
 
@@ -55,8 +62,10 @@ function requireReadLimit(limit: number, maximum: number): void {
 export async function loadSessionSnapshot(
   client: TransactionClient,
   sessionId: string,
+  ownerPrincipalId?: string,
 ): Promise<SessionSnapshot | null> {
   requireSessionIdentifier(sessionId);
+  if (ownerPrincipalId !== undefined) requireOwnerPrincipal(ownerPrincipalId);
   const result = await client.query<StoredSessionRow>(
     `SELECT parent.snapshot_json,
             CURRENT_TIMESTAMP AS observed_at,
@@ -73,14 +82,16 @@ export async function loadSessionSnapshot(
             (SELECT count(*)::integer
                FROM codeops.sessions AS child
               WHERE child.snapshot_json->'identity'->>'parentSessionId' = parent.session_id
+                AND child.owner_principal_id = parent.owner_principal_id
                 AND child.snapshot_json->>'state' IN
                     ('queued', 'running', 'waiting_permission', 'checkpointing', 'hibernated'))
               AS active_children
        FROM codeops.sessions AS parent
        LEFT JOIN codeops.session_model_budgets AS budget
          ON budget.session_id = parent.session_id
-      WHERE parent.session_id = $1`,
-    [sessionId],
+      WHERE parent.session_id = $1
+        AND ($2::text IS NULL OR parent.owner_principal_id = $2)`,
+    [sessionId, ownerPrincipalId ?? null],
   );
   if (!result.rows[0]) return null;
   const snapshot = projectStoredSessionBudget(result.rows[0]);
@@ -93,8 +104,10 @@ export async function loadSessionSnapshot(
 export async function listSessionSnapshots(
   client: TransactionClient,
   limit = 100,
+  ownerPrincipalId?: string,
 ): Promise<readonly SessionSnapshot[]> {
   requireReadLimit(limit, 200);
+  if (ownerPrincipalId !== undefined) requireOwnerPrincipal(ownerPrincipalId);
   const result = await client.query<StoredSessionRow>(
     `SELECT parent.snapshot_json,
             CURRENT_TIMESTAMP AS observed_at,
@@ -111,15 +124,17 @@ export async function listSessionSnapshots(
             (SELECT count(*)::integer
                FROM codeops.sessions AS child
               WHERE child.snapshot_json->'identity'->>'parentSessionId' = parent.session_id
+                AND child.owner_principal_id = parent.owner_principal_id
                 AND child.snapshot_json->>'state' IN
                     ('queued', 'running', 'waiting_permission', 'checkpointing', 'hibernated'))
               AS active_children
        FROM codeops.sessions AS parent
        LEFT JOIN codeops.session_model_budgets AS budget
          ON budget.session_id = parent.session_id
+      WHERE ($2::text IS NULL OR parent.owner_principal_id = $2)
       ORDER BY parent.updated_at DESC, parent.session_id ASC
       LIMIT $1`,
-    [limit],
+    [limit, ownerPrincipalId ?? null],
   );
   return result.rows.map(projectStoredSessionBudget);
 }
@@ -215,6 +230,7 @@ export async function loadSessionEvents(
     readonly sessionId: string;
     readonly afterCursor?: number;
     readonly limit?: number;
+    readonly ownerPrincipalId?: string;
   },
 ): Promise<readonly SessionEvent[]> {
   requireSessionIdentifier(input.sessionId);
@@ -224,13 +240,19 @@ export async function loadSessionEvents(
     throw new Error("event cursor must be a non-negative safe integer");
   }
   requireReadLimit(limit, 500);
+  if (input.ownerPrincipalId !== undefined) {
+    requireOwnerPrincipal(input.ownerPrincipalId);
+  }
   const result = await client.query<StoredEventRow>(
-    `SELECT event_json
-       FROM codeops.session_events
-      WHERE session_id = $1 AND cursor > $2
-      ORDER BY cursor ASC
+    `SELECT event.event_json
+       FROM codeops.session_events AS event
+       JOIN codeops.sessions AS session
+         ON session.session_id = event.session_id
+      WHERE event.session_id = $1 AND event.cursor > $2
+        AND ($4::text IS NULL OR session.owner_principal_id = $4)
+      ORDER BY event.cursor ASC
       LIMIT $3`,
-    [input.sessionId, afterCursor, limit],
+    [input.sessionId, afterCursor, limit, input.ownerPrincipalId ?? null],
   );
   const events = result.rows.map(({ event_json }) =>
     sessionEventSchema.parse(event_json),
@@ -251,6 +273,7 @@ export async function loadSessionEvents(
 interface ExecuteSessionCommandInput {
   readonly command: unknown;
   readonly principalId: string;
+  readonly ownerPrincipalId?: string;
   readonly now?: () => Date;
   readonly commandId?: () => string;
   readonly mutate: (
@@ -294,6 +317,7 @@ interface StoredRuntimeDispatchRow extends Record<string, unknown> {
 
 interface StoredSessionRow extends Record<string, unknown> {
   readonly snapshot_json: unknown;
+  readonly owner_principal_id?: unknown;
   readonly observed_at?: unknown;
   readonly active_children?: unknown;
   readonly model_budget_id?: unknown;
@@ -525,11 +549,14 @@ async function persistEvents(
 async function persistForkedSession(
   client: TransactionClient,
   snapshot: SessionSnapshot,
+  ownerPrincipalId: string,
 ): Promise<void> {
+  requireOwnerPrincipal(ownerPrincipalId);
   const inserted = await client.query(
     `INSERT INTO codeops.sessions
-       (session_id, generation, lease_id, snapshot_json, updated_at)
-     VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz)
+       (session_id, generation, lease_id, snapshot_json, updated_at,
+        owner_principal_id)
+     VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6)
      ON CONFLICT (session_id) DO NOTHING`,
     [
       snapshot.sessionId,
@@ -537,6 +564,7 @@ async function persistForkedSession(
       snapshot.lease?.leaseId ?? null,
       canonicalJsonText(snapshot),
       snapshot.updatedAt,
+      ownerPrincipalId,
     ],
   );
   if (inserted.rowCount !== 1) {
@@ -653,6 +681,9 @@ export async function executeSessionCommandTransaction(
   if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(input.principalId)) {
     throw new Error("session command principal must be a bounded audit identity");
   }
+  if (input.ownerPrincipalId !== undefined) {
+    requireOwnerPrincipal(input.ownerPrincipalId);
+  }
   const committedAt = (input.now ?? (() => new Date()))().toISOString();
   const commandId = (input.commandId ?? randomUUID)();
 
@@ -662,7 +693,7 @@ export async function executeSessionCommandTransaction(
     // for one session a single serialization point, including two first-time
     // requests racing with the same key.
     const locked = await client.query<StoredSessionRow>(
-      `SELECT parent.snapshot_json,
+      `SELECT parent.snapshot_json, parent.owner_principal_id,
               CURRENT_TIMESTAMP AS observed_at,
               budget.budget_id AS model_budget_id,
               budget.started_at AS model_budget_started_at,
@@ -677,6 +708,7 @@ export async function executeSessionCommandTransaction(
               (SELECT count(*)::integer
                  FROM codeops.sessions AS child
                 WHERE child.snapshot_json->'identity'->>'parentSessionId' = parent.session_id
+                  AND child.owner_principal_id = parent.owner_principal_id
                   AND child.snapshot_json->>'state' IN
                       ('queued', 'running', 'waiting_permission', 'checkpointing', 'hibernated'))
                 AS active_children
@@ -684,8 +716,9 @@ export async function executeSessionCommandTransaction(
          LEFT JOIN codeops.session_model_budgets AS budget
            ON budget.session_id = parent.session_id
         WHERE parent.session_id = $1
+          AND ($2::text IS NULL OR parent.owner_principal_id = $2)
         FOR UPDATE OF parent`,
-      [command.sessionId],
+      [command.sessionId, input.ownerPrincipalId ?? null],
     );
     if (!locked.rows[0]) {
       throw new SessionNotFoundError(`session ${command.sessionId} not found`);
@@ -829,7 +862,11 @@ export async function executeSessionCommandTransaction(
           mutation.events,
         );
         if (command.type === "fork") {
-          await persistForkedSession(client, result.snapshot);
+          await persistForkedSession(
+            client,
+            result.snapshot,
+            String(locked.rows[0].owner_principal_id),
+          );
         }
         await persistEvents(client, result.commandId, events);
         if (command.type !== "fork") {

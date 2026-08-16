@@ -120,7 +120,7 @@ test("launch server functions bind the private UI context and no browser token",
     readFile(new URL("../src/lib/sessionIdentity.ts", import.meta.url), "utf8"),
   ]);
   assert.equal(
-    (dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length,
+    (dataSource.match(/\.middleware\(\[sessionOwnerContextMiddleware\]\)/g) ?? []).length,
     3,
   );
   assert.doesNotMatch(dataSource, /TOKEN_FILE|readFile/);

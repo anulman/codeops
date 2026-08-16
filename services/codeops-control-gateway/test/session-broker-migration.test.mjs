@@ -120,10 +120,26 @@ test("records a caller-supplied immutable migration identity", async () => {
   assert.equal(insert.values[0], "session-broker-runtime-outbox-v1");
 });
 
+test("binds an explicit legacy owner only inside the owner migration transaction", async () => {
+  const client = fakeClient();
+  await applySessionBrokerMigration(
+    client,
+    migration,
+    "session-owner-v1",
+    { legacySessionOwnerPrincipalId: "access:aidan@example.com" },
+  );
+  const setting = client.calls.find(({ text }) =>
+    text.includes("set_config('codeops.legacy_session_owner_principal_id'"));
+  assert.deepEqual(setting.values, ["access:aidan@example.com"]);
+  assert.ok(client.calls.indexOf(setting) < client.calls.findIndex(({ text }) =>
+    text === "CREATE TABLE example (id bigint);"));
+});
+
 test("applies broker runtime, lifecycle journal, launches, and notifications in order", async () => {
   const client = fakeClient();
   const results = await migrateSessionBroker(client);
   assert.deepEqual(results, [
+    "applied",
     "applied",
     "applied",
     "applied",
@@ -161,6 +177,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "session-model-budget-ledger-v2",
     "session-model-budget-ledger-functions-v1",
     "session-model-budget-recovery-v1",
+    "session-owner-v1",
   ]);
 });
 

@@ -97,6 +97,8 @@ export function renderAgentsUiManifest(template, digest) {
       "/var/run/secrets/codeops-session-read/token" ||
     env.CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE !==
       "/var/run/secrets/codeops-session-write/token" ||
+    env.CODEOPS_SESSION_OWNER_FIXED_PRINCIPAL !== "codeops:agents-ui" ||
+    env.CODEOPS_SESSION_OWNER_PRINCIPAL_HEADER !== undefined ||
     container.securityContext.readOnlyRootFilesystem !== true ||
     JSON.stringify(container.securityContext.capabilities?.drop) !==
       JSON.stringify(["ALL"])

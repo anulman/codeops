@@ -12,6 +12,11 @@ nodeSelector: {}
 
 agentsUi:
   replicas: 1
+  authentication:
+    # Keep the private default single-operator. For multiple operators, clear
+    # fixedPrincipal and configure a trusted edge-authentication header.
+    fixedPrincipal: codeops:agents-ui
+    principalHeader: ""
   image:
     repository: ghcr.io/anulman/codeops/agents-ui
     digest: ""
@@ -67,6 +72,10 @@ modelProxy:
 
 migration:
   enabled: true
+
+sessionOwner:
+  # Required on the first upgrade that finds existing session rows.
+  legacyPrincipalId: ""
 
 lifecycleRelay:
   replicas: 1
