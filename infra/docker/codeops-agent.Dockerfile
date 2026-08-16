@@ -22,7 +22,7 @@ RUN node infra/scripts/rewrite-workspace-dependency-for-npm.mjs services/codeops
 
 FROM node:24-bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/anulman/codeops" \
-      org.opencontainers.image.licenses="AGPL-3.0-only"
+      org.opencontainers.image.licenses="Apache-2.0"
 
 WORKDIR /opt/codeops-agent
 COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/licenses/codeops/

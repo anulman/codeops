@@ -52,7 +52,7 @@ test("stages a release chart with the exact immutable image identity embedded", 
   assert.equal(staged.quickstart.enabled, false);
   assert.match(
     await readFile(path.join(outputRoot, "LICENSE"), "utf8"),
-    /GNU AFFERO GENERAL PUBLIC LICENSE/,
+    /Apache License/,
   );
   assert.match(
     await readFile(path.join(outputRoot, "THIRD_PARTY_NOTICES.md"), "utf8"),

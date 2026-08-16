@@ -25,7 +25,7 @@ RUN services/codeops-control-gateway/node_modules/.bin/tsc -p packages/codeops-c
 
 FROM node:24-bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/anulman/codeops" \
-      org.opencontainers.image.licenses="AGPL-3.0-only"
+      org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /app
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends ca-certificates git \

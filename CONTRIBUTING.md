@@ -2,14 +2,14 @@
 
 ## Contribution license
 
-CodeOps uses the GNU Affero General Public License, version 3 only. By
-submitting a contribution, you license that contribution under
-AGPL-3.0-only. CodeOps does not require a separate contributor license
-agreement.
+CodeOps uses the Apache License, Version 2.0. By submitting a contribution,
+you license that contribution under Apache-2.0. CodeOps does not require a
+separate contributor license agreement.
 
 Submit only work that you have the right to license. Preserve third-party
-copyright, attribution, notice, and license text. Do not copy code with an
-incompatible license into this repository.
+copyright, attribution, notice, and license text. Do not copy, adapt, link,
+vendor, or add a package dependency under a copyleft or source-available
+license. See [LICENSE_POLICY.md](LICENSE_POLICY.md).
 
 ## Validation
 
@@ -23,8 +23,8 @@ nub run acceptance:agents-ui
 
 If a change adds or updates a dependency, verify its license and update the
 third-party notices when the distribution boundary changes. The license gate
-rejects CodeOps packages without `AGPL-3.0-only` metadata and rejects
-unapproved JavaScript dependency licenses.
+rejects CodeOps packages without `Apache-2.0` metadata and rejects unapproved
+JavaScript dependency licenses.
 
 ## Commit messages
 

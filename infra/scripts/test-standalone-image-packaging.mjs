@@ -34,7 +34,7 @@ test("packages CodeOps license identity in every published image", async () => {
       new URL(`../docker/${filename}.dockerignore`, import.meta.url),
       "utf8",
     );
-    assert.match(source, /org\.opencontainers\.image\.licenses="AGPL-3\.0-only"/);
+    assert.match(source, /org\.opencontainers\.image\.licenses="Apache-2\.0"/);
     assert.match(source, /COPY .*LICENSE THIRD_PARTY_NOTICES\.md \/usr\/share\/licenses\/codeops\//);
     assert.match(dockerignore, /^!LICENSE$/m);
     assert.match(dockerignore, /^!THIRD_PARTY_NOTICES\.md$/m);

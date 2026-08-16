@@ -10,14 +10,12 @@ import {
 } from "node:fs";
 import { basename, join, resolve } from "node:path";
 
-const CODEOPS_LICENSE = "AGPL-3.0-only";
+const CODEOPS_LICENSE = "Apache-2.0";
 const ALLOWED_JAVASCRIPT_LICENSES = new Set([
   "0BSD",
-  "AGPL-3.0-only",
   "Apache-2.0",
   "Apache-2.0 AND MIT",
   "(Apache-2.0 AND MIT)",
-  "Artistic-2.0",
   "BSD-2-Clause",
   "BSD-3-Clause",
   "BlueOak-1.0.0",
@@ -27,9 +25,15 @@ const ALLOWED_JAVASCRIPT_LICENSES = new Set([
   "ISC",
   "LicenseRef-Apache-2.0",
   "MIT",
-  "MPL-2.0",
   "Python-2.0",
   "Unlicense",
+]);
+const APPROVED_COPYLEFT_JAVASCRIPT_EXCEPTIONS = new Map([
+  ["lightningcss@1.32.0", "MPL-2.0"],
+  ["lightningcss-linux-x64-gnu@1.32.0", "MPL-2.0"],
+  ["lightningcss@1.33.0", "MPL-2.0"],
+  ["lightningcss-linux-x64-gnu@1.33.0", "MPL-2.0"],
+  ["web-push@3.6.7", "MPL-2.0"],
 ]);
 const REJECTED_LICENSE_PATTERN = /(?:BUSL|SSPL|Elastic-License|Commons-Clause|PolyForm|Proprietary|UNLICENSED|SEE LICENSE)/i;
 const LICENSE_OVERRIDES_PATH = join(
@@ -113,6 +117,11 @@ function packageLicense(packageRoot, manifest) {
   return null;
 }
 
+function approvedJavascriptLicense(key, license) {
+  return ALLOWED_JAVASCRIPT_LICENSES.has(license)
+    || APPROVED_COPYLEFT_JAVASCRIPT_EXCEPTIONS.get(key) === license;
+}
+
 function checkWorkspace() {
   const root = process.cwd();
   for (const manifestPath of ownPackageManifests(root)) {
@@ -122,19 +131,22 @@ function checkWorkspace() {
     }
   }
 
-  assertFile(join(root, "LICENSE"), "GNU AFFERO GENERAL PUBLIC LICENSE");
-  assertFile(join(root, "CONTRIBUTING.md"), "CodeOps does not require a separate contributor license");
+  assertFile(join(root, "LICENSE"), "Apache License");
+  assertFile(join(root, "CONTRIBUTING.md"), "license that contribution under Apache-2.0");
+  assertFile(join(root, "LICENSE_POLICY.md"), "Do not copy, adapt, link, vendor");
   assertFile(join(root, "THIRD_PARTY_NOTICES.md"), "Bundled Helm chart dependencies");
-  assertFile(join(root, "infra/charts/codeops/LICENSE"), "GNU AFFERO GENERAL PUBLIC LICENSE");
+  assertFile(join(root, "infra/charts/codeops/LICENSE"), "Apache License");
   assertFile(join(root, "infra/charts/codeops/THIRD_PARTY_NOTICES.md"), "NATS Helm chart");
   assertFile(join(root, "infra/charts/codeops/licenses/NATS-CHART-APACHE-2.0.txt"), "Apache License");
   assertFile(join(root, "infra/charts/codeops/licenses/TEMPORAL-CHART-MIT.txt"), "The MIT License");
   assertFile(join(root, "infra/charts/codeops/licenses/PLANE-CHART-AGPL-3.0.txt"), "AGPL-3.0-only");
   assertFile(join(root, "sites/agents-ui/src/components/AppShell.tsx"), "Legal &amp; source");
+  assertFile(join(root, "config/project-context/AGENTS.md"), "Do not copy, adapt, link, vendor");
+  assertFile(join(root, "infra/charts/codeops/files/project-context/AGENTS.md"), "Do not copy, adapt, link, vendor");
 
   const chart = readFileSync(join(root, "infra/charts/codeops/Chart.yaml"), "utf8");
-  if (!chart.includes("artifacthub.io/license: AGPL-3.0-only")) {
-    fail("the Helm chart must declare AGPL-3.0-only");
+  if (!chart.includes("artifacthub.io/license: Apache-2.0")) {
+    fail("the Helm chart must declare Apache-2.0");
   }
 
   const packages = new Map();
@@ -146,7 +158,7 @@ function checkWorkspace() {
     const key = `${manifest.name}@${manifest.version}`;
     const license = packageLicense(packageRoot, manifest);
     if (!license) fail(`JavaScript dependency has no reviewed license: ${key}`);
-    if (!ALLOWED_JAVASCRIPT_LICENSES.has(license)) {
+    if (!approvedJavascriptLicense(key, license)) {
       fail(`JavaScript dependency uses an unapproved license: ${key} (${license})`);
     }
     packages.set(key, license);
@@ -229,7 +241,7 @@ function checkSbom(sbomPath, reportPath, subject) {
         derivedSubpaths.push({ package: key, license: derived.license, evidence: derived.evidence });
       }
     }
-    if (!ALLOWED_JAVASCRIPT_LICENSES.has(effective)) {
+    if (!approvedJavascriptLicense(key, effective)) {
       rejected.push(`${key} (${declared})`);
     }
     if (pkg.name?.startsWith("@codeops/") && declared !== CODEOPS_LICENSE) {
@@ -255,6 +267,7 @@ function checkSbom(sbomPath, reportPath, subject) {
       codeopsLicense: CODEOPS_LICENSE,
       rejectedLicensePattern: REJECTED_LICENSE_PATTERN.source,
       javascriptLicenseAllowlist: [...ALLOWED_JAVASCRIPT_LICENSES].sort(),
+      approvedCopyleftJavascriptExceptions: Object.fromEntries(APPROVED_COPYLEFT_JAVASCRIPT_EXCEPTIONS),
       result: "pass",
     },
   };

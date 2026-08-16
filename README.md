@@ -163,20 +163,19 @@ report for every published CodeOps image.
 Copyright (c) 2026 Aidan Nulman.
 
 CodeOps-authored source is licensed under
-[AGPL-3.0-only](LICENSE). Network operators that modify CodeOps must offer the
-Corresponding Source as required by section 13 of the license.
+[Apache-2.0](LICENSE). You may use, modify, and distribute CodeOps, including
+as part of proprietary software, under that license.
 
-CodeOps is free software. You may redistribute and modify it under the license.
-It comes without warranty, to the extent permitted by law. The complete
-Corresponding Source is available in this repository.
+CodeOps comes without warranty, to the extent permitted by law.
 
 The Helm archive is a multi-license aggregate. Bundled NATS, Temporal, and
 Plane chart code remains under its upstream license. See
 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md) and the license files packaged
 inside the chart. Release SBOMs provide the exact image-package inventory.
 
-Contributions use the same AGPL-3.0-only license without a separate CLA. See
-[CONTRIBUTING.md](CONTRIBUTING.md).
+Contributions use the same Apache-2.0 license without a separate CLA. Code and
+package dependencies must use an approved permissive license. See
+[CONTRIBUTING.md](CONTRIBUTING.md) and [LICENSE_POLICY.md](LICENSE_POLICY.md).
 
 ## Safety boundary
 
