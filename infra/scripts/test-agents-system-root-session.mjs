@@ -13,6 +13,7 @@ const input = {
   leaseId: "11111111-1111-4111-8111-111111111111",
   runId: "agents-control-plane-1",
   sessionId: "ses_agents_control_plane_1",
+  ownerPrincipalId: "codeops:agents-ui",
   sessionSuffix: "agents-control-plane-1",
   workflowId: "agents-control-plane-1",
 };

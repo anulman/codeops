@@ -417,7 +417,10 @@ const database = new Pool({
 });
 const migrationClient = await database.connect();
 try {
-  await migrateSessionBroker(migrationClient);
+  await migrateSessionBroker(migrationClient, {
+    legacySessionOwnerPrincipalId:
+      process.env.CODEOPS_LEGACY_SESSION_OWNER_PRINCIPAL_ID?.trim() || undefined,
+  });
 } finally {
   migrationClient.release();
 }
@@ -545,10 +548,10 @@ async function reconcileOneWorkspaceLaunch(launchId: string): Promise<void> {
         throw error;
       }
     },
-    loadSession: async (sessionId) => {
+    loadSession: async (sessionId, ownerPrincipalId) => {
       const client = await database.connect();
       try {
-        return await loadSessionSnapshot(client, sessionId);
+        return await loadSessionSnapshot(client, sessionId, ownerPrincipalId);
       } finally {
         client.release();
       }
@@ -568,7 +571,10 @@ async function reconcileOneWorkspaceLaunch(launchId: string): Promise<void> {
       const client = await database.connect();
       try {
         try {
-          return await enqueueSessionRuntimeDispatch(client, input);
+          return await enqueueSessionRuntimeDispatch(client, {
+            ...input,
+            ownerPrincipalId: input.principalId,
+          });
         } catch (error) {
           if (error instanceof ImmutableSessionRuntimeDispatchConflictError) {
             throw new PermanentWorkspaceLaunchError(error.message, {
@@ -905,7 +911,10 @@ const server = createServer((request, response) => {
         enqueueRuntime: async (commandInput) => {
           const client = await database.connect();
           try {
-            return await enqueueSessionRuntimeDispatch(client, commandInput);
+            return await enqueueSessionRuntimeDispatch(client, {
+              ...commandInput,
+              ownerPrincipalId: commandInput.principalId,
+            });
           } finally {
             client.release();
           }

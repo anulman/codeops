@@ -9,6 +9,7 @@ import {
 const token = "t".repeat(32);
 const writeToken = "w".repeat(32);
 const leaseId = "11111111-1111-4111-8111-111111111111";
+const ownerPrincipal = "operator@example.com";
 
 function capabilities() {
   return [
@@ -96,11 +97,12 @@ test("keeps the read token server-side and validates all fleet snapshots", async
       return json({ version: "codeops.session-fleet/v1", sessions: [snapshot()] });
     },
   });
-  assert.equal((await client.listSessions(25))[0].sessionId, "ses_91a4");
+  assert.equal((await client.listSessions(ownerPrincipal, 25))[0].sessionId, "ses_91a4");
   assert.equal(calls[0].url, "http://codeops-control-gateway:8080/v1/sessions?limit=25");
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${token}`);
+  assert.equal(calls[0].init.headers["X-CodeOps-Principal"], ownerPrincipal);
   assert.equal(calls[0].init.redirect, "error");
-  await assert.rejects(client.listSessions(201));
+  await assert.rejects(client.listSessions(ownerPrincipal, 201));
 });
 
 test("loads only bounded provider effect projections with the read credential", async () => {
@@ -134,9 +136,10 @@ test("loads only bounded provider effect projections with the read credential", 
       return json({ version: "codeops.provider-effect-fleet/v1", effects: [effect] });
     },
   });
-  assert.equal((await client.listProviderEffects(25))[0].state, "unknown");
+  assert.equal((await client.listProviderEffects(ownerPrincipal, 25))[0].state, "unknown");
   assert.equal(calls[0].url, "https://broker.example/v1/provider-effects?limit=25");
   assert.equal(calls[0].init.headers.Authorization, `Bearer ${token}`);
+  assert.equal(calls[0].init.headers["X-CodeOps-Principal"], ownerPrincipal);
 });
 
 test("uses the separate write credential for an explicit provider reconciliation read", async () => {
@@ -178,7 +181,10 @@ test("rejects wrong identities and discontinuous event pages", async () => {
       session: { ...snapshot(), sessionId: "ses_foreign" },
     }),
   });
-  await assert.rejects(wrongSession.getSession("ses_91a4"), /wrong session identity/);
+  await assert.rejects(
+    wrongSession.getSession("ses_91a4", ownerPrincipal),
+    /wrong session identity/,
+  );
 
   const skippedEvent = createSessionBrokerClient({
     baseUrl: new URL("https://broker.example/"),
@@ -193,7 +199,11 @@ test("rejects wrong identities and discontinuous event pages", async () => {
     }),
   });
   await assert.rejects(
-    skippedEvent.getEvents({ sessionId: "ses_91a4", afterCursor: 184 }),
+    skippedEvent.getEvents({
+      sessionId: "ses_91a4",
+      principalId: ownerPrincipal,
+      afterCursor: 184,
+    }),
     /contiguous/,
   );
 });
@@ -205,8 +215,8 @@ test("allows an explicit missing session but fails closed on other upstream resp
     writeToken,
     fetch: async () => json({ status: "not-found" }, 404),
   });
-  assert.equal(await missing.getSession("ses_missing"), null);
-  await assert.rejects(missing.listSessions(), /status 404/);
+  assert.equal(await missing.getSession("ses_missing", ownerPrincipal), null);
+  await assert.rejects(missing.listSessions(ownerPrincipal), /status 404/);
 
   assert.throws(() => parseSessionBrokerBaseUrl("http://example.com:8080/", "production"), /HTTPS/);
   assert.throws(() => parseSessionBrokerBaseUrl("https://broker.example/path", "production"), /exact service origin/);
@@ -304,19 +314,21 @@ test("accepts an identity-bound asynchronous runtime command submission", async 
   assert.equal(result.type, "prompt");
 });
 
-test("server functions bind the private UI service principal", async () => {
+test("server functions bind read and command authority to the resolved session owner", async () => {
   const dataSource = await readFile(new URL("../src/lib/sessionBroker.data.ts", import.meta.url), "utf8");
-  const contextSource = await readFile(new URL("../src/lib/agentsContext.ts", import.meta.url), "utf8");
-  assert.equal((dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length, 10);
+  const contextSource = await readFile(new URL("../src/lib/sessionOwnerContext.ts", import.meta.url), "utf8");
+  assert.equal((dataSource.match(/\.middleware\(\[sessionOwnerContextMiddleware\]\)/g) ?? []).length, 7);
+  assert.equal((dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length, 3);
   assert.match(dataSource, /synthesizeSessionForks/);
   assert.match(dataSource, /submitSessionForkSynthesis/);
-  assert.match(dataSource, /principalId: context\.agentsPrincipal/);
+  assert.match(dataSource, /principalId: context\.sessionOwnerPrincipal/);
   assert.match(dataSource, /registerWebPushSubscription/);
   assert.match(dataSource, /revokeWebPushSubscription/);
   assert.match(dataSource, /reconcileProviderEffect/);
   assert.doesNotMatch(dataSource, /TOKEN_FILE|readFile/);
-  assert.match(contextSource, /codeops:agents-ui/);
-  assert.doesNotMatch(contextSource, /requestHeader|process\.env/i);
+  assert.match(contextSource, /CODEOPS_SESSION_OWNER_FIXED_PRINCIPAL/);
+  assert.match(contextSource, /CODEOPS_SESSION_OWNER_PRINCIPAL_HEADER/);
+  assert.match(contextSource, /exactly one fixed session owner or trusted principal header/);
 });
 
 test("permission cards render the digest-bound operation before approval", async () => {

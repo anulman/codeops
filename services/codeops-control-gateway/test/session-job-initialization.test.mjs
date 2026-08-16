@@ -21,6 +21,7 @@ const request = {
   },
   leaseId: "11111111-1111-4111-8111-111111111111",
   holderId: "job:agents-video-proof",
+  ownerPrincipalId: "access:aidan@example.com",
 };
 
 function fakeDatabase(existing = null) {
@@ -34,10 +35,14 @@ function fakeDatabase(existing = null) {
       if (text.startsWith("INSERT INTO codeops.sessions")) {
         if (state.snapshot !== null) return { rowCount: 0, rows: [] };
         state.snapshot = JSON.parse(values[3]);
+        state.ownerPrincipalId = values[5];
         return { rowCount: 1, rows: [] };
       }
       if (text.includes("SELECT snapshot_json")) {
-        return { rowCount: 1, rows: [{ snapshot_json: state.snapshot }] };
+        return { rowCount: 1, rows: [{
+          snapshot_json: state.snapshot,
+          owner_principal_id: state.ownerPrincipalId ?? request.ownerPrincipalId,
+        }] };
       }
       return { rowCount: null, rows: [] };
     },
@@ -99,6 +104,14 @@ test("replays the current session for an exact root identity and rejects drift",
   });
   assert.equal(duplicate.disposition, "duplicate");
   assert.equal(duplicate.snapshot.eventCursor, 2);
+
+  const wrongOwner = fakeDatabase(created.snapshot);
+  wrongOwner.state.ownerPrincipalId = "access:mallory@example.com";
+  await assert.rejects(
+    initializeSessionFromJob(wrongOwner, { request }),
+    /different Job identity/,
+  );
+  assert.equal(wrongOwner.calls.at(-1).text, "ROLLBACK");
 
   const drift = fakeDatabase({
     ...created.snapshot,

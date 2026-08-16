@@ -17,6 +17,7 @@ import { sessionCapabilitiesFor } from "./session-broker-transitions.js";
 
 interface StoredSessionRow extends Record<string, unknown> {
   readonly snapshot_json: unknown;
+  readonly owner_principal_id: unknown;
 }
 
 function eventId(body: Readonly<Record<string, unknown>>): string {
@@ -95,8 +96,9 @@ export async function initializeSessionFromJob(
   try {
     const inserted = await client.query(
       `INSERT INTO codeops.sessions
-         (session_id, generation, lease_id, snapshot_json, updated_at)
-       VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz)
+         (session_id, generation, lease_id, snapshot_json, updated_at,
+          owner_principal_id)
+       VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6)
        ON CONFLICT (session_id) DO NOTHING`,
       [
         proposed.sessionId,
@@ -104,6 +106,7 @@ export async function initializeSessionFromJob(
         proposed.lease!.leaseId,
         canonicalJsonText(proposed),
         proposed.updatedAt,
+        request.ownerPrincipalId,
       ],
     );
     if (inserted.rowCount === 1) {
@@ -152,14 +155,17 @@ export async function initializeSessionFromJob(
     }
 
     const stored = await client.query<StoredSessionRow>(
-      `SELECT snapshot_json
+      `SELECT snapshot_json, owner_principal_id
          FROM codeops.sessions
         WHERE session_id = $1
         FOR UPDATE`,
       [request.sessionId],
     );
     const existing = sessionSnapshotSchema.parse(stored.rows[0]?.snapshot_json);
-    if (!sameRootIdentity(existing, proposed)) {
+    if (
+      !sameRootIdentity(existing, proposed) ||
+      stored.rows[0]?.owner_principal_id !== request.ownerPrincipalId
+    ) {
       throw new Error(
         `session ${request.sessionId} already belongs to a different Job identity`,
       );

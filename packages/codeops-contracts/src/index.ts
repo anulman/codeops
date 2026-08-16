@@ -51,6 +51,7 @@ export {
   sessionJobInitializationRequestSchema,
   sessionJobInitializationResponseSchema,
   sessionLeaseSchema,
+  sessionOwnerPrincipalSchema,
   sessionPermissionOperationSchema,
   sessionPermissionRequestSchema,
   sessionSnapshotSchema,

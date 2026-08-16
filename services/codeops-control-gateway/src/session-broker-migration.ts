@@ -86,7 +86,13 @@ const migrations = [
       import.meta.url,
     ),
   },
+  {
+    name: "session-owner-v1",
+    url: new URL("../sql/session-owner-v1.sql", import.meta.url),
+  },
 ] as const;
+
+const ownerPrincipalPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 
 function migrationDigest(sql: string): string {
   return createHash("sha256").update(sql).digest("hex");
@@ -106,6 +112,7 @@ export async function applySessionBrokerMigration(
   client: TransactionClient,
   sql: string,
   migrationName = "session-broker-v1",
+  settings: { readonly legacySessionOwnerPrincipalId?: string } = {},
 ): Promise<"applied" | "current"> {
   const sha256 = migrationDigest(sql);
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
@@ -136,6 +143,16 @@ export async function applySessionBrokerMigration(
       return "current";
     }
 
+    if (settings.legacySessionOwnerPrincipalId !== undefined) {
+      if (!ownerPrincipalPattern.test(settings.legacySessionOwnerPrincipalId)) {
+        throw new Error("legacy session owner principal is invalid");
+      }
+      await client.query(
+        "SELECT pg_catalog.set_config('codeops.legacy_session_owner_principal_id', $1, true)",
+        [settings.legacySessionOwnerPrincipalId],
+      );
+    }
+
     await client.query(stripTransactionEnvelope(sql));
     await client.query(
       `INSERT INTO codeops.schema_migrations (migration_name, sha256)
@@ -152,6 +169,7 @@ export async function applySessionBrokerMigration(
 
 export async function migrateSessionBroker(
   client: TransactionClient,
+  input: { readonly legacySessionOwnerPrincipalId?: string } = {},
 ): Promise<readonly ("applied" | "current")[]> {
   const results: ("applied" | "current")[] = [];
   for (const migration of migrations) {
@@ -160,6 +178,9 @@ export async function migrateSessionBroker(
         client,
         await readFile(migration.url, "utf8"),
         migration.name,
+        migration.name === "session-owner-v1"
+          ? { legacySessionOwnerPrincipalId: input.legacySessionOwnerPrincipalId }
+          : {},
       ),
     );
   }

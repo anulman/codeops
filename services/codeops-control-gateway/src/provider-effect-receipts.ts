@@ -79,20 +79,33 @@ function projectProviderEffect(row: ProviderEffectRow): ProviderEffectReceipt {
 export async function listProviderEffectReceipts(
   client: TransactionClient,
   limit = 100,
+  ownerPrincipalId?: string,
 ): Promise<readonly ProviderEffectReceipt[]> {
   if (!Number.isInteger(limit) || limit < 1 || limit > 200) {
     throw new Error("provider effect receipt limit must be between 1 and 200");
   }
+  if (
+    ownerPrincipalId !== undefined &&
+    !/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(ownerPrincipalId)
+  ) {
+    throw new Error("provider effect owner principal is invalid");
+  }
   const result = await client.query<ProviderEffectRow>(
-    `SELECT effect_id, provider, repository, operation, pull_request_number,
-            target_id, expected_head_sha, payload_digest, permission_digest,
-            session_id, dispatch_id, state, authorized_at, attempted_at,
-            resolved_at, reconciliation_action, resolution_summary
-       FROM codeops.provider_effect_receipts
-      ORDER BY CASE state WHEN 'unknown' THEN 0 WHEN 'attempting' THEN 1 ELSE 2 END,
-               updated_at DESC, effect_id ASC
+    `SELECT effect.effect_id, effect.provider, effect.repository,
+            effect.operation, effect.pull_request_number, effect.target_id,
+            effect.expected_head_sha, effect.payload_digest,
+            effect.permission_digest, effect.session_id, effect.dispatch_id,
+            effect.state, effect.authorized_at, effect.attempted_at,
+            effect.resolved_at, effect.reconciliation_action,
+            effect.resolution_summary
+       FROM codeops.provider_effect_receipts AS effect
+       JOIN codeops.sessions AS session
+         ON session.session_id = effect.session_id
+      WHERE ($2::text IS NULL OR session.owner_principal_id = $2)
+      ORDER BY CASE effect.state WHEN 'unknown' THEN 0 WHEN 'attempting' THEN 1 ELSE 2 END,
+               effect.updated_at DESC, effect.effect_id ASC
       LIMIT $1`,
-    [limit],
+    [limit, ownerPrincipalId ?? null],
   );
   return result.rows.map(projectProviderEffect);
 }
@@ -100,12 +113,16 @@ export async function listProviderEffectReceipts(
 export async function loadUnknownProviderEffectReconciliation(
   client: TransactionClient,
   effectId: string,
+  ownerPrincipalId: string,
 ): Promise<{
   readonly request: GitHubMutationProviderRequest;
   readonly attemptedAt: Date;
 }> {
   if (!/^githubmutation-[0-9a-f]{64}$/.test(effectId)) {
     throw new Error("provider effect identity is invalid");
+  }
+  if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(ownerPrincipalId)) {
+    throw new Error("provider effect owner principal is invalid");
   }
   const result = await client.query<ReconciliationAuthorityRow>(
     `SELECT effect.effect_id, effect.session_id, effect.dispatch_id,
@@ -118,8 +135,11 @@ export async function loadUnknownProviderEffectReconciliation(
         AND permission.request_json->>'toolCallId' = effect.effect_id
        JOIN codeops.session_runtime_outbox AS outbox
          ON outbox.dispatch_id = effect.dispatch_id
+       JOIN codeops.sessions AS session
+         ON session.session_id = effect.session_id
+        AND session.owner_principal_id = $2
       WHERE effect.effect_id = $1`,
-    [effectId],
+    [effectId, ownerPrincipalId],
   );
   const row = result.rows[0];
   if (row === undefined) throw new Error("provider effect was not found");
@@ -193,7 +213,12 @@ export async function recordProviderEffectReconciliation(
             updated_at = $5::timestamptz
       WHERE effect_id = $6 AND state = 'unknown'
         AND dispatch_id = $7 AND payload_digest = $8
-        AND permission_digest = $9 AND attempted_at IS NOT NULL`,
+        AND permission_digest = $9 AND attempted_at IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM codeops.sessions AS session
+           WHERE session.session_id = codeops.provider_effect_receipts.session_id
+             AND session.owner_principal_id = $4
+        )`,
     [
       reconciliation.state,
       reconciliation.result === null
@@ -251,7 +276,12 @@ export async function operatorResolveProviderEffect(
             reconciliation_action = 'none', resolved_at = $4::timestamptz,
             updated_at = $4::timestamptz
       WHERE effect_id = $5 AND state = 'unknown'
-        AND attempted_at IS NOT NULL`,
+        AND attempted_at IS NOT NULL
+        AND EXISTS (
+          SELECT 1 FROM codeops.sessions AS session
+           WHERE session.session_id = codeops.provider_effect_receipts.session_id
+             AND session.owner_principal_id = $3
+        )`,
     [evidence, input.summary, input.principalId, resolvedAt, input.effectId],
   );
   if (updated.rowCount !== 1) {

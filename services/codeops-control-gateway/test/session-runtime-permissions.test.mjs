@@ -201,11 +201,18 @@ class SubmitClient {
           claim_token: this.token,
           claimed_by: workerId,
           claim_expires_at: this.expiresAt,
+          owner_principal_id: "access:aidan@example.com",
         }],
       };
     }
     if (text.includes("FROM codeops.sessions")) {
-      return { rowCount: 1, rows: [{ snapshot_json: this.current }] };
+      return {
+        rowCount: 1,
+        rows: [{
+          snapshot_json: this.current,
+          owner_principal_id: "access:aidan@example.com",
+        }],
+      };
     }
     if (
       text.includes("FROM codeops.session_runtime_permission_requests AS request") &&
@@ -220,6 +227,7 @@ class SubmitClient {
           claim_token: this.token,
           claimed_by: workerId,
           claim_expires_at: this.expiresAt,
+          owner_principal_id: "access:aidan@example.com",
           snapshot_json: this.current,
           command_json: null,
           result_json: null,
@@ -345,6 +353,7 @@ test("a duplicate submission returns its exact durable decision", async () => {
             claim_token: claimToken,
             claimed_by: workerId,
             claim_expires_at: "2026-08-05T03:30:00.000Z",
+            owner_principal_id: "access:aidan@example.com",
             snapshot_json: selectedResult.snapshot,
             command_json: selected,
             result_json: selectedResult,
@@ -497,6 +506,7 @@ class PollClient {
         claim_token: claimToken,
         claimed_by: workerId,
         claim_expires_at: "2026-08-05T03:30:00.000Z",
+        owner_principal_id: "access:aidan@example.com",
         snapshot_json: this.snapshotValue,
         command_json: this.command,
         result_json: this.result,

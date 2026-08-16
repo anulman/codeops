@@ -99,6 +99,7 @@ function row(overrides = {}) {
     claim_token: claimToken,
     claimed_by: workerId,
     claim_expires_at: "2026-08-15T11:00:00.000Z",
+    owner_principal_id: "access:aidan@example.com",
     ...overrides,
   };
 }
@@ -142,6 +143,7 @@ test("fails closed on claim and immutable authority drift", () => {
     { row: { claimed_by: "acp-worker:other" } },
     { row: { claim_expires_at: "not-a-time" } },
     { row: { claim_expires_at: "2026-08-15T10:05:00.000Z" } },
+    { row: { owner_principal_id: "access:mallory@example.com" } },
     { dispatchId: "55555555-5555-4555-8555-555555555555" },
     { row: { dispatch_json: dispatch({
       command: { ...dispatch().command, type: "cancel", reason: "drift" },

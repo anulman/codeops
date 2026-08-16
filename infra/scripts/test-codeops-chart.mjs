@@ -733,6 +733,9 @@ test("accepts arbitrary namespaces and fails closed on invalid configuration", (
     ["--namespace", "engineering", "--set", "controlGateway.kubernetesApiCidrs[0]=not-a-cidr"],
     ["--namespace", "engineering", "--set", "temporal.address=missing-port"],
     ["--namespace", "engineering", "--set", "githubController.repositoryContexts[0].directory=../escape"],
+    ["--namespace", "engineering", "--set", "agentsUi.authentication.fixedPrincipal=", "--set", "agentsUi.authentication.principalHeader="],
+    ["--namespace", "engineering", "--set", "agentsUi.authentication.principalHeader=x-authenticated-principal"],
+    ["--namespace", "engineering", "--set", "agentsUi.authentication.fixedPrincipal=", "--set", "agentsUi.authentication.principalHeader=X-Authenticated-Principal"],
   ];
   for (const extra of cases) {
     assert.throws(() => helm([

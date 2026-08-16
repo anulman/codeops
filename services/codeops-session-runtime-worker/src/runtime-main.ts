@@ -136,6 +136,7 @@ try {
     identity,
     leaseId: required("CODEOPS_SESSION_LEASE_ID"),
     holderId: required("CODEOPS_SESSION_HOLDER_ID"),
+    ownerPrincipalId: required("CODEOPS_SESSION_OWNER_PRINCIPAL_ID"),
   }));
   if (initialization.snapshot.lease?.status !== "active") {
     throw new Error("session runtime requires an active server-confirmed lease");

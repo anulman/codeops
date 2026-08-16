@@ -128,6 +128,9 @@ spec:
             - { name: CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy/signing-key }
             - { name: CODEOPS_EVIDENCE_ROOT, value: /var/lib/codeops }
             - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/codeops/database-url }
+            {{- with .Values.sessionOwner.legacyPrincipalId }}
+            - { name: CODEOPS_LEGACY_SESSION_OWNER_PRINCIPAL_ID, value: {{ . | quote }} }
+            {{- end }}
             - { name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE, value: /var/run/secrets/codeops/read-token }
             - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/codeops/write-token }
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/codeops/runtime-worker-token }

@@ -25,8 +25,10 @@ export async function submitSessionForkSynthesis(input: {
   readonly idempotencyKey: string;
 }) {
   const [target, ...candidateSnapshots] = await Promise.all([
-    input.broker.getSession(input.targetSessionId),
-    ...input.candidateSessionIds.map((sessionId) => input.broker.getSession(sessionId)),
+    input.broker.getSession(input.targetSessionId, input.principalId),
+    ...input.candidateSessionIds.map((sessionId) =>
+      input.broker.getSession(sessionId, input.principalId)
+    ),
   ]);
   if (!target || candidateSnapshots.some((snapshot) => snapshot === null)) {
     throw new Error("fork comparison session is unavailable");
@@ -38,6 +40,7 @@ export async function submitSessionForkSynthesis(input: {
         sessionId: snapshot.sessionId,
         afterCursor: Math.max(0, snapshot.eventCursor - 500),
         limit: 500,
+        principalId: input.principalId,
       });
       return { snapshot, afterCursor: page.afterCursor, events: page.events };
     }),

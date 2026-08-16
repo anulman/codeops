@@ -32,6 +32,8 @@ const modelBudgetFunctionsUrl = new URL("../sql/session-model-budget-ledger-func
 const modelBudgetFunctionsRevertUrl = new URL("../sql/session-model-budget-ledger-functions-v1-revert.sql", import.meta.url);
 const modelBudgetRecoveryUrl = new URL("../sql/session-model-budget-recovery-v1.sql", import.meta.url);
 const modelBudgetRecoveryRevertUrl = new URL("../sql/session-model-budget-recovery-v1-revert.sql", import.meta.url);
+const sessionOwnerUrl = new URL("../sql/session-owner-v1.sql", import.meta.url);
+const sessionOwnerRevertUrl = new URL("../sql/session-owner-v1-revert.sql", import.meta.url);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");
@@ -49,6 +51,25 @@ test("defines the durable session, command, and ordered event identities", async
   assert.match(sql, /UNIQUE \(session_id, cursor\)/);
   assert.match(sql, /DEFERRABLE INITIALLY DEFERRED/);
   assert.match(sql, /CHECK \(event_json->>'eventId' = event_id\)/);
+});
+
+test("adds one normalized non-null immutable session owner with an explicit legacy backfill", async () => {
+  const sql = await readFile(sessionOwnerUrl, "utf8");
+  const revert = await readFile(sessionOwnerRevertUrl, "utf8");
+  assert.match(sql, /ADD COLUMN owner_principal_id text/);
+  assert.match(sql, /current_setting\('codeops\.legacy_session_owner_principal_id', true\)/);
+  assert.match(sql, /existing sessions require an explicit legacy owner principal/);
+  assert.match(sql, /ALTER COLUMN owner_principal_id SET NOT NULL/);
+  assert.match(sql, /owner_principal_id = btrim\(owner_principal_id\)/);
+  assert.match(sql, /sessions_owner_updated_idx/);
+  assert.match(sql, /CREATE TRIGGER sessions_owner_immutable/);
+  assert.match(sql, /session owner principal is immutable/);
+  assert.doesNotMatch(sql, /DELETE|TRUNCATE|DROP TABLE/);
+  assert.match(revert, /DROP TRIGGER sessions_owner_immutable/);
+  assert.match(revert, /DROP FUNCTION codeops\.reject_session_owner_update/);
+  assert.match(revert, /DROP COLUMN owner_principal_id/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });
 
 test("defines an immutable lease-claimed runtime outbox", async () => {

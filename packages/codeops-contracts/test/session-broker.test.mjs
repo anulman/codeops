@@ -80,6 +80,7 @@ test("binds a root Job initialization request to one created snapshot", () => {
     identity: snapshot().identity,
     leaseId,
     holderId: "job:agents-video-proof",
+    ownerPrincipalId: "access:aidan@example.com",
   });
   assert.equal(request.identity.parentSessionId, null);
   assert.throws(() =>
@@ -109,6 +110,7 @@ test("keeps work-item identity optional for generic Agent Sessions", () => {
     identity: snapshot().identity,
     leaseId,
     holderId: "job:generic-session",
+    ownerPrincipalId: "access:aidan@example.com",
   });
   assert.equal(request.identity.workItemId, undefined);
 });
@@ -169,6 +171,7 @@ test("admits a first-class scratch or multi-source workspace identity", () => {
       identity: { ...identity, repository: "example-org/escape" },
       leaseId,
       holderId: "job:workspace",
+      ownerPrincipalId: "access:aidan@example.com",
     }),
   );
 });

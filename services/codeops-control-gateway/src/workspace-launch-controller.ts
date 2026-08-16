@@ -56,7 +56,10 @@ export interface WorkspaceLaunchControllerDependencies {
     resource: Record<string, unknown>,
     requestDigest: string,
   ) => Promise<void>;
-  readonly loadSession: (sessionId: string) => Promise<SessionSnapshot | null>;
+  readonly loadSession: (
+    sessionId: string,
+    ownerPrincipalId: string,
+  ) => Promise<SessionSnapshot | null>;
   readonly loadJob: (name: string) => Promise<Record<string, unknown>>;
   readonly listRuntimePods: (
     runId: string,
@@ -180,7 +183,10 @@ export async function reconcileWorkspaceLaunch(
       failureCode = "provisioning-failed";
     }
 
-    const session = await dependencies.loadSession(identity.sessionId);
+    const session = await dependencies.loadSession(
+      identity.sessionId,
+      launch.principalId,
+    );
     if (session === null) {
       if (launch.materializedAt === undefined) {
         const materializerName = (materializerJob.metadata as { readonly name: string }).name;

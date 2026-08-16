@@ -15,6 +15,7 @@ process.stdout.write(renderAgentsSystemRootSession(template, {
   leaseId: required("CODEOPS_LEASE_ID"),
   runId: required("CODEOPS_RUN_ID"),
   sessionId: required("CODEOPS_SESSION_ID"),
+  ownerPrincipalId: required("CODEOPS_SESSION_OWNER_PRINCIPAL_ID"),
   sessionSuffix: required("CODEOPS_SESSION_SUFFIX"),
   workflowId: required("CODEOPS_WORKFLOW_ID"),
 }));

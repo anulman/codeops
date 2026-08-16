@@ -98,17 +98,27 @@ export interface SessionEventPage {
 }
 
 export interface SessionBrokerClient {
-  listSessions(limit?: number): Promise<readonly SessionSnapshot[]>;
-  listProviderEffects(limit?: number): Promise<readonly ProviderEffectReceipt[]>;
+  listSessions(
+    principalId: string,
+    limit?: number,
+  ): Promise<readonly SessionSnapshot[]>;
+  listProviderEffects(
+    principalId: string,
+    limit?: number,
+  ): Promise<readonly ProviderEffectReceipt[]>;
   reconcileProviderEffect(input: {
     readonly effectId: string;
     readonly principalId: string;
   }): Promise<GitHubMutationReconciliationResult>;
-  getSession(sessionId: string): Promise<SessionSnapshot | null>;
+  getSession(
+    sessionId: string,
+    principalId: string,
+  ): Promise<SessionSnapshot | null>;
   getEvents(input: {
     readonly sessionId: string;
     readonly afterCursor?: number;
     readonly limit?: number;
+    readonly principalId: string;
   }): Promise<SessionEventPage>;
   executeCommand(input: {
     readonly command: SessionCommand;
@@ -219,17 +229,21 @@ export function createSessionBrokerClient(input: {
   };
 
   return {
-    async listSessions(readLimit = 100) {
+    async listSessions(principalId, readLimit = 100) {
       const parsedLimit = limit(200).parse(readLimit);
       const response = fleetResponseSchema.parse(
-        await request(`/v1/sessions?limit=${parsedLimit}`),
+        await request(`/v1/sessions?limit=${parsedLimit}`, {
+          principalId: principal.parse(principalId),
+        }),
       );
       return response.sessions;
     },
-    async listProviderEffects(readLimit = 100) {
+    async listProviderEffects(principalId, readLimit = 100) {
       const parsedLimit = limit(200).parse(readLimit);
       const response = providerEffectFleetResponseSchema.parse(
-        await request(`/v1/provider-effects?limit=${parsedLimit}`),
+        await request(`/v1/provider-effects?limit=${parsedLimit}`, {
+          principalId: principal.parse(principalId),
+        }),
       );
       return response.effects;
     },
@@ -246,10 +260,11 @@ export function createSessionBrokerClient(input: {
         }),
       );
     },
-    async getSession(sessionId) {
+    async getSession(sessionId, principalId) {
       const parsedSessionId = identifier.parse(sessionId);
       const body = await request(`/v1/sessions/${parsedSessionId}`, {
         allowMissing: true,
+        principalId: principal.parse(principalId),
       });
       if (body === null) return null;
       const response = detailResponseSchema.parse(body);
@@ -258,13 +273,19 @@ export function createSessionBrokerClient(input: {
       }
       return response.session;
     },
-    async getEvents({ sessionId, afterCursor = 0, limit: readLimit = 100 }) {
+    async getEvents({
+      sessionId,
+      principalId,
+      afterCursor = 0,
+      limit: readLimit = 100,
+    }) {
       const parsedSessionId = identifier.parse(sessionId);
       const parsedCursor = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER).parse(afterCursor);
       const parsedLimit = limit(500).parse(readLimit);
       const response = eventsResponseSchema.parse(
         await request(
           `/v1/sessions/${parsedSessionId}/events?afterCursor=${parsedCursor}&limit=${parsedLimit}`,
+          { principalId: principal.parse(principalId) },
         ),
       );
       if (response.sessionId !== parsedSessionId || response.afterCursor !== parsedCursor) {

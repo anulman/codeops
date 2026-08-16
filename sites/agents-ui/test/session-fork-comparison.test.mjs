@@ -188,8 +188,8 @@ test("loads exact candidate evidence and submits one identity-bound synthesis pr
     idempotencyKey: "55555555-5555-4555-8555-555555555555",
   });
   assert.deepEqual(calls.filter(({ kind }) => kind === "events").map(({ input }) => input), [
-    { sessionId: "session-b", afterCursor: 0, limit: 500 },
-    { sessionId: "session-a", afterCursor: 1, limit: 500 },
+    { sessionId: "session-b", afterCursor: 0, limit: 500, principalId: "operator@example.com" },
+    { sessionId: "session-a", afterCursor: 1, limit: 500, principalId: "operator@example.com" },
   ]);
   const command = calls.find(({ kind }) => kind === "command").input;
   assert.equal(command.principalId, "operator@example.com");

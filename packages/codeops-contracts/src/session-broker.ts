@@ -24,6 +24,11 @@ const gitSha = z.string().regex(/^[0-9a-f]{40}$/);
 const sha256Digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const isoDateTime = z.string().datetime({ offset: true });
 const uuid = z.string().uuid();
+export const sessionOwnerPrincipalSchema = z
+  .string()
+  .min(1)
+  .max(256)
+  .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/);
 const safeText = (maximum: number) => z.string().min(1).max(maximum);
 const optionalText = (maximum: number) => z.string().max(maximum).optional();
 
@@ -554,6 +559,7 @@ export const sessionJobInitializationRequestSchema = z
     ),
     leaseId: uuid,
     holderId: identifier,
+    ownerPrincipalId: sessionOwnerPrincipalSchema,
   })
   .strict();
 

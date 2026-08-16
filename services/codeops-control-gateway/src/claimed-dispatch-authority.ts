@@ -19,6 +19,7 @@ export interface ClaimedDispatchRow extends Record<string, unknown> {
   readonly claim_token: unknown;
   readonly claimed_by: unknown;
   readonly claim_expires_at: unknown;
+  readonly owner_principal_id: unknown;
 }
 
 export interface ClaimedDispatchAuthority {
@@ -81,6 +82,11 @@ export function validateClaimedDispatchAuthority(
     );
   }
   const dispatch = deepFreeze(parsedDispatch.data);
+  if (row.owner_principal_id !== dispatch.principalId) {
+    throw new ClaimedDispatchAuthorityConflictError(
+      "claimed dispatch principal does not own the session",
+    );
+  }
   if (dispatch.dispatchId !== input.dispatchId || dispatch.command.type !== "prompt") {
     throw new ClaimedDispatchAuthorityConflictError(
       "authority belongs only to the exact claimed prompt dispatch",
@@ -115,9 +121,13 @@ export async function loadClaimedDispatchAuthority(
   },
 ): Promise<ClaimedDispatchAuthority> {
   const result = await client.query<ClaimedDispatchRow>(
-    `SELECT dispatch_json, status, claim_token, claimed_by, claim_expires_at
-       FROM codeops.session_runtime_outbox
-      WHERE dispatch_id = $1`,
+    `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
+            outbox.claimed_by, outbox.claim_expires_at,
+            session.owner_principal_id
+       FROM codeops.session_runtime_outbox AS outbox
+       JOIN codeops.sessions AS session
+         ON session.session_id = outbox.session_id
+      WHERE outbox.dispatch_id = $1`,
     [input.dispatchId],
   );
   const row = result.rows[0];

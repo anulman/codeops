@@ -393,6 +393,7 @@ export function buildWorkspaceResources(
                 { name: "CODEOPS_SESSION_POLICY_JSON", value: JSON.stringify(policy) },
                 { name: "CODEOPS_SESSION_CONTEXT_ATTACHMENTS_JSON", value: JSON.stringify(contextAttachments) },
                 { name: "CODEOPS_SESSION_ID", value: raw.sessionId },
+                { name: "CODEOPS_SESSION_OWNER_PRINCIPAL_ID", value: raw.principalId },
                 { name: "CODEOPS_SESSION_WORKFLOW_ID", value: raw.workflowId },
                 { name: "CODEOPS_SESSION_RUN_ID", value: raw.runId },
                 ...(raw.displayName === undefined ? [] : [{ name: "CODEOPS_SESSION_DISPLAY_NAME", value: raw.displayName }]),

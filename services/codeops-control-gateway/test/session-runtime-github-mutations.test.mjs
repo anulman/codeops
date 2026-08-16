@@ -215,7 +215,10 @@ class Client {
 
   async query(text, values = []) {
     this.calls.push({ text, values });
-    if (text.includes("FROM codeops.session_runtime_outbox\n")) {
+    if (
+      text.includes("FROM codeops.session_runtime_outbox AS outbox") &&
+      text.includes("JOIN codeops.sessions AS session")
+    ) {
       return {
         rowCount: 1,
         rows: [{
@@ -224,10 +227,14 @@ class Client {
           claim_token: claimToken,
           claimed_by: workerId,
           claim_expires_at: "2026-08-14T15:30:00.000Z",
+          owner_principal_id: "access:aidan@example.com",
         }],
       };
     }
-    if (text.includes("FROM codeops.session_runtime_outbox AS outbox")) {
+    if (
+      text.includes("FROM codeops.session_runtime_outbox AS outbox") &&
+      text.includes("session_runtime_permission_requests AS permission")
+    ) {
       return {
         rowCount: 1,
         rows: [{
@@ -271,7 +278,7 @@ test("consumes one exact durable permission before returning provider authority"
   assert.ok(client.calls.some(({ text }) =>
     text.includes("INSERT INTO codeops.provider_effect_receipts")));
   const authorizationQuery = client.calls.find(({ text }) =>
-    text.includes("FROM codeops.session_runtime_outbox AS outbox"));
+    text.includes("session_runtime_permission_requests AS permission"));
   assert.match(authorizationQuery.text, /permission\.request_id = \$2/);
   assert.equal(authorizationQuery.values[1], permission().request.requestId);
 

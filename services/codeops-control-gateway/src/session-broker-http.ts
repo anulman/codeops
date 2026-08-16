@@ -15,6 +15,7 @@ export interface SessionBrokerHttpResult {
 
 const sessionPath = /^\/v1\/sessions\/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})$/;
 const eventsPath = /^\/v1\/sessions\/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})\/events$/;
+const principalPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 
 function authorization(headers: IncomingHttpHeaders): string | undefined {
   return typeof headers.authorization === "string"
@@ -72,6 +73,12 @@ export async function serveSessionBrokerRead(input: {
   if (!authenticateBearer(authorization(input.headers), input.token)) {
     return { status: 401, body: { status: "unauthorized" } };
   }
+  const principalId = input.headers["x-codeops-principal"];
+  if (typeof principalId !== "string" || !principalPattern.test(principalId)) {
+    throw new InvalidSessionReadRequestError(
+      "session read principal is missing or invalid",
+    );
+  }
 
   if (fleet) {
     requireOnly(url, ["limit"]);
@@ -80,7 +87,7 @@ export async function serveSessionBrokerRead(input: {
       status: 200,
       body: {
         version: "codeops.session-fleet/v1",
-        sessions: await listSessionSnapshots(input.database, limit),
+        sessions: await listSessionSnapshots(input.database, limit, principalId),
       },
     };
   }
@@ -92,7 +99,11 @@ export async function serveSessionBrokerRead(input: {
       status: 200,
       body: {
         version: "codeops.provider-effect-fleet/v1",
-        effects: await listProviderEffectReceipts(input.database, limit),
+        effects: await listProviderEffectReceipts(
+          input.database,
+          limit,
+          principalId,
+        ),
       },
     };
   }
@@ -102,6 +113,7 @@ export async function serveSessionBrokerRead(input: {
     const session = await loadSessionSnapshot(
       input.database,
       snapshotMatch[1]!,
+      principalId,
     );
     return session === null
       ? { status: 404, body: { status: "not-found" } }
@@ -118,6 +130,7 @@ export async function serveSessionBrokerRead(input: {
     sessionId: eventMatch![1]!,
     afterCursor,
     limit,
+    ownerPrincipalId: principalId,
   });
   return {
     status: 200,
