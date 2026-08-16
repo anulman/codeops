@@ -46,6 +46,10 @@ const migrations = [
     ),
   },
   {
+    name: "provider-effect-receipts-v1",
+    url: new URL("../sql/provider-effect-receipts-v1.sql", import.meta.url),
+  },
+  {
     name: "work-item-lifecycle-journal-v1",
     url: new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url),
   },

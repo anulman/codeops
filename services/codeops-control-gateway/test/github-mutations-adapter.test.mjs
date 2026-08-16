@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { createGitHubMutationAdapter } from "../dist/github-mutations-adapter.js";
+import {
+  createGitHubMutationAdapter,
+  createGitHubMutationReconciler,
+  githubEffectMarker,
+} from "../dist/github-mutations-adapter.js";
 
 const repository = "anulman/codeops";
 const head = "a".repeat(40);
@@ -172,6 +176,13 @@ test("executes only four bounded routes with preflight and postflight identity p
     assert.equal(result.operationId, operationId);
     assert.deepEqual(calls.map(({ init }) => init.method ?? "GET"), item.methods);
     assert.equal(responses.length, 0);
+    if (item.operation === "review_thread_reply") {
+      const mutationBody = JSON.parse(calls[1].init.body);
+      assert.equal(
+        mutationBody.variables.body,
+        `${item.input.body}\n\n${githubEffectMarker(operationId)}`,
+      );
+    }
     for (const call of calls) {
       assert.equal(
         call.init.headers.Authorization,
@@ -180,6 +191,14 @@ test("executes only four bounded routes with preflight and postflight identity p
       assert.doesNotMatch(JSON.stringify(call), /read-token-not-used/);
     }
   }
+});
+
+test("builds one exact hidden review marker from the provider effect identity", () => {
+  assert.equal(
+    githubEffectMarker(operationId),
+    `<!-- codeops-provider-effect:${operationId} -->`,
+  );
+  assert.throws(() => githubEffectMarker("githubmutation-not-a-digest"));
 });
 
 test("rejects stale heads and forged permission digests before a provider effect", async () => {
@@ -211,4 +230,90 @@ test("rejects stale heads and forged permission digests before a provider effect
   forged.permissionDigest = `sha256:${"0".repeat(64)}`;
   await assert.rejects(mutate(forged), /digests do not match/);
   assert.equal(calls.length, 1);
+});
+
+test("reconciles each mutation only from operation-specific attributable evidence", async () => {
+  const attemptedAt = new Date("2026-08-16T00:00:00.000Z");
+  const observedAt = new Date("2026-08-16T00:02:00.000Z");
+
+  const updateInput = {
+    repository,
+    pullRequestNumber: 27,
+    expectedHeadSha: head,
+    expectedBaseSha: base,
+    title: "Reconciled title",
+  };
+  const reconcileUpdate = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async () => json(pull({ title: "Reconciled title" })),
+  });
+  assert.equal(
+    (await reconcileUpdate(request("pull_request_update", updateInput), attemptedAt, observedAt)).state,
+    "reconciled_satisfied",
+  );
+
+  const replyInput = {
+    repository,
+    pullRequestNumber: 27,
+    expectedHeadSha: head,
+    threadId: "PRRT_thread_1",
+    body: "Addressed.",
+  };
+  const replyRequest = request("review_thread_reply", replyInput);
+  const reconcileReply = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async () => json({ data: { node: {
+      id: replyInput.threadId,
+      pullRequest: {
+        number: 27,
+        headRefOid: head,
+        repository: { nameWithOwner: repository },
+      },
+      comments: { nodes: [{
+        databaseId: 9876,
+        url: "https://github.com/anulman/codeops/pull/27#discussion_r9876",
+        body: `Addressed.\n\n${githubEffectMarker(operationId)}`,
+      }], pageInfo: { hasPreviousPage: false } },
+    } } }),
+  });
+  const reply = await reconcileReply(replyRequest, attemptedAt, observedAt);
+  assert.equal(reply.state, "reconciled_satisfied");
+  assert.equal(reply.result.commentId, 9876);
+
+  const reconcileAbsentReply = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async () => json({ data: { node: {
+      id: replyInput.threadId,
+      pullRequest: {
+        number: 27,
+        headRefOid: head,
+        repository: { nameWithOwner: repository },
+      },
+      comments: { nodes: [], pageInfo: { hasPreviousPage: false } },
+    } } }),
+  });
+  assert.equal(
+    (await reconcileAbsentReply(replyRequest, attemptedAt, observedAt)).state,
+    "reconciled_not_observed",
+  );
+
+  const reconcileBranch = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async () => json(pull()),
+  });
+  assert.equal((await reconcileBranch(request("pull_request_update_branch", {
+    repository,
+    pullRequestNumber: 27,
+    expectedHeadSha: head,
+  }), attemptedAt, observedAt)).state, "reconciled_not_observed");
+
+  const reconcileCheck = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async () => json({ id: 1234, head_sha: head }),
+  });
+  assert.equal((await reconcileCheck(request("check_rerun", {
+    repository,
+    expectedHeadSha: head,
+    checkRunId: 1234,
+  }), attemptedAt, observedAt)).state, "unknown");
 });

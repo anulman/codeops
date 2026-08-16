@@ -6,6 +6,7 @@ import {
   loadSessionSnapshot,
   type TransactionClient,
 } from "./session-broker-repository.js";
+import { listProviderEffectReceipts } from "./provider-effect-receipts.js";
 
 export interface SessionBrokerHttpResult {
   readonly status: number;
@@ -65,7 +66,8 @@ export async function serveSessionBrokerRead(input: {
   const snapshotMatch = url.pathname.match(sessionPath);
   const eventMatch = url.pathname.match(eventsPath);
   const fleet = url.pathname === "/v1/sessions";
-  if (!fleet && snapshotMatch === null && eventMatch === null) return null;
+  const providerEffects = url.pathname === "/v1/provider-effects";
+  if (!fleet && !providerEffects && snapshotMatch === null && eventMatch === null) return null;
 
   if (!authenticateBearer(authorization(input.headers), input.token)) {
     return { status: 401, body: { status: "unauthorized" } };
@@ -79,6 +81,18 @@ export async function serveSessionBrokerRead(input: {
       body: {
         version: "codeops.session-fleet/v1",
         sessions: await listSessionSnapshots(input.database, limit),
+      },
+    };
+  }
+
+  if (providerEffects) {
+    requireOnly(url, ["limit"]);
+    const limit = exactInteger(url, "limit", 100, 200);
+    return {
+      status: 200,
+      body: {
+        version: "codeops.provider-effect-fleet/v1",
+        effects: await listProviderEffectReceipts(input.database, limit),
       },
     };
   }

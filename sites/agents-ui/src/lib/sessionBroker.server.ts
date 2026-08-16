@@ -11,6 +11,12 @@ import {
 } from "@codeops/codeops-contracts/session-broker";
 import { z } from "zod";
 import {
+  providerEffectReceiptSchema,
+  githubMutationReconciliationResultSchema,
+  type GitHubMutationReconciliationResult,
+  type ProviderEffectReceipt,
+} from "@codeops/codeops-contracts/github-mutations";
+import {
   webPushConfigurationSchema,
   webPushSubscriptionResultSchema,
   webPushSubscriptionSchema,
@@ -77,6 +83,12 @@ const eventsResponseSchema = z
       });
     }
   });
+const providerEffectFleetResponseSchema = z
+  .object({
+    version: z.literal("codeops.provider-effect-fleet/v1"),
+    effects: z.array(providerEffectReceiptSchema).max(200),
+  })
+  .strict();
 
 export interface SessionEventPage {
   readonly sessionId: string;
@@ -87,6 +99,11 @@ export interface SessionEventPage {
 
 export interface SessionBrokerClient {
   listSessions(limit?: number): Promise<readonly SessionSnapshot[]>;
+  listProviderEffects(limit?: number): Promise<readonly ProviderEffectReceipt[]>;
+  reconcileProviderEffect(input: {
+    readonly effectId: string;
+    readonly principalId: string;
+  }): Promise<GitHubMutationReconciliationResult>;
   getSession(sessionId: string): Promise<SessionSnapshot | null>;
   getEvents(input: {
     readonly sessionId: string;
@@ -208,6 +225,26 @@ export function createSessionBrokerClient(input: {
         await request(`/v1/sessions?limit=${parsedLimit}`),
       );
       return response.sessions;
+    },
+    async listProviderEffects(readLimit = 100) {
+      const parsedLimit = limit(200).parse(readLimit);
+      const response = providerEffectFleetResponseSchema.parse(
+        await request(`/v1/provider-effects?limit=${parsedLimit}`),
+      );
+      return response.effects;
+    },
+    async reconcileProviderEffect({ effectId, principalId }) {
+      const parsedEffectId = z.string().regex(/^githubmutation-[0-9a-f]{64}$/).parse(effectId);
+      return githubMutationReconciliationResultSchema.parse(
+        await request(`/v1/provider-effects/${parsedEffectId}/reconcile`, {
+          method: "POST",
+          token: input.writeToken,
+          principalId: principal.parse(principalId),
+          body: JSON.stringify({
+            version: "codeops.provider-effect-reconciliation-command/v1",
+          }),
+        }),
+      );
     },
     async getSession(sessionId) {
       const parsedSessionId = identifier.parse(sessionId);

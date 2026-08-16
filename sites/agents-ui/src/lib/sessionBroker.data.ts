@@ -27,6 +27,28 @@ export const getSessionFleet = createServerFn({ method: "GET" })
     return (await sessionBrokerClient()).listSessions();
   });
 
+export const getProviderEffectFleet = createServerFn({ method: "GET" })
+  .middleware([agentsContextMiddleware])
+  .handler(async () => {
+    protectResponse();
+    return (await sessionBrokerClient()).listProviderEffects();
+  });
+
+export const reconcileProviderEffect = createServerFn({ method: "POST" })
+  .middleware([agentsContextMiddleware])
+  .inputValidator((value: unknown) =>
+    z.object({
+      effectId: z.string().regex(/^githubmutation-[0-9a-f]{64}$/),
+    }).strict().parse(value),
+  )
+  .handler(async ({ data, context }) => {
+    protectResponse();
+    return (await sessionBrokerClient()).reconcileProviderEffect({
+      effectId: data.effectId,
+      principalId: context.agentsPrincipal,
+    });
+  });
+
 export const getSessionDetail = createServerFn({ method: "GET" })
   .middleware([agentsContextMiddleware])
   .inputValidator((value: unknown) =>

@@ -10,11 +10,21 @@ import {
 } from "./session-runtime-github-reads.js";
 import {
   authorizeSessionRuntimeGitHubMutation,
-  completeSessionRuntimeGitHubMutation,
   createGitHubMutationProviderClient,
+  createGitHubMutationReconciliationProviderClient,
+  executeAuthorizedSessionRuntimeGitHubMutation,
   SessionRuntimeGitHubMutationConflictError,
   SessionRuntimeGitHubMutationNotFoundError,
 } from "./session-runtime-github-mutations.js";
+import {
+  loadUnknownProviderEffectReconciliation,
+  operatorResolveProviderEffect,
+  recordProviderEffectReconciliation,
+} from "./provider-effect-receipts.js";
+import {
+  InvalidProviderEffectRequestError,
+  serveProviderEffectReconciliation,
+} from "./provider-effect-http.js";
 import {
   createGitHubSteeringRegistry,
   loadGitHubSteeringRegistryFile,
@@ -218,6 +228,14 @@ const configuredGitHubMutationProvider =
   githubMutationProviderToken === undefined
     ? undefined
     : createGitHubMutationProviderClient({
+        origin: githubMutationProviderOrigin,
+        token: githubMutationProviderToken,
+      });
+const configuredGitHubMutationReconciliationProvider =
+  githubMutationProviderOrigin === undefined ||
+  githubMutationProviderToken === undefined
+    ? undefined
+    : createGitHubMutationReconciliationProviderClient({
         origin: githubMutationProviderOrigin,
         token: githubMutationProviderToken,
       });
@@ -544,12 +562,13 @@ const server = createServer((request, response) => {
                     return authorization.result;
                   }
                   const providerRequest = authorization.request;
-                  const providerResult =
-                    await configuredGitHubMutationProvider(providerRequest);
-                  return await completeSessionRuntimeGitHubMutation(client, {
-                    request: providerRequest,
-                    result: providerResult,
-                  });
+                  return await executeAuthorizedSessionRuntimeGitHubMutation(
+                    client,
+                    {
+                      request: providerRequest,
+                      provider: configuredGitHubMutationProvider,
+                    },
+                  );
                 } finally {
                   client.release();
                 }
@@ -588,6 +607,60 @@ const server = createServer((request, response) => {
               : status === 409
                 ? "conflict"
                 : "unavailable",
+      });
+      return;
+    }
+    try {
+      const result = await serveProviderEffectReconciliation({
+        method: request.method,
+        url: request.url,
+        headers: request.headers,
+        token: secrets.writeToken,
+        readBody: () => readJson(request),
+        reconcile: async ({ effectId, principalId }) => {
+          if (configuredGitHubMutationReconciliationProvider === undefined) {
+            throw new Error("GitHub mutation reconciliation provider is unavailable");
+          }
+          const client = await database.connect();
+          try {
+            const authority = await loadUnknownProviderEffectReconciliation(
+              client,
+              effectId,
+            );
+            const reconciliation =
+              await configuredGitHubMutationReconciliationProvider(authority);
+            await recordProviderEffectReconciliation(client, {
+              request: authority.request,
+              reconciliation,
+              principalId,
+            });
+            return reconciliation;
+          } finally {
+            client.release();
+          }
+        },
+        resolve: async (resolution) => {
+          const client = await database.connect();
+          try {
+            await operatorResolveProviderEffect(client, resolution);
+            return {
+              version: "codeops.provider-effect-operator-resolution-result/v1",
+              effectId: resolution.effectId,
+              state: "operator_resolved",
+            };
+          } finally {
+            client.release();
+          }
+        },
+      });
+      if (result !== null) {
+        json(response, result.status, result.body);
+        return;
+      }
+    } catch (error) {
+      const invalid = error instanceof InvalidProviderEffectRequestError;
+      json(response, invalid ? 400 : 503, {
+        status: invalid ? "invalid-request" : "unavailable",
       });
       return;
     }

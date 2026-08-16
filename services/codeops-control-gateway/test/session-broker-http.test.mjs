@@ -68,6 +68,27 @@ class FakeClient {
   }
   async query(text, values = []) {
     this.calls.push({ text, values });
+    if (text.includes("provider_effect_receipts")) {
+      return { rowCount: 1, rows: [{
+        effect_id: `githubmutation-${"a".repeat(64)}`,
+        provider: "github",
+        repository: "anulman/codeops",
+        operation: "check_rerun",
+        pull_request_number: null,
+        target_id: "1234",
+        expected_head_sha: "b".repeat(40),
+        payload_digest: `sha256:${"c".repeat(64)}`,
+        permission_digest: `sha256:${"d".repeat(64)}`,
+        session_id: "ses_91a4",
+        dispatch_id: "22222222-2222-4222-8222-222222222222",
+        state: "unknown",
+        authorized_at: "2026-08-04T03:00:00.000Z",
+        attempted_at: "2026-08-04T03:00:01.000Z",
+        resolved_at: null,
+        reconciliation_action: "inspect_check_attempts",
+        resolution_summary: null,
+      }] };
+    }
     if (text.includes("session_events")) {
       return { rowCount: this.events.length, rows: this.events.map((value) => ({ event_json: value })) };
     }
@@ -126,4 +147,15 @@ test("loads one strict cursor page and exposes its committed next cursor", async
   assert.deepEqual(database.calls[0].values, ["ses_91a4", 184, 50]);
   await assert.rejects(request(database, "/v1/sessions/ses_91a4/events?afterCursor=-1"), /integer/);
   await assert.rejects(request(database, "/v1/sessions/ses_91a4/events?limit=1&limit=2"), /one integer/);
+});
+
+test("lists bounded provider effects with unknown outcomes first", async () => {
+  const database = new FakeClient();
+  const result = await request(database, "/v1/provider-effects?limit=25");
+  assert.equal(result.status, 200);
+  assert.equal(result.body.version, "codeops.provider-effect-fleet/v1");
+  assert.equal(result.body.effects[0].state, "unknown");
+  assert.equal(result.body.effects[0].reconciliationAction, "inspect_check_attempts");
+  assert.deepEqual(database.calls[0].values, [25]);
+  await assert.rejects(request(database, "/v1/provider-effects?limit=201"));
 });

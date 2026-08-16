@@ -97,6 +97,88 @@ export const githubMutationOperationSchema = z.enum([
   "check_rerun",
 ]);
 
+export const providerEffectStateSchema = z.enum([
+  "authorized",
+  "attempting",
+  "succeeded",
+  "failed",
+  "unknown",
+  "reconciled_satisfied",
+  "reconciled_not_observed",
+  "operator_resolved",
+]);
+
+export const providerEffectReconciliationActionSchema = z.enum([
+  "none",
+  "inspect_pull_request",
+  "search_review_thread_marker",
+  "compare_pull_request_head",
+  "inspect_check_attempts",
+  "operator_review",
+]);
+
+const isoDateTime = z.string().datetime({ offset: true });
+
+export const providerEffectReceiptSchema = z
+  .object({
+    version: z.literal("codeops.provider-effect-receipt/v1"),
+    effectId: operationId,
+    provider: z.literal("github"),
+    repository,
+    operation: githubMutationOperationSchema,
+    pullRequestNumber: pullRequestNumber.nullable(),
+    targetId: z.string().min(1).max(256).nullable(),
+    expectedHeadSha: gitSha,
+    payloadDigest: sha256Digest,
+    permissionDigest: sha256Digest,
+    sessionId: z.string().min(1).max(128),
+    dispatchId: uuid,
+    state: providerEffectStateSchema,
+    authorizedAt: isoDateTime,
+    attemptedAt: isoDateTime.nullable(),
+    resolvedAt: isoDateTime.nullable(),
+    reconciliationAction: providerEffectReconciliationActionSchema,
+    resolutionSummary: z.string().min(1).max(1_000).nullable(),
+  })
+  .strict()
+  .superRefine((receipt, context) => {
+    const terminal = [
+      "succeeded",
+      "failed",
+      "reconciled_satisfied",
+      "reconciled_not_observed",
+      "operator_resolved",
+    ].includes(receipt.state);
+    if (receipt.state === "authorized" && receipt.attemptedAt !== null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "authorized provider effect cannot have an attempt time",
+        path: ["attemptedAt"],
+      });
+    }
+    if (receipt.state !== "authorized" && receipt.attemptedAt === null) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "attempted provider effect requires an attempt time",
+        path: ["attemptedAt"],
+      });
+    }
+    if (terminal !== (receipt.resolvedAt !== null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "terminal provider effect requires one resolution time",
+        path: ["resolvedAt"],
+      });
+    }
+    if (terminal !== (receipt.resolutionSummary !== null)) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "terminal provider effect requires one bounded resolution summary",
+        path: ["resolutionSummary"],
+      });
+    }
+  });
+
 const runtimeMutationBase = z.object({
   version: z.literal("codeops.session-runtime-github-mutation-request/v1"),
   claimToken: uuid,
@@ -147,6 +229,14 @@ export const githubMutationProviderRequestSchema = z.discriminatedUnion(
   "operation",
   mutationRequestBranches(providerMutationBase),
 );
+
+export const githubMutationReconciliationProviderRequestSchema = z
+  .object({
+    version: z.literal("codeops.github-mutation-reconciliation-provider-request/v1"),
+    request: githubMutationProviderRequestSchema,
+    attemptedAt: isoDateTime,
+  })
+  .strict();
 
 const resultBase = { repository, operationId } as const;
 
@@ -223,9 +313,29 @@ export const githubMutationResultSchema = z.union([
   githubCheckRerunResultSchema,
 ]);
 
+export const githubMutationReconciliationResultSchema = z.discriminatedUnion(
+  "state",
+  [
+    z.object({
+      version: z.literal("codeops.github-mutation-reconciliation-result/v1"),
+      state: z.literal("reconciled_satisfied"),
+      result: githubMutationResultSchema,
+      summary: z.string().min(1).max(1_000),
+    }).strict(),
+    z.object({
+      version: z.literal("codeops.github-mutation-reconciliation-result/v1"),
+      state: z.enum(["reconciled_not_observed", "unknown"]),
+      result: z.null(),
+      summary: z.string().min(1).max(1_000),
+    }).strict(),
+  ],
+);
+
 export type GitHubMutationOperation = z.infer<
   typeof githubMutationOperationSchema
 >;
+export type ProviderEffectState = z.infer<typeof providerEffectStateSchema>;
+export type ProviderEffectReceipt = z.infer<typeof providerEffectReceiptSchema>;
 export type SessionRuntimeGitHubMutationRequest = z.infer<
   typeof sessionRuntimeGitHubMutationRequestSchema
 >;
@@ -233,3 +343,9 @@ export type GitHubMutationProviderRequest = z.infer<
   typeof githubMutationProviderRequestSchema
 >;
 export type GitHubMutationResult = z.infer<typeof githubMutationResultSchema>;
+export type GitHubMutationReconciliationProviderRequest = z.infer<
+  typeof githubMutationReconciliationProviderRequestSchema
+>;
+export type GitHubMutationReconciliationResult = z.infer<
+  typeof githubMutationReconciliationResultSchema
+>;

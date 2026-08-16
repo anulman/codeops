@@ -139,6 +139,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "applied",
     "applied",
     "applied",
+    "applied",
   ]);
   const inserts = client.calls
     .filter(({ text }) => text.includes("INSERT INTO codeops.schema_migrations"))
@@ -152,6 +153,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "session-runtime-permission-relay-v1",
     "session-runtime-github-mutations-v1",
     "session-runtime-github-mutations-request-scoped-v2",
+    "provider-effect-receipts-v1",
     "work-item-lifecycle-journal-v1",
     "workspace-launch-v1",
     "runtime-egress-pod-observations-v1",
