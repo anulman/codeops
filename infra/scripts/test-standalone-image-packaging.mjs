@@ -90,6 +90,8 @@ test("packages the Agents UI from the frozen standalone workspace", async () => 
   assert.match(source, /services\/codeops-acceptance-runner\/package\.json/);
   assert.match(source, /nub run --filter @codeops\/agents-ui build/);
   assert.match(source, /sites\/agents-ui\/\.output\/server\/index\.mjs/);
+  assert.match(source, /sites\/agents-ui\/postcss\.config\.mjs/);
+  assert.doesNotMatch(source, /COPY --from=build .*node_modules/);
   assert.match(dockerignore, /^!lock\.yaml$/m);
   assert.match(dockerignore, /^!sites\/agents-ui\/src\/\*\*$/m);
 });

@@ -29,8 +29,6 @@ const ALLOWED_JAVASCRIPT_LICENSES = new Set([
   "Unlicense",
 ]);
 const APPROVED_COPYLEFT_JAVASCRIPT_EXCEPTIONS = new Map([
-  ["lightningcss@1.32.0", "MPL-2.0"],
-  ["lightningcss-linux-x64-gnu@1.32.0", "MPL-2.0"],
   ["lightningcss@1.33.0", "MPL-2.0"],
   ["lightningcss-linux-x64-gnu@1.33.0", "MPL-2.0"],
   ["web-push@3.6.7", "MPL-2.0"],
@@ -150,16 +148,20 @@ function checkWorkspace() {
   }
 
   const packages = new Map();
+  const overrides = loadLicenseOverrides();
   for (const packageRoot of installedPackageRoots(root)) {
     const manifestPath = join(packageRoot, "package.json");
     if (!existsSync(manifestPath)) continue;
     const manifest = readJson(manifestPath);
     if (!manifest.name || !manifest.version) continue;
     const key = `${manifest.name}@${manifest.version}`;
-    const license = packageLicense(packageRoot, manifest);
-    if (!license) fail(`JavaScript dependency has no reviewed license: ${key}`);
-    if (!approvedJavascriptLicense(key, license)) {
-      fail(`JavaScript dependency uses an unapproved license: ${key} (${license})`);
+    const declared = packageLicense(packageRoot, manifest);
+    if (!declared) fail(`JavaScript dependency has no reviewed license: ${key}`);
+    const license = approvedJavascriptLicense(key, declared)
+      ? declared
+      : overrides.get(key)?.license;
+    if (!license || !approvedJavascriptLicense(key, license)) {
+      fail(`JavaScript dependency uses an unapproved license: ${key} (${declared})`);
     }
     packages.set(key, license);
   }
@@ -230,13 +232,13 @@ function checkSbom(sbomPath, reportPath, subject) {
     if (!npmPackage(pkg)) continue;
     const key = `${pkg.name}@${pkg.versionInfo ?? "UNKNOWN"}`;
     let effective = declared;
-    if (declared === "NOASSERTION") {
-      const override = overrides.get(key);
+    const override = overrides.get(key);
+    if (!approvedJavascriptLicense(key, declared) && override) {
+      effective = override.license;
+      appliedOverrides.push({ package: key, license: override.license, evidence: override.evidence });
+    } else if (declared === "NOASSERTION") {
       const derived = derivedSubpathLicense(pkg, javascript);
-      if (override) {
-        effective = override.license;
-        appliedOverrides.push({ package: key, license: override.license, evidence: override.evidence });
-      } else if (derived) {
+      if (derived) {
         effective = derived.license;
         derivedSubpaths.push({ package: key, license: derived.license, evidence: derived.evidence });
       }

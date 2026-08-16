@@ -1,3 +1,4 @@
+import { sx } from "@/styles/sx";
 import { useEffect, useState } from "react";
 import type {
   WebPushConfiguration,
@@ -134,17 +135,17 @@ export function SessionNotifications() {
     setState("hidden");
   };
   return (
-    <aside className="fixed bottom-3 right-3 z-20 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-white/[0.1] bg-[#171719] p-3 shadow-xl lg:bottom-3 lg:left-32 lg:right-auto">
-      <p className="text-[11px] font-semibold text-white/78">
+    <aside {...sx("fixed bottom-3 right-3 z-20 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-white/[0.1] bg-[#171719] p-3 shadow-xl lg:bottom-3 lg:left-32 lg:right-auto")}>
+      <p {...sx("text-[11px] font-semibold text-white/78")}>
         {state === "install" ? "Install CodeOps for notifications" : "Get session notifications"}
       </p>
-      <p className="mt-1 text-[10px] leading-4 text-white/42">
+      <p {...sx("mt-1 text-[10px] leading-4 text-white/42")}>
         {state === "install"
           ? "On iPhone or iPad, use Share → Add to Home Screen. Then open the installed app to enable notifications."
           : "Get permission requests, failures, completed work, idle checkpoints, and budget limits while this app is suspended."}
       </p>
-      <div className="mt-2 flex justify-end gap-2">
-        <button type="button" onClick={dismiss} className="rounded-md px-2 py-1 text-[10px] text-white/38 hover:text-white/68">
+      <div {...sx("mt-2 flex justify-end gap-2")}>
+        <button type="button" onClick={dismiss} {...sx("rounded-md px-2 py-1 text-[10px] text-white/38 hover:text-white/68")}>
           Not now
         </button>
         {state !== "install" ? (
@@ -162,7 +163,7 @@ export function SessionNotifications() {
                 setState("hidden");
               }
             }}
-            className="rounded-md bg-[#6d6af7] px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-[#7c79ff] disabled:opacity-45"
+            {...sx("rounded-md bg-[#6d6af7] px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-[#7c79ff] disabled:opacity-45")}
           >
             {state === "enabling" ? "Enabling…" : "Enable notifications"}
           </button>

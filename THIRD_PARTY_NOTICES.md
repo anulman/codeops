@@ -18,8 +18,8 @@ The packaged chart includes the applicable license and copyright text under
 `licenses/`. The upstream chart archives do not become CodeOps-authored work.
 Plane is an approved copyleft aggregate exception. CodeOps does not copy,
 adapt, or link Plane source. The chart deploys Plane as separate processes and
-preserves its upstream license and source obligations. Exact Lightning CSS
-MPL-2.0 build-tool exceptions are documented in
+preserves its upstream license and source obligations. The exact Lightning CSS
+MPL-2.0 build-only exception is documented in
 [LICENSE_POLICY.md](LICENSE_POLICY.md).
 
 ## Referenced services and images

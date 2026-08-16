@@ -79,6 +79,7 @@ test("accepts only exact reviewed MPL exceptions", async (t) => {
   await execute(process.execPath, [policy.pathname, "--sbom", acceptedPath, "--report", reportPath, "--subject", "example"]);
   const report = JSON.parse(await readFile(reportPath, "utf8"));
   assert.equal(report.policy.approvedCopyleftJavascriptExceptions["lightningcss@1.33.0"], "MPL-2.0");
+  assert.equal(report.policy.approvedCopyleftJavascriptExceptions["lightningcss@1.32.0"], undefined);
   assert.equal(report.policy.approvedCopyleftJavascriptExceptions["web-push@3.6.7"], "MPL-2.0");
 
   const rejectedPath = path.join(directory, "rejected.json");
@@ -110,6 +111,19 @@ test("uses only an exact reviewed override for an unresolved package", async (t)
     execute(process.execPath, [policy.pathname, "--sbom", rejectedPath, "--report", `${rejectedPath}.report`, "--subject", "example"]),
     /semver@7\.8\.6 \(NOASSERTION\)/,
   );
+});
+
+test("normalizes an exact reviewed non-SPDX license alias", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-license-policy-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sbomPath = path.join(directory, "sbom.json");
+  const reportPath = path.join(directory, "report.json");
+  await writeFile(sbomPath, JSON.stringify(sbom("BSD", { name: "css-mediaquery", versionInfo: "0.1.2" })));
+  await execute(process.execPath, [policy.pathname, "--sbom", sbomPath, "--report", reportPath, "--subject", "example"]);
+  const report = JSON.parse(await readFile(reportPath, "utf8"));
+  assert.deepEqual(report.appliedOverrides, [
+    { package: "css-mediaquery@0.1.2", license: "BSD-3-Clause", evidence: "LICENSE file in the distributed package" },
+  ]);
 });
 
 test("derives an unresolved package subpath only from one declared parent", async (t) => {
