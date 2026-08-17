@@ -117,6 +117,17 @@ test("binds source scenarios to exact released-image cluster evidence", () => {
   }
 });
 
+test("accepts the supported prerelease chart version format", () => {
+  const input = fixture();
+  input.releaseManifest.chart.version = "0.5.0-alpha.4";
+  input.registryInstallEvidence.releaseVersion = "0.5.0-alpha.4";
+  input.smokeReport.release.chart = "codeops-0.5.0-alpha.4";
+
+  const report = buildGoldenReleaseEvidence(input);
+
+  assert.equal(report.artifactProof.chartVersion, "0.5.0-alpha.4");
+});
+
 test("rejects failed scenarios and source, chart, image, or smoke drift", () => {
   const failed = fixture();
   failed.goldenSourceReport.scenarios[0].status = "failed";
@@ -133,6 +144,10 @@ test("rejects failed scenarios and source, chart, image, or smoke drift", () => 
   const chartRepositoryDrift = fixture();
   chartRepositoryDrift.releaseManifest.chart.repository = "oci://ghcr.io/example/codeops";
   assert.throws(() => buildGoldenReleaseEvidence(chartRepositoryDrift), /chart identity/);
+
+  const invalidChartVersion = fixture();
+  invalidChartVersion.releaseManifest.chart.version = "0.5.0-alpha";
+  assert.throws(() => buildGoldenReleaseEvidence(invalidChartVersion), /chart identity/);
 
   const imageDrift = fixture();
   imageDrift.liveImageEvidence.images[0].immutableRef = `${images.agent.repository}@${images.agent.digest}`;

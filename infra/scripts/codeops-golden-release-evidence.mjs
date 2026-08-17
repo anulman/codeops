@@ -3,10 +3,10 @@
 
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
+import { CODEOPS_RELEASE_VERSION_PATTERN } from "./codeops-release-version.mjs";
 
 const SHA = /^[0-9a-f]{40}$/;
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
-const SEMVER = /^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$/;
 const CHART_REPOSITORY = "oci://ghcr.io/anulman/codeops/charts/codeops";
 const IMAGE_NAMES = Object.freeze([
   "acceptance-runner",
@@ -106,7 +106,7 @@ function releaseImages(manifest) {
   }
   if (
     manifest.chart?.repository !== CHART_REPOSITORY ||
-    !SEMVER.test(manifest.chart?.version ?? "") ||
+    !CODEOPS_RELEASE_VERSION_PATTERN.test(manifest.chart?.version ?? "") ||
     !DIGEST.test(manifest.chart?.digest ?? "") ||
     manifest.chart?.immutableRef !== `${CHART_REPOSITORY}@${manifest.chart?.digest}`
   ) {
