@@ -16,6 +16,7 @@ const ALLOWED_JAVASCRIPT_LICENSES = new Set([
   "Apache-2.0",
   "Apache-2.0 AND MIT",
   "(Apache-2.0 AND MIT)",
+  "Artistic-2.0",
   "BSD-2-Clause",
   "BSD-3-Clause",
   "BlueOak-1.0.0",

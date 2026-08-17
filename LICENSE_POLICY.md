@@ -8,6 +8,7 @@ dependencies only under approved permissive licenses.
 The dependency gate approves these common permissive license families:
 
 - Apache-2.0
+- Artistic-2.0
 - MIT
 - BSD-2-Clause and BSD-3-Clause
 - ISC and 0BSD
