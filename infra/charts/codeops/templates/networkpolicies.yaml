@@ -381,7 +381,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/component
                 operator: In
-                values: [session-gateway, session-migration, control-gateway, runtime, lifecycle-relay]
+                values: [session-gateway, session-migration, control-gateway, runtime, lifecycle-relay, model-proxy]
         {{- if eq .Values.temporal.deployment "managed" }}
         - podSelector:
             matchLabels:

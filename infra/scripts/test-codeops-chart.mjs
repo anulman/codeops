@@ -538,7 +538,18 @@ test("defaults to deny and opens only explicit component paths", () => {
 
   const postgresql = resource(resources, "NetworkPolicy", "team-a-codeops-postgresql");
   assert.deepEqual(postgresql.spec.egress, []);
-  assert.ok(JSON.stringify(postgresql.spec.ingress).includes("session-migration"));
+  const postgresqlComponents = postgresql.spec.ingress[0].from
+    .find(({ podSelector }) => podSelector?.matchLabels?.["app.kubernetes.io/part-of"] === "codeops")
+    .podSelector.matchExpressions
+    .find(({ key }) => key === "app.kubernetes.io/component").values;
+  assert.deepEqual(postgresqlComponents.sort(), [
+    "control-gateway",
+    "lifecycle-relay",
+    "model-proxy",
+    "runtime",
+    "session-gateway",
+    "session-migration",
+  ]);
   const gateway = resource(resources, "NetworkPolicy", "team-a-codeops-session-gateway");
   assert.ok(JSON.stringify(gateway).includes("github-controller"));
   assert.ok(JSON.stringify(gateway).includes("team-a-codeops-postgresql"));
