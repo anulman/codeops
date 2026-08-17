@@ -141,7 +141,7 @@ function NewSessionPage() {
 
               <fieldset {...sx("mt-7")} disabled={locked}>
                 <legend {...sx("text-xs font-semibold text-white/72")}>Session mode</legend>
-                <p {...sx("mt-1.5 text-[11px] leading-5 text-white/32")}>CodeOps binds this policy to the launch, runtime, and model authority. The session cannot expand it.</p>
+                <p data-codeops-typography="launch-policy-description" {...sx("mt-1.5 text-[11px] leading-4 text-white/32")}>CodeOps binds this policy to the launch, runtime, and model authority. The session cannot expand it.</p>
                 <div {...sx("mt-3 grid gap-2 sm:grid-cols-2")}>
                   {sessionModes.map((option) => {
                     const checked = mode === option.id;
@@ -157,7 +157,7 @@ function NewSessionPage() {
 
               <fieldset {...sx("mt-7")} disabled={locked}>
                 <legend {...sx("text-xs font-semibold text-white/72")}>Repositories <span {...sx("font-normal text-white/28")}>Optional · up to four</span></legend>
-                <p {...sx("mt-1.5 text-[11px] leading-5 text-white/32")}>Each repository is resolved to its exact default-branch commit before the session starts.</p>
+                <p {...sx("mt-1.5 text-[11px] leading-4 text-white/32")}>Each repository is resolved to its exact default-branch commit before the session starts.</p>
                 <div {...sx("mt-3 grid gap-2 sm:grid-cols-2")}>
                   {catalog.repositories.map((repository) => {
                     const checked = selected.includes(repository.key);
@@ -174,7 +174,7 @@ function NewSessionPage() {
 
               <fieldset {...sx("mt-7")} disabled={locked}>
                 <legend {...sx("text-xs font-semibold text-white/72")}>Context files <span {...sx("font-normal text-white/28")}>Optional · up to four</span></legend>
-                <p {...sx("mt-1.5 text-[11px] leading-5 text-white/32")}>Each file is bound to its SHA-256 digest. The runtime verifies the exact bytes again before it sends them to the agent.</p>
+                <p {...sx("mt-1.5 text-[11px] leading-4 text-white/32")}>Each file is bound to its SHA-256 digest. The runtime verifies the exact bytes again before it sends them to the agent.</p>
                 <label {...sx("mt-3 flex min-h-11 cursor-pointer items-center justify-center rounded-xl border border-dashed border-white/[0.11] bg-white/[0.02] px-4 text-xs font-medium text-white/42 transition hover:border-[#7774ff]/35 hover:bg-[#7774ff]/[0.05] hover:text-white/68")}>
                   <input type="file" multiple {...sx("sr-only")} onChange={(event) => { void addContextAttachments(event.target.files); event.target.value = ""; }} />
                   Add files · 256 KiB each · 512 KiB total

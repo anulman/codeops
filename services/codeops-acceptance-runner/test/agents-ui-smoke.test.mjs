@@ -5,7 +5,7 @@ import {
   runAgentsUiSmoke,
 } from "../src/agents-ui-smoke.mjs";
 
-function fakeChromium({ overflow = false } = {}) {
+function fakeChromium({ overflow = false, typographyDrift = false } = {}) {
   const contexts = [];
   return {
     contexts,
@@ -28,7 +28,15 @@ function fakeChromium({ overflow = false } = {}) {
                   record.locators.push({ role, ...locatorOptions });
                   return { waitFor: async () => undefined };
                 },
-                evaluate: async () => overflow,
+                evaluate: async (_callback, sample) => {
+                  if (sample === undefined) return overflow;
+                  record.typography ??= [];
+                  record.typography.push(sample);
+                  return {
+                    fontSize: sample.fontSize,
+                    lineHeight: typographyDrift ? sample.lineHeight + 8 : sample.lineHeight,
+                  };
+                },
               };
             },
             async close() {
@@ -113,6 +121,22 @@ test("checks fleet and new-session surfaces", async () => {
             ],
     );
     assert.equal(context.closed, true);
+    assert.deepEqual(
+      context.typography ?? [],
+      index === 2
+        ? [{
+          selector: '[data-codeops-typography="launch-policy-description"]',
+          fontSize: 11,
+          lineHeight: 16,
+        }]
+        : index === 3
+        ? [{
+          selector: '[data-codeops-typography="protocol-diagnostics"]',
+          fontSize: 9,
+          lineHeight: 12,
+        }]
+        : [],
+    );
   }
   assert.equal(chromium.contexts.browserClosed, true);
 });
@@ -125,5 +149,16 @@ test("fails closed on horizontal overflow", async () => {
       extraHTTPHeaders: {},
     }),
     /horizontal overflow/,
+  );
+});
+
+test("fails closed on dense typography drift", async () => {
+  await assert.rejects(
+    runAgentsUiSmoke({
+      baseUrl: "http://codeops-agents-ui:3000",
+      chromium: fakeChromium({ typographyDrift: true }),
+      sessionId: "ses_legacy_workspace_042",
+    }),
+    /typography drift.*expected 11\/16px, received 11\/24px/,
   );
 });

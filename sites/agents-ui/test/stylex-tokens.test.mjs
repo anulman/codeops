@@ -78,3 +78,73 @@ test("every literal sx token resolves before a route renders", async () => {
   }
   assert.deepEqual([...unresolved].sort(), []);
 });
+
+test("dense typography keeps explicit leading proportional to its font size", async () => {
+  const sourceDirectory = new URL("../src/", import.meta.url);
+  const fontSizes = new Map([
+    ["text-[8px]", 8],
+    ["text-[9px]", 9],
+    ["text-[10px]", 10],
+    ["text-[11px]", 11],
+  ]);
+  const lineHeights = new Map([
+    ["leading-3", 12],
+    ["leading-4", 16],
+    ["leading-5", 20],
+    ["leading-6", 24],
+  ]);
+  const maximumLineHeight = new Map([
+    [8, 12],
+    [9, 12],
+    [10, 16],
+    [11, 16],
+  ]);
+  const violations = [];
+
+  for (const file of await sourceFiles(sourceDirectory)) {
+    const source = await readFile(file, "utf8");
+    const ast = await parseAsync(source, {
+      filename: file.pathname,
+      parserOpts: { plugins: ["typescript", "jsx"] },
+    });
+    walk(ast, (node) => {
+      if (node.type !== "CallExpression" || node.callee?.type !== "Identifier" || node.callee.name !== "sx") return;
+      for (const argument of node.arguments) {
+        walk(argument, (literal) => {
+          const value = literal.type === "StringLiteral"
+            ? literal.value
+            : literal.type === "TemplateElement"
+              ? literal.value.cooked
+              : null;
+          const tokens = value?.split(/\s+/).filter(Boolean) ?? [];
+          const fontToken = tokens.find((token) => fontSizes.has(token));
+          const leadingToken = tokens.find((token) => lineHeights.has(token));
+          if (!fontToken || !leadingToken) return;
+          const fontSize = fontSizes.get(fontToken);
+          const lineHeight = lineHeights.get(leadingToken);
+          if (lineHeight > maximumLineHeight.get(fontSize)) {
+            violations.push(`${file.pathname}:${literal.loc?.start.line ?? "?"} ${fontToken} ${leadingToken}`);
+          }
+        });
+      }
+    });
+  }
+
+  assert.deepEqual(violations, []);
+});
+
+test("leading utilities use absolute pixel lengths instead of unitless multipliers", async () => {
+  const styleSource = await readFile(new URL("../src/styles/sx.ts", import.meta.url), "utf8");
+  for (const [token, lineHeight] of [
+    ["leading-3", 12],
+    ["leading-4", 16],
+    ["leading-5", 20],
+    ["leading-6", 24],
+  ]) {
+    assert.match(
+      styleSource,
+      new RegExp(`"${token}": \\{\\s*"lineHeight": "${lineHeight}px"\\s*\\}`),
+      `${token} must compile to an absolute ${lineHeight}px line height`,
+    );
+  }
+});
