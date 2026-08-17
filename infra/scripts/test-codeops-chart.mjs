@@ -586,6 +586,16 @@ test("creates a complete one-repository quickstart from one values file", () => 
     /^postgresql:\/\/codeops_runtime_receipts:[A-Za-z0-9]{48}@codeops-database:5432\/agents$/,
   );
   assert.equal(session.stringData["runtime-database-role"], "codeops_runtime_receipts");
+  const modelProxy = resource(resources, "Secret", "codeops-model-proxy-credentials");
+  assert.match(
+    modelProxy.stringData["database-password"],
+    /^[A-Za-z0-9]{48}$/,
+  );
+  assert.equal(
+    modelProxy.stringData["database-url"],
+    `postgresql://codeops_model_proxy:${modelProxy.stringData["database-password"]}@codeops-database:5432/agents`,
+  );
+  assert.equal(modelProxy.stringData["database-role"], "codeops_model_proxy");
   const registryPull = resource(resources, "Secret", "codeops-registry");
   assert.equal(registryPull.type, "kubernetes.io/dockerconfigjson");
   const dockerConfig = JSON.parse(registryPull.stringData[".dockerconfigjson"]);
