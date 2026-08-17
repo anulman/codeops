@@ -26,6 +26,7 @@ const legacyWorkspaceFixture = JSON.parse(
     "utf8",
   ),
 );
+const legacySessionId = legacyWorkspaceFixture.snapshot.sessionId;
 
 function fleet() {
   return {
@@ -109,6 +110,33 @@ const broker = createServer((request, response) => {
     return;
   }
   if (
+    request.url === `/v1/sessions/${legacySessionId}` &&
+    request.headers.authorization === `Bearer ${token}` &&
+    request.headers["x-codeops-principal"] === ownerPrincipal
+  ) {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      version: "codeops.session-detail/v1",
+      session: legacyWorkspaceFixture.snapshot,
+    }));
+    return;
+  }
+  if (
+    request.url === `/v1/sessions/${legacySessionId}/events?afterCursor=0&limit=500` &&
+    request.headers.authorization === `Bearer ${token}` &&
+    request.headers["x-codeops-principal"] === ownerPrincipal
+  ) {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      version: "codeops.session-events/v1",
+      sessionId: legacySessionId,
+      afterCursor: 0,
+      nextCursor: 0,
+      events: [],
+    }));
+    return;
+  }
+  if (
     request.url === "/v1/workspace-catalog" &&
     request.headers.authorization === `Bearer ${writeToken}`
   ) {
@@ -154,7 +182,7 @@ try {
   const origin = `http://127.0.0.1:${uiPort}`;
   try {
     await waitForUi(origin, ui);
-    await runAgentsUiSmoke({ baseUrl: origin });
+    await runAgentsUiSmoke({ baseUrl: origin, sessionId: legacySessionId });
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\nBroker requests: ${JSON.stringify(brokerRequests)}\n${logs.slice(-8_000)}`);
   }
