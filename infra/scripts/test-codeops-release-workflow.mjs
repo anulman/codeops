@@ -107,6 +107,11 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(anonymousAccess.run, /release-manifest\.json/);
   assert.match(anonymousAccess.run, /ghcr\.io\/token/);
   assert.match(anonymousAccess.run, /\.images \| to_entries/);
+  assert.match(
+    anonymousAccess.run,
+    /\.sourceSha == \$sourceSha and \(\.images \| length\) == 10/,
+  );
+  assert.doesNotMatch(anonymousAccess.run, /if \. then empty/);
   assert.match(anonymousAccess.run, /codeops\.registry-access\/v1/);
   assert.match(anonymousAccess.run, /sourceCheckout:false/);
   const downloadGoldenSource = registryInstall.steps.find(
