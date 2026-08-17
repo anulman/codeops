@@ -32,6 +32,7 @@ export {
 export {
   allowedSessionActionsForState,
   isWorkspaceSessionIdentity,
+  migrateLegacyWorkspaceSessionSnapshot,
   SESSION_BROKER_VERSION,
   sessionActionTypeSchema,
   sessionCapabilitySchema,

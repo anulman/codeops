@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   InvalidSessionReadRequestError,
@@ -7,6 +8,10 @@ import {
 
 const token = "t".repeat(32);
 const leaseId = "11111111-1111-4111-8111-111111111111";
+const legacyWorkspaceFixtureUrl = new URL(
+  "../../../packages/codeops-contracts/test/fixtures/codeops-0.4.2-workspace-session.json",
+  import.meta.url,
+);
 
 function capabilities() {
   return [
@@ -125,6 +130,24 @@ test("authenticates and bounds the fleet read", async () => {
   assert.deepEqual(unauthorized, { status: 401, body: { status: "unauthorized" } });
   await assert.rejects(request(database, "/v1/sessions?limit=201"), InvalidSessionReadRequestError);
   await assert.rejects(request(database, "/v1/sessions?unknown=1"), /unknown query/);
+});
+
+test("serves an owner-filtered fleet from a serialized 0.4.2 workspace snapshot", async () => {
+  const fixture = JSON.parse(await readFile(legacyWorkspaceFixtureUrl, "utf8"));
+  const database = new FakeClient({ sessions: [fixture.snapshot] });
+  const result = await request(database, "/v1/sessions?limit=25", {
+    headers: {
+      authorization: `Bearer ${token}`,
+      "x-codeops-principal": fixture.ownerPrincipalId,
+    },
+  });
+
+  assert.equal(result.status, 200);
+  assert.equal(result.body.sessions.length, 1);
+  assert.equal(result.body.sessions[0].sessionId, fixture.snapshot.sessionId);
+  assert.equal(result.body.sessions[0].identity.policy.mode, "implement");
+  assert.deepEqual(result.body.sessions[0].identity.contextAttachments, []);
+  assert.deepEqual(database.calls[0].values, [25, fixture.ownerPrincipalId]);
 });
 
 test("loads an exact session and returns an explicit miss", async () => {

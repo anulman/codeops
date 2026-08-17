@@ -124,6 +124,13 @@ The migration assigns that explicit principal to every legacy session. It
 fails closed if existing sessions are present and the value is empty or
 invalid. After the migration succeeds, remove the value from later upgrades.
 
+CodeOps 0.5 projects a stored 0.4.2 workspace identity that has no session
+policy into the immutable `implement` policy with an empty context-attachment
+descriptor list. The projection does not rewrite the stored snapshot. This
+keeps the snapshot readable by 0.4.2 during an atomic upgrade rollback. The
+Agents UI acceptance gate loads a serialized 0.4.2 snapshot and checks the
+authenticated fleet-backed `/` route and the `/new` route.
+
 Helm uninstall retains the quickstart Secrets and PostgreSQL data PVC. Delete
 them explicitly only when you intend to destroy the installation identity and
 stored data.

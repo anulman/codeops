@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import { test } from "node:test";
 import {
   allowedSessionActionsForState,
@@ -9,6 +10,7 @@ import {
   sessionEventSchema,
   sessionJobInitializationRequestSchema,
   sessionJobInitializationResponseSchema,
+  migrateLegacyWorkspaceSessionSnapshot,
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
@@ -16,6 +18,11 @@ import {
   workspaceSessionIdentitySchema,
   temporalCodeOpsSessionIdentitySchema,
 } from "../dist/index.js";
+
+const legacyWorkspaceFixtureUrl = new URL(
+  "./fixtures/codeops-0.4.2-workspace-session.json",
+  import.meta.url,
+);
 
 const sessionId = "ses_91a4";
 const leaseId = "11111111-1111-4111-8111-111111111111";
@@ -174,6 +181,64 @@ test("admits a first-class scratch or multi-source workspace identity", () => {
       ownerPrincipalId: "access:aidan@example.com",
     }),
   );
+});
+
+test("projects a serialized 0.4.2 workspace snapshot into implement policy without changing rollback bytes", async () => {
+  const fixtureBytes = await readFile(legacyWorkspaceFixtureUrl, "utf8");
+  const fixture = JSON.parse(fixtureBytes);
+  const originalSnapshotBytes = JSON.stringify(fixture.snapshot);
+  const originalEvidenceBytes = JSON.stringify(fixture.evidence);
+
+  assert.equal(fixture.source.release, "v0.4.2");
+  assert.equal(Object.hasOwn(fixture.snapshot.identity, "policy"), false);
+  assert.equal(
+    Object.hasOwn(fixture.snapshot.identity, "contextAttachments"),
+    false,
+  );
+
+  const migrated = sessionSnapshotSchema.parse(fixture.snapshot);
+  assert.deepEqual(migrated.identity.policy, {
+    version: "codeops.session-policy/v1",
+    mode: "implement",
+    workspaceAccess: "bounded-writes",
+    modelCalls: "allowed",
+    modelPolicy: {
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "medium",
+    },
+  });
+  assert.deepEqual(migrated.identity.contextAttachments, []);
+  assert.equal(migrated.sessionId, fixture.snapshot.sessionId);
+  assert.equal(migrated.eventCursor, fixture.snapshot.eventCursor);
+  assert.deepEqual(migrated.checkpoint, fixture.snapshot.checkpoint);
+  assert.equal(JSON.stringify(fixture.snapshot), originalSnapshotBytes);
+  assert.equal(JSON.stringify(fixture.evidence), originalEvidenceBytes);
+  assert.deepEqual(
+    migrateLegacyWorkspaceSessionSnapshot(migrated),
+    migrated,
+  );
+});
+
+test("fails closed for partial or invalid legacy workspace policy state", async () => {
+  const fixture = JSON.parse(await readFile(legacyWorkspaceFixtureUrl, "utf8"));
+  const partial = structuredClone(fixture.snapshot);
+  partial.identity.contextAttachments = [];
+  assert.throws(() => sessionSnapshotSchema.parse(partial));
+
+  const selected = structuredClone(fixture.snapshot);
+  selected.identity.policy = {
+    version: "codeops.session-policy/v1",
+    mode: "explore",
+    workspaceAccess: "bounded-writes",
+    modelCalls: "allowed",
+    modelPolicy: {
+      provider: "openai",
+      model: "gpt-5.6-sol",
+      reasoningEffort: "medium",
+    },
+  };
+  assert.throws(() => sessionSnapshotSchema.parse(selected));
 });
 
 test("requires work-item, role, and round at the Temporal CodeOps boundary", () => {

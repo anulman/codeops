@@ -22,6 +22,12 @@ a durable human permission decision for the same live prompt dispatch. The
 ACP agent receives no Plane credential. The trusted controller applies the
 idempotent provider mutation.
 
+The Session Broker projects pre-policy 0.4.2 workspace snapshots into the
+immutable `implement` policy at the read boundary. It does not rewrite the
+stored snapshot, checkpoint, cursor, or evidence. This preserves the existing
+0.4.2 rollback input while the current fleet and Agents UI use the strict
+policy-bearing identity.
+
 Current limitations:
 
 - Production onboarding requires repository-scoped GitHub and Plane authority.
