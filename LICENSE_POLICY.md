@@ -41,12 +41,6 @@ The current approved exceptions are:
 - Plane CE 1.6.2 is an unmodified, separately licensed Helm aggregate
   component. CodeOps deploys Plane as separate processes and preserves its
   AGPL-3.0-only text and source notice.
-- Lightning CSS 1.33.0 and its exact Linux x64 GNU binary package are
-  unmodified MPL-2.0 build dependencies required by the pinned TanStack Start
-  and Vite toolchain. The Agents UI uses StyleX for application styling. Its
-  runtime image contains the bundled application output and does not contain
-  Lightning CSS. The executable gate binds this exception to the exact package
-  names, versions, and license. A version or package change fails closed.
 - `web-push@3.6.7` is an unmodified MPL-2.0 runtime module behind the Web Push
   delivery interface. No maintained permissive drop-in provides the same Web
   Push encryption and VAPID behavior. The executable gate binds this existing
