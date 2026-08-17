@@ -62,6 +62,19 @@ function render(extra = []) {
     .filter(Boolean);
 }
 
+function renderUpgrade(extra = []) {
+  const output = helm([
+    "template", "team-a", chart,
+    "--namespace", "engineering",
+    "--is-upgrade",
+    ...digestSets.flatMap((value) => ["--set", value]),
+    ...extra,
+  ]);
+  return parseAllDocuments(output)
+    .map((document) => document.toJSON())
+    .filter(Boolean);
+}
+
 function renderQuickstart(extra = []) {
   const output = helm([
     "template", "codeops", chart,
@@ -151,13 +164,10 @@ test("renders one portable CodeOps package with immutable images", () => {
     "strict-v1",
   );
   const migration = resource(resources, "Job", "team-a-codeops-session-migrate");
+  assert.equal(migration.metadata.annotations?.["helm.sh/hook"], undefined);
   assert.equal(
-    migration.metadata.annotations["helm.sh/hook"],
-    "post-install,pre-upgrade",
-  );
-  assert.equal(
-    migration.metadata.annotations["helm.sh/hook-delete-policy"],
-    "before-hook-creation,hook-succeeded",
+    migration.metadata.annotations?.["helm.sh/hook-delete-policy"],
+    undefined,
   );
   assert.equal(migration.spec.backoffLimit, 0);
   assert.equal(migration.spec.template.spec.automountServiceAccountToken, false);
@@ -228,6 +238,20 @@ test("renders one portable CodeOps package with immutable images", () => {
   }
   const controlGatewayAccount = resource(resources, "ServiceAccount", "team-a-codeops-control-gateway");
   assert.notEqual(controlGatewayAccount.automountServiceAccountToken, false);
+});
+
+test("runs migration as an ordinary install Job and a pre-upgrade hook", () => {
+  const migration = resource(
+    renderUpgrade(),
+    "Job",
+    "team-a-codeops-session-migrate",
+  );
+  assert.equal(migration.metadata.annotations["helm.sh/hook"], "pre-upgrade");
+  assert.equal(
+    migration.metadata.annotations["helm.sh/hook-delete-policy"],
+    "before-hook-creation,hook-succeeded",
+  );
+  assert.equal(migration.metadata.annotations["helm.sh/hook-weight"], "-10");
 });
 
 test("wires Web Push only from an explicit public configuration and private Secret", () => {

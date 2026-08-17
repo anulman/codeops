@@ -14,7 +14,7 @@ The chart contains:
 - the Agents UI on a private ClusterIP Service;
 - scoped ServiceAccounts and RBAC for each fixed operand and per-session runtime;
 - a Varlock-backed model proxy and immutable runtime image inputs;
-- a post-install and pre-upgrade, non-retrying schema migration Job;
+- an install Job and pre-upgrade, non-retrying schema migration hook;
 - default-deny selection for every CodeOps workload, each managed Temporal,
   JetStream, and Plane workload, and the Plane MinIO setup Job, plus explicit
   same-namespace and external paths.
@@ -265,17 +265,20 @@ concurrent requests per token, and 16 concurrent requests globally. These
 limits are incident controls, not normal operating targets. Keep the dedicated
 OpenAI project server-side budget as the final spend boundary.
 
-The quickstart runs the forward-compatible schema migration as a
-`post-install` hook during the first installation and as a `pre-upgrade` hook
-for later revisions. The migration creates or rotates the receipt-only runtime
-role from the exact runtime DSN, removes all broad schema/table/sequence
+The quickstart runs the forward-compatible schema migration as an ordinary Job
+during the first installation and as a `pre-upgrade` hook for later revisions.
+The install Job can run while Helm waits for workload readiness, so workloads
+that use migrated database roles do not deadlock the `post-install` phase. The
+migration creates or rotates the receipt-only runtime role from the exact
+runtime DSN, removes all broad schema/table/sequence
 authority, and grants only the execution-receipt and workspace-artifact
-columns. The hook is
-non-retrying and blocks Helm completion if the database contract is not ready.
+columns. The migration is non-retrying and blocks Helm completion if the
+database contract is not ready.
 
 Helm uninstall removes the workloads, Services, RBAC, NetworkPolicies, and
-migration hook. Kubernetes retains the PostgreSQL StatefulSet data PVC so an
-operator must explicitly remove that data or delete the release namespace.
+migration Job or hook. Kubernetes retains the PostgreSQL StatefulSet data PVC
+so an operator must explicitly remove that data or delete the release
+namespace.
 
 Create the first root session only from the trusted operator boundary. Render
 one immutable, non-retrying runtime Job with exact session identity:
