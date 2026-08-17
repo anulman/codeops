@@ -527,8 +527,10 @@ jobs:
             done
           jq -e --arg sourceSha "$SOURCE_SHA" '
             .sourceSha == $sourceSha and (.images | length) == 10
-            | if . then empty else error("release manifest image identity drifted") end
-          ' /tmp/codeops-release/release-manifest.json
+          ' /tmp/codeops-release/release-manifest.json >/dev/null || {
+            echo "release manifest image identity drifted" >&2
+            exit 1
+          }
           jq --arg sourceSha "$SOURCE_SHA" '{
             version:"codeops.registry-access/v1",
             sourceSha:$sourceSha,
