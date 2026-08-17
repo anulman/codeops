@@ -1,0 +1,468 @@
+name: Finalize immutable release
+
+on:
+  workflow_dispatch:
+    inputs:
+      runId:
+        description: Failed release workflow run ID
+        required: true
+        type: string
+      tag:
+        description: Immutable release tag
+        required: true
+        type: string
+      sourceSha:
+        description: Exact tagged source SHA
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-finalize-${{ inputs.tag }}
+  cancel-in-progress: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      release_version: ${{ steps.request.outputs.release_version }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: "24"
+
+      - name: Validate immutable finalization request
+        id: request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ inputs.runId }}
+          RELEASE_TAG: ${{ inputs.tag }}
+          SOURCE_SHA: ${{ inputs.sourceSha }}
+        run: |
+          set -euo pipefail
+          [[ "$RUN_ID" =~ ^[1-9][0-9]*$ ]]
+          [[ "$RELEASE_TAG" == v* ]]
+          release_version="${RELEASE_TAG#v}"
+          node infra/scripts/codeops-release-version.mjs "$release_version"
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]]
+          [[ "$(git rev-parse "refs/tags/${RELEASE_TAG}")" == "$SOURCE_SHA" ]]
+          default_branch=$(gh api "repos/${GITHUB_REPOSITORY}" --jq .default_branch)
+          [[ "$GITHUB_REF_NAME" == "$default_branch" ]]
+
+          run=$(gh api "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}")
+          [[ "$(jq -r .event <<<"$run")" == push ]]
+          [[ "$(jq -r .status <<<"$run")" == completed ]]
+          [[ "$(jq -r .conclusion <<<"$run")" == failure ]]
+          [[ "$(jq -r .head_branch <<<"$run")" == "$RELEASE_TAG" ]]
+          [[ "$(jq -r .head_sha <<<"$run")" == "$SOURCE_SHA" ]]
+          [[ "$(jq -r .path <<<"$run")" == .github/workflows/release.yml ]]
+
+          artifacts=$(gh api \
+            "repos/${GITHUB_REPOSITORY}/actions/runs/${RUN_ID}/artifacts?per_page=100")
+          for name in \
+            "codeops-release-${release_version}-${SOURCE_SHA}" \
+            "codeops-golden-source-${SOURCE_SHA}"; do
+            jq -e --arg name "$name" '
+              [.artifacts[] | select(.name == $name and .expired == false)]
+              | length == 1
+            ' <<<"$artifacts" >/dev/null
+          done
+          if gh release view "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            echo "refusing to overwrite existing GitHub Release" >&2
+            exit 1
+          fi
+          printf 'release_version=%s\n' "$release_version" >> "$GITHUB_OUTPUT"
+
+  registry-install:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      actions: read
+      contents: read
+    steps:
+      - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a # v4
+        with:
+          version: v3.19.2
+
+      - uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415 # v4
+        with:
+          version: v1.36.1
+
+      - name: Install kind
+        env:
+          KIND_VERSION: v0.32.0
+        run: |
+          set -euo pipefail
+          curl -fsSLo /tmp/kind-linux-amd64 "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+          curl -fsSLo /tmp/kind.sha256sum "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+          (cd /tmp && sha256sum --check kind.sha256sum)
+          sudo install /tmp/kind-linux-amd64 /usr/local/bin/kind
+
+      - name: Create disposable cluster
+        run: |
+          kind create cluster --name codeops-registry --image kindest/node:v1.36.1 --wait 120s
+          kubectl label node --all codeops.dev/operator=true
+          kubectl label node --all renoconcierge.ca/codeops=true
+
+      - name: Download exact release manifest
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ inputs.sourceSha }}
+          path: /tmp/codeops-release
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runId }}
+          github-token: ${{ github.token }}
+
+      - name: Download exact golden source report
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codeops-golden-source-${{ inputs.sourceSha }}
+          path: /tmp/codeops-golden-source
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runId }}
+          github-token: ${{ github.token }}
+
+      - name: Verify anonymous registry access
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+          SOURCE_SHA: ${{ inputs.sourceSha }}
+        run: |
+          set -euo pipefail
+          anonymous_root=$(mktemp -d)
+          mkdir -p \
+            "${anonymous_root}/home/.config/helm/registry" \
+            "${anonymous_root}/docker"
+          printf '{"auths":{}}\n' \
+            > "${anonymous_root}/home/.config/helm/registry/config.json"
+          printf '{"auths":{}}\n' > "${anonymous_root}/docker/config.json"
+          export HOME="${anonymous_root}/home"
+          export DOCKER_CONFIG="${anonymous_root}/docker"
+          export HELM_REGISTRY_CONFIG="${anonymous_root}/home/.config/helm/registry/config.json"
+
+          mkdir -p /tmp/codeops-registry-proof
+          pull_output=$(helm pull \
+            oci://ghcr.io/anulman/codeops/charts/codeops \
+            --version "$RELEASE_VERSION" \
+            --destination /tmp/codeops-registry-proof 2>&1)
+          printf '%s\n' "$pull_output"
+
+          jq -r '.images | to_entries[] | [.key, .value.repository, .value.digest] | @tsv' \
+            /tmp/codeops-release/release-manifest.json |
+            while IFS=$'\t' read -r name repository digest; do
+              registry_path="${repository#ghcr.io/}"
+              token=$(curl --fail --silent --show-error \
+                "https://ghcr.io/token?service=ghcr.io&scope=repository:${registry_path}:pull" |
+                jq -er '.token')
+              status=$(curl --silent --show-error --output /dev/null \
+                --write-out '%{http_code}' \
+                --header "Authorization: Bearer ${token}" \
+                --header 'Accept: application/vnd.oci.image.manifest.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json' \
+                "https://ghcr.io/v2/${registry_path}/manifests/${digest}")
+              [[ "$status" == "200" ]] || {
+                printf '%s is not anonymously pullable: HTTP %s\n' "$name" "$status" >&2
+                exit 1
+              }
+            done
+          jq -e --arg sourceSha "$SOURCE_SHA" '
+            .sourceSha == $sourceSha and (.images | length) == 10
+          ' /tmp/codeops-release/release-manifest.json >/dev/null || {
+            echo "release manifest image identity drifted" >&2
+            exit 1
+          }
+          jq --arg sourceSha "$SOURCE_SHA" '{
+            version:"codeops.registry-access/v1",
+            sourceSha:$sourceSha,
+            sourceCheckout:false,
+            imageCount:(.images | length),
+            images:(.images | to_entries | map({name:.key, immutableRef:.value.immutableRef}))
+          }' /tmp/codeops-release/release-manifest.json \
+            > /tmp/codeops-registry-proof/registry-access-evidence.json
+
+      - name: Create isolated quickstart values
+        run: |
+          set -euo pipefail
+          api_ip=$(kubectl get service kubernetes --output jsonpath='{.spec.clusterIP}')
+          API_IP="$api_ip" node --input-type=module -e '
+            import { writeFileSync } from "node:fs";
+            const values = {
+              profile: "custom",
+              nodeSelector: { "renoconcierge.ca/codeops": "true" },
+              agentsUi: { access: { issuer: "https://example.cloudflareaccess.com" } },
+              controlGateway: { kubernetesApiCidrs: [`${process.env.API_IP}/32`] },
+              temporal: { enabled: false, driver: "none", deployment: "none" },
+              jetstream: { enabled: false, driver: "none", deployment: "none" },
+              plane: {
+                enabled: false,
+                deployment: "none",
+                adapter: { enabled: false, onboardingRequired: false },
+              },
+              quickstart: {
+                enabled: true,
+                openaiApiKey: "proof-openai-key-00000000000000000001",
+                access: {
+                  audience: "proof-cloudflare-access-audience",
+                  allowedEmails: ["operator@example.com"],
+                },
+                repository: {
+                  identity: "example/codeops-proof",
+                  github: {
+                    readToken: "proof-github-read-token-000000000000001",
+                    writeToken: "proof-github-write-token-00000000000001",
+                    webhookSecret: "proof-github-webhook-secret-00000000001",
+                    reviewerIds: [12345678],
+                  },
+                  plane: {
+                    apiOrigin: "https://plane.example.com",
+                    workspaceSlug: "engineering",
+                    workspaceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                    projectId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                    apiKey: "proof-plane-api-key-000000000000000001",
+                    webhookSecret: "proof-plane-webhook-secret-00000000001",
+                    humanActorIds: ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"],
+                    stateIds: {
+                      ready: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                      inProgress: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                      needsAttention: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                      complete: "11111111-1111-4111-8111-111111111111",
+                    },
+                    personas: [
+                      { handle: "@ai-web", userId: "20000000-0000-4000-8000-000000000001" },
+                      { handle: "@ai-security", userId: "20000000-0000-4000-8000-000000000002" },
+                      { handle: "@ai-database", userId: "20000000-0000-4000-8000-000000000003" },
+                      { handle: "@ai-infra", userId: "20000000-0000-4000-8000-000000000004" },
+                      { handle: "@ai-design", userId: "20000000-0000-4000-8000-000000000005" },
+                      { handle: "@ai-product", userId: "20000000-0000-4000-8000-000000000006" },
+                      { handle: "@ai-ml", userId: "20000000-0000-4000-8000-000000000007" },
+                    ],
+                  },
+                  context: {
+                    directory: "codeops-proof",
+                    agents: "# Agent instructions\nUse the repository instructions.",
+                    currentState: "# Current state\nThis proof repository is active.",
+                    decisions: "# Decisions\nKeep authority fail closed.",
+                    domain: "# Domain\nThe repository contains one proof service.",
+                    product: "# Product\nThe fixture validates registry onboarding.",
+                    sourceMap: "# Source map\nApplication sources are under src/.",
+                    soul: "# Soul\nUse short, direct technical language.",
+                  },
+                },
+              },
+            };
+            writeFileSync("/tmp/codeops-quickstart.json", `${JSON.stringify(values)}\n`, { mode: 0o600 });
+            writeFileSync("/tmp/codeops-consumer-policy.json", `${JSON.stringify({
+              schemaVersion: "codeops.consumer-policy/v1",
+              helmTimeout: "20m",
+              httpTimeoutMs: 15000,
+              requiredSecrets: [],
+              cluster: {
+                kubernetesServiceCidrs: [`${process.env.API_IP}/32`],
+                readyNodeSelector: "codeops.dev/operator=true",
+              },
+              postDeployHttpChecks: [],
+            })}\n`, { mode: 0o600 });
+          '
+
+      - name: Install only from the OCI registry
+        env:
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+          SOURCE_SHA: ${{ inputs.sourceSha }}
+          HOME: /tmp/codeops-anonymous-home
+          DOCKER_CONFIG: /tmp/codeops-anonymous-docker
+          HELM_REGISTRY_CONFIG: /tmp/codeops-anonymous-home/.config/helm/registry/config.json
+          KUBECONFIG: /home/runner/.kube/config
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.config/helm/registry" "$DOCKER_CONFIG"
+          printf '{"auths":{}}\n' > "$HELM_REGISTRY_CONFIG"
+          printf '{"auths":{}}\n' > "$DOCKER_CONFIG/config.json"
+          mkdir -p /tmp/codeops-registry-proof
+          pull_output=$(helm pull oci://ghcr.io/anulman/codeops/charts/codeops --version "$RELEASE_VERSION" --destination /tmp/codeops-registry-proof 2>&1)
+          printf '%s\n' "$pull_output"
+          pulled_digest=$(printf '%s\n' "$pull_output" | sed -n 's/^Digest: \(sha256:[0-9a-f]\{64\}\)$/\1/p')
+          [[ "$pulled_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
+          [[ "$(helm show chart "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" | sed -n 's/^version: //p')" == "$RELEASE_VERSION" ]]
+          [[ "$(helm show chart "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" | sed -n 's/^appVersion: //p')" == "$SOURCE_SHA" ]]
+          node /tmp/codeops-release/codeopsctl.mjs deploy \
+            --lock /tmp/codeops-release/codeops-consumer-lock.json \
+            --values /tmp/codeops-quickstart.json \
+            --policy /tmp/codeops-consumer-policy.json \
+            --release proof-system \
+            --namespace proof-system \
+            --chart-path "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" \
+            --manifest-path /tmp/codeops-release/release-manifest.json
+          [[ "$(helm status proof-system --namespace proof-system --output json | jq -r .info.status)" == "deployed" ]]
+          kubectl wait --namespace proof-system --for=condition=Available deployment --all --timeout=5m
+          kubectl get deployment --namespace proof-system --output json | jq -e --argjson expected '[
+            "ghcr.io/anulman/codeops/agents-ui",
+            "ghcr.io/anulman/codeops/control-gateway",
+            "ghcr.io/anulman/codeops/model-proxy",
+            "ghcr.io/anulman/codeops/session-control-gateway"
+          ]' '
+            [.items[].spec.template.spec.containers[].image]
+            | map(select(startswith("ghcr.io/anulman/codeops/"))) as $images
+            | ($images | all(test("@sha256:[0-9a-f]{64}$")))
+              and (($images | map(sub("@sha256:[0-9a-f]{64}$"; "")) | unique | sort) == $expected)
+          '
+          prior_revision=$(helm list --namespace proof-system --filter '^proof-system$' --output json \
+            | jq -er 'map(select(.name == "proof-system")) | if length == 1 then .[0].revision else error("expected one release") end')
+          jq '.httpTimeoutMs = 1000 | .postDeployHttpChecks = [{url:"https://127.0.0.1:1",acceptedStatuses:[200]}]' \
+            /tmp/codeops-consumer-policy.json > /tmp/codeops-rollback-policy.json
+          if node /tmp/codeops-release/codeopsctl.mjs deploy \
+            --lock /tmp/codeops-release/codeops-consumer-lock.json \
+            --values /tmp/codeops-quickstart.json \
+            --policy /tmp/codeops-rollback-policy.json \
+            --release proof-system \
+            --namespace proof-system \
+            --chart-path "/tmp/codeops-registry-proof/codeops-${RELEASE_VERSION}.tgz" \
+            --manifest-path /tmp/codeops-release/release-manifest.json; then
+            echo "post-deploy failure proof unexpectedly passed" >&2
+            exit 1
+          fi
+          restored=$(helm list --namespace proof-system --filter '^proof-system$' --output json \
+            | jq -ec 'map(select(.name == "proof-system")) | if length == 1 then .[0] else error("expected one release") end')
+          [[ "$(jq -r .status <<<"$restored")" == "deployed" ]]
+          [[ "$(jq -r .chart <<<"$restored")" == "codeops-${RELEASE_VERSION}" ]]
+          [[ "$(jq -r .app_version <<<"$restored")" == "$SOURCE_SHA" ]]
+          [[ "$(jq -r .revision <<<"$restored")" -gt "$prior_revision" ]]
+          kubectl wait --namespace proof-system --for=condition=Available deployment --all --timeout=5m
+          node /tmp/codeops-release/codeopsctl.mjs smoke \
+            --release proof-system \
+            --namespace proof-system \
+            > /tmp/codeops-registry-proof/smoke-report.json
+          kubectl get deployment --namespace proof-system --output json | jq -e \
+            --arg sourceSha "$SOURCE_SHA" '{
+              version:"codeops.live-images/v1",
+              sourceSha:$sourceSha,
+              release:"proof-system",
+              namespace:"proof-system",
+              images:([.items[].spec.template.spec.containers[].image
+                | select(startswith("ghcr.io/anulman/codeops/"))
+                | {name:(split("/")[-1] | split("@")[0]), immutableRef:.}]
+                | unique_by(.name) | sort_by(.name))
+            } | if (.images | length) == 4 then . else error("live image set drifted") end' \
+            > /tmp/codeops-registry-proof/live-images.json
+          helm uninstall proof-system --namespace proof-system --wait --timeout 5m
+          test -z "$(kubectl get deployment,statefulset,daemonset,job --namespace proof-system --output name)"
+          jq -n --arg releaseVersion "$RELEASE_VERSION" --arg sourceSha "$SOURCE_SHA" --arg chartDigest "$pulled_digest" '{
+            version:"codeops.registry-install/v1",
+            releaseVersion:$releaseVersion,
+            sourceSha:$sourceSha,
+            chartDigest:$chartDigest,
+            installStatus:"deployed",
+            rollbackStatus:"passed",
+            cleanupStatus:"passed",
+            sourceCheckout:false
+          }' > /tmp/codeops-registry-proof/registry-install-evidence.json
+          node /tmp/codeops-release/codeops-golden-release-evidence.mjs \
+            /tmp/codeops-golden-source/golden-source-report.json \
+            /tmp/codeops-release/release-manifest.json \
+            /tmp/codeops-registry-proof/registry-access-evidence.json \
+            /tmp/codeops-registry-proof/registry-install-evidence.json \
+            /tmp/codeops-registry-proof/live-images.json \
+            /tmp/codeops-registry-proof/smoke-report.json \
+            /tmp/codeops-registry-proof/golden-release-report.json
+
+      - name: Capture registry-install diagnostics
+        if: failure()
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/codeops-registry-proof
+          helm status proof-system --namespace proof-system \
+            > /tmp/codeops-registry-proof/helm-status.txt 2>&1 || true
+          kubectl get deployment,statefulset,job,pod,pvc --namespace proof-system --output wide \
+            > /tmp/codeops-registry-proof/kubernetes-resources.txt 2>&1 || true
+          kubectl get events --namespace proof-system --sort-by=.lastTimestamp \
+            > /tmp/codeops-registry-proof/kubernetes-events.txt 2>&1 || true
+
+      - name: Retain registry-install evidence
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: codeops-registry-install-${{ needs.validate.outputs.release_version }}-${{ inputs.sourceSha }}
+          if-no-files-found: warn
+          retention-days: 90
+          path: /tmp/codeops-registry-proof/*
+
+      - name: Delete disposable cluster
+        if: always()
+        run: kind delete cluster --name codeops-registry
+
+  github-release:
+    needs: [validate, registry-install]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: write
+    steps:
+      - name: Download exact release evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codeops-release-${{ needs.validate.outputs.release_version }}-${{ inputs.sourceSha }}
+          path: release
+          repository: ${{ github.repository }}
+          run-id: ${{ inputs.runId }}
+          github-token: ${{ github.token }}
+
+      - name: Download exact golden released-image evidence
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: codeops-registry-install-${{ needs.validate.outputs.release_version }}-${{ inputs.sourceSha }}
+          path: registry-proof
+
+      - name: Verify release checksums
+        working-directory: release
+        run: sha256sum --check SHA256SUMS
+
+      - name: Bind golden released-image evidence to the release
+        run: |
+          set -euo pipefail
+          jq -e '.version == "codeops.golden-release-report/v2"
+              and .passed == true
+              and .sourceProof.evidence == {kind:"simulated-provider",providerMode:"fake"}
+              and .artifactProof.evidence == {
+                kind:"released-image",
+                sourceCheckout:false,
+                immutableImageRefs:true
+              }
+              and ([.sourceProof.evidence.kind, .artifactProof.evidence.kind]
+                | all(. != "browser-acceptance" and . != "live-provider"))' \
+            registry-proof/golden-release-report.json >/dev/null
+          cp registry-proof/golden-release-report.json release/golden-release-report.json
+          (
+            cd release
+            sha256sum golden-release-report.json >> SHA256SUMS
+            sha256sum --check SHA256SUMS
+          )
+
+      - name: Publish durable GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_VERSION: ${{ needs.validate.outputs.release_version }}
+          SOURCE_SHA: ${{ inputs.sourceSha }}
+        run: |
+          set -euo pipefail
+          tag="v${RELEASE_VERSION}"
+          release_flags=()
+          if [[ "$RELEASE_VERSION" == *-* ]]; then
+            release_flags+=(--prerelease)
+          fi
+          gh release create "$tag" \
+            --repo "$GITHUB_REPOSITORY" \
+            --target "$SOURCE_SHA" \
+            --title "CodeOps ${tag}" \
+            --generate-notes \
+            "${release_flags[@]}" \
+            release/*
