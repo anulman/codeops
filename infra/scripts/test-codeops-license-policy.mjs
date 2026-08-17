@@ -45,6 +45,21 @@ test("writes one exact passing SPDX license-policy report", async (t) => {
   assert.match(report.sbomSha256, /^[0-9a-f]{64}$/);
 });
 
+test("accepts npm's declared Artistic-2.0 license", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-license-policy-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sbomPath = path.join(directory, "sbom.json");
+  const reportPath = path.join(directory, "report.json");
+  await writeFile(sbomPath, JSON.stringify(sbom("Artistic-2.0", {
+    name: "npm",
+    versionInfo: "11.17.0",
+  })));
+  await execute(process.execPath, [policy.pathname, "--sbom", sbomPath, "--report", reportPath, "--subject", "example"]);
+  const report = JSON.parse(await readFile(reportPath, "utf8"));
+  assert.equal(report.policy.javascriptLicenseAllowlist.includes("Artistic-2.0"), true);
+  assert.equal(report.declaredLicenses["Artistic-2.0"], 1);
+});
+
 test("rejects missing, copyleft, and source-available JavaScript licenses", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-license-policy-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
