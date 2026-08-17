@@ -78,7 +78,7 @@ function SessionCockpit() {
       <main {...sx("min-h-[calc(100dvh-52px)] bg-[#111113] lg:min-h-dvh xl:grid xl:grid-cols-[minmax(0,1fr)_320px]")}>
         <section {...sx("relative min-w-0 xl:flex xl:h-dvh xl:min-h-0 xl:flex-col")}>
           <CockpitHeader session={session} />
-          <div {...sx("no-scrollbar flex gap-1 overflow-x-auto border-b border-white/[0.06] bg-[#131315] px-3 py-2 sm:px-5")} aria-label="Session actions">
+          <div role="group" {...sx("no-scrollbar flex gap-1 overflow-x-auto border-b border-white/[0.06] bg-[#131315] px-3 py-2 sm:px-5")} aria-label="Session actions">
             {session.capabilities.map((capability) => ["prompt", "respond_permission"].includes(capability.action) ? null : <ActionButton key={capability.action} capability={capability} session={session} />)}
           </div>
 

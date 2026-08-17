@@ -68,12 +68,14 @@ test("checks fleet and new-session surfaces", async () => {
   await runAgentsUiSmoke({
     baseUrl: "http://codeops-agents-ui:3000",
     chromium,
+    sessionId: "ses_legacy_workspace_042",
   });
   assert.deepEqual(
     chromium.contexts.map(({ options }) => options.viewport),
     [
       { width: 1440, height: 1000 },
       { width: 390, height: 844 },
+      { width: 1440, height: 1000 },
       { width: 1440, height: 1000 },
     ],
   );
@@ -83,7 +85,9 @@ test("checks fleet and new-session surfaces", async () => {
       String(context.url),
       index === 2
         ? "http://codeops-agents-ui:3000/new"
-        : "http://codeops-agents-ui:3000/",
+        : index === 3
+          ? "http://codeops-agents-ui:3000/sessions/ses_legacy_workspace_042"
+          : "http://codeops-agents-ui:3000/",
     );
     assert.deepEqual(
       context.locators,
@@ -97,9 +101,15 @@ test("checks fleet and new-session surfaces", async () => {
               { role: "heading", name: "Sessions" },
               { role: "group", name: "Session filters" },
             ]
-          : [
+          : index === 2
+            ? [
               { role: "heading", name: "New session" },
               { role: "button", name: "Create session" },
+            ]
+            : [
+              { role: "heading", name: "Legacy workspace" },
+              { role: "group", name: "Session actions" },
+              { role: "button", name: "Cancel" },
             ],
     );
     assert.equal(context.closed, true);

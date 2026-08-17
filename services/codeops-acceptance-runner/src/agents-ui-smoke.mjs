@@ -36,7 +36,7 @@ export async function runAgentsUiSmoke(input = {}) {
     args: ["--disable-dev-shm-usage", "--no-sandbox"],
   });
   try {
-    for (const target of [
+    const targets = [
       {
         name: "desktop",
         viewport: { width: 1440, height: 1000 },
@@ -63,7 +63,20 @@ export async function runAgentsUiSmoke(input = {}) {
           { role: "button", name: "Create session" },
         ],
       },
-    ]) {
+    ];
+    if (input.sessionId) {
+      targets.push({
+        name: "session-cockpit",
+        path: `/sessions/${encodeURIComponent(input.sessionId)}`,
+        viewport: { width: 1440, height: 1000 },
+        locators: [
+          { role: "heading", name: "Legacy workspace" },
+          { role: "group", name: "Session actions" },
+          { role: "button", name: "Cancel" },
+        ],
+      });
+    }
+    for (const target of targets) {
       const context = await browser.newContext({
         viewport: target.viewport,
         extraHTTPHeaders: input.extraHTTPHeaders,

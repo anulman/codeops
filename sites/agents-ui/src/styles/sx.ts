@@ -728,6 +728,11 @@ const utilityStyles = stylex.create({
       "left": 128
     }
   },
+  "lg:right-auto": {
+    "@media (min-width: 1024px)": {
+      "right": "auto"
+    }
+  },
   "lg:min-h-dvh": {
     "@media (min-width: 1024px)": {
       "minHeight": "100dvh"
@@ -752,6 +757,21 @@ const utilityStyles = stylex.create({
   },
   "list-none": {
     "listStyle": "none"
+  },
+  "max-h-36": {
+    "maxHeight": 144
+  },
+  "max-h-48": {
+    "maxHeight": 192
+  },
+  "max-h-56": {
+    "maxHeight": 224
+  },
+  "max-h-80": {
+    "maxHeight": 320
+  },
+  "max-h-96": {
+    "maxHeight": 384
   },
   "max-w-24": {
     "maxWidth": 96
@@ -1235,6 +1255,11 @@ const utilityStyles = stylex.create({
   "sm:h-9": {
     "@media (min-width: 640px)": {
       "height": 36
+    }
+  },
+  "sm:inline": {
+    "@media (min-width: 640px)": {
+      "display": "inline"
     }
   },
   "sm:items-center": {
