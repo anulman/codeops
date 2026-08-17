@@ -1656,6 +1656,9 @@ const utilityStyles = stylex.create({
   "w-full": {
     "width": "100%"
   },
+  "whitespace-nowrap": {
+    "whiteSpace": "nowrap"
+  },
   "whitespace-pre-wrap": {
     "whiteSpace": "pre-wrap"
   },

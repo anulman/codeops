@@ -3,10 +3,11 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 test("fleet and cockpit routes use the live broker while retaining the v1 operator contract", async () => {
-  const [shell, fleet, cockpit] = await Promise.all([
+  const [shell, fleet, cockpit, styles] = await Promise.all([
     readFile(new URL("../src/components/AppShell.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/index.tsx", import.meta.url), "utf8"),
     readFile(new URL("../src/routes/sessions.$sessionId.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/styles/sx.ts", import.meta.url), "utf8"),
   ]);
 
   for (const label of ["Active", "Needs attention", "Archived", "Search sessions"]) {
@@ -65,6 +66,8 @@ test("fleet and cockpit routes use the live broker while retaining the v1 operat
   assert.doesNotMatch(cockpit, /window\.prompt|window\.confirm/);
   assert.doesNotMatch(cockpit, /ACP runtime adapter pending/);
   assert.match(cockpit, /session\.capabilities\.map/);
+  assert.match(cockpit, /whitespace-nowrap/);
+  assert.match(styles, /"whitespace-nowrap": \{\s*"whiteSpace": "nowrap"\s*\}/);
   assert.doesNotMatch(fleet, /sessionFixtures/);
   assert.doesNotMatch(cockpit, /sessionFixtures/);
 });
