@@ -16,7 +16,7 @@ function sbom(license, dependency = { name: "dependency", versionInfo: "1.0.0" }
       {
         name: "@codeops/example",
         versionInfo: "0.1.0",
-        licenseDeclared: "AGPL-3.0-only",
+        licenseDeclared: "Apache-2.0",
         externalRefs: [{ referenceCategory: "PACKAGE_MANAGER", referenceType: "purl", referenceLocator: "pkg:npm/%40codeops/example@0.1.0" }],
       },
       {
@@ -45,10 +45,19 @@ test("writes one exact passing SPDX license-policy report", async (t) => {
   assert.match(report.sbomSha256, /^[0-9a-f]{64}$/);
 });
 
-test("rejects missing and source-available JavaScript license identities", async (t) => {
+test("rejects missing, copyleft, and source-available JavaScript licenses", async (t) => {
   const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-license-policy-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
-  for (const license of ["NOASSERTION", "BUSL-1.1"]) {
+  for (const license of [
+    "NOASSERTION",
+    "GPL-2.0-only",
+    "LGPL-3.0-only",
+    "AGPL-3.0-only",
+    "MPL-2.0",
+    "EPL-2.0",
+    "CDDL-1.0",
+    "BUSL-1.1",
+  ]) {
     const sbomPath = path.join(directory, `${license}.json`);
     await writeFile(sbomPath, JSON.stringify(sbom(license)));
     await assert.rejects(
@@ -56,6 +65,32 @@ test("rejects missing and source-available JavaScript license identities", async
       /image license policy rejected/,
     );
   }
+});
+
+test("accepts only exact reviewed MPL exceptions", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-license-policy-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const acceptedPath = path.join(directory, "accepted.json");
+  const reportPath = path.join(directory, "report.json");
+  await writeFile(acceptedPath, JSON.stringify(sbom("MPL-2.0", {
+    name: "lightningcss",
+    versionInfo: "1.33.0",
+  })));
+  await execute(process.execPath, [policy.pathname, "--sbom", acceptedPath, "--report", reportPath, "--subject", "example"]);
+  const report = JSON.parse(await readFile(reportPath, "utf8"));
+  assert.equal(report.policy.approvedCopyleftJavascriptExceptions["lightningcss@1.33.0"], "MPL-2.0");
+  assert.equal(report.policy.approvedCopyleftJavascriptExceptions["lightningcss@1.32.0"], undefined);
+  assert.equal(report.policy.approvedCopyleftJavascriptExceptions["web-push@3.6.7"], "MPL-2.0");
+
+  const rejectedPath = path.join(directory, "rejected.json");
+  await writeFile(rejectedPath, JSON.stringify(sbom("MPL-2.0", {
+    name: "lightningcss",
+    versionInfo: "1.34.0",
+  })));
+  await assert.rejects(
+    execute(process.execPath, [policy.pathname, "--sbom", rejectedPath, "--report", `${rejectedPath}.report`, "--subject", "example"]),
+    /lightningcss@1\.34\.0 \(MPL-2\.0\)/,
+  );
 });
 
 test("uses only an exact reviewed override for an unresolved package", async (t) => {
@@ -76,6 +111,19 @@ test("uses only an exact reviewed override for an unresolved package", async (t)
     execute(process.execPath, [policy.pathname, "--sbom", rejectedPath, "--report", `${rejectedPath}.report`, "--subject", "example"]),
     /semver@7\.8\.6 \(NOASSERTION\)/,
   );
+});
+
+test("normalizes an exact reviewed non-SPDX license alias", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-license-policy-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sbomPath = path.join(directory, "sbom.json");
+  const reportPath = path.join(directory, "report.json");
+  await writeFile(sbomPath, JSON.stringify(sbom("BSD", { name: "css-mediaquery", versionInfo: "0.1.2" })));
+  await execute(process.execPath, [policy.pathname, "--sbom", sbomPath, "--report", reportPath, "--subject", "example"]);
+  const report = JSON.parse(await readFile(reportPath, "utf8"));
+  assert.deepEqual(report.appliedOverrides, [
+    { package: "css-mediaquery@0.1.2", license: "BSD-3-Clause", evidence: "LICENSE file in the distributed package" },
+  ]);
 });
 
 test("derives an unresolved package subpath only from one declared parent", async (t) => {

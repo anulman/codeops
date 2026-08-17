@@ -21,5 +21,6 @@
 !sites/agents-ui/package.json
 !sites/agents-ui/tsconfig.json
 !sites/agents-ui/vite.config.ts
+!sites/agents-ui/postcss.config.mjs
 !sites/agents-ui/src/
 !sites/agents-ui/src/**

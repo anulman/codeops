@@ -1,3 +1,4 @@
+import { sx } from "@/styles/sx";
 import type { SessionState } from "@codeops/codeops-contracts/session-broker";
 
 const styles: Record<SessionState, string> = {
@@ -14,8 +15,8 @@ const styles: Record<SessionState, string> = {
 
 export function StatusBadge({ state }: Readonly<{ state: SessionState }>) {
   return (
-    <span className={`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.11em] ${styles[state]}`}>
-      <span className={`size-1 rounded-full ${state === "running" ? "animate-pulse bg-current" : "bg-current"}`} />
+    <span {...sx(`inline-flex items-center gap-1.5 rounded-md border px-2 py-1 text-[9px] font-semibold uppercase tracking-[0.11em] ${styles[state]}`)}>
+      <span {...sx(`size-1 rounded-full ${state === "running" ? "animate-pulse bg-current" : "bg-current"}`)} />
       {state.replaceAll("_", " ")}
     </span>
   );

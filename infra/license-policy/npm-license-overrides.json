@@ -10,6 +10,7 @@
     "async-sema@3.1.1": { "license": "MIT", "evidence": "npm registry metadata" },
     "bindings@1.5.0": { "license": "MIT", "evidence": "npm registry metadata" },
     "consola@3.4.2": { "license": "MIT", "evidence": "npm registry metadata" },
+    "css-mediaquery@0.1.2": { "license": "BSD-3-Clause", "evidence": "LICENSE file in the distributed package" },
     "detect-libc@2.1.2": { "license": "Apache-2.0", "evidence": "npm registry metadata" },
     "estree-walker@2.0.2": { "license": "MIT", "evidence": "npm registry metadata" },
     "file-uri-to-path@1.0.0": { "license": "MIT", "evidence": "npm registry metadata" },

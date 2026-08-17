@@ -1,4 +1,4 @@
-@import "tailwindcss";
+@stylex;
 
 :root {
   color-scheme: dark;
@@ -6,8 +6,11 @@
   background: #111113;
 }
 
-* {
+*,
+*::before,
+*::after {
   box-sizing: border-box;
+  border: 0 solid;
 }
 
 html {
@@ -23,10 +26,43 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
+h1,
+h2,
+h3,
+p,
+ol,
+ul,
+figure,
+fieldset {
+  margin: 0;
+  padding: 0;
+}
+
+ol,
+ul {
+  list-style: none;
+}
+
+a {
+  color: inherit;
+  text-decoration: inherit;
+}
+
 button,
 input,
 textarea {
   font: inherit;
+}
+
+button {
+  appearance: none;
+  background: transparent;
+}
+
+img,
+svg,
+audio {
+  display: block;
 }
 
 ::selection {
@@ -45,6 +81,40 @@ textarea {
 
 .no-scrollbar::-webkit-scrollbar {
   display: none;
+}
+
+.space-y-0\.5 > :not(:last-child) { margin-bottom: 2px; }
+.space-y-1 > :not(:last-child) { margin-bottom: 4px; }
+.space-y-1\.5 > :not(:last-child) { margin-bottom: 6px; }
+.space-y-2 > :not(:last-child) { margin-bottom: 8px; }
+.space-y-2\.5 > :not(:last-child) { margin-bottom: 10px; }
+.space-y-3 > :not(:last-child) { margin-bottom: 12px; }
+.space-y-6 > :not(:last-child) { margin-bottom: 24px; }
+.space-y-8 > :not(:last-child) { margin-bottom: 32px; }
+
+.divide-y > :not(:last-child) { border-bottom-width: 1px; }
+.divide-x > :not(:last-child) { border-right-width: 1px; }
+.divide-white\/\[0\.055\] > :not(:last-child) { border-color: rgb(255 255 255 / 0.055); }
+.divide-white\/\[0\.07\] > :not(:last-child) { border-color: rgb(255 255 255 / 0.07); }
+
+.group:hover .group-hover\:text-white { color: white; }
+.group:hover .group-hover\:text-white\/78 { color: rgb(255 255 255 / 0.78); }
+.group:last-child .group-last\:border-0 { border-width: 0; }
+.group\/execution[open] .group-open\/execution\:rotate-45 { transform: rotate(45deg); }
+
+.bg-gradient-to-t {
+  background-image: linear-gradient(to top, var(--stylex-gradient-from), var(--stylex-gradient-via), var(--stylex-gradient-to));
+}
+.from-\[\#111113\] { --stylex-gradient-from: #111113; }
+.via-\[\#111113\] { --stylex-gradient-via: #111113; }
+.to-transparent { --stylex-gradient-to: transparent; }
+
+.animate-pulse {
+  animation: stylex-pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@keyframes stylex-pulse {
+  50% { opacity: 0.5; }
 }
 
 @media (prefers-reduced-motion: reduce) {

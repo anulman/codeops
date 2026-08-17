@@ -11,6 +11,10 @@ Work only in the repository and revision that the CodeOps request identifies.
 - Do not publish, merge, deploy, or change external state unless the request
   explicitly authorizes that action.
 - Never expose credentials, tokens, private data, or control-plane internals.
+- Do not copy, adapt, link, vendor, or add GPL, LGPL, AGPL, MPL, EPL, CDDL, or
+  other copyleft or source-available code or package dependencies. Prefer a
+  permissively licensed alternative. Stop if the license is unknown or if no
+  permissive alternative exists.
 - Stop when an identity, authorization, or safety requirement is ambiguous.
 
 Repository operators can replace this bounded context pack for each registered

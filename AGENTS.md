@@ -55,6 +55,21 @@ decision, and source context.
 5. Build each affected image for Docker or packaging changes.
 6. Review the complete diff for credential, identity, and fail-open behavior.
 
+## License policy
+
+- License CodeOps-authored work under Apache-2.0.
+- Do not copy, adapt, link, vendor, or add a package dependency under GPL,
+  LGPL, AGPL, MPL, EPL, CDDL, SSPL, BUSL, Elastic License, Commons Clause,
+  PolyForm, or another copyleft or source-available license.
+- Treat an unknown, custom, dual, compound, or missing license as blocked until
+  the exact version and distributed artifact are reviewed.
+- Prefer Apache-2.0, MIT, BSD, ISC, 0BSD, BlueOak-1.0.0, CC0-1.0, or
+  Unlicense dependencies.
+- A separately operated or aggregated copyleft component requires an explicit
+  documented exception and human approval. Preserve its notices and source
+  obligations. Keep a process, network, or aggregate distribution boundary.
+- Run `nub run check:licenses` after a dependency or distribution change.
+
 ## Commit messages
 
 - Write a short, capitalized imperative subject. Aim for 50 characters and do

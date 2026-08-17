@@ -28,29 +28,19 @@ RUN --mount=type=cache,target=/repo/.nub-store,sharing=locked \
 COPY tsconfig.json ./tsconfig.json
 COPY packages/codeops-contracts/tsconfig.json packages/codeops-contracts/tsconfig.build.json ./packages/codeops-contracts/
 COPY packages/codeops-contracts/src ./packages/codeops-contracts/src
-COPY sites/agents-ui/tsconfig.json sites/agents-ui/vite.config.ts ./sites/agents-ui/
+COPY sites/agents-ui/tsconfig.json sites/agents-ui/vite.config.ts sites/agents-ui/postcss.config.mjs ./sites/agents-ui/
 COPY sites/agents-ui/src ./sites/agents-ui/src
 RUN nub run --filter @codeops/codeops-contracts build \
   && nub run --filter @codeops/agents-ui build \
   && nub run --filter @codeops/agents-ui typecheck \
-  && test -f sites/agents-ui/.output/server/index.mjs \
-  && mkdir -p /deploy/node_modules \
-  && cp -a node_modules/.nub /deploy/node_modules/.nub \
-  && find sites/agents-ui/node_modules -mindepth 1 -maxdepth 2 -type l | while IFS= read -r link; do \
-    rel="${link#sites/agents-ui/node_modules/}"; \
-    target="$(readlink -f "$link")"; \
-    store_rel="${target#*/node_modules/.nub/}"; \
-    mkdir -p "/deploy/node_modules/$(dirname "$rel")"; \
-    ln -s "/app/node_modules/.nub/$store_rel" "/deploy/node_modules/$rel"; \
-  done
+  && test -f sites/agents-ui/.output/server/index.mjs
 
 FROM node:24-bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/anulman/codeops" \
-      org.opencontainers.image.licenses="AGPL-3.0-only"
+      org.opencontainers.image.licenses="Apache-2.0"
 WORKDIR /app
 ENV NODE_ENV=production HOST=0.0.0.0 PORT=3000
 COPY --chown=node:node LICENSE THIRD_PARTY_NOTICES.md /usr/share/licenses/codeops/
-COPY --from=build --chown=node:node /deploy/node_modules ./node_modules
 COPY --from=build --chown=node:node /repo/sites/agents-ui/.output ./.output
 USER node
 EXPOSE 3000

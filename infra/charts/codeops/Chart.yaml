@@ -8,7 +8,7 @@ home: https://github.com/anulman/codeops
 sources:
   - https://github.com/anulman/codeops
 annotations:
-  artifacthub.io/license: AGPL-3.0-only
+  artifacthub.io/license: Apache-2.0
 dependencies:
   - name: nats
     alias: jetstream

@@ -1,9 +1,8 @@
 # Third-party notices
 
-CodeOps source is licensed under the GNU Affero General Public License,
-version 3 only. CodeOps distributions also contain or refer to third-party
-software under separate licenses. Those licenses apply to the third-party
-software only.
+CodeOps source is licensed under the Apache License, Version 2.0. CodeOps
+distributions also contain or refer to third-party software under separate
+licenses. Those licenses apply to the third-party software only.
 
 ## Bundled Helm chart dependencies
 
@@ -17,6 +16,9 @@ The CodeOps Helm archive bundles these upstream Helm charts:
 
 The packaged chart includes the applicable license and copyright text under
 `licenses/`. The upstream chart archives do not become CodeOps-authored work.
+Plane is an approved copyleft aggregate exception. CodeOps does not copy,
+adapt, or link Plane source. The chart deploys Plane as separate processes and
+preserves its upstream license and source obligations.
 
 ## Referenced services and images
 
