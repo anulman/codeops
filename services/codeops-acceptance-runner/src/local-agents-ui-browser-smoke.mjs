@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import { spawn } from "node:child_process";
 import { once } from "node:events";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import path from "node:path";
@@ -17,47 +17,38 @@ const token = "r".repeat(64);
 const writeToken = "w".repeat(64);
 const ownerPrincipal = "codeops:agents-ui";
 const brokerRequests = [];
+const legacyWorkspaceFixture = JSON.parse(
+  await readFile(
+    path.join(
+      repositoryRoot,
+      "packages/codeops-contracts/test/fixtures/codeops-0.4.2-workspace-session.json",
+    ),
+    "utf8",
+  ),
+);
 
 function fleet() {
   return {
     version: "codeops.session-fleet/v1",
-    sessions: [
+    sessions: [legacyWorkspaceFixture.snapshot],
+  };
+}
+
+function workspaceCatalog() {
+  return {
+    version: "codeops.workspace-catalog/v1",
+    repositories: [
       {
-        version: "codeops.session-snapshot/v1",
-        sessionId: "session-browser-smoke",
-        generation: 1,
-        state: "running",
-        identity: {
-          repository: "example-org/example-repository",
-          branch: "feat/browser-smoke",
-          baseSha: "a".repeat(40),
-          workflowId: "workflow-browser-smoke",
-          runId: "run-browser-smoke",
-          parentSessionId: null,
-          forkedAtCursor: null,
-        },
-        lease: {
-          leaseId: "11111111-1111-4111-8111-111111111111",
-          generation: 1,
-          status: "active",
-          holderId: "worker-browser-smoke",
-          acquiredAt: "2026-08-11T12:00:00.000Z",
-          expiresAt: "2026-08-11T13:00:00.000Z",
-        },
-        checkpoint: null,
-        pendingPermission: null,
-        eventCursor: 1,
-        capabilities: [
-          { action: "prompt", availability: "enabled" },
-          { action: "respond_permission", availability: "disabled", reason: "No request." },
-          { action: "cancel", availability: "enabled" },
-          { action: "checkpoint", availability: "enabled" },
-          { action: "hibernate", availability: "enabled" },
-          { action: "resume", availability: "disabled", reason: "Already running." },
-          { action: "fork", availability: "disabled", reason: "No checkpoint." },
-          { action: "archive", availability: "disabled", reason: "Still running." },
-        ],
-        updatedAt: "2026-08-11T12:01:00.000Z",
+        key: "renoconcierge",
+        label: "RenoConcierge",
+        repository: "anulman/renoconcierge",
+        defaultRef: "main",
+      },
+      {
+        key: "codeops",
+        label: "CodeOps",
+        repository: "anulman/codeops",
+        defaultRef: "main",
       },
     ],
   };
@@ -117,6 +108,14 @@ const broker = createServer((request, response) => {
     response.end(JSON.stringify(providerEffectFleet()));
     return;
   }
+  if (
+    request.url === "/v1/workspace-catalog" &&
+    request.headers.authorization === `Bearer ${writeToken}`
+  ) {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(workspaceCatalog()));
+    return;
+  }
   response.writeHead(404, { "content-type": "application/json" });
   response.end(JSON.stringify({ status: "not-found" }));
 });
@@ -144,6 +143,8 @@ try {
       CODEOPS_SESSION_BROKER_READ_TOKEN_FILE: readTokenPath,
       CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE: writeTokenPath,
       CODEOPS_SESSION_OWNER_FIXED_PRINCIPAL: ownerPrincipal,
+      CODEOPS_WORKSPACE_LAUNCH_URL: `http://127.0.0.1:${brokerPort}`,
+      CODEOPS_WORKSPACE_LAUNCH_TOKEN_FILE: writeTokenPath,
     },
     stdio: ["ignore", "pipe", "pipe"],
   });

@@ -47,10 +47,20 @@ export async function runAgentsUiSmoke(input = {}) {
       },
       {
         name: "mobile",
+        path: "/",
         viewport: { width: 390, height: 844 },
         locators: [
           { role: "heading", name: "Sessions" },
           { role: "group", name: "Session filters" },
+        ],
+      },
+      {
+        name: "new-session",
+        path: "/new",
+        viewport: { width: 1440, height: 1000 },
+        locators: [
+          { role: "heading", name: "New session" },
+          { role: "button", name: "Create session" },
         ],
       },
     ]) {
@@ -60,10 +70,13 @@ export async function runAgentsUiSmoke(input = {}) {
       });
       try {
         const page = await context.newPage();
-        const response = await page.goto(baseUrl.href, {
-          waitUntil: "networkidle",
-          timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
-        });
+        const response = await page.goto(
+          new URL(target.path ?? "/", baseUrl).href,
+          {
+            waitUntil: "networkidle",
+            timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          },
+        );
         if (response?.status() !== 200) {
           throw new Error(
             `${target.name} agents UI returned ${response?.status() ?? "no response"}`,

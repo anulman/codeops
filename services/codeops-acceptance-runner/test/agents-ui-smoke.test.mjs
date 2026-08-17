@@ -63,7 +63,7 @@ test("accepts only an exact external HTTPS or bounded local origin", () => {
   }
 });
 
-test("checks desktop and mobile fleet surfaces", async () => {
+test("checks fleet and new-session surfaces", async () => {
   const chromium = fakeChromium();
   await runAgentsUiSmoke({
     baseUrl: "http://codeops-agents-ui:3000",
@@ -74,11 +74,17 @@ test("checks desktop and mobile fleet surfaces", async () => {
     [
       { width: 1440, height: 1000 },
       { width: 390, height: 844 },
+      { width: 1440, height: 1000 },
     ],
   );
   for (const [index, context] of chromium.contexts.entries()) {
     assert.equal(context.options.extraHTTPHeaders, undefined);
-    assert.equal(context.url, "http://codeops-agents-ui:3000/");
+    assert.equal(
+      String(context.url),
+      index === 2
+        ? "http://codeops-agents-ui:3000/new"
+        : "http://codeops-agents-ui:3000/",
+    );
     assert.deepEqual(
       context.locators,
       index === 0
@@ -86,10 +92,15 @@ test("checks desktop and mobile fleet surfaces", async () => {
             { role: "heading", name: "Agent Sessions" },
             { role: "navigation", name: "Agent sessions" },
           ]
-        : [
-            { role: "heading", name: "Sessions" },
-            { role: "group", name: "Session filters" },
-          ],
+        : index === 1
+          ? [
+              { role: "heading", name: "Sessions" },
+              { role: "group", name: "Session filters" },
+            ]
+          : [
+              { role: "heading", name: "New session" },
+              { role: "button", name: "Create session" },
+            ],
     );
     assert.equal(context.closed, true);
   }

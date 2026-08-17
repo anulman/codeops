@@ -1,5 +1,8 @@
 import { z } from "zod";
-import { sessionPolicySchema } from "./session-policy.js";
+import {
+  sessionPolicyForMode,
+  sessionPolicySchema,
+} from "./session-policy.js";
 import {
   sessionBudgetProjectionSchema,
   sessionBudgetV2ProjectionSchema,
@@ -429,7 +432,7 @@ export const temporalCodeOpsSessionIdentitySchema = legacySessionIdentitySchema
     }
   });
 
-export const sessionSnapshotSchema = z
+const currentSessionSnapshotSchema = z
   .object({
     version: z.literal(SESSION_BROKER_VERSION.snapshot),
     sessionId: identifier,
@@ -547,6 +550,43 @@ export const sessionSnapshotSchema = z
       });
     }
   });
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * Project one pre-policy CodeOps 0.4.2 workspace snapshot into the current
+ * immutable identity without changing its stored bytes. Keeping this
+ * migration at the read boundary lets an atomic upgrade roll back to 0.4.2:
+ * the older strict parser continues to see the original persisted identity.
+ */
+export function migrateLegacyWorkspaceSessionSnapshot(
+  input: unknown,
+): unknown {
+  if (!isRecord(input) || !isRecord(input.identity)) return input;
+  const identity = input.identity;
+  if (
+    identity.version !== "codeops.session-workspace-identity/v1" ||
+    Object.hasOwn(identity, "policy") ||
+    Object.hasOwn(identity, "contextAttachments")
+  ) {
+    return input;
+  }
+  return {
+    ...input,
+    identity: {
+      ...identity,
+      policy: sessionPolicyForMode("implement"),
+      contextAttachments: [],
+    },
+  };
+}
+
+export const sessionSnapshotSchema = z.preprocess(
+  migrateLegacyWorkspaceSessionSnapshot,
+  currentSessionSnapshotSchema,
+);
 
 export const sessionJobInitializationRequestSchema = z
   .object({

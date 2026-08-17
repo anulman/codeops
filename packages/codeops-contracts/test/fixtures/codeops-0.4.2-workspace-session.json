@@ -1,0 +1,87 @@
+{
+  "version": "codeops.legacy-workspace-session-fixture/v1",
+  "source": {
+    "release": "v0.4.2",
+    "sourceSha": "c81f74952d9b843075159dc2f414e20c1c99fb76"
+  },
+  "ownerPrincipalId": "codeops:agents-ui",
+  "snapshot": {
+    "version": "codeops.session-snapshot/v1",
+    "sessionId": "ses_legacy_workspace_042",
+    "generation": 1,
+    "state": "running",
+    "identity": {
+      "version": "codeops.session-workspace-identity/v1",
+      "workspace": {
+        "version": "codeops.workspace/v1",
+        "sources": [
+          {
+            "catalogKey": "renoconcierge",
+            "repository": "anulman/renoconcierge",
+            "checkoutPath": "sources/renoconcierge",
+            "requestedRef": "main",
+            "resolvedSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          {
+            "catalogKey": "codeops",
+            "repository": "anulman/codeops",
+            "checkoutPath": "sources/codeops",
+            "requestedRef": "main",
+            "resolvedSha": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+          }
+        ],
+        "scratchPath": "scratch"
+      },
+      "workflowId": "workspace-launch",
+      "runId": "launch-legacy-workspace-042",
+      "displayName": "Legacy workspace",
+      "parentSessionId": null,
+      "forkedAtCursor": null
+    },
+    "lease": {
+      "leaseId": "11111111-1111-4111-8111-111111111111",
+      "generation": 1,
+      "status": "active",
+      "holderId": "session-job:legacy-workspace",
+      "acquiredAt": "2026-08-14T12:00:00.000Z",
+      "expiresAt": "2026-08-14T18:00:00.000Z"
+    },
+    "checkpoint": {
+      "version": "codeops.session-workspace-checkpoint/v1",
+      "checkpointId": "22222222-2222-4222-8222-222222222222",
+      "sessionId": "ses_legacy_workspace_042",
+      "generation": 1,
+      "workspaceManifestDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
+      "sourcePatches": [
+        {
+          "catalogKey": "renoconcierge",
+          "repository": "anulman/renoconcierge",
+          "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "patchDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        }
+      ],
+      "scratchArtifactDigest": "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
+      "acpSessionId": "thread-legacy-workspace-042",
+      "eventCursor": 17,
+      "evidenceReferences": ["evidence:legacy-checkpoint"],
+      "createdAt": "2026-08-14T12:30:00.000Z"
+    },
+    "pendingPermission": null,
+    "eventCursor": 17,
+    "capabilities": [
+      { "action": "prompt", "availability": "enabled" },
+      { "action": "respond_permission", "availability": "disabled", "reason": "Unavailable in this state." },
+      { "action": "cancel", "availability": "enabled" },
+      { "action": "checkpoint", "availability": "enabled" },
+      { "action": "hibernate", "availability": "enabled" },
+      { "action": "resume", "availability": "disabled", "reason": "Unavailable in this state." },
+      { "action": "fork", "availability": "disabled", "reason": "Unavailable in this state." },
+      { "action": "archive", "availability": "disabled", "reason": "Unavailable in this state." }
+    ],
+    "updatedAt": "2026-08-14T12:31:00.000Z"
+  },
+  "evidence": {
+    "eventCursor": 17,
+    "checkpointEvidenceReferences": ["evidence:legacy-checkpoint"]
+  }
+}
