@@ -34,6 +34,14 @@ const modelBudgetRecoveryUrl = new URL("../sql/session-model-budget-recovery-v1.
 const modelBudgetRecoveryRevertUrl = new URL("../sql/session-model-budget-recovery-v1-revert.sql", import.meta.url);
 const sessionOwnerUrl = new URL("../sql/session-owner-v1.sql", import.meta.url);
 const sessionOwnerRevertUrl = new URL("../sql/session-owner-v1-revert.sql", import.meta.url);
+const agentTerminalProgressUrl = new URL(
+  "../sql/session-agent-terminal-progress-v1.sql",
+  import.meta.url,
+);
+const agentTerminalProgressRevertUrl = new URL(
+  "../sql/session-agent-terminal-progress-v1-revert.sql",
+  import.meta.url,
+);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");
@@ -155,6 +163,22 @@ test("persists claim-bound runtime permission requests and their option map", as
   assert.match(sql, /codeops\.session-runtime-permission-submission\/v1/);
   assert.match(revert, /DROP TABLE IF EXISTS codeops\.session_runtime_permission_requests/);
   assert.match(revert, /event_type = 'session_created'/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
+});
+
+test("admits only the commandless progress events emitted by adopted Agent sessions", async () => {
+  const sql = await readFile(agentTerminalProgressUrl, "utf8");
+  const revert = await readFile(agentTerminalProgressRevertUrl, "utf8");
+  assert.match(
+    sql,
+    /event_type IN \(\s*'session_created',\s*'permission_requested',\s*'acp_update',\s*'state_changed'\s*\)/,
+  );
+  assert.doesNotMatch(sql, /checkpoint_committed|lease_changed|session_archived/);
+  assert.match(
+    revert,
+    /event_type IN \('session_created', 'permission_requested'\)/,
+  );
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });
