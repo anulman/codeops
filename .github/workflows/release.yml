@@ -18,6 +18,7 @@ on:
       - infra/scripts/codeops-release-consumer-lock.mjs
       - infra/scripts/codeops-release-version.mjs
       - infra/scripts/codeops-golden-release-evidence.mjs
+      - infra/scripts/codeops-agent-execution-proof.mjs
       - infra/scripts/codeopsctl.mjs
       - services/codeops-acceptance-runner/src/golden-dogfood.mjs
       - .github/actions/codeops/action.yml
@@ -29,6 +30,7 @@ on:
       - infra/scripts/test-codeops-quickstart-docs.mjs
       - infra/scripts/test-codeops-release-images.mjs
       - infra/scripts/test-codeops-golden-release-evidence.mjs
+      - infra/scripts/test-codeops-agent-execution-proof.mjs
       - infra/scripts/test-codeops-release-workflow.mjs
   workflow_dispatch:
     inputs:
@@ -417,6 +419,8 @@ jobs:
             .release/evidence/codeops-release-version.mjs
           cp infra/scripts/codeops-golden-release-evidence.mjs \
             .release/evidence/codeops-golden-release-evidence.mjs
+          cp infra/scripts/codeops-agent-execution-proof.mjs \
+            .release/evidence/codeops-agent-execution-proof.mjs
           RELEASE_TAG="v${RELEASE_VERSION}" \
             node infra/scripts/codeops-release-consumer-lock.mjs \
               ".release/codeops-${RELEASE_VERSION}.tgz" \
@@ -723,6 +727,15 @@ jobs:
             /tmp/codeops-registry-proof/live-images.json \
             /tmp/codeops-registry-proof/smoke-report.json \
             /tmp/codeops-registry-proof/golden-release-report.json
+
+      - name: Prove provider-free Agent execution
+        run: |
+          set -euo pipefail
+          node /tmp/codeops-release/codeops-agent-execution-proof.mjs \
+            /tmp/codeops-release/release-manifest.json \
+            /tmp/codeops-registry-proof/agent-execution-proof.json \
+            proof-system \
+            codeops-agent-execution-proof
 
       - name: Capture registry-install diagnostics
         if: failure()

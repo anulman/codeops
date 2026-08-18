@@ -24,6 +24,8 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.ok(workflow.on.push.paths.includes("infra/charts/codeops/**"));
   assert.ok(workflow.on.push.paths.includes("infra/scripts/codeopsctl.mjs"));
   assert.ok(workflow.on.push.paths.includes("infra/scripts/codeops-golden-release-evidence.mjs"));
+  assert.ok(workflow.on.push.paths.includes("infra/scripts/codeops-agent-execution-proof.mjs"));
+  assert.ok(workflow.on.push.paths.includes("infra/scripts/test-codeops-agent-execution-proof.mjs"));
   assert.ok(workflow.on.push.paths.includes("services/codeops-acceptance-runner/src/golden-dogfood.mjs"));
   assert.ok(workflow.on.push.paths.includes(".github/actions/codeops/action.yml"));
   assert.equal(workflow.on.workflow_dispatch.inputs.publish.default, false);
@@ -166,6 +168,16 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
     install.run.indexOf("helm uninstall proof-system") <
       install.run.indexOf("codeops-golden-release-evidence.mjs"),
   );
+  const agentExecution = registryInstall.steps.find(
+    ({ name }) => name === "Prove provider-free Agent execution",
+  );
+  assert.match(agentExecution.run, /codeops-agent-execution-proof\.mjs/);
+  assert.match(agentExecution.run, /release-manifest\.json/);
+  assert.match(agentExecution.run, /agent-execution-proof\.json/);
+  assert.ok(
+    registryInstall.steps.indexOf(agentExecution) <
+      registryInstall.steps.findIndex(({ name }) => name === "Retain registry-install evidence"),
+  );
   assert.match(quickstartValues.run, /profile: "custom"/);
   assert.match(quickstartValues.run, /renoconcierge\.ca\/codeops/);
   assert.doesNotMatch(quickstartValues.run, /GHCR_TOKEN/);
@@ -211,6 +223,10 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(
     serialized,
     /cp infra\/scripts\/codeops-release-version\.mjs.*\.release\/evidence\/codeops-release-version\.mjs/s,
+  );
+  assert.match(
+    serialized,
+    /cp infra\/scripts\/codeops-agent-execution-proof\.mjs.*\.release\/evidence\/codeops-agent-execution-proof\.mjs/s,
   );
   assert.match(serialized, /codeops-consumer-lock\.json/);
   assert.match(serialized, /codeopsctl\.mjs/);
