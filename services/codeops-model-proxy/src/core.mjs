@@ -19,12 +19,14 @@ const MAX_OBJECT_KEYS = 1_000;
 const MAX_ARRAY_ITEMS = 10_000;
 
 const ALLOWED_RESPONSE_FIELDS = new Set([
+  "client_metadata",
   "include",
   "input",
   "instructions",
   "max_output_tokens",
   "model",
   "parallel_tool_calls",
+  "prompt_cache_key",
   "reasoning",
   "store",
   "stream",
@@ -176,8 +178,11 @@ function enforceResponsesPrivacyPolicy(body, authority, allowedModels, maxOutput
     }
   }
   validateBoundedJson(body);
+  const admittedBody = { ...body };
+  delete admittedBody.client_metadata;
+  delete admittedBody.prompt_cache_key;
   return {
-    ...body,
+    ...admittedBody,
     store: false,
     max_output_tokens: body.max_output_tokens ?? maxOutputTokens,
   };
