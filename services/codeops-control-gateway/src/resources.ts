@@ -30,6 +30,7 @@ interface ResourceConfig {
 function labels(input: ResourceConfig, request: AgentJobDispatchRequest) {
   return {
     "app.kubernetes.io/name": "codeops-agent",
+    "app.kubernetes.io/component": "runtime",
     "app.kubernetes.io/part-of": "codeops",
     "codeops.example/run-id": input.runId,
     "codeops.example/agent-role": request.role,

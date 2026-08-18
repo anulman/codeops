@@ -1071,6 +1071,10 @@ test("builds only the fixed tokenless run resources", () => {
     resources.map((resource) => resource.kind),
     ["Secret", "ServiceAccount", "Job", "NetworkPolicy"],
   );
+  assert.equal(
+    resources[2].spec.template.metadata.labels["app.kubernetes.io/component"],
+    "runtime",
+  );
   const workspaceBuilder =
     resources[2].spec.template.spec.initContainers[0].command.at(-1);
   assert.match(
