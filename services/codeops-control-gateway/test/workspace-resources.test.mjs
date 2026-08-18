@@ -107,6 +107,10 @@ test("binds workspace mounts and Codex configuration to the immutable session po
     );
   }
   const implementAgent = implementRuntime.spec.template.spec.containers[1];
+  assert.equal(
+    implementAgent.env.find((entry) => entry.name === "INITIAL_AGENT_MODE")?.value,
+    "agent-full-access",
+  );
   const implementCodexConfig = JSON.parse(
     implementAgent.env.find((entry) => entry.name === "CODEX_CONFIG")?.value,
   );
@@ -133,6 +137,10 @@ test("binds workspace mounts and Codex configuration to the immutable session po
     );
   }
   const reviewAgent = reviewRuntime.spec.template.spec.containers[1];
+  assert.equal(
+    reviewAgent.env.find((entry) => entry.name === "INITIAL_AGENT_MODE")?.value,
+    "agent-full-access",
+  );
   const reviewCodexConfig = JSON.parse(
     reviewAgent.env.find((entry) => entry.name === "CODEX_CONFIG")?.value,
   );

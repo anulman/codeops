@@ -571,8 +571,24 @@ test("defaults to deny and opens only explicit component paths", () => {
     ["TCP:53", "TCP:5432", "UDP:53"],
   );
   const modelProxy = resource(resources, "NetworkPolicy", "team-a-codeops-model-proxy");
-  assert.ok(JSON.stringify(modelProxy.spec.ingress).includes("runtime"));
-  assert.ok(JSON.stringify(modelProxy.spec.ingress).includes("github-controller"));
+  assert.deepEqual(modelProxy.spec.ingress[0].from, [
+    {
+      podSelector: {
+        matchExpressions: [
+          {
+            key: "app.kubernetes.io/component",
+            operator: "In",
+            values: ["github-controller", "runtime"],
+          },
+        ],
+      },
+    },
+    {
+      podSelector: {
+        matchLabels: { "app.kubernetes.io/name": "codeops-agent" },
+      },
+    },
+  ]);
   assert.deepEqual(
     modelProxy.spec.ingress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)),
     ["TCP:8080"],

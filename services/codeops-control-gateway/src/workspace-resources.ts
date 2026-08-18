@@ -424,6 +424,7 @@ export function buildWorkspaceResources(
               env: [
                 ...proxyEnvironment,
                 { name: "CODEX_HOME", value: "/tmp/codex-home" },
+                { name: "INITIAL_AGENT_MODE", value: "agent-full-access" },
                 { name: "CODEOPS_MODEL_PROXY_TOKEN_FILE", value: "/run/codeops/model-proxy-token" },
                 { name: "DEFAULT_AUTH_REQUEST", value: '{"methodId":"api-key"}' },
                 { name: "CODEX_CONFIG", value: JSON.stringify({

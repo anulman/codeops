@@ -1130,6 +1130,10 @@ test("builds only the fixed tokenless run resources", () => {
     "/tmp/codex-home",
   );
   assert.equal(
+    codingAgent.env.find((entry) => entry.name === "INITIAL_AGENT_MODE").value,
+    "agent-full-access",
+  );
+  assert.equal(
     codingAgent.env.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST").value,
     '{"methodId":"api-key"}',
   );

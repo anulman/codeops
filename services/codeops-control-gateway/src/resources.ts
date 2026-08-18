@@ -366,6 +366,10 @@ export function buildRunResources(
                     value: "/tmp/codex-home",
                   },
                   {
+                    name: "INITIAL_AGENT_MODE",
+                    value: "agent-full-access",
+                  },
+                  {
                     name: "DEFAULT_AUTH_REQUEST",
                     value: '{"methodId":"api-key"}',
                   },
@@ -608,6 +612,8 @@ export function assertRunResources(
   if (
     agent?.env?.find((entry) => entry.name === "CODEX_HOME")?.value !==
       "/tmp/codex-home" ||
+    agent.env?.find((entry) => entry.name === "INITIAL_AGENT_MODE")?.value !==
+      "agent-full-access" ||
     agent.env?.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST")?.value !==
       '{"methodId":"api-key"}' ||
     !agent.env?.some((entry) => entry.name === "CODEX_API_KEY") ||
