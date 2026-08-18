@@ -17,6 +17,7 @@ const MAX_REQUEST_NODES = 100_000;
 const MAX_REQUEST_DEPTH = 20;
 const MAX_OBJECT_KEYS = 1_000;
 const MAX_ARRAY_ITEMS = 10_000;
+export const MODEL_PROXY_UPSTREAM_TIMEOUT_MS = 60 * 60 * 1_000;
 
 const ALLOWED_RESPONSE_FIELDS = new Set([
   "client_metadata",
@@ -716,7 +717,7 @@ export function createModelProxyRequestListener(input) {
               redirect: "error",
               headers,
               body: upstreamBody,
-              signal: AbortSignal.timeout(10 * 60 * 1_000),
+              signal: AbortSignal.timeout(MODEL_PROXY_UPSTREAM_TIMEOUT_MS),
             },
           );
         } catch (error) {
