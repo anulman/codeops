@@ -580,6 +580,66 @@ test("keeps terminal workflow projection internal and contract-bound", async () 
   }
 });
 
+test("admits an existing pull request only through the dedicated operator capability", async () => {
+  const requests = [];
+  const token = "a".repeat(64);
+  const body = {
+    version: "codeops.existing-pull-request-adoption-request/v1",
+    operatorRequestId: "22222222-2222-4222-8222-222222222222",
+    codingRequest: { exact: "validated by the adoption processor" },
+    pullRequest: { number: 158 },
+  };
+  const listener = createPlaneWebhookRequestListener({
+    adoption: {
+      token,
+      process: async (value) => {
+        requests.push(value);
+        return {
+          version: "codeops.existing-pull-request-adoption-result/v1",
+          status: "enqueued",
+          workflowId: "adopt-pr-158",
+          workItemId: "088a83b9-a53f-4dda-b2bc-c860cf455997",
+          repository: "example-org/example-repository",
+          pullRequestNumber: 158,
+          headSha: "a".repeat(40),
+        };
+      },
+    },
+  });
+  const server = createServer((incoming, response) => {
+    void listener(incoming, response);
+  });
+  server.listen(0, "127.0.0.1");
+  await once(server, "listening");
+  try {
+    const address = server.address();
+    const url = `http://127.0.0.1:${address.port}/v1/existing-pull-request-adoptions`;
+    const denied = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${"x".repeat(64)}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    assert.equal(denied.status, 401);
+    const accepted = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(body),
+    });
+    assert.equal(accepted.status, 202);
+    assert.equal((await accepted.json()).workflowId, "adopt-pr-158");
+    assert.deepEqual(requests, [body]);
+  } finally {
+    server.close();
+    await once(server, "close");
+  }
+});
+
 test("serves health and preserves the exact raw Plane body and headers", async () => {
   const seen = [];
   const secret = "p".repeat(64);

@@ -93,6 +93,7 @@ export {
   createFileCodingRequestStore,
   type CodingRequestStore,
 } from "./coding-request-store.js";
+export { adoptExistingPullRequest } from "./existing-pr-adoption.js";
 
 export {
   applyResearchMutationBatch,

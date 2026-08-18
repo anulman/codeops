@@ -361,9 +361,13 @@ export async function workItemWorkflow(
         );
         if (await cancelIfRequested()) return snapshot;
       }
+      const publicationProvenance =
+        workItem.codingRequest.humanReview ??
+        workItem.codingRequest.adoptedPullRequest;
       if (
-        workItem.codingRequest.humanReview !== undefined &&
-        acceptedCandidate !== null
+        publicationProvenance !== undefined &&
+        acceptedCandidate !== null &&
+        acceptedCandidate.patch.sizeBytes > 0
       ) {
         await move(
           "validating",
@@ -377,13 +381,20 @@ export async function workItemWorkflow(
             workItemId: workItem.workItemId,
             workflowId: workItem.workflowId,
             repository: workItem.codingRequest.workItem.repository,
-            pullRequestNumber:
-              workItem.codingRequest.humanReview.pullRequestNumber,
+            pullRequestNumber: publicationProvenance.pullRequestNumber,
             expectedHeadSha: workItem.baseSha,
             headRef: workItem.codingRequest.workItem.branch,
-            humanReview: workItem.codingRequest.humanReview,
+            ...(workItem.codingRequest.humanReview === undefined
+              ? {
+                  adoptedPullRequest:
+                    workItem.codingRequest.adoptedPullRequest!,
+                }
+              : { humanReview: workItem.codingRequest.humanReview }),
             candidate: acceptedCandidate,
-            commitMessage: `fix(codeops): address PR #${workItem.codingRequest.humanReview.pullRequestNumber} review`,
+            commitMessage:
+              workItem.codingRequest.humanReview === undefined
+                ? `Address CodeOps review of PR #${publicationProvenance.pullRequestNumber}`
+                : `Address PR #${publicationProvenance.pullRequestNumber} review`,
           });
           await move(
             "completed",
