@@ -689,7 +689,15 @@ export function createModelProxyRequestListener(input) {
             throw error;
           }
         }
-        const upstreamBody = Buffer.from(JSON.stringify(admittedBody));
+        // Streamed reasoning requests can outlive a synchronous Responses
+        // connection. The proxy owns background mode so an untrusted client
+        // cannot weaken or override the request lifecycle policy. OpenAI keeps
+        // store=false background responses only for the temporary polling and
+        // stream-resumption window.
+        const upstreamBody = Buffer.from(JSON.stringify({
+          ...admittedBody,
+          ...(admittedBody.stream === true ? { background: true } : {}),
+        }));
         if (requestBytes >= WARN_BODY_BYTES) {
           log({
             event: "model_proxy_body_warning",
