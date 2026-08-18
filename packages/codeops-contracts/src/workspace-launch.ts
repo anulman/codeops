@@ -232,6 +232,15 @@ export const workspaceLaunchSchema = z.discriminatedUnion("state", [
     .strict(),
 ]);
 
+export const workspaceLaunchDetailSchema = z
+  .object({
+    version: z.literal("codeops.workspace-launch-detail/v1"),
+    launch: workspaceLaunchSchema,
+    initialPrompt: safeText(100_000),
+    initialPromptStatus: z.enum(["accepted", "committed"]),
+  })
+  .strict();
+
 export const workspaceCheckpointSchema = z
   .object({
     version: z.literal("codeops.workspace-checkpoint/v1"),
@@ -281,4 +290,7 @@ export type WorkspaceCatalogEntry = z.infer<
 >;
 export type WorkspaceCatalog = z.infer<typeof workspaceCatalogSchema>;
 export type WorkspaceLaunch = z.infer<typeof workspaceLaunchSchema>;
+export type WorkspaceLaunchDetail = z.infer<
+  typeof workspaceLaunchDetailSchema
+>;
 export type WorkspaceCheckpoint = z.infer<typeof workspaceCheckpointSchema>;

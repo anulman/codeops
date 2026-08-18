@@ -1,10 +1,12 @@
 import { readFile } from "node:fs/promises";
 import {
   workspaceCatalogSchema,
+  workspaceLaunchDetailSchema,
   workspaceLaunchRequestSchema,
   workspaceLaunchSchema,
   type WorkspaceCatalog,
   type WorkspaceLaunch,
+  type WorkspaceLaunchDetail,
   type WorkspaceLaunchRequest,
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
@@ -32,7 +34,7 @@ export interface WorkspaceLaunchClient {
   getLaunch(input: {
     readonly launchId: string;
     readonly principalId: string;
-  }): Promise<WorkspaceLaunch | null>;
+  }): Promise<WorkspaceLaunchDetail | null>;
 }
 
 export function createWorkspaceLaunchClient(input: {
@@ -109,7 +111,9 @@ export function createWorkspaceLaunchClient(input: {
         principalId: parsedPrincipal,
         allowMissing: true,
       });
-      return response === null ? null : workspaceLaunchSchema.parse(response);
+      return response === null
+        ? null
+        : workspaceLaunchDetailSchema.parse(response);
     },
   };
 }

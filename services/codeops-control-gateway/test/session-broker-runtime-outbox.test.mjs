@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { projectSessionBudget } from "@codeops/codeops-contracts";
 import {
   ImmutableSessionRuntimeDispatchConflictError,
   claimSessionRuntimeDispatch,
@@ -375,11 +376,19 @@ async function runtimeDispatch() {
 }
 
 test("atomically commits only an exact unexpired claim completion", async () => {
-  const dispatch = await runtimeDispatch();
+  const rawDispatch = await runtimeDispatch();
+  const budget = projectSessionBudget({
+    startedAt: "2026-08-04T17:30:00.000Z",
+    observedAt: "2026-08-04T19:09:00.000Z",
+  });
+  const dispatch = {
+    ...rawDispatch,
+    snapshot: { ...rawDispatch.snapshot, budget },
+  };
   const client = new CompletionClient({
     dispatch,
     reservedDispatch: reverseObjectKeys(dispatch),
-    current: reverseObjectKeys(snapshot()),
+    current: reverseObjectKeys(snapshot({ budget })),
   });
   const result = await completeSessionRuntimeDispatch(client, {
     dispatchId,
@@ -395,6 +404,8 @@ test("atomically commits only an exact unexpired claim completion", async () => 
     text === "BEGIN ISOLATION LEVEL SERIALIZABLE");
   assert.ok(transaction > 1);
   assert.match(client.calls[transaction + 1].text, /codeops\.sessions[\s\S]*FOR UPDATE/);
+  assert.match(client.calls[transaction + 1].text, /COALESCE\(\$3::timestamptz, CURRENT_TIMESTAMP\)/);
+  assert.equal(client.calls[transaction + 1].values[2], budget.observedAt);
   assert.match(client.calls[transaction + 2].text, /session_runtime_outbox[\s\S]*FOR UPDATE/);
   const completed = client.calls.find(({ text }) =>
     text.startsWith("UPDATE codeops.session_runtime_outbox"));

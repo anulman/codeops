@@ -14,7 +14,7 @@ export const Route = createFileRoute("/sessions/$sessionId")({
   loader: async ({ params }) => {
     const [session, fleet] = await Promise.all([getSessionDetail({ data: { sessionId: params.sessionId } }), getSessionFleet()]);
     const launchId = workspaceSessionLaunchId(params.sessionId);
-    const [events, launch] = await Promise.all([
+    const [events, launchDetail] = await Promise.all([
       session
         ? getSessionEvents({ data: { sessionId: params.sessionId, afterCursor: Math.max(0, session.eventCursor - 500), limit: 500 } })
         : Promise.resolve({ sessionId: params.sessionId, afterCursor: 0, nextCursor: 0, events: [] }),
@@ -22,13 +22,20 @@ export const Route = createFileRoute("/sessions/$sessionId")({
         ? getWorkspaceLaunch({ data: { launchId } })
         : Promise.resolve(null),
     ]);
-    return { session, events, fleet, launch };
+    return {
+      session,
+      events,
+      fleet,
+      launch: launchDetail?.launch ?? null,
+      initialPrompt: launchDetail?.initialPrompt ?? null,
+      initialPromptStatus: launchDetail?.initialPromptStatus ?? null,
+    };
   },
   component: SessionCockpit,
 });
 
 function SessionCockpit() {
-  const { session, events, fleet, launch } = Route.useLoaderData();
+  const { session, events, fleet, launch, initialPrompt, initialPromptStatus } = Route.useLoaderData();
   const router = useRouter();
   const [optimisticPrompt, setOptimisticPrompt] = useState<{
     readonly idempotencyKey: string;
@@ -63,7 +70,7 @@ function SessionCockpit() {
     if (!optimisticPrompt) return;
     optimisticPromptRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [optimisticPrompt?.idempotencyKey]);
-  if (!session && launch) return <ProvisioningSession launch={launch} sessions={fleet} />;
+  if (!session && launch) return <ProvisioningSession launch={launch} initialPrompt={initialPrompt} sessions={fleet} />;
   if (!session) return <AppShell sessions={fleet}><main {...sx("grid min-h-[calc(100dvh-52px)] place-items-center px-4 text-sm text-white/42 lg:min-h-dvh")}>Session not found.</main></AppShell>;
   const relatedSessions = fleet.filter((item) => item.identity.workflowId === session.identity.workflowId && item.sessionId !== session.sessionId).slice(0, 6);
   const comparisonCandidates = fleet.filter((item) =>
@@ -72,6 +79,10 @@ function SessionCockpit() {
     item.identity.forkedAtCursor !== null
   ).slice(0, 32);
   const permissionCapability = session.capabilities.find((item) => item.action === "respond_permission");
+  const acceptedInitialPrompt =
+    launch?.state === "ready" && initialPromptStatus === "accepted"
+      ? initialPrompt
+      : null;
 
   return (
     <AppShell sessions={fleet} activeSessionId={session.sessionId}>
@@ -92,8 +103,9 @@ function SessionCockpit() {
               </div>
               <div {...sx("space-y-1")}>
                 {events.events.map((event) => <EventRow key={event.eventId} event={event} />)}
+                {acceptedInitialPrompt ? <PendingPrompt text={acceptedInitialPrompt} /> : null}
                 {optimisticPrompt ? <PendingPrompt anchorRef={optimisticPromptRef} text={optimisticPrompt.text} /> : null}
-                {events.events.length === 0 && !optimisticPrompt ? <div {...sx("py-16 text-center text-sm text-white/28")}>No events after this cursor.</div> : null}
+                {events.events.length === 0 && !acceptedInitialPrompt && !optimisticPrompt ? <div {...sx("py-16 text-center text-sm text-white/28")}>No events after this cursor.</div> : null}
               </div>
             </div>
             <SessionComposer
@@ -118,7 +130,7 @@ function SessionCockpit() {
   );
 }
 
-function ProvisioningSession({ launch, sessions }: Readonly<{ launch: WorkspaceLaunch; sessions: readonly SessionSnapshot[] }>) {
+function ProvisioningSession({ launch, initialPrompt, sessions }: Readonly<{ launch: WorkspaceLaunch; initialPrompt: string | null; sessions: readonly SessionSnapshot[] }>) {
   const failed = launch.state === "failed";
   return (
     <AppShell sessions={sessions} activeSessionId={workspaceLaunchSessionId(launch.launchId)}>
@@ -136,6 +148,7 @@ function ProvisioningSession({ launch, sessions }: Readonly<{ launch: WorkspaceL
             <div {...sx(`grid size-10 place-items-center rounded-xl ${failed ? "bg-[#ff7278]/10 text-[#ff989d]" : "bg-[#6da8ff]/10 text-[#8dbbff]"}`)}>{failed ? "!" : <span {...sx("size-2 animate-pulse rounded-full bg-current")} />}</div>
             <h2 {...sx("mt-5 text-base font-semibold text-white/82")}>{failed ? "Workspace provisioning failed" : "Preparing your workspace"}</h2>
             <p {...sx("mt-2 max-w-xl text-sm leading-6 text-white/38")}>{failed ? `The launcher stopped with ${launch.failureCode.replaceAll("-", " ")}. No prompt was sent.` : "CodeOps is resolving the workspace, starting the runtime, and delivering your initial prompt. This page will update automatically."}</p>
+            {initialPrompt ? <div {...sx("mt-5 rounded-xl border border-white/[0.06] bg-black/15 px-4 py-3")}><p {...sx("text-[9px] font-semibold uppercase tracking-[0.08em] text-white/28")}>Initial prompt · {failed ? "not sent" : "accepted"}</p><p {...sx("mt-2 whitespace-pre-wrap break-words text-sm leading-6 text-white/62")}>{initialPrompt}</p></div> : null}
             {launch.contextAttachments.length > 0 ? <ContextAttachmentList attachments={launch.contextAttachments} tokens="mt-5" /> : null}
             {failed ? <Link to="/new" {...sx("mt-5 inline-grid h-10 place-items-center rounded-lg bg-white/[0.07] px-4 text-xs font-semibold text-white/72 transition hover:bg-white/[0.1]")}>Create another session</Link> : null}
           </div>
@@ -342,7 +355,7 @@ function safeResourceHref(uri: string) { try { const parsed = new URL(uri); retu
 function resourceName(uri: string) { const value = uri.split("/").filter(Boolean).at(-1); return value && value.length < 200 ? value : "agent-resource"; }
 function formatBytes(bytes: number) { if (bytes < 1_000) return `${bytes} B`; if (bytes < 1_000_000) return `${(bytes / 1_000).toFixed(1)} KB`; return `${(bytes / 1_000_000).toFixed(1)} MB`; }
 
-function PendingPrompt({ anchorRef, text }: Readonly<{ anchorRef: Ref<HTMLElement>; text: string }>) {
+function PendingPrompt({ anchorRef, text }: Readonly<{ anchorRef?: Ref<HTMLElement>; text: string }>) {
   return <article ref={anchorRef} aria-label="Prompt submitted. Waiting for agent." {...sx("ml-auto max-w-[88%] scroll-mb-32 py-2 opacity-65 sm:max-w-[78%]")}><div {...sx("rounded-2xl rounded-br-md border border-[#7774ff]/12 bg-[#7774ff]/7 px-4 py-3 text-sm leading-6 text-white/62")}><p {...sx("whitespace-pre-wrap break-words")}>{text}</p></div><div {...sx("mt-1.5 flex items-center justify-end gap-2 px-1 text-[9px] text-white/24")}><span {...sx("size-1.5 animate-pulse rounded-full bg-[#8e8bff]")} /><span>Waiting for agent</span></div></article>;
 }
 

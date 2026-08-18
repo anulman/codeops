@@ -41,6 +41,12 @@ const launch = {
   deadlineAt: "2026-08-13T19:00:00.000Z",
   attemptCount: 0,
 };
+const launchDetail = {
+  version: "codeops.workspace-launch-detail/v1",
+  launch,
+  initialPrompt: "Create a one-off script.",
+  initialPromptStatus: "accepted",
+};
 
 function json(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -90,7 +96,7 @@ test("catalog and launch reads validate responses and exact identities", async (
       defaultRef: "main",
     }],
   };
-  const responses = [json(catalog), json(launch)];
+  const responses = [json(catalog), json(launchDetail)];
   const calls = [];
   const client = createWorkspaceLaunchClient({
     baseUrl: new URL("https://launcher.example/"),
@@ -106,7 +112,7 @@ test("catalog and launch reads validate responses and exact identities", async (
       launchId: launch.launchId,
       principalId: launch.principalId,
     }),
-    launch,
+    launchDetail,
   );
   assert.equal(calls[1].url, `https://launcher.example/v1/workspace-launches/${launch.launchId}`);
   assert.equal(calls[1].init.headers["X-CodeOps-Principal"], launch.principalId);
@@ -135,6 +141,8 @@ test("launch server functions bind the private UI context and no browser token",
   assert.match(routeSource, /workspaceLaunchSessionId\(launch\.launchId\)/);
   assert.doesNotMatch(routeSource, /launch\.state === "ready"/);
   assert.match(sessionRouteSource, /Preparing your workspace/);
+  assert.match(sessionRouteSource, /Initial prompt/);
+  assert.match(sessionRouteSource, /initialPromptStatus === "accepted"/);
   assert.match(sessionRouteSource, /getWorkspaceLaunch/);
   assert.match(sessionRouteSource, /router\.invalidate\(\)/);
   assert.match(identitySource, /identity\.displayName \?\? identity\.runId/);
