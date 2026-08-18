@@ -199,6 +199,7 @@ test("replaces the run token with the real key only for the Responses API", asyn
     input: "hello",
     reasoning: { effort: "none" },
     max_output_tokens: 32768,
+    parallel_tool_calls: false,
     store: false,
   });
   assert.equal((await new Response(calls[0].init.body).text()).includes(token()), false);
@@ -590,6 +591,7 @@ test("enforces stateless Responses requests and rejects provider-hosted state", 
         input: [{ type: "message", role: "user", content: "Inspect this." }],
         reasoning: { effort: "high", context: "all_turns" },
         stream: true,
+        parallel_tool_calls: true,
         include: ["reasoning.encrypted_content"],
         client_metadata: {
           session_id: "session-runtime-local-only",
@@ -624,6 +626,7 @@ test("enforces stateless Responses requests and rejects provider-hosted state", 
   );
   assert.equal(admitted.length, 1);
   assert.equal(admitted[0].store, false);
+  assert.equal(admitted[0].parallel_tool_calls, false);
   assert.equal(admitted[0].background, true);
   assert.equal("client_metadata" in admitted[0], false);
   assert.equal("prompt_cache_key" in admitted[0], false);
