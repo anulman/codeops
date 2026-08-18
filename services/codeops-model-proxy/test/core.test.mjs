@@ -876,3 +876,75 @@ test("uses a high per-token concurrency stop-loss and releases capacity", async 
   assert.equal(logs.some((entry) => entry.event === "model_proxy_limit_warning"), true);
   assert.equal(logs.some((entry) => entry.event === "model_proxy_stop_loss"), true);
 });
+
+test("cancels abandoned upstream work and promptly releases concurrency", async () => {
+  const releases = [];
+  const logs = [];
+  let upstreamCalls = 0;
+  let firstUpstreamAborted = false;
+  await withProxy(
+    createModelProxyRequestListener({
+      openAiApiKey: "test-openai-key-never-exposed",
+      signingKey,
+      now: () => now,
+      log: (entry) => logs.push(entry),
+      fetch: async (_url, init) => {
+        upstreamCalls += 1;
+        if (upstreamCalls === 1) {
+          await new Promise((resolve, reject) => {
+            const abort = () => {
+              firstUpstreamAborted = true;
+              reject(init.signal.reason);
+            };
+            if (init.signal.aborted) abort();
+            else init.signal.addEventListener("abort", abort, { once: true });
+          });
+        } else {
+          await new Promise((resolve) => releases.push(resolve));
+        }
+        return new Response('{"id":"resp_after_cancel"}\n', {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    }),
+    async (origin) => {
+      const request = (signal) => fetch(`${origin}/v1/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token()}`,
+          "Content-Type": "application/json",
+        },
+        body: '{"model":"gpt-5.6-sol","input":"cancel","reasoning":{"effort":"high"}}',
+        signal,
+      });
+      const clientAbort = new AbortController();
+      const abandoned = request(clientAbort.signal);
+      while (upstreamCalls < 1) await new Promise((resolve) => setTimeout(resolve, 5));
+      clientAbort.abort();
+      await assert.rejects(abandoned, { name: "AbortError" });
+      while (!firstUpstreamAborted) await new Promise((resolve) => setTimeout(resolve, 5));
+
+      const active = Array.from({ length: 8 }, () => request());
+      await Promise.race([
+        (async () => {
+          while (upstreamCalls < 9) {
+            await new Promise((resolve) => setTimeout(resolve, 5));
+          }
+        })(),
+        new Promise((_, reject) => setTimeout(
+          () => reject(new Error("abandoned request did not release concurrency")),
+          1_000,
+        )),
+      ]);
+      for (const release of releases) release();
+      const completed = await Promise.all(active);
+      assert.deepEqual(completed.map((response) => response.status), Array(8).fill(200));
+      for (const response of completed) await response.text();
+    },
+  );
+  assert.equal(
+    logs.some((entry) => entry.event === "model_proxy_downstream_cancel"),
+    true,
+  );
+});
