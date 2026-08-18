@@ -185,6 +185,7 @@ function enforceResponsesPrivacyPolicy(body, authority, allowedModels, maxOutput
   return {
     ...admittedBody,
     store: false,
+    parallel_tool_calls: false,
     max_output_tokens: body.max_output_tokens ?? maxOutputTokens,
   };
 }
