@@ -604,6 +604,7 @@ test("enforces stateless Responses requests and rejects provider-hosted state", 
       const rejected = [
         { previous_response_id: "resp_prior" },
         { conversation: "conv_1" },
+        { background: false },
         { store: true },
         { tools: [{ type: "web_search" }] },
         { tools: [{ type: "file_search", vector_store_ids: ["vs_1"] }] },
@@ -623,6 +624,7 @@ test("enforces stateless Responses requests and rejects provider-hosted state", 
   );
   assert.equal(admitted.length, 1);
   assert.equal(admitted[0].store, false);
+  assert.equal(admitted[0].background, true);
   assert.equal("client_metadata" in admitted[0], false);
   assert.equal("prompt_cache_key" in admitted[0], false);
   assert.equal("previous_response_id" in admitted[0], false);
