@@ -39,6 +39,10 @@ test("renders one tokenless, bounded Agent Job without reusable model credential
   assert.deepEqual(pod.imagePullSecrets, [{ name: "codeops-registry" }]);
   assert.deepEqual(pod.nodeSelector, { "codeops.example/codeops": "true" });
   assert.equal(pod.volumes.some((volume) => volume.persistentVolumeClaim), false);
+  assert.equal(
+    pod.volumes.find((volume) => volume.name === "temp").emptyDir.sizeLimit,
+    "2Gi",
+  );
   assert.equal(rendered.includes("hostPath"), false);
   assert.equal(rendered.includes("PersistentVolumeClaim"), false);
 });

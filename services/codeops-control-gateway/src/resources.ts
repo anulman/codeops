@@ -460,7 +460,7 @@ export function buildRunResources(
                   ],
                 },
               },
-              { name: "temp", emptyDir: { sizeLimit: "256Mi" } },
+              { name: "temp", emptyDir: { sizeLimit: "2Gi" } },
               ...(input.candidate
                 ? [
                     {
