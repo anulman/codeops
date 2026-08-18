@@ -11,7 +11,10 @@ import {
   type SessionSnapshot,
 } from "@codeops/codeops-contracts";
 import { createHash } from "node:crypto";
-import type { TransactionClient } from "./session-broker-repository.js";
+import {
+  loadSessionSnapshot,
+  type TransactionClient,
+} from "./session-broker-repository.js";
 import { applyRuntimePermissionRequestTransition } from "./session-broker-transitions.js";
 import {
   ClaimedDispatchAuthorityConflictError,
@@ -138,6 +141,35 @@ async function loadPermissionDecisionRows(
   return result.rows;
 }
 
+function sessionRuntimeLineageSnapshot(snapshot: SessionSnapshot): unknown {
+  if (snapshot.budget === undefined) return snapshot;
+  // Model settlement and elapsed-time projection advance outside session
+  // command lineage. Keep the budget identity and limits in that lineage.
+  const budgetAuthority = snapshot.budget.version === "codeops.session-budget/v2"
+    ? {
+        version: snapshot.budget.version,
+        budgetId: snapshot.budget.budgetId,
+        startedAt: snapshot.budget.startedAt,
+        limits: snapshot.budget.limits,
+      }
+    : {
+        version: snapshot.budget.version,
+        startedAt: snapshot.budget.startedAt,
+        limits: snapshot.budget.limits,
+      };
+  return { ...snapshot, budget: budgetAuthority };
+}
+
+function followsRuntimeLineage(
+  expected: SessionSnapshot,
+  actual: SessionSnapshot,
+): boolean {
+  return (
+    canonicalJsonText(sessionRuntimeLineageSnapshot(expected)) ===
+    canonicalJsonText(sessionRuntimeLineageSnapshot(actual))
+  );
+}
+
 function validatePermissionDecisionLineage(
   rows: readonly PermissionDecisionRow[],
   input: {
@@ -147,10 +179,7 @@ function validatePermissionDecisionLineage(
   },
 ): SessionSnapshot {
   if (rows.length === 0) {
-    if (
-      canonicalJsonText(input.current) !==
-      canonicalJsonText(input.dispatch.snapshot)
-    ) {
+    if (!followsRuntimeLineage(input.dispatch.snapshot, input.current)) {
       throw new SessionRuntimePermissionConflictError(
         "runtime completion snapshot drifted without a permission transition",
       );
@@ -219,7 +248,7 @@ function validatePermissionDecisionLineage(
   }
   if (
     finalSnapshot === null ||
-    canonicalJsonText(finalSnapshot) !== canonicalJsonText(input.current)
+    !followsRuntimeLineage(finalSnapshot, input.current)
   ) {
     throw new SessionRuntimePermissionConflictError(
       "runtime completion does not end at the current session snapshot",
@@ -437,18 +466,15 @@ export async function resolveSessionRuntimeCompletionSnapshot(
     readonly claimToken: string;
   },
 ): Promise<SessionSnapshot> {
-  const result = await client.query<StoredSessionRow>(
-    `SELECT snapshot_json
-       FROM codeops.sessions
-      WHERE session_id = $1`,
-    [input.dispatch.command.sessionId],
+  const current = await loadSessionSnapshot(
+    client,
+    input.dispatch.command.sessionId,
   );
-  if (!result.rows[0]) {
+  if (current === null) {
     throw new SessionRuntimePermissionNotFoundError(
       `session ${input.dispatch.command.sessionId} was not found`,
     );
   }
-  const current = sessionSnapshotSchema.parse(result.rows[0].snapshot_json);
   return validatePermissionDecisionLineage(
     await loadPermissionDecisionRows(client, input.dispatch.dispatchId),
     { dispatch: input.dispatch, claimToken: input.claimToken, current },

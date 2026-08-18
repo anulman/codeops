@@ -1,9 +1,11 @@
 import type { IncomingHttpHeaders } from "node:http";
 import {
   workspaceCatalogSchema,
+  workspaceLaunchDetailSchema,
   workspaceLaunchSchema,
   type WorkspaceCatalog,
   type WorkspaceLaunch,
+  type WorkspaceLaunchDetail,
 } from "@codeops/codeops-contracts";
 import { ZodError } from "zod";
 import { authenticateBearer } from "./bearer-auth.js";
@@ -40,7 +42,7 @@ export async function serveWorkspaceLaunch(input: {
   readonly readBody: () => Promise<unknown>;
   readonly catalog: WorkspaceCatalog;
   readonly admit: (request: unknown, principalId: string) => Promise<WorkspaceLaunch>;
-  readonly load: (launchId: string, principalId: string) => Promise<WorkspaceLaunch | null>;
+  readonly load: (launchId: string, principalId: string) => Promise<WorkspaceLaunchDetail | null>;
 }): Promise<{
   readonly status: number;
   readonly body: Readonly<Record<string, unknown>>;
@@ -99,5 +101,5 @@ export async function serveWorkspaceLaunch(input: {
   const launch = await input.load(launchId, principalId);
   return launch === null
     ? { status: 404, body: { status: "not-found" } }
-    : { status: 200, body: workspaceLaunchSchema.parse(launch) };
+    : { status: 200, body: workspaceLaunchDetailSchema.parse(launch) };
 }

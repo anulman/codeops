@@ -694,7 +694,9 @@ export async function executeSessionCommandTransaction(
     // requests racing with the same key.
     const locked = await client.query<StoredSessionRow>(
       `SELECT parent.snapshot_json, parent.owner_principal_id,
-              CURRENT_TIMESTAMP AS observed_at,
+              -- Reproject a runtime reservation at its pre-lock observation
+              -- time so only durable ledger drift can fail the exact compare.
+              COALESCE($3::timestamptz, CURRENT_TIMESTAMP) AS observed_at,
               budget.budget_id AS model_budget_id,
               budget.started_at AS model_budget_started_at,
               budget.provider_requests_limit,
@@ -718,7 +720,11 @@ export async function executeSessionCommandTransaction(
         WHERE parent.session_id = $1
           AND ($2::text IS NULL OR parent.owner_principal_id = $2)
         FOR UPDATE OF parent`,
-      [command.sessionId, input.ownerPrincipalId ?? null],
+      [
+        command.sessionId,
+        input.ownerPrincipalId ?? null,
+        input.runtimeReservation?.expectedSnapshot.budget?.observedAt ?? null,
+      ],
     );
     if (!locked.rows[0]) {
       throw new SessionNotFoundError(`session ${command.sessionId} not found`);

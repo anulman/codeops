@@ -1,7 +1,9 @@
 import {
   workspaceLaunchRequestSchema,
+  workspaceLaunchDetailSchema,
   workspaceLaunchSchema,
   type WorkspaceLaunch,
+  type WorkspaceLaunchDetail,
   type WorkspaceLaunchRequest,
 } from "@codeops/codeops-contracts";
 import type { TransactionClient } from "./session-broker-repository.js";
@@ -13,6 +15,11 @@ import {
 
 interface LaunchRow extends Record<string, unknown> {
   readonly launch_json: unknown;
+}
+
+interface LaunchDetailRow extends LaunchRow {
+  readonly request_json: unknown;
+  readonly initial_prompt_committed: unknown;
 }
 
 export function createPostgresWorkspaceLaunchStore(
@@ -129,20 +136,35 @@ export async function loadWorkspaceLaunchRequest(
     : null;
 }
 
-export async function loadWorkspaceLaunchForPrincipal(
+export async function loadWorkspaceLaunchDetailForPrincipal(
   client: TransactionClient,
   launchId: string,
   principalId: string,
-): Promise<WorkspaceLaunch | null> {
-  const result = await client.query<LaunchRow>(
-    `SELECT launch_json
-       FROM codeops.workspace_launches
-      WHERE launch_id = $1 AND principal_id = $2`,
+): Promise<WorkspaceLaunchDetail | null> {
+  const result = await client.query<LaunchDetailRow>(
+    `SELECT launch.launch_json, launch.request_json,
+            EXISTS (
+              SELECT 1
+                FROM codeops.session_commands AS command
+               WHERE command.session_id = launch.launch_json->>'sessionId'
+                 AND command.idempotency_key::text =
+                     launch.launch_json->>'initialPromptCommandId'
+            ) AS initial_prompt_committed
+       FROM codeops.workspace_launches AS launch
+      WHERE launch.launch_id = $1 AND launch.principal_id = $2`,
     [launchId, principalId],
   );
-  return result.rows[0]
-    ? workspaceLaunchSchema.parse(result.rows[0].launch_json)
-    : null;
+  const row = result.rows[0];
+  if (!row) return null;
+  const request = workspaceLaunchRequestSchema.parse(row.request_json);
+  return workspaceLaunchDetailSchema.parse({
+    version: "codeops.workspace-launch-detail/v1",
+    launch: workspaceLaunchSchema.parse(row.launch_json),
+    initialPrompt: request.prompt,
+    initialPromptStatus: row.initial_prompt_committed === true
+      ? "committed"
+      : "accepted",
+  });
 }
 
 export async function listActiveWorkspaceLaunchIds(

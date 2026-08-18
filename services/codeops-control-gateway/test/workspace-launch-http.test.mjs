@@ -47,6 +47,12 @@ const launch = {
   deadlineAt: "2026-08-13T18:00:00.000Z",
   attemptCount: 0,
 };
+const launchDetail = {
+  version: "codeops.workspace-launch-detail/v1",
+  launch,
+  initialPrompt: "Implement the bounded change.",
+  initialPromptStatus: "accepted",
+};
 
 function request(overrides = {}) {
   return {
@@ -67,7 +73,7 @@ function request(overrides = {}) {
     }),
     catalog,
     admit: async () => launch,
-    load: async () => launch,
+    load: async () => launchDetail,
     ...overrides,
   };
 }
@@ -112,7 +118,7 @@ test("loads only a launch owned by the authenticated principal", async () => {
       url: "/v1/workspace-launches/launch-1",
       load: async (launchId, principalId) => {
         loaded = { launchId, principalId };
-        return launch;
+        return launchDetail;
       },
     }),
   );
@@ -121,6 +127,8 @@ test("loads only a launch owned by the authenticated principal", async () => {
     launchId: "launch-1",
     principalId: "anulman@gmail.com",
   });
+  assert.equal(result.body.initialPrompt, "Implement the bounded change.");
+  assert.equal(result.body.initialPromptStatus, "accepted");
 });
 
 test("rejects missing launch authority, principal, and JSON media type", async () => {

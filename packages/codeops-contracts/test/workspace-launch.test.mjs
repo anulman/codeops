@@ -4,6 +4,7 @@ import {
   workspaceCatalogSchema,
   workspaceCheckpointSchema,
   workspaceLaunchRequestSchema,
+  workspaceLaunchDetailSchema,
   workspaceLaunchSchema,
   workspaceLaunchSessionId,
   workspaceManifestSchema,
@@ -147,6 +148,14 @@ test("records durable launch state without the prompt body", () => {
   });
   assert.equal("prompt" in launch, false);
   assert.equal("content" in launch.contextAttachments[0], false);
+  const detail = workspaceLaunchDetailSchema.parse({
+    version: "codeops.workspace-launch-detail/v1",
+    launch,
+    initialPrompt: "Implement the bounded change.",
+    initialPromptStatus: "accepted",
+  });
+  assert.equal(detail.initialPrompt, "Implement the bounded change.");
+  assert.equal("initialPrompt" in detail.launch, false);
 });
 
 test("groups checkpoint evidence by source and scratch artifact", () => {

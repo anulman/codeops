@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { createPostgresWorkspaceLaunchStore } from "../dist/workspace-launch-store.js";
+import {
+  createPostgresWorkspaceLaunchStore,
+  loadWorkspaceLaunchDetailForPrincipal,
+} from "../dist/workspace-launch-store.js";
 import { WorkspaceLaunchQuotaError } from "../dist/workspace-launch.js";
 
 const policy = {
@@ -119,4 +122,46 @@ test("serializes the per-principal quota under parallel requests", async () => {
   );
   assert.equal(results.filter(({ status }) => status === "fulfilled").length, 2);
   assert.equal(database.state.launches.length, 2);
+});
+
+test("loads the owner-only initial prompt and its durable commit state", async () => {
+  const admitted = admission(1, "owner@example.com");
+  const ready = {
+    ...admitted.launch,
+    contextAttachments: [],
+    state: "ready",
+    sessionId: "ses_000000000000000000000001",
+    initialPromptCommandId: admitted.launch.idempotencyKey,
+  };
+  const calls = [];
+  const client = {
+    async query(text, values) {
+      calls.push({ text, values });
+      return {
+        rowCount: 1,
+        rows: [{
+          launch_json: ready,
+          request_json: admitted.request,
+          initial_prompt_committed: true,
+        }],
+      };
+    },
+  };
+
+  assert.deepEqual(
+    await loadWorkspaceLaunchDetailForPrincipal(
+      client,
+      ready.launchId,
+      ready.principalId,
+    ),
+    {
+      version: "codeops.workspace-launch-detail/v1",
+      launch: ready,
+      initialPrompt: "Prompt 1",
+      initialPromptStatus: "committed",
+    },
+  );
+  assert.deepEqual(calls[0].values, [ready.launchId, ready.principalId]);
+  assert.match(calls[0].text, /launch\.principal_id = \$2/);
+  assert.match(calls[0].text, /codeops\.session_commands/);
 });

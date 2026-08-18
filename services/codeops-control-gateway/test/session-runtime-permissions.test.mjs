@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { projectSessionBudget } from "@codeops/codeops-contracts";
 import {
   pollSessionRuntimePermission,
   resolveSessionRuntimeCompletionSnapshot,
@@ -576,8 +577,9 @@ function permissionDecisionRow(
 }
 
 class CompletionClient {
-  constructor(rows) {
+  constructor(rows, current = null) {
     this.rows = rows;
+    this.current = current;
     this.calls = [];
   }
 
@@ -587,7 +589,9 @@ class CompletionClient {
       const latest = this.rows.findLast(({ result_json }) => result_json !== null);
       return {
         rowCount: 1,
-        rows: [{ snapshot_json: latest?.result_json.snapshot ?? snapshot() }],
+        rows: [{
+          snapshot_json: this.current ?? latest?.result_json.snapshot ?? snapshot(),
+        }],
       };
     }
     if (text.includes("FROM codeops.session_runtime_permission_requests AS request")) {
@@ -596,6 +600,63 @@ class CompletionClient {
     throw new Error(`unexpected query: ${text}`);
   }
 }
+
+test("completion accepts only ledger-owned budget projection drift", async () => {
+  const startedAt = "2026-08-05T03:15:00.000Z";
+  const original = snapshot({
+    budget: projectSessionBudget({
+      startedAt,
+      observedAt: startedAt,
+      totalTokens: 0,
+      modelRequests: 0,
+    }),
+  });
+  const current = {
+    ...original,
+    budget: projectSessionBudget({
+      startedAt,
+      observedAt: "2026-08-05T03:20:00.000Z",
+      totalTokens: 16_327,
+      modelRequests: 1,
+    }),
+  };
+  const completionDispatch = { ...dispatch(), snapshot: original };
+  const client = new CompletionClient([], current);
+
+  assert.deepEqual(
+    await resolveSessionRuntimeCompletionSnapshot(client, {
+      dispatch: completionDispatch,
+      claimToken,
+    }),
+    current,
+  );
+  assert.match(
+    client.calls.find((text) => text.includes("FROM codeops.sessions")),
+    /LEFT JOIN codeops\.session_model_budgets/,
+  );
+
+  await assert.rejects(
+    resolveSessionRuntimeCompletionSnapshot(
+      new CompletionClient([], { ...current, eventCursor: 2 }),
+      { dispatch: completionDispatch, claimToken },
+    ),
+    /drifted without a permission transition/,
+  );
+  await assert.rejects(
+    resolveSessionRuntimeCompletionSnapshot(
+      new CompletionClient([], {
+        ...current,
+        budget: {
+          ...current.budget,
+          limits: { ...current.budget.limits, modelRequests: 201 },
+          remaining: { ...current.budget.remaining, modelRequests: 200 },
+        },
+      }),
+      { dispatch: completionDispatch, claimToken },
+    ),
+    /drifted without a permission transition/,
+  );
+});
 
 test("completion validates multiple ordered decisions without a fixed cursor", async () => {
   const rows = [

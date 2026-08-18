@@ -105,7 +105,7 @@ import {
 import {
   createPostgresWorkspaceLaunchStore,
   listActiveWorkspaceLaunchIds,
-  loadWorkspaceLaunchForPrincipal,
+  loadWorkspaceLaunchDetailForPrincipal,
   loadWorkspaceLaunchRequest,
   updateWorkspaceLaunch,
 } from "./workspace-launch-store.js";
@@ -747,7 +747,7 @@ const server = createServer((request, response) => {
         load: async (launchId, principalId) => {
           const client = await database.connect();
           try {
-            return await loadWorkspaceLaunchForPrincipal(
+            return await loadWorkspaceLaunchDetailForPrincipal(
               client,
               launchId,
               principalId,
