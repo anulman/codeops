@@ -641,6 +641,17 @@ export function createModelProxyRequestListener(input) {
       const startedAt = Date.now();
       let status = 502;
       let requestBytes = 0;
+      const downstreamAbort = new AbortController();
+      const abortUpstream = () => {
+        if (response.writableFinished || downstreamAbort.signal.aborted) return;
+        downstreamAbort.abort(new Error("model proxy downstream disconnected"));
+        log({
+          event: "model_proxy_downstream_cancel",
+          subject: authority.runId,
+        });
+      };
+      request.once("aborted", abortUpstream);
+      response.once("close", abortUpstream);
       try {
         const bodyResult = await readBody(request);
         requestBytes = bodyResult.bytes;
@@ -726,7 +737,10 @@ export function createModelProxyRequestListener(input) {
               redirect: "error",
               headers,
               body: upstreamBody,
-              signal: AbortSignal.timeout(MODEL_PROXY_UPSTREAM_TIMEOUT_MS),
+              signal: AbortSignal.any([
+                AbortSignal.timeout(MODEL_PROXY_UPSTREAM_TIMEOUT_MS),
+                downstreamAbort.signal,
+              ]),
             },
           );
         } catch (error) {
@@ -833,6 +847,8 @@ export function createModelProxyRequestListener(input) {
         else if (error instanceof RequestPolicyError) status = 400;
         throw error;
       } finally {
+        request.off("aborted", abortUpstream);
+        response.off("close", abortUpstream);
         release();
         log({
           event: "model_proxy_request",
