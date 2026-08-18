@@ -676,16 +676,16 @@ const utilityStyles = stylex.create({
     "justifyContent": "flex-end"
   },
   "leading-3": {
-    "lineHeight": 12
+    "lineHeight": "12px"
   },
   "leading-4": {
-    "lineHeight": 16
+    "lineHeight": "16px"
   },
   "leading-5": {
-    "lineHeight": 20
+    "lineHeight": "20px"
   },
   "leading-6": {
-    "lineHeight": 24
+    "lineHeight": "24px"
   },
   "left-2.5": {
     "left": 10

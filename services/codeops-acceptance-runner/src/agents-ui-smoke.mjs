@@ -62,6 +62,13 @@ export async function runAgentsUiSmoke(input = {}) {
           { role: "heading", name: "New session" },
           { role: "button", name: "Create session" },
         ],
+        typography: [
+          {
+            selector: '[data-codeops-typography="launch-policy-description"]',
+            fontSize: 11,
+            lineHeight: 16,
+          },
+        ],
       },
     ];
     if (input.sessionId) {
@@ -73,6 +80,13 @@ export async function runAgentsUiSmoke(input = {}) {
           { role: "heading", name: "Legacy workspace" },
           { role: "group", name: "Session actions" },
           { role: "button", name: "Cancel" },
+        ],
+        typography: [
+          {
+            selector: '[data-codeops-typography="protocol-diagnostics"]',
+            fontSize: 9,
+            lineHeight: 12,
+          },
         ],
       });
     }
@@ -105,6 +119,26 @@ export async function runAgentsUiSmoke(input = {}) {
         );
         if (overflow) {
           throw new Error(`${target.name} agents UI has horizontal overflow`);
+        }
+        for (const sample of target.typography ?? []) {
+          const computed = await page.evaluate(({ selector }) => {
+            const element = document.querySelector(selector);
+            if (!(element instanceof HTMLElement)) return null;
+            const style = window.getComputedStyle(element);
+            return {
+              fontSize: Number.parseFloat(style.fontSize),
+              lineHeight: Number.parseFloat(style.lineHeight),
+            };
+          }, sample);
+          if (
+            computed === null ||
+            computed.fontSize !== sample.fontSize ||
+            computed.lineHeight !== sample.lineHeight
+          ) {
+            throw new Error(
+              `${target.name} agents UI typography drift at ${sample.selector}: expected ${sample.fontSize}/${sample.lineHeight}px, received ${computed === null ? "missing" : `${computed.fontSize}/${computed.lineHeight}px`}`,
+            );
+          }
         }
       } finally {
         await context.close();
