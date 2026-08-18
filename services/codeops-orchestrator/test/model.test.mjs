@@ -14,12 +14,23 @@ import {
   publishResearchPacket,
   recordTransition,
 } from "../dist/activities.js";
+import { agentJobActivityOptions } from "../dist/activity-options.js";
 import { transition } from "../dist/model.js";
 import {
   adversarialReviewMatchesCandidate,
   candidateCheckpointFromDispatch,
   criticLoopAction,
 } from "../dist/review.js";
+
+test("does not automatically repeat Agent Job provider side effects", () => {
+  assert.deepEqual(agentJobActivityOptions, {
+    startToCloseTimeout: "70 minutes",
+    retry: {
+      initialInterval: "5 seconds",
+      maximumAttempts: 1,
+    },
+  });
+});
 
 const projectContext = {
   version: "codeops.project-context/v1",

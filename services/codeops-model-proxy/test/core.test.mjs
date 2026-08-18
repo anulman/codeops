@@ -5,12 +5,17 @@ import { once } from "node:events";
 import test from "node:test";
 import {
   createModelProxyRequestListener as createRawModelProxyRequestListener,
+  MODEL_PROXY_UPSTREAM_TIMEOUT_MS,
   validateModelProxyToken,
 } from "../src/core.mjs";
 import { ModelBudgetExhaustedError } from "../src/model-budget-ledger.mjs";
 
 const signingKey = "m".repeat(64);
 const now = Date.parse("2026-08-09T17:00:00.000Z");
+
+test("allows one high-reasoning provider request to use the Agent Job window", () => {
+  assert.equal(MODEL_PROXY_UPSTREAM_TIMEOUT_MS, 60 * 60 * 1_000);
+});
 
 function testLedger() {
   const calls = [];

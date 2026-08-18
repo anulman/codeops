@@ -20,6 +20,7 @@ import type {
   DispatchResult,
   ResearchProjectionResult,
 } from "./activities.js";
+import { agentJobActivityOptions } from "./activity-options.js";
 import { transition, type WorkflowSnapshot } from "./model.js";
 import { buildResearchPacket } from "./research.js";
 import {
@@ -77,13 +78,7 @@ const { recordTransition } = proxyActivities<
 });
 const { dispatchAgentJob } = proxyActivities<
   Pick<Activities, "dispatchAgentJob">
->({
-  startToCloseTimeout: "70 minutes",
-  retry: {
-    initialInterval: "5 seconds",
-    maximumAttempts: 3,
-  },
-});
+>(agentJobActivityOptions);
 const { publishResearchPacket } = proxyActivities<
   Pick<Activities, "publishResearchPacket">
 >({
