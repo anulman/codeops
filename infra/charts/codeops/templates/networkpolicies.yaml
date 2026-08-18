@@ -346,6 +346,9 @@ spec:
               - key: app.kubernetes.io/component
                 operator: In
                 values: [github-controller, runtime]
+        - podSelector:
+            matchLabels:
+              app.kubernetes.io/name: codeops-agent
       ports: [{ protocol: TCP, port: 8080 }]
   egress:
     - to:
