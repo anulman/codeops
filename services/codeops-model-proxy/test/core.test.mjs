@@ -583,9 +583,14 @@ test("enforces stateless Responses requests and rejects provider-hosted state", 
       const safe = await request({
         model: "gpt-5.6-sol",
         input: [{ type: "message", role: "user", content: "Inspect this." }],
-        reasoning: { effort: "high" },
+        reasoning: { effort: "high", context: "all_turns" },
         stream: true,
         include: ["reasoning.encrypted_content"],
+        client_metadata: {
+          session_id: "session-runtime-local-only",
+          turn_id: "turn-runtime-local-only",
+        },
+        prompt_cache_key: "session-runtime-local-only",
         tools: [{ type: "function", name: "inspect", parameters: { type: "object" } }],
       });
       assert.equal(safe.status, 200);
@@ -598,7 +603,6 @@ test("enforces stateless Responses requests and rejects provider-hosted state", 
         { tools: [{ type: "web_search" }] },
         { tools: [{ type: "file_search", vector_store_ids: ["vs_1"] }] },
         { input: [{ type: "input_file", file_id: "file_1" }] },
-        { prompt_cache_key: "stable-provider-state" },
         { metadata: { workItemBody: "private" } },
       ];
       for (const drift of rejected) {
@@ -614,6 +618,8 @@ test("enforces stateless Responses requests and rejects provider-hosted state", 
   );
   assert.equal(admitted.length, 1);
   assert.equal(admitted[0].store, false);
+  assert.equal("client_metadata" in admitted[0], false);
+  assert.equal("prompt_cache_key" in admitted[0], false);
   assert.equal("previous_response_id" in admitted[0], false);
 });
 
