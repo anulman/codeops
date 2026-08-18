@@ -557,6 +557,12 @@ test("delivers immutable ticket and sibling decision context to coding jobs", ()
     codingDispatch,
   );
   assert.doesNotThrow(() => assertRunResources(resources));
+  const job = resources.find((resource) => resource.kind === "Job");
+  assert.equal(
+    job.spec.template.spec.volumes.find((volume) => volume.name === "temp")
+      .emptyDir.sizeLimit,
+    "2Gi",
+  );
   const runSecret = resources[0];
   assert.deepEqual(
     JSON.parse(

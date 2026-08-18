@@ -194,7 +194,7 @@ spec:
             sizeLimit: 256Mi
         - name: temp
           emptyDir:
-            sizeLimit: 256Mi
+            sizeLimit: 2Gi
         - name: run-input
           secret:
             secretName: codeops-run-__CODEOPS_RUN_SUFFIX__
