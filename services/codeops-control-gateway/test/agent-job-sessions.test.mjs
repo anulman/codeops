@@ -3,6 +3,7 @@ import test from "node:test";
 import {
   agentJobSessionId,
   describeAgentJobSession,
+  projectAgentJobSessionStarted,
 } from "../dist/agent-job-sessions.js";
 
 const adoptedPullRequest = {
@@ -27,7 +28,16 @@ function request(role, round) {
     workflowId: "adopt-pr-158",
     baseSha: adoptedPullRequest.headSha,
     codingRound: round,
-    codingRequest: { adoptedPullRequest },
+    summary: "Review the exact existing PR",
+    codingRequest: {
+      adoptedPullRequest,
+      projectContext: { digest: `sha256:${"c".repeat(64)}` },
+      researchDisposition: {
+        mode: "skipped",
+        rationale: "The ticket is bounded.",
+      },
+      workItem: { acceptanceCriteria: ["Review the exact existing PR."] },
+    },
   };
 }
 
@@ -59,4 +69,44 @@ test("does not project unrelated Agent Jobs", () => {
     ),
     null,
   );
+});
+
+test("persists the projected Job prompt as one command-bound event", async () => {
+  const calls = [];
+  let snapshot;
+  const client = {
+    async query(sql, values = []) {
+      calls.push({ sql, values });
+      if (sql.includes("INSERT INTO codeops.sessions")) {
+        snapshot = JSON.parse(values[3]);
+        return { rowCount: 1, rows: [] };
+      }
+      if (sql.includes("SELECT snapshot_json FROM codeops.sessions")) {
+        return { rowCount: 1, rows: [{ snapshot_json: snapshot }] };
+      }
+      return { rowCount: 1, rows: [] };
+    },
+  };
+
+  const sessionId = await projectAgentJobSessionStarted({
+    client,
+    request: request("coding-agent", 1),
+    runId: "worker-run",
+    now: () => new Date("2026-08-18T08:30:00.000Z"),
+  });
+
+  assert.equal(sessionId, agentJobSessionId("worker-run"));
+  const command = calls.find(({ sql }) =>
+    sql.includes("INSERT INTO codeops.session_commands"),
+  );
+  const promptEvent = calls.find(
+    ({ sql, values }) =>
+      sql.includes("INSERT INTO codeops.session_events") &&
+      values[2] === "command_committed",
+  );
+  assert.ok(command);
+  assert.ok(promptEvent);
+  assert.equal(promptEvent.values[4], command.values[0]);
+  assert.equal(JSON.parse(command.values[3]).type, "prompt");
+  assert.equal(JSON.parse(command.values[4]).disposition, "committed");
 });
