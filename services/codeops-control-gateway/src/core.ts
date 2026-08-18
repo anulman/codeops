@@ -553,6 +553,18 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
             "Resolve every concrete request in the review summary and inline comments. Preserve valid existing PR work, keep the change within the ticket, and explicitly cover each request with code or passing evidence.",
           ]
         : []),
+      ...(request.codingRequest.adoptedPullRequest
+        ? [
+            "This workflow adopts one existing pull request for exact-head adversarial review.",
+            `The immutable adopted pull request is: ${JSON.stringify(request.codingRequest.adoptedPullRequest)}`,
+            ...(request.codingRound === 1
+              ? [
+                  "The workspace is already checked out at the exact adopted PR head.",
+                  "Do not edit source in round 1. Inspect the PR diff and existing implementation, run the focused acceptance tests, and report the exact adopted tree as the candidate.",
+                ]
+              : []),
+          ]
+        : []),
       ...(request.revision
         ? [
             "The previous cumulative candidate patch is already applied to /workspace.",
@@ -650,6 +662,12 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
         ? [
             `The exact human review being addressed is: ${JSON.stringify(request.codingRequest.humanReview)}`,
             "Independently verify that every concrete human review request is resolved in the cumulative candidate.",
+          ]
+        : []),
+      ...(request.codingRequest.adoptedPullRequest
+        ? [
+            `The exact adopted pull request is: ${JSON.stringify(request.codingRequest.adoptedPullRequest)}`,
+            "Review the complete adopted PR diff against its exact base, not only repairs added after adoption. The workspace contains the exact adopted head plus any cumulative repair patch.",
           ]
         : []),
       "Pursue narrow ticket completion. Do not demand adjacent roadmap work in this candidate.",
@@ -928,6 +946,14 @@ export function parseCheckpointLogs(input: {
       patch.length !== input.request.candidate.patch.sizeBytes)
   ) {
     throw new Error("Critic Agent changed the cumulative candidate patch");
+  }
+  if (
+    input.request.role === "coding-agent" &&
+    input.request.codingRound === 1 &&
+    input.request.codingRequest.adoptedPullRequest !== undefined &&
+    (patch.length !== 0 || patchDigest !== EMPTY_PATCH_SHA256)
+  ) {
+    throw new Error("Adopted pull-request round 1 changed the exact adopted head");
   }
   return {
     checkpoint,

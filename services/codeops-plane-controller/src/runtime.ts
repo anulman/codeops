@@ -770,6 +770,10 @@ export function createPlaneWebhookRequestListener(input: {
     token: string;
     process: (notice: WorkflowTransitionNotice) => Promise<void>;
   };
+  adoption?: {
+    token: string;
+    process: (request: unknown) => Promise<Readonly<Record<string, unknown>>>;
+  };
   workItems?: {
     token: string;
     create: (request: unknown) => Promise<WorkItemCreateResult>;
@@ -787,6 +791,39 @@ export function createPlaneWebhookRequestListener(input: {
   return async (request, response) => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      request.url === "/v1/existing-pull-request-adoptions"
+    ) {
+      if (
+        input.adoption === undefined ||
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          input.adoption.token,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      if (!request.headers["content-type"]?.startsWith("application/json")) {
+        json(response, 415, { status: "unsupported-media-type" });
+        return;
+      }
+      try {
+        json(
+          response,
+          202,
+          await input.adoption.process(
+            JSON.parse((await readRawBody(request)).toString("utf8")) as unknown,
+          ),
+        );
+      } catch {
+        json(response, 409, { status: "rejected" });
+      }
       return;
     }
     if (request.method === "POST" && request.url === "/v1/research-packets") {

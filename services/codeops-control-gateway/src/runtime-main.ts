@@ -32,6 +32,10 @@ import {
   loadInClusterKubernetesClient,
 } from "./kubernetes.js";
 import { publishCandidateRevision } from "./publication.js";
+import {
+  projectAgentJobSessionStarted,
+  projectAgentJobSessionTerminal,
+} from "./agent-job-sessions.js";
 import { createAgentJobRunner } from "./runtime.js";
 import {
   createRepositoryRegistry,
@@ -442,6 +446,30 @@ const run = createAgentJobRunner({
     ),
     modelAuth,
     evidenceRoot: required("CODEOPS_EVIDENCE_ROOT"),
+    sessionProjection: {
+      started: async (request, runId) => {
+        const client = await database.connect();
+        try {
+          await projectAgentJobSessionStarted({ client, request, runId });
+        } finally {
+          client.release();
+        }
+      },
+      terminal: async ({ request, runId, response, state }) => {
+        const client = await database.connect();
+        try {
+          await projectAgentJobSessionTerminal({
+            client,
+            request,
+            runId,
+            response,
+            state,
+          });
+        } finally {
+          client.release();
+        }
+      },
+    },
   },
 });
 

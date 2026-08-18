@@ -27,6 +27,7 @@ import {
   createTemporalCodingCanceller,
   createFileResearchPacketStore,
   createPlaneApiClient,
+  adoptExistingPullRequest,
   identifyPlaneReadyTransition,
   loadGitHubWebhookRegistryFile,
   loadRepositoryPlaneRegistryFile,
@@ -125,6 +126,9 @@ const workItemMutationToken = await secretFile(
 const repositoryHeadToken = await secretFile(
   "CODEOPS_REPOSITORY_HEAD_TOKEN_FILE",
 );
+const existingPullRequestAdoptionToken = await secretFile(
+  "CODEOPS_EXISTING_PR_ADOPTION_TOKEN_FILE",
+);
 const classifyCommentRequest = createModelPlaneCommentRequestClassifier({
   origin: required("CODEOPS_MODEL_PROXY_ORIGIN"),
   signingKey: await secretFile("CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE"),
@@ -133,7 +137,12 @@ if (
   workItemMutationToken.length < 32 ||
   workItemMutationToken.length > 4_096 ||
   workItemMutationToken === projectionToken ||
-  workItemMutationToken === repositoryHeadToken
+  workItemMutationToken === repositoryHeadToken ||
+  existingPullRequestAdoptionToken.length < 32 ||
+  existingPullRequestAdoptionToken.length > 4_096 ||
+  [projectionToken, workItemMutationToken, repositoryHeadToken].includes(
+    existingPullRequestAdoptionToken,
+  )
 ) {
   throw new Error("CodeOps work-item mutation token is invalid or reused");
 }
@@ -493,6 +502,45 @@ async function cancelDescendantWork(input: {
 }
 
 const listener = createPlaneWebhookRequestListener({
+  adoption: {
+    token: existingPullRequestAdoptionToken,
+    process: async (request) => {
+      const parsed = z
+        .object({
+          codingRequest: z
+            .object({
+              projectId: z.string().uuid(),
+              workItem: z
+                .object({
+                  repository: z
+                    .object({ owner: z.string(), name: z.string() })
+                    .passthrough(),
+                })
+                .passthrough(),
+            })
+            .passthrough(),
+        })
+        .passthrough()
+        .parse(request);
+      const authority = planeRegistry.resolveProject(
+        parsed.codingRequest.projectId,
+      );
+      if (
+        `${parsed.codingRequest.workItem.repository.owner}/${parsed.codingRequest.workItem.repository.name}` !==
+        authority.repository
+      ) {
+        throw new Error("existing PR adoption project repository mismatch");
+      }
+      return adoptExistingPullRequest({
+        request,
+        resolveCurrent: resolveCurrentPullRequest,
+        codingRequests: codingRequestStore,
+        pullRequestBindings,
+        workflowBindings,
+        enqueue: enqueueCoding,
+      });
+    },
+  },
   workItems: {
     token: workItemMutationToken,
     create: (request) => {

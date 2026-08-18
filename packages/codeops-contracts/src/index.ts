@@ -424,6 +424,45 @@ export const humanReviewRequestSchema = z
     }
   });
 
+export const adoptedPullRequestSchema = z
+  .object({
+    version: z.literal("codeops.adopted-pull-request/v1"),
+    repository: z
+      .string()
+      .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+    pullRequestNumber: z.number().int().positive().max(10_000_000),
+    headSha: gitSha,
+    headRef: branchName,
+    baseSha: gitSha,
+    baseRef: branchName,
+    title: safeText(500),
+    url: z.string().url().max(2_000),
+    adoptedAt: isoDateTime,
+    sessionOwnerPrincipalId: z
+      .string()
+      .min(1)
+      .max(256)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/),
+    rationale: safeText(2_000),
+  })
+  .strict()
+  .refine(
+    (pullRequest) => {
+      const url = new URL(pullRequest.url);
+      return (
+        url.protocol === "https:" &&
+        url.hostname === "github.com" &&
+        url.username === "" &&
+        url.password === "" &&
+        url.search === "" &&
+        url.hash === "" &&
+        url.pathname ===
+          `/${pullRequest.repository}/pull/${pullRequest.pullRequestNumber}`
+      );
+    },
+    "adopted pull-request URL does not match its exact identity",
+  );
+
 export const candidatePublicationSchema = z
   .object({
     version: z.literal(VERSION.candidatePublication),
@@ -435,26 +474,31 @@ export const candidatePublicationSchema = z
     pullRequestNumber: z.number().int().positive().max(10_000_000),
     expectedHeadSha: gitSha,
     headRef: branchName,
-    humanReview: humanReviewRequestSchema,
+    humanReview: humanReviewRequestSchema.optional(),
+    adoptedPullRequest: adoptedPullRequestSchema.optional(),
     candidate: candidateCheckpointSchema,
     commitMessage: safeText(500),
   })
   .strict()
   .superRefine((publication, context) => {
+    const provenance = publication.humanReview ?? publication.adoptedPullRequest;
     if (
-      publication.humanReview.repository !==
+      (publication.humanReview === undefined) ===
+        (publication.adoptedPullRequest === undefined) ||
+      provenance === undefined ||
+      provenance.repository !==
         `${publication.repository.owner}/${publication.repository.name}` ||
-      publication.humanReview.pullRequestNumber !==
-        publication.pullRequestNumber ||
-      publication.humanReview.reviewedHeadSha !==
-        publication.expectedHeadSha ||
-      publication.humanReview.headRef !== publication.headRef ||
+      provenance.pullRequestNumber !== publication.pullRequestNumber ||
+      (publication.humanReview !== undefined
+        ? publication.humanReview.reviewedHeadSha
+        : publication.adoptedPullRequest!.headSha) !== publication.expectedHeadSha ||
+      provenance.headRef !== publication.headRef ||
       publication.candidate.runId.length === 0
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["humanReview"],
-        message: "candidate publication identity does not match its review",
+        message: "candidate publication identity does not match its exact PR provenance",
       });
     }
   });
@@ -1933,6 +1977,7 @@ export const codingRequestSchema = z
       .strict(),
     researchPacket: researchPacketSchema.optional(),
     humanReview: humanReviewRequestSchema.optional(),
+    adoptedPullRequest: adoptedPullRequestSchema.optional(),
     workItem: workItemRequestSchema,
   })
   .strict()
@@ -1977,6 +2022,26 @@ export const codingRequestSchema = z
         message: "human review identity does not match its coding target",
       });
     }
+    if (request.humanReview !== undefined && request.adoptedPullRequest !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["adoptedPullRequest"],
+        message: "a coding request cannot be both an adopted PR and a human review revision",
+      });
+    }
+    if (
+      request.adoptedPullRequest !== undefined &&
+      (request.adoptedPullRequest.repository !==
+        `${request.workItem.repository.owner}/${request.workItem.repository.name}` ||
+        request.adoptedPullRequest.headSha !== request.workItem.baseSha ||
+        request.adoptedPullRequest.headRef !== request.workItem.branch)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["adoptedPullRequest"],
+        message: "adopted pull-request identity does not match its coding target",
+      });
+    }
     if (request.researchDisposition.mode === "required" && !request.researchPacket) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -2008,6 +2073,47 @@ export const codingRequestSchema = z
       }
     }
   });
+
+export const existingPullRequestAdoptionRequestSchema = z
+  .object({
+    version: z.literal("codeops.existing-pull-request-adoption-request/v1"),
+    operatorRequestId: uuid,
+    codingRequest: codingRequestSchema,
+    pullRequest: adoptedPullRequestSchema,
+  })
+  .strict()
+  .superRefine((request, context) => {
+    if (
+      request.codingRequest.adoptedPullRequest === undefined ||
+      canonicalJsonText(request.codingRequest.adoptedPullRequest) !==
+        canonicalJsonText(request.pullRequest)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["pullRequest"],
+        message: "adoption request must bind the exact coding-request PR identity",
+      });
+    }
+    if (request.codingRequest.humanReview !== undefined) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["codingRequest", "humanReview"],
+        message: "existing PR adoption cannot contain a human review revision",
+      });
+    }
+  });
+
+export const existingPullRequestAdoptionResultSchema = z
+  .object({
+    version: z.literal("codeops.existing-pull-request-adoption-result/v1"),
+    status: z.enum(["enqueued", "already-enqueued"]),
+    workflowId: workflowRunIdentifier,
+    workItemId: uuid,
+    repository: z.string().regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+    pullRequestNumber: z.number().int().positive().max(10_000_000),
+    headSha: gitSha,
+  })
+  .strict();
 
 export const workflowTransitionNoticeSchema = z
   .object({

@@ -1,4 +1,6 @@
 import { setTimeout as delay } from "node:timers/promises";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
 import type {
   AgentJobDispatchRequest,
   AgentJobDispatchResult,
@@ -40,6 +42,28 @@ interface RuntimeConfig {
   readonly evidenceRoot: string;
   readonly pollIntervalMs?: number;
   readonly timeoutMs?: number;
+  readonly sessionProjection?: {
+    started(request: AgentJobDispatchRequest, runId: string): Promise<void>;
+    terminal(input: {
+      request: AgentJobDispatchRequest;
+      runId: string;
+      response: string;
+      state: "completed" | "failed";
+    }): Promise<void>;
+  };
+}
+
+async function retainedResponse(rootDirectory: string, runId: string): Promise<string> {
+  const checkpoint = JSON.parse(
+    await readFile(
+      path.join(rootDirectory, "agent-runs", runId, "checkpoint.json"),
+      "utf8",
+    ),
+  ) as { response?: unknown };
+  if (typeof checkpoint.response !== "string") {
+    throw new Error("retained Agent Job checkpoint omitted its response");
+  }
+  return checkpoint.response;
 }
 
 function jobState(job: Record<string, unknown>): "running" | "succeeded" | "failed" {
@@ -112,6 +136,7 @@ export function createAgentJobRunner(input: {
       request,
       ...identity,
     });
+    await input.config.sessionProjection?.started(request, identity.runId);
     const cleanup = async (): Promise<void> => {
       let firstError: unknown;
       for (const resource of [...resources].reverse()) {
@@ -130,10 +155,17 @@ export function createAgentJobRunner(input: {
       ...identity,
     });
     if (retained) {
+      await input.config.sessionProjection?.terminal({
+        request,
+        runId: identity.runId,
+        response: await retainedResponse(input.config.evidenceRoot, identity.runId),
+        state: "completed",
+      });
       await cleanup();
       return retained;
     }
     let logs = "";
+    let completedResponse: string | null = null;
     try {
       for (const resource of resources) {
         signal?.throwIfAborted();
@@ -180,12 +212,20 @@ export function createAgentJobRunner(input: {
           "Agent Job failed despite a syntactically valid checkpoint",
         );
       }
-      return await retainCheckpoint({
+      const result = await retainCheckpoint({
         rootDirectory: input.config.evidenceRoot,
         request,
         ...identity,
         retained: checkpoint,
       });
+      completedResponse = checkpoint.checkpoint.response;
+      await input.config.sessionProjection?.terminal({
+        request,
+        runId: identity.runId,
+        response: completedResponse,
+        state: "completed",
+      });
+      return result;
     } catch (error) {
       if (!signal?.aborted) {
         await retainFailure({
@@ -193,6 +233,14 @@ export function createAgentJobRunner(input: {
           ...identity,
           error,
           logs,
+        });
+      }
+      if (completedResponse === null) {
+        await input.config.sessionProjection?.terminal({
+          request,
+          runId: identity.runId,
+          response: error instanceof Error ? error.message : "Agent Job failed",
+          state: "failed",
         });
       }
       throw error;

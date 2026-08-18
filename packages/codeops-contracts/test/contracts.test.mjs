@@ -8,6 +8,7 @@ import {
   canonicalJsonBytes,
   canonicalJsonText,
   canonicalSerialize,
+  candidatePublicationSchema,
   codingRequestSchema,
   contractVersions,
   controlCommandSchema,
@@ -18,6 +19,7 @@ import {
   createResearchRequestFromPlaneComment,
   createTransitionId,
   evidenceReferenceSchema,
+  existingPullRequestAdoptionRequestSchema,
   githubPullRequestStackLinkSchema,
   githubPullRequestStackPositionSchema,
   githubPullRequestStackSnapshotSchema,
@@ -512,6 +514,48 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
       },
     }),
   );
+  const adoptedPullRequest = {
+    version: "codeops.adopted-pull-request/v1",
+    repository: "example-org/example-repository",
+    pullRequestNumber: 158,
+    headSha: codingWorkItem.baseSha,
+    headRef: codingWorkItem.branch,
+    baseSha: "a".repeat(40),
+    baseRef: "main",
+    title: "Qualify the canonical customer-file auth matrix",
+    url: "https://github.com/example-org/example-repository/pull/158",
+    adoptedAt: now,
+    sessionOwnerPrincipalId: "access:aidan@example.com",
+    rationale: "Run the existing PR head through the independent critic loop.",
+  };
+  const adoptedRequest = {
+    ...request,
+    adoptedPullRequest,
+  };
+  assert.deepEqual(codingRequestSchema.parse(adoptedRequest), adoptedRequest);
+  assert.deepEqual(
+    existingPullRequestAdoptionRequestSchema.parse({
+      version: "codeops.existing-pull-request-adoption-request/v1",
+      operatorRequestId: "22222222-2222-4222-8222-222222222222",
+      codingRequest: adoptedRequest,
+      pullRequest: adoptedPullRequest,
+    }).pullRequest,
+    adoptedPullRequest,
+  );
+  assert.throws(() =>
+    codingRequestSchema.parse({
+      ...adoptedRequest,
+      humanReview: humanReviewRequest.humanReview,
+    }),
+  );
+  assert.throws(() =>
+    existingPullRequestAdoptionRequestSchema.parse({
+      version: "codeops.existing-pull-request-adoption-request/v1",
+      operatorRequestId: "22222222-2222-4222-8222-222222222222",
+      codingRequest: adoptedRequest,
+      pullRequest: { ...adoptedPullRequest, headSha: "f".repeat(40) },
+    }),
+  );
   const initialDispatch = {
     version: contractVersions.agentJobDispatch,
     role: "coding-agent",
@@ -530,6 +574,30 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
     ...makeAdversarialReview().candidate,
     round: 1,
   };
+  const adoptedPublication = {
+    version: contractVersions.candidatePublication,
+    workspaceId: request.workspaceId,
+    projectId: request.projectId,
+    workItemId: codingWorkItem.workItemId,
+    workflowId: codingWorkItem.workflowId,
+    repository: codingWorkItem.repository,
+    pullRequestNumber: adoptedPullRequest.pullRequestNumber,
+    expectedHeadSha: adoptedPullRequest.headSha,
+    headRef: adoptedPullRequest.headRef,
+    adoptedPullRequest,
+    candidate,
+    commitMessage: "Address CodeOps review of PR #158",
+  };
+  assert.deepEqual(
+    candidatePublicationSchema.parse(adoptedPublication),
+    adoptedPublication,
+  );
+  assert.throws(() =>
+    candidatePublicationSchema.parse({
+      ...adoptedPublication,
+      humanReview: humanReviewRequest.humanReview,
+    }),
+  );
   const review = makeAdversarialReview({
     workflowId: codingWorkItem.workflowId,
     workItemId: codingWorkItem.workItemId,
