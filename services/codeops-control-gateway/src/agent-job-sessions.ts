@@ -2,6 +2,8 @@ import { createHash } from "node:crypto";
 import {
   canonicalJsonText,
   SESSION_BROKER_VERSION,
+  sessionCommandResultSchema,
+  sessionCommandSchema,
   sessionEventSchema,
   sessionSnapshotSchema,
   temporalCodeOpsSessionIdentitySchema,
@@ -93,14 +95,26 @@ export async function projectAgentJobSessionStarted(input: {
   });
   if (initialized.snapshot.eventCursor >= 2) return projected.sessionId;
   const occurredAt = now.toISOString();
+  const prompt = buildAgentPrompt(input.request);
+  const commandId = deterministicUuid(`command:${input.runId}`);
+  const idempotencyKey = deterministicUuid(`idempotency:${input.runId}`);
+  const command = sessionCommandSchema.parse({
+    version: SESSION_BROKER_VERSION.command,
+    sessionId: projected.sessionId,
+    generation: 1,
+    leaseId: initialized.snapshot.lease!.leaseId,
+    idempotencyKey,
+    type: "prompt",
+    prompt,
+  });
   const body = {
     sessionId: projected.sessionId,
     generation: 1,
     cursor: 2,
-    type: "acp_update",
+    type: "command_committed",
     message: {
       role: "user",
-      text: buildAgentPrompt(input.request),
+      text: prompt,
       messageId: `agent-job-prompt:${input.runId}`,
     },
     occurredAt,
@@ -123,12 +137,47 @@ export async function projectAgentJobSessionStarted(input: {
         eventCursor: 2,
         updatedAt: occurredAt,
       });
+      const result = sessionCommandResultSchema.parse({
+        version: SESSION_BROKER_VERSION.commandResult,
+        commandId,
+        sessionId: projected.sessionId,
+        generation: 1,
+        leaseId: snapshot.lease!.leaseId,
+        idempotencyKey,
+        type: "prompt",
+        disposition: "committed",
+        eventCursor: 2,
+        snapshot: updated,
+        committedAt: occurredAt,
+      });
+      await input.client.query(
+        `INSERT INTO codeops.session_commands
+           (command_id, session_id, idempotency_key, command_json, result_json,
+            principal_id, committed_at)
+         VALUES ($1, $2, $3, $4::jsonb, $5::jsonb, $6, $7::timestamptz)`,
+        [
+          commandId,
+          projected.sessionId,
+          idempotencyKey,
+          canonicalJsonText(command),
+          canonicalJsonText(result),
+          projected.ownerPrincipalId,
+          occurredAt,
+        ],
+      );
       await input.client.query(
         `INSERT INTO codeops.session_events
            (event_id, session_id, generation, cursor, event_type, event_json,
             command_id, occurred_at)
-         VALUES ($1, $2, 1, 2, $3, $4::jsonb, NULL, $5::timestamptz)`,
-        [event.eventId, event.sessionId, event.type, canonicalJsonText(event), occurredAt],
+         VALUES ($1, $2, 1, 2, $3, $4::jsonb, $5, $6::timestamptz)`,
+        [
+          event.eventId,
+          event.sessionId,
+          event.type,
+          canonicalJsonText(event),
+          commandId,
+          occurredAt,
+        ],
       );
       await input.client.query(
         `UPDATE codeops.sessions
