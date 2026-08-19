@@ -18,6 +18,16 @@ const sessionIdSchema = z
   .min(1)
   .max(128)
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/);
+const webPushFailureDiagnosticSchema = z.object({
+  version: z.literal("codeops.web-push-failure-diagnostic/v1"),
+  flow: z.enum(["automatic", "gesture"]),
+  stage: z.enum(["read-existing", "revoke", "subscribe", "serialize", "register"]),
+  name: z.string().min(1).max(64).regex(/^[A-Za-z][A-Za-z0-9._-]*$/),
+  message: z.string().min(1).max(240),
+  permission: z.enum(["default", "denied", "granted"]),
+  serviceWorkerState: z.enum(["activated", "activating", "installed", "installing", "redundant", "missing"]),
+  installed: z.boolean(),
+}).strict();
 function protectResponse(): void {
   setResponseHeader("Cache-Control", "private, no-store");
   setResponseHeader("Referrer-Policy", "no-referrer");
@@ -160,4 +170,17 @@ export const revokeWebPushSubscription = createServerFn({ method: "POST" })
       subscription: data,
       principalId: context.agentsPrincipal,
     });
+  });
+
+export const reportWebPushFailure = createServerFn({ method: "POST" })
+  .middleware([agentsContextMiddleware])
+  .inputValidator((value: unknown) => webPushFailureDiagnosticSchema.parse(value))
+  .handler(({ data, context }) => {
+    protectResponse();
+    console.warn(JSON.stringify({
+      event: "agents_ui_web_push_enable_failed",
+      principalId: context.agentsPrincipal,
+      ...data,
+    }));
+    return { ok: true as const };
   });

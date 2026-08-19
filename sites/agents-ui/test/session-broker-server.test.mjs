@@ -318,12 +318,14 @@ test("server functions bind read and command authority to the resolved session o
   const dataSource = await readFile(new URL("../src/lib/sessionBroker.data.ts", import.meta.url), "utf8");
   const contextSource = await readFile(new URL("../src/lib/sessionOwnerContext.ts", import.meta.url), "utf8");
   assert.equal((dataSource.match(/\.middleware\(\[sessionOwnerContextMiddleware\]\)/g) ?? []).length, 7);
-  assert.equal((dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length, 3);
+  assert.equal((dataSource.match(/\.middleware\(\[agentsContextMiddleware\]\)/g) ?? []).length, 4);
   assert.match(dataSource, /synthesizeSessionForks/);
   assert.match(dataSource, /submitSessionForkSynthesis/);
   assert.match(dataSource, /principalId: context\.sessionOwnerPrincipal/);
   assert.match(dataSource, /registerWebPushSubscription/);
   assert.match(dataSource, /revokeWebPushSubscription/);
+  assert.match(dataSource, /reportWebPushFailure/);
+  assert.match(dataSource, /agents_ui_web_push_enable_failed/);
   assert.match(dataSource, /reconcileProviderEffect/);
   assert.doesNotMatch(dataSource, /TOKEN_FILE|readFile/);
   assert.match(contextSource, /CODEOPS_SESSION_OWNER_FIXED_PRINCIPAL/);
