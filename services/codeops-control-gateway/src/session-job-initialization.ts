@@ -34,6 +34,42 @@ function sameRootIdentity(
   );
 }
 
+async function ensureSessionModelBudget(
+  client: TransactionClient,
+  snapshot: SessionSnapshot,
+): Promise<void> {
+  const budget = snapshot.budget;
+  if (budget == null || budget.version !== "codeops.session-budget/v2") {
+    throw new Error("session Job budget must use version 2");
+  }
+  await client.query(
+    `INSERT INTO codeops.session_model_budgets (
+       session_id, budget_id, started_at, provider_requests_limit,
+       output_tokens_limit, committed_provider_requests,
+       settled_output_tokens, reserved_output_tokens,
+       observed_input_tokens, observed_total_tokens, revision, updated_at
+     ) VALUES (
+       $1, $2, $3::timestamptz, $4, $5, $6, $7, $8, $9, $10, $11,
+       $12::timestamptz
+     )
+     ON CONFLICT (session_id) DO NOTHING`,
+    [
+      snapshot.sessionId,
+      budget.budgetId,
+      budget.startedAt,
+      budget.limits.providerRequests,
+      budget.limits.outputTokens,
+      budget.usage.providerRequests,
+      budget.usage.outputTokens,
+      budget.reserved.outputTokens,
+      budget.usage.observedInputTokens,
+      budget.usage.observedTotalTokens,
+      budget.revision,
+      budget.observedAt,
+    ],
+  );
+}
+
 export async function initializeSessionFromJob(
   client: TransactionClient,
   input: {
@@ -110,27 +146,7 @@ export async function initializeSessionFromJob(
       ],
     );
     if (inserted.rowCount === 1) {
-      const budget = proposed.budget!;
-      if (budget.version !== "codeops.session-budget/v2") {
-        throw new Error("new session budget must use version 2");
-      }
-      await client.query(
-        `INSERT INTO codeops.session_model_budgets (
-           session_id, budget_id, started_at, provider_requests_limit,
-           output_tokens_limit, committed_provider_requests,
-           settled_output_tokens, reserved_output_tokens,
-           observed_input_tokens, observed_total_tokens, revision, updated_at
-         ) VALUES (
-           $1, $1, $2::timestamptz, $3, $4, 0, 0, 0, 0, 0, 1,
-           $2::timestamptz
-         )`,
-        [
-          proposed.sessionId,
-          budget.startedAt,
-          budget.limits.providerRequests,
-          budget.limits.outputTokens,
-        ],
-      );
+      await ensureSessionModelBudget(client, proposed);
       await client.query(
         `INSERT INTO codeops.session_events
            (event_id, session_id, generation, cursor, event_type, event_json,
@@ -170,6 +186,7 @@ export async function initializeSessionFromJob(
         `session ${request.sessionId} already belongs to a different Job identity`,
       );
     }
+    await ensureSessionModelBudget(client, existing);
     await client.query("COMMIT");
     return sessionJobInitializationResponseSchema.parse({
       version: "codeops.session-job-initialization-result/v1",

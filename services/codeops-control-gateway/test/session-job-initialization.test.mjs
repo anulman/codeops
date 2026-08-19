@@ -75,9 +75,17 @@ test("creates one running root session and one commandless creation event", asyn
   );
   assert.deepEqual(budget.values, [
     request.sessionId,
+    request.sessionId,
     "2026-08-05T03:00:00.000Z",
     200,
     1_000_000,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    "2026-08-05T03:00:00.000Z",
   ]);
   const event = database.calls.find(({ text }) =>
     text.includes("INSERT INTO codeops.session_events"),
@@ -104,6 +112,25 @@ test("replays the current session for an exact root identity and rejects drift",
   });
   assert.equal(duplicate.disposition, "duplicate");
   assert.equal(duplicate.snapshot.eventCursor, 2);
+  const recoveredBudget = retry.calls.find(({ text }) =>
+    text.includes("INSERT INTO codeops.session_model_budgets"),
+  );
+  assert.ok(recoveredBudget);
+  assert.match(recoveredBudget.text, /ON CONFLICT \(session_id\) DO NOTHING/);
+  assert.deepEqual(recoveredBudget.values, [
+    request.sessionId,
+    request.sessionId,
+    "2026-08-05T03:00:00.000Z",
+    200,
+    1_000_000,
+    0,
+    0,
+    0,
+    0,
+    0,
+    1,
+    "2026-08-05T03:00:00.000Z",
+  ]);
 
   const wrongOwner = fakeDatabase(created.snapshot);
   wrongOwner.state.ownerPrincipalId = "access:mallory@example.com";
