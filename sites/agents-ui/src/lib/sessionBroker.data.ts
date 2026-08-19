@@ -5,7 +5,10 @@ import { sessionCommandSchema } from "@codeops/codeops-contracts/session-broker"
 import { webPushSubscriptionSchema } from "@codeops/codeops-contracts/session-notification";
 import { agentsContextMiddleware } from "./agentsContext";
 import { sessionOwnerContextMiddleware } from "./sessionOwnerContext";
-import { sessionBrokerClient } from "./sessionBroker.server";
+import {
+  sessionBrokerClient,
+  sessionNotificationClient,
+} from "./sessionBroker.server";
 import {
   submitSessionForkSynthesis,
 } from "./sessionForkComparison.server";
@@ -134,7 +137,7 @@ export const getWebPushConfiguration = createServerFn({ method: "GET" })
   .middleware([agentsContextMiddleware])
   .handler(async () => {
     protectResponse();
-    return (await sessionBrokerClient()).getWebPushConfiguration();
+    return (await sessionNotificationClient()).getWebPushConfiguration();
   });
 
 export const registerWebPushSubscription = createServerFn({ method: "POST" })
@@ -142,7 +145,7 @@ export const registerWebPushSubscription = createServerFn({ method: "POST" })
   .inputValidator((value: unknown) => webPushSubscriptionSchema.parse(value))
   .handler(async ({ data, context }) => {
     protectResponse();
-    return (await sessionBrokerClient()).registerWebPushSubscription({
+    return (await sessionNotificationClient()).registerWebPushSubscription({
       subscription: data,
       principalId: context.agentsPrincipal,
     });
@@ -153,7 +156,7 @@ export const revokeWebPushSubscription = createServerFn({ method: "POST" })
   .inputValidator((value: unknown) => webPushSubscriptionSchema.parse(value))
   .handler(async ({ data, context }) => {
     protectResponse();
-    return (await sessionBrokerClient()).revokeWebPushSubscription({
+    return (await sessionNotificationClient()).revokeWebPushSubscription({
       subscription: data,
       principalId: context.agentsPrincipal,
     });

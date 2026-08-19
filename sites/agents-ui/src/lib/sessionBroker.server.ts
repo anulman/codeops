@@ -346,33 +346,55 @@ export function createSessionBrokerClient(input: {
 }
 
 let client: Promise<SessionBrokerClient> | null = null;
+let notificationClient: Promise<SessionBrokerClient> | null = null;
+
+async function configuredClient(baseUrl: string): Promise<SessionBrokerClient> {
+  const tokenPath = process.env.CODEOPS_SESSION_BROKER_READ_TOKEN_FILE?.trim();
+  const writeTokenPath = process.env.CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE?.trim();
+  if (!tokenPath || !writeTokenPath) {
+    throw new Error("session broker token configuration is incomplete");
+  }
+  const [readToken, writeToken] = await Promise.all([
+    readFile(tokenPath, "utf8").then((value) => value.trim()),
+    readFile(writeTokenPath, "utf8").then((value) => value.trim()),
+  ]);
+  return createSessionBrokerClient({
+    baseUrl: parseSessionBrokerBaseUrl(
+      baseUrl,
+      process.env.NODE_ENV,
+      ["127.0.0.1", "localhost", "::1"].includes(
+        process.env.HOST?.trim() ?? "",
+      ),
+    ),
+    readToken,
+    writeToken,
+  });
+}
 
 export function sessionBrokerClient(): Promise<SessionBrokerClient> {
   client ??= (async () => {
-    const tokenPath = process.env.CODEOPS_SESSION_BROKER_READ_TOKEN_FILE?.trim();
-    const writeTokenPath = process.env.CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE?.trim();
     const baseUrl = process.env.CODEOPS_SESSION_BROKER_URL?.trim();
-    if (!tokenPath || !writeTokenPath || !baseUrl) {
+    if (!baseUrl) {
       throw new Error("session broker server configuration is incomplete");
     }
-    const [readToken, writeToken] = await Promise.all([
-      readFile(tokenPath, "utf8").then((value) => value.trim()),
-      readFile(writeTokenPath, "utf8").then((value) => value.trim()),
-    ]);
-    return createSessionBrokerClient({
-      baseUrl: parseSessionBrokerBaseUrl(
-        baseUrl,
-        process.env.NODE_ENV,
-        ["127.0.0.1", "localhost", "::1"].includes(
-          process.env.HOST?.trim() ?? "",
-        ),
-      ),
-      readToken,
-      writeToken,
-    });
+    return configuredClient(baseUrl);
   })().catch((error) => {
     client = null;
     throw error;
   });
   return client;
+}
+
+export function sessionNotificationClient(): Promise<SessionBrokerClient> {
+  notificationClient ??= (async () => {
+    const baseUrl = process.env.CODEOPS_SESSION_NOTIFICATION_URL?.trim();
+    if (!baseUrl) {
+      throw new Error("session notification server configuration is incomplete");
+    }
+    return configuredClient(baseUrl);
+  })().catch((error) => {
+    notificationClient = null;
+    throw error;
+  });
+  return notificationClient;
 }

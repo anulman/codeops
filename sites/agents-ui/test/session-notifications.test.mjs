@@ -3,11 +3,12 @@ import test from "node:test";
 import { readFile } from "node:fs/promises";
 
 test("ships one installable manifest and one notification click route", async () => {
-  const [root, manifestSource, worker, component] = await Promise.all([
+  const [root, manifestSource, worker, component, data] = await Promise.all([
     readFile(new URL("../src/routes/__root.tsx", import.meta.url), "utf8"),
     readFile(new URL("../public/manifest.webmanifest", import.meta.url), "utf8"),
     readFile(new URL("../public/session-notifications-sw.js", import.meta.url), "utf8"),
     readFile(new URL("../src/components/SessionNotifications.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../src/lib/sessionBroker.data.ts", import.meta.url), "utf8"),
   ]);
   const manifest = JSON.parse(manifestSource);
   assert.equal(manifest.display, "standalone");
@@ -23,6 +24,11 @@ test("ships one installable manifest and one notification click route", async ()
   assert.match(component, /Settings → Notifications → Agent Sessions/);
   assert.match(component, /removeItem\(DISMISS_KEY\)/);
   assert.match(component, /pushManager\.subscribe/);
+  assert.equal(data.match(/sessionNotificationClient\(\)/g)?.length, 3);
+  assert.doesNotMatch(
+    data,
+    /sessionBrokerClient\(\)\.(getWebPushConfiguration|registerWebPushSubscription|revokeWebPushSubscription)/,
+  );
   assert.doesNotMatch(component, /setInterval/);
   assert.match(worker, /addEventListener\("push"/);
   assert.match(worker, /showNotification/);
