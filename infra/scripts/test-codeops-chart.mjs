@@ -373,6 +373,10 @@ test("keeps the Agents UI private", () => {
     env.get("CODEOPS_SESSION_BROKER_URL").value,
     "http://team-a-codeops-session-control-gateway.engineering.svc.cluster.local:8080",
   );
+  assert.equal(
+    env.get("CODEOPS_SESSION_NOTIFICATION_URL").value,
+    "http://team-a-codeops-control-gateway.engineering.svc.cluster.local:8080",
+  );
 
   const gateway = resource(resources, "Deployment", "team-a-codeops-session-gateway");
   const gatewaySource = JSON.stringify(gateway);

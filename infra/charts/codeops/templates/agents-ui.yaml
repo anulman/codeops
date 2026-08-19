@@ -41,6 +41,7 @@ spec:
             - { name: PORT, value: "3000" }
             - { name: NODE_ENV, value: production }
             - { name: CODEOPS_SESSION_BROKER_URL, value: http://{{ include "codeops.fullname" . }}-session-control-gateway.{{ .Release.Namespace }}.svc.cluster.local:8080 }
+            - { name: CODEOPS_SESSION_NOTIFICATION_URL, value: http://{{ include "codeops.fullname" . }}-control-gateway.{{ .Release.Namespace }}.svc.cluster.local:8080 }
             - { name: CODEOPS_SESSION_BROKER_READ_TOKEN_FILE, value: /var/run/secrets/codeops/read-token }
             - { name: CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE, value: /var/run/secrets/codeops/write-token }
             - { name: CODEOPS_WORKSPACE_LAUNCH_URL, value: http://{{ include "codeops.fullname" . }}-control-gateway.{{ .Release.Namespace }}.svc.cluster.local:8080 }
