@@ -103,7 +103,23 @@ jobs:
         run: nub install --frozen-lockfile
 
       - name: Install the exact Chromium runtime
-        run: services/codeops-acceptance-runner/node_modules/.bin/playwright-core install --with-deps chromium
+        shell: bash
+        run: |
+          set -euo pipefail
+          mirrors=/etc/apt/apt-mirrors.txt
+          test -f "$mirrors"
+          sudo sed -i \
+            's|http://azure.archive.ubuntu.com/ubuntu|https://archive.ubuntu.com/ubuntu|g' \
+            "$mirrors"
+          ! grep -Fq 'azure.archive.ubuntu.com' "$mirrors"
+          printf '%s\n' \
+            'Acquire::Retries "3";' \
+            'Acquire::http::Timeout "20";' \
+            'Acquire::https::Timeout "20";' \
+            | sudo tee /etc/apt/apt.conf.d/80codeops-network >/dev/null
+          timeout --signal=TERM --kill-after=30s 10m \
+            services/codeops-acceptance-runner/node_modules/.bin/playwright-core \
+              install --with-deps chromium
 
       - name: Run the real Agents UI browser acceptance
         run: nub run acceptance:agents-ui

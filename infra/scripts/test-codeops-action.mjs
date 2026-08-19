@@ -43,3 +43,23 @@ test("pins every GitHub Action to an immutable commit", async () => {
     for (const value of uses) assert.match(value, /@[0-9a-f]{40}$/);
   }
 });
+
+test("browser acceptance bounds Ubuntu mirror failures", async () => {
+  const source = await readFile(
+    new URL("../../.github/workflows/ci.yml", import.meta.url),
+    "utf8",
+  );
+  const workflow = parse(source);
+  const browserJob = workflow.jobs["agents-ui-browser-acceptance"];
+  const install = browserJob.steps.find(
+    ({ name }) => name === "Install the exact Chromium runtime",
+  );
+
+  assert.equal(browserJob["timeout-minutes"], 20);
+  assert.match(install.run, /azure\.archive\.ubuntu\.com/);
+  assert.match(install.run, /https:\/\/archive\.ubuntu\.com\/ubuntu/);
+  assert.match(install.run, /Acquire::Retries "3"/);
+  assert.match(install.run, /Acquire::https::Timeout "20"/);
+  assert.match(install.run, /timeout --signal=TERM --kill-after=30s 10m/);
+  assert.match(install.run, /install --with-deps chromium/);
+});
