@@ -14,7 +14,14 @@ const DISMISS_KEY = "codeops:web-push-dismissed-at";
 const DEVICE_KEY = "codeops:web-push-device-id";
 const DISMISS_MS = 7 * 24 * 60 * 60 * 1_000;
 
-type PromptState = "hidden" | "install" | "enable" | "enabling";
+type PromptState =
+  | "hidden"
+  | "install"
+  | "enable"
+  | "enabling"
+  | "enabled"
+  | "blocked"
+  | "failed";
 
 function isInstalled(): boolean {
   return window.matchMedia("(display-mode: standalone)").matches ||
@@ -99,6 +106,7 @@ export function SessionNotifications() {
   const [state, setState] = useState<PromptState>("hidden");
   const [configuration, setConfiguration] = useState<WebPushConfiguration | null>(null);
   const [registration, setRegistration] = useState<ServiceWorkerRegistration | null>(null);
+  const [subscribed, setSubscribed] = useState(false);
 
   useEffect(() => {
     let cancelled = false;
@@ -117,7 +125,12 @@ export function SessionNotifications() {
       setRegistration(nextRegistration);
       if (Notification.permission === "denied") return;
       if (Notification.permission === "granted") {
-        await ensureSubscription(nextRegistration, nextConfiguration);
+        try {
+          await ensureSubscription(nextRegistration, nextConfiguration);
+          if (!cancelled) setSubscribed(true);
+        } catch {
+          if (!cancelled) setState("failed");
+        }
         return;
       }
       const dismissedAt = Number(window.localStorage.getItem(DISMISS_KEY) ?? "0");
@@ -129,43 +142,93 @@ export function SessionNotifications() {
     return () => { cancelled = true; };
   }, []);
 
-  if (state === "hidden") return null;
+  if (configuration === null || registration === null) return null;
   const dismiss = () => {
     window.localStorage.setItem(DISMISS_KEY, String(Date.now()));
     setState("hidden");
   };
+  const open = () => {
+    if (Notification.permission === "denied") {
+      setState("blocked");
+      return;
+    }
+    if (Notification.permission === "granted") {
+      setState(subscribed ? "enabled" : "failed");
+      return;
+    }
+    window.localStorage.removeItem(DISMISS_KEY);
+    setState(isIOS() && !isInstalled() ? "install" : "enable");
+  };
+  if (state === "hidden") {
+    const permission = Notification.permission;
+    const label = permission === "granted" && subscribed
+      ? "Notifications on"
+      : permission === "denied"
+      ? "Notifications blocked"
+      : "Notifications";
+    return (
+      <button
+        type="button"
+        onClick={open}
+        aria-label="Notification settings"
+        {...sx("fixed bottom-3 right-3 z-20 flex min-h-10 items-center gap-2 rounded-full border border-white/[0.1] bg-[#171719] px-3 text-[10px] font-semibold text-white/68 shadow-xl transition hover:border-white/[0.13] hover:text-white")}
+      >
+        <span
+          aria-hidden="true"
+          {...sx(`size-1.5 rounded-full ${permission === "granted" && subscribed ? "bg-[#54d18b] shadow-[0_0_7px_rgba(84,209,139,.65)]" : permission === "denied" ? "bg-[#ff9b73]" : "bg-[#6d6af7]"}`)}
+        />
+        {label}
+      </button>
+    );
+  }
+  const title = state === "install"
+    ? "Install CodeOps for notifications"
+    : state === "blocked"
+    ? "Notifications are blocked"
+    : state === "enabled"
+    ? "Notifications are enabled"
+    : state === "failed"
+    ? "Notifications could not be enabled"
+    : "Get session notifications";
+  const detail = state === "install"
+    ? "On iPhone or iPad, use Share → Add to Home Screen. Then open the installed app to enable notifications."
+    : state === "blocked"
+    ? "Open iPhone Settings → Notifications → Agent Sessions and turn on Allow Notifications."
+    : state === "enabled"
+    ? "This device can receive permission requests, failures, completed work, idle checkpoints, and budget limits."
+    : state === "failed"
+    ? "The permission or push subscription could not be completed. Try again from this device."
+    : "Get permission requests, failures, completed work, idle checkpoints, and budget limits while this app is suspended.";
   return (
     <aside {...sx("fixed bottom-3 right-3 z-20 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-white/[0.1] bg-[#171719] p-3 shadow-xl lg:bottom-3 lg:left-32 lg:right-auto")}>
-      <p {...sx("text-[11px] font-semibold text-white/78")}>
-        {state === "install" ? "Install CodeOps for notifications" : "Get session notifications"}
-      </p>
-      <p {...sx("mt-1 text-[10px] leading-4 text-white/42")}>
-        {state === "install"
-          ? "On iPhone or iPad, use Share → Add to Home Screen. Then open the installed app to enable notifications."
-          : "Get permission requests, failures, completed work, idle checkpoints, and budget limits while this app is suspended."}
-      </p>
+      <p {...sx("text-[11px] font-semibold text-white/78")}>{title}</p>
+      <p {...sx("mt-1 text-[10px] leading-4 text-white/42")}>{detail}</p>
       <div {...sx("mt-2 flex justify-end gap-2")}>
-        <button type="button" onClick={dismiss} {...sx("rounded-md px-2 py-1 text-[10px] text-white/38 hover:text-white/68")}>
-          Not now
+        <button type="button" onClick={dismiss} disabled={state === "enabling"} {...sx("rounded-md px-2 py-1 text-[10px] text-white/38 hover:text-white/68 disabled:opacity-40")}>
+          {state === "enable" ? "Not now" : "Done"}
         </button>
-        {state !== "install" ? (
+        {state === "enable" || state === "enabling" || state === "failed" ? (
           <button
             type="button"
             disabled={state === "enabling"}
             onClick={async () => {
-              if (registration === null || configuration === null) return;
               setState("enabling");
               try {
                 const permission = await Notification.requestPermission();
-                if (permission !== "granted") return;
+                if (permission !== "granted") {
+                  setState(permission === "denied" ? "blocked" : "hidden");
+                  return;
+                }
                 await ensureSubscription(registration, configuration);
-              } finally {
-                setState("hidden");
+                setSubscribed(true);
+                setState("enabled");
+              } catch {
+                setState("failed");
               }
             }}
             {...sx("rounded-md bg-[#6d6af7] px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-[#7c79ff] disabled:opacity-45")}
           >
-            {state === "enabling" ? "Enabling…" : "Enable notifications"}
+            {state === "failed" ? "Try again" : state === "enabling" ? "Enabling…" : "Enable notifications"}
           </button>
         ) : null}
       </div>

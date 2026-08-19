@@ -18,6 +18,10 @@ test("ships one installable manifest and one notification click route", async ()
   assert.match(component, /Add to Home Screen/);
   assert.match(component, /7 \* 24 \* 60 \* 60 \* 1_000/);
   assert.match(component, /Notification\.permission === "denied"/);
+  assert.match(component, /aria-label="Notification settings"/);
+  assert.match(component, /Notifications blocked/);
+  assert.match(component, /Settings → Notifications → Agent Sessions/);
+  assert.match(component, /removeItem\(DISMISS_KEY\)/);
   assert.match(component, /pushManager\.subscribe/);
   assert.doesNotMatch(component, /setInterval/);
   assert.match(worker, /addEventListener\("push"/);
