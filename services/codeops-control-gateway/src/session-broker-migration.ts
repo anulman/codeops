@@ -69,6 +69,13 @@ const migrations = [
     url: new URL("../sql/session-notifications.sql", import.meta.url),
   },
   {
+    name: "session-notification-key-constraint-v2",
+    url: new URL(
+      "../sql/session-notification-key-constraint-v2.sql",
+      import.meta.url,
+    ),
+  },
+  {
     name: "session-model-budget-ledger-v2",
     url: new URL("../sql/session-model-budget-ledger-v2.sql", import.meta.url),
   },
