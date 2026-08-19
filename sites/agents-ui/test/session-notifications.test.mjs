@@ -14,7 +14,7 @@ test("ships one installable manifest and one notification click route", async ()
   assert.equal(manifest.display, "standalone");
   assert.equal(manifest.start_url, "/");
   assert.match(root, /manifest\.webmanifest/);
-  assert.match(component, /Notification\.requestPermission/);
+  assert.doesNotMatch(component, /Notification\.requestPermission/);
   assert.match(component, /display-mode: standalone/);
   assert.match(component, /Add to Home Screen/);
   assert.match(component, /7 \* 24 \* 60 \* 60 \* 1_000/);
@@ -24,6 +24,14 @@ test("ships one installable manifest and one notification click route", async ()
   assert.match(component, /Settings → Notifications → Agent Sessions/);
   assert.match(component, /removeItem\(DISMISS_KEY\)/);
   assert.match(component, /pushManager\.subscribe/);
+  assert.match(
+    component,
+    /function subscribeFromUserGesture[\s\S]*const subscriptionPromise = registration\.pushManager\.subscribe[\s\S]*await subscriptionPromise/,
+  );
+  assert.match(
+    component,
+    /onClick=\{async \(\) => \{[\s\S]*subscribeFromUserGesture\(registration, configuration\)/,
+  );
   assert.equal(data.match(/sessionNotificationClient\(\)/g)?.length, 3);
   assert.doesNotMatch(
     data,
