@@ -681,6 +681,15 @@ test("retains passing coding evidence and mounts the exact cumulative patch for 
       candidateMount.subPath,
       `agent-runs/${candidate.runId}/changes.patch`,
     );
+    const workspaceBuilder = pod.initContainers[0].command.at(-1);
+    assert.match(
+      workspaceBuilder,
+      /apply --allow-empty --check \/candidate\/changes\.patch/,
+    );
+    assert.match(
+      workspaceBuilder,
+      /apply --allow-empty \/candidate\/changes\.patch/,
+    );
     assert.equal(
       pod.containers.some((container) =>
         container.volumeMounts.some((mount) => mount.name === "candidate"),

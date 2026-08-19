@@ -227,8 +227,8 @@ export function buildRunResources(
                           "test -f /candidate/changes.patch",
                           "test \"$(wc -c < /candidate/changes.patch | tr -d ' ')\" = \"$CODEOPS_CANDIDATE_PATCH_SIZE\"",
                           "test \"sha256:$(sha256sum /candidate/changes.patch | cut -d' ' -f1)\" = \"$CODEOPS_CANDIDATE_PATCH_DIGEST\"",
-                          "git -c safe.directory=/workspace -C /workspace apply --check /candidate/changes.patch",
-                          "git -c safe.directory=/workspace -C /workspace apply /candidate/changes.patch",
+                          "git -c safe.directory=/workspace -C /workspace apply --allow-empty --check /candidate/changes.patch",
+                          "git -c safe.directory=/workspace -C /workspace apply --allow-empty /candidate/changes.patch",
                         ]
                       : []),
                     "node /opt/codeops-agent/prepare-project-context.mjs",
