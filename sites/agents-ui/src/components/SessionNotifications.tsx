@@ -227,15 +227,18 @@ export function SessionNotifications() {
           <button
             type="button"
             disabled={state === "enabling"}
-            onClick={async () => {
+            onClick={() => {
+              const subscriptionPromise = subscribeFromUserGesture(
+                registration,
+                configuration,
+              );
               setState("enabling");
-              try {
-                await subscribeFromUserGesture(registration, configuration);
+              void subscriptionPromise.then(() => {
                 setSubscribed(true);
                 setState("enabled");
-              } catch {
+              }).catch(() => {
                 setState(Notification.permission === "denied" ? "blocked" : "failed");
-              }
+              });
             }}
             {...sx("rounded-md bg-[#6d6af7] px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-[#7c79ff] disabled:opacity-45")}
           >

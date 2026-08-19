@@ -30,7 +30,7 @@ test("ships one installable manifest and one notification click route", async ()
   );
   assert.match(
     component,
-    /onClick=\{async \(\) => \{[\s\S]*subscribeFromUserGesture\(registration, configuration\)/,
+    /onClick=\{\(\) => \{\s*const subscriptionPromise = subscribeFromUserGesture\([\s\S]*setState\("enabling"\)/,
   );
   assert.equal(data.match(/sessionNotificationClient\(\)/g)?.length, 3);
   assert.doesNotMatch(
