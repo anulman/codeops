@@ -17,6 +17,10 @@ export async function adoptExistingPullRequest(input: {
   codingRequests: CodingRequestStore;
   pullRequestBindings: PullRequestBindingStore;
   workflowBindings: WorkflowBindingStore;
+  begin: (input: {
+    projectId: string;
+    workItemId: string;
+  }) => Promise<void>;
   enqueue: (input: {
     workflowId: string;
     request: CodingRequest;
@@ -61,6 +65,13 @@ export async function adoptExistingPullRequest(input: {
     throw new Error("pull request is already bound to different CodeOps authority");
   }
 
+  // Align the provider lifecycle before enqueue. A failed lifecycle preflight
+  // must not leave an admitted Agent workflow running while Plane still shows
+  // the ticket as Ready or Needs attention.
+  await input.begin({
+    projectId: request.projectId,
+    workItemId: request.workItem.workItemId,
+  });
   await input.codingRequests.put(request);
   const enqueueResult = await input.enqueue({
     workflowId: request.workItem.workflowId,

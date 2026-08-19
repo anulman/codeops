@@ -144,6 +144,7 @@ export function createPlaneApiClient(
         "X-API-Key": config.apiKey,
       },
       ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      signal: AbortSignal.timeout(30_000),
     });
     if (!response.ok) {
       throw new Error(`Plane API ${method} ${path} failed with ${response.status}`);
