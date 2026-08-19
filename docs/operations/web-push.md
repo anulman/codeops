@@ -18,8 +18,10 @@ controlGateway:
 
 The Agents UI requests permission only after the operator selects **Enable
 notifications**. If the operator dismisses the prompt, the UI waits seven days
-before it shows the prompt again. If the browser denies permission, the UI does
-not show the prompt again.
+before it shows the prompt again automatically. A persistent **Notifications**
+control remains available and can reopen the prompt immediately. If the browser
+denies permission, the control shows the iPhone Settings recovery path instead
+of issuing an invalid second permission request.
 
 On iPhone and iPad, first add the Agents UI to the Home Screen. Open the
 installed app and select **Enable notifications**. iOS does not offer Web Push
