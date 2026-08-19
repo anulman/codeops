@@ -49,6 +49,7 @@ interface RuntimeConfig {
       runId: string;
       response: string;
       state: "completed" | "failed";
+      source: "live" | "retained-reconciliation";
     }): Promise<void>;
   };
 }
@@ -160,6 +161,7 @@ export function createAgentJobRunner(input: {
         runId: identity.runId,
         response: await retainedResponse(input.config.evidenceRoot, identity.runId),
         state: "completed",
+        source: "retained-reconciliation",
       });
       await cleanup();
       return retained;
@@ -224,6 +226,7 @@ export function createAgentJobRunner(input: {
         runId: identity.runId,
         response: completedResponse,
         state: "completed",
+        source: "live",
       });
       return result;
     } catch (error) {
@@ -241,6 +244,7 @@ export function createAgentJobRunner(input: {
           runId: identity.runId,
           response: error instanceof Error ? error.message : "Agent Job failed",
           state: "failed",
+          source: "live",
         });
       }
       throw error;

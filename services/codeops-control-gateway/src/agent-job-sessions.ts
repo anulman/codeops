@@ -14,6 +14,7 @@ import { agentJobSessionId } from "./agent-job-identity.js";
 import { initializeSessionFromJob } from "./session-job-initialization.js";
 import type { TransactionClient } from "./session-broker-repository.js";
 import { sessionCapabilitiesFor } from "./session-broker-transitions.js";
+import { reconcileSessionSupervision } from "./session-supervision.js";
 
 export { agentJobSessionId } from "./agent-job-identity.js";
 
@@ -24,6 +25,37 @@ function hash(value: string): string {
 function deterministicUuid(value: string): string {
   const digest = hash(value);
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
+}
+
+async function projectSupervisorState(input: {
+  client: TransactionClient;
+  request: AgentJobDispatchRequest;
+  runId: string;
+  phase: "started" | "failed" | "completed" | "reconciled";
+  now?: () => Date;
+}): Promise<void> {
+  if (input.request.role !== "coding-agent" && input.request.role !== "critic-agent") return;
+  const adopted = input.request.codingRequest.adoptedPullRequest;
+  const supervisorSessionId = adopted?.supervisorSessionId;
+  if (adopted === undefined || supervisorSessionId === undefined) return;
+  const childSessionId = agentJobSessionId(input.runId);
+  await reconcileSessionSupervision(
+    input.client,
+    {
+      version: "codeops.session-supervision-reconciliation/v1",
+      idempotencyKey: deterministicUuid(
+        `supervision:${supervisorSessionId}:${childSessionId}:${input.phase}`,
+      ),
+      supervisorSessionId,
+      childSessionIds: [childSessionId],
+      repository: adopted.repository,
+      workItemId: input.request.workItemId,
+      workflowId: input.request.workflowId,
+      pullRequestNumber: adopted.pullRequestNumber,
+      pullRequestHeadSha: adopted.headSha,
+    },
+    { now: input.now },
+  );
 }
 
 export function describeAgentJobSession(request: AgentJobDispatchRequest, runId: string) {
@@ -190,6 +222,13 @@ export async function projectAgentJobSessionStarted(input: {
     await input.client.query("ROLLBACK");
     throw error;
   }
+  await projectSupervisorState({
+    client: input.client,
+    request: input.request,
+    runId: input.runId,
+    phase: "started",
+    now: input.now,
+  });
   return projected.sessionId;
 }
 
@@ -199,6 +238,7 @@ export async function projectAgentJobSessionTerminal(input: {
   runId: string;
   response: string;
   state: "completed" | "failed";
+  source?: "live" | "retained-reconciliation";
   now?: () => Date;
 }): Promise<void> {
   const projected = describeAgentJobSession(input.request, input.runId);
@@ -211,78 +251,106 @@ export async function projectAgentJobSessionTerminal(input: {
       [projected.sessionId],
     );
     const snapshot = sessionSnapshotSchema.parse(locked.rows[0]?.snapshot_json);
-    if (snapshot.state === "completed" || snapshot.state === "failed") {
-      await input.client.query("COMMIT");
-      return;
-    }
-    const responseCursor = snapshot.eventCursor + 1;
-    const stateCursor = responseCursor + 1;
-    const responseBody = {
-      sessionId: projected.sessionId,
-      generation: snapshot.generation,
-      cursor: responseCursor,
-      type: "acp_update",
-      message: {
-        role: "assistant",
-        text: input.response.slice(0, 200_000),
-        messageId: `agent-job-response:${input.runId}`,
-        stopReason: input.state === "completed" ? "end_turn" : "cancelled",
-      },
-      occurredAt,
-    } as const;
-    const stateBody = {
-      sessionId: projected.sessionId,
-      generation: snapshot.generation,
-      cursor: stateCursor,
-      type: "state_changed",
-      occurredAt,
-    } as const;
-    const events = [responseBody, stateBody].map((body) =>
-      sessionEventSchema.parse({
-        version: SESSION_BROKER_VERSION.event,
-        eventId: eventId(body),
-        ...body,
-      }),
-    );
-    const updated = sessionSnapshotSchema.parse({
-      ...snapshot,
-      state: input.state,
-      lease: {
-        leaseId: snapshot.lease!.leaseId,
+    if (snapshot.state === input.state) {
+      // The exact terminal projection is already durable. The separate
+      // supervision projection below remains independently idempotent.
+    } else if (
+      !(
+        snapshot.state === "failed" &&
+        input.state === "completed" &&
+        input.source === "retained-reconciliation"
+      ) &&
+      (snapshot.state === "completed" || snapshot.state === "failed")
+    ) {
+      throw new Error("Agent Job terminal reconciliation conflicts with stored state");
+    } else {
+      const responseCursor = snapshot.eventCursor + 1;
+      const stateCursor = responseCursor + 1;
+      const responseBody = {
+        sessionId: projected.sessionId,
         generation: snapshot.generation,
-        status: "released",
-        releasedAt: occurredAt,
-      },
-      eventCursor: stateCursor,
-      capabilities: sessionCapabilitiesFor(input.state, false),
-      updatedAt: occurredAt,
-    });
-    for (const event of events) {
+        cursor: responseCursor,
+        type: "acp_update",
+        message: {
+          role: "assistant",
+          text: input.response.slice(0, 200_000),
+          messageId:
+            input.source === "retained-reconciliation"
+              ? `agent-job-response:${input.runId}:reconciled`
+              : `agent-job-response:${input.runId}`,
+          stopReason: input.state === "completed" ? "end_turn" : "cancelled",
+        },
+        occurredAt,
+      } as const;
+      const stateBody = {
+        sessionId: projected.sessionId,
+        generation: snapshot.generation,
+        cursor: stateCursor,
+        type: "state_changed",
+        occurredAt,
+      } as const;
+      const events = [responseBody, stateBody].map((body) =>
+        sessionEventSchema.parse({
+          version: SESSION_BROKER_VERSION.event,
+          eventId: eventId(body),
+          ...body,
+        }),
+      );
+      const updated = sessionSnapshotSchema.parse({
+        ...snapshot,
+        state: input.state,
+        lease: {
+          leaseId: snapshot.lease!.leaseId,
+          generation: snapshot.generation,
+          status: "released",
+          releasedAt: occurredAt,
+        },
+        eventCursor: stateCursor,
+        capabilities: sessionCapabilitiesFor(input.state, false),
+        updatedAt: occurredAt,
+      });
+      for (const event of events) {
+        await input.client.query(
+          `INSERT INTO codeops.session_events
+             (event_id, session_id, generation, cursor, event_type, event_json,
+              command_id, occurred_at)
+           VALUES ($1, $2, $3, $4, $5, $6::jsonb, NULL, $7::timestamptz)`,
+          [
+            event.eventId,
+            event.sessionId,
+            event.generation,
+            event.cursor,
+            event.type,
+            canonicalJsonText(event),
+            occurredAt,
+          ],
+        );
+      }
       await input.client.query(
-        `INSERT INTO codeops.session_events
-           (event_id, session_id, generation, cursor, event_type, event_json,
-            command_id, occurred_at)
-         VALUES ($1, $2, $3, $4, $5, $6::jsonb, NULL, $7::timestamptz)`,
+        `UPDATE codeops.sessions
+            SET snapshot_json = $2::jsonb, lease_id = $3, updated_at = $4::timestamptz
+          WHERE session_id = $1`,
         [
-          event.eventId,
-          event.sessionId,
-          event.generation,
-          event.cursor,
-          event.type,
-          canonicalJsonText(event),
+          projected.sessionId,
+          canonicalJsonText(updated),
+          updated.lease!.leaseId,
           occurredAt,
         ],
       );
     }
-    await input.client.query(
-      `UPDATE codeops.sessions
-          SET snapshot_json = $2::jsonb, lease_id = $3, updated_at = $4::timestamptz
-        WHERE session_id = $1`,
-      [projected.sessionId, canonicalJsonText(updated), updated.lease!.leaseId, occurredAt],
-    );
     await input.client.query("COMMIT");
   } catch (error) {
     await input.client.query("ROLLBACK");
     throw error;
   }
+  await projectSupervisorState({
+    client: input.client,
+    request: input.request,
+    runId: input.runId,
+    phase:
+      input.source === "retained-reconciliation"
+        ? "reconciled"
+        : input.state,
+    now: input.now,
+  });
 }

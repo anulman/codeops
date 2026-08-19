@@ -99,6 +99,11 @@ import {
 } from "./session-notification-store.js";
 import { projectNextSessionNotification } from "./session-notification-projector.js";
 import {
+  InvalidSessionSupervisionReconciliationRequestError,
+  reconcileSessionSupervision,
+  serveSessionSupervisionReconciliation,
+} from "./session-supervision.js";
+import {
   acknowledgeWebPushDelivery,
   claimWebPushDelivery,
   sendClaimedWebPush,
@@ -456,7 +461,7 @@ const run = createAgentJobRunner({
           client.release();
         }
       },
-      terminal: async ({ request, runId, response, state }) => {
+      terminal: async ({ request, runId, response, state, source }) => {
         const client = await database.connect();
         try {
           await projectAgentJobSessionTerminal({
@@ -465,6 +470,7 @@ const run = createAgentJobRunner({
             runId,
             response,
             state,
+            source,
           });
         } finally {
           client.release();
@@ -846,6 +852,49 @@ const server = createServer((request, response) => {
         {
           status:
             error instanceof InvalidSessionJobInitializationRequestError
+              ? "invalid-request"
+              : "unavailable",
+        },
+      );
+      return;
+    }
+    try {
+      const supervisionReconciliation =
+        await serveSessionSupervisionReconciliation({
+          method: request.method,
+          url: request.url,
+          headers: request.headers,
+          token: sessionJobInitializationToken,
+          readBody: () => readJson(request),
+          reconcile: async (reconciliationRequest) => {
+            const client = await database.connect();
+            try {
+              return await reconcileSessionSupervision(
+                client,
+                reconciliationRequest,
+              );
+            } finally {
+              client.release();
+            }
+          },
+        });
+      if (supervisionReconciliation !== null) {
+        json(
+          response,
+          supervisionReconciliation.status,
+          supervisionReconciliation.body,
+        );
+        return;
+      }
+    } catch (error) {
+      json(
+        response,
+        error instanceof InvalidSessionSupervisionReconciliationRequestError
+          ? 400
+          : 503,
+        {
+          status:
+            error instanceof InvalidSessionSupervisionReconciliationRequestError
               ? "invalid-request"
               : "unavailable",
         },

@@ -35,12 +35,54 @@ import {
   sha256CanonicalJsonDigest,
   researchPlaneMutationSchema,
   secretReferenceSchema,
+  sessionSupervisionReconciliationRequestSchema,
+  sessionSupervisionReconciliationResultSchema,
   verifyPlaneWebhookSignature,
   workflowEventSchema,
   workflowStateSchema,
   workItemLifecycleEventSchema,
   workItemRequestSchema,
 } from "../dist/index.js";
+
+test("binds session supervision reconciliation to exact parent, children, and PR identity", () => {
+  const request = {
+    version: "codeops.session-supervision-reconciliation/v1",
+    idempotencyKey: "11111111-1111-4111-8111-111111111111",
+    supervisorSessionId: "ses_pm",
+    childSessionIds: ["ses_worker", "ses_reviewer"],
+    repository: "example-org/example-repository",
+    workItemId: "22222222-2222-4222-8222-222222222222",
+    workflowId: "adopt-pr-158",
+    pullRequestNumber: 158,
+    pullRequestHeadSha: "b".repeat(40),
+  };
+  assert.deepEqual(sessionSupervisionReconciliationRequestSchema.parse(request), request);
+  assert.throws(() =>
+    sessionSupervisionReconciliationRequestSchema.parse({
+      ...request,
+      childSessionIds: ["ses_worker", "ses_worker"],
+    }),
+  );
+  assert.throws(() =>
+    sessionSupervisionReconciliationRequestSchema.parse({
+      ...request,
+      childSessionIds: ["ses_pm"],
+    }),
+  );
+  assert.equal(
+    sessionSupervisionReconciliationResultSchema.parse({
+      version: "codeops.session-supervision-reconciliation-result/v1",
+      idempotencyKey: request.idempotencyKey,
+      supervisorSessionId: request.supervisorSessionId,
+      projected: request.childSessionIds.map((childSessionId, index) => ({
+        childSessionId,
+        disposition: index === 0 ? "created" : "existing",
+        eventCursor: 6 + index,
+      })),
+    }).projected.length,
+    2,
+  );
+});
 
 const now = "2026-07-25T16:00:00.000Z";
 const sha = "8f3d2c033f70be04b4b2dc8a005683806e84e209";

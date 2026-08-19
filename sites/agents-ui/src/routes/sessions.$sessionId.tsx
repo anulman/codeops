@@ -276,6 +276,7 @@ function executionSummary(update: ExecutionUpdate) {
   if (update.kind === "available_commands") return { label: "Available commands", status: String(update.commands.length) };
   if (update.kind === "configuration") return { label: "ACP configuration", status: String(update.options.length) };
   if (update.kind === "usage") return { label: "Context usage", status: `${update.usedTokens.toLocaleString()} / ${update.contextWindowTokens.toLocaleString()}` };
+  if (update.kind === "supervision") return { label: `${update.agentRole} session`, status: update.childState.replaceAll("_", " ") };
   return {
     label: update.title ?? update.name ?? `${update.toolKind ?? "Tool"} call`,
     status: update.status?.replaceAll("_", " ") ?? (update.kind === "tool_call" ? "started" : "updated"),
@@ -289,13 +290,14 @@ function executionIcon(update: ExecutionUpdate) {
   if (update.kind === "available_commands") return "/";
   if (update.kind === "configuration") return "⚙";
   if (update.kind === "usage") return "%";
+  if (update.kind === "supervision") return "↳";
   return update.status === "failed" ? "!" : update.status === "completed" ? "✓" : "›";
 }
 
 function executionTone(update: ExecutionUpdate) {
   if (update.kind === "thought") return "border-[#b39cff]/12 bg-[#b39cff]/6 text-[#c5b6ff]/55";
   if (update.kind === "plan" || update.kind === "plan_update" || update.kind === "plan_removed") return "border-[#6da8ff]/12 bg-[#6da8ff]/6 text-[#8dbbff]/60";
-  if (["current_mode", "available_commands", "configuration", "usage"].includes(update.kind)) return "border-[#54d18b]/12 bg-[#54d18b]/6 text-[#6ee2a0]/65";
+  if (["current_mode", "available_commands", "configuration", "usage", "supervision"].includes(update.kind)) return "border-[#54d18b]/12 bg-[#54d18b]/6 text-[#6ee2a0]/65";
   if ((update.kind === "tool_call" || update.kind === "tool_call_update") && update.status === "failed") return "border-[#ff747b]/16 bg-[#ff747b]/7 text-[#ff989d]/70";
   if ((update.kind === "tool_call" || update.kind === "tool_call_update") && update.status === "completed") return "border-[#54d18b]/12 bg-[#54d18b]/6 text-[#6ee2a0]/65";
   return "border-white/[0.06] bg-white/[0.025] text-white/32";
@@ -320,6 +322,7 @@ function ExecutionContent({ update }: Readonly<{ update: ExecutionUpdate }>) {
   if (update.kind === "available_commands") return <ul {...sx("space-y-2")}>{update.commands.map((command) => <li key={command.name}><code {...sx("font-mono text-[10px] text-white/58")}>/{command.name}</code><span {...sx("ml-2 text-white/38")}>{command.description}</span>{command.inputHint ? <span {...sx("mt-0.5 block text-[10px] text-white/24")}>Input: {command.inputHint}</span> : null}</li>)}</ul>;
   if (update.kind === "configuration") return <ul {...sx("space-y-2")}>{update.options.map((option) => <li key={option.id} {...sx("flex items-start justify-between gap-3")}><span><span {...sx("text-white/48")}>{option.name}</span>{option.category ? <span {...sx("ml-2 text-[9px] uppercase text-white/20")}>{option.category}</span> : null}</span><code {...sx("font-mono text-[10px] text-white/54")}>{String(option.currentValue)}</code></li>)}</ul>;
   if (update.kind === "usage") return <p><span {...sx("text-white/55")}>{update.usedTokens.toLocaleString()}</span> of {update.contextWindowTokens.toLocaleString()} context tokens{update.cost ? ` · ${update.cost.amount.toLocaleString(undefined, { style: "currency", currency: update.cost.currency })}` : ""}</p>;
+  if (update.kind === "supervision") return <div {...sx("space-y-2")}><p><Link to="/sessions/$sessionId" params={{ sessionId: update.childSessionId }} {...sx("font-medium text-[#8dbbff]/70 transition hover:text-white/75")}>Open {update.agentRole} session</Link><span {...sx("ml-2 text-white/32")}>Round {update.round} · {update.childState.replaceAll("_", " ")} at cursor {update.childEventCursor}</span></p><p {...sx("font-mono text-[10px] text-white/28")}>{update.repository} · PR #{update.pullRequestNumber} · {update.pullRequestHeadSha.slice(0, 8)}</p>{update.resultUri ? <ResourceLink uri={update.resultUri} label="Open retained result" /> : null}</div>;
   return <div {...sx("space-y-3")}>{update.name ? <p {...sx("font-mono text-[10px] text-white/28")}>{update.name}</p> : null}{update.locations?.length ? <div {...sx("flex flex-wrap gap-1.5")}>{update.locations.map((location) => <code key={`${location.path}:${location.line ?? ""}`} {...sx("rounded bg-black/20 px-1.5 py-0.5 font-mono text-[9px] text-white/34")}>{location.path}{location.line === undefined ? "" : `:${location.line}`}</code>)}</div> : null}{update.content?.map((content, index) => <ToolContentView key={index} content={content} />)}</div>;
 }
 

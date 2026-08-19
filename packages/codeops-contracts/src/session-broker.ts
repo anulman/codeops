@@ -1005,6 +1005,33 @@ const sessionTimelineUpdateBaseSchema = z.discriminatedUnion("kind", [
         .optional(),
     })
     .strict(),
+  z
+    .object({
+      kind: z.literal("supervision"),
+      projectionId: uuid,
+      childSessionId: identifier,
+      childState: sessionStateSchema,
+      childEventCursor: z
+        .number()
+        .int()
+        .nonnegative()
+        .max(Number.MAX_SAFE_INTEGER),
+      repository: z
+        .string()
+        .regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/),
+      workItemId: uuid,
+      workflowId: workflowRunIdentifier,
+      pullRequestNumber: z
+        .number()
+        .int()
+        .positive()
+        .max(Number.MAX_SAFE_INTEGER),
+      pullRequestHeadSha: gitSha,
+      agentRole: z.enum(["coding", "critic", "revision"]),
+      round: z.number().int().positive().max(100),
+      resultUri: resourceUri.optional(),
+    })
+    .strict(),
 ]);
 
 export const sessionTimelineUpdateSchema =
