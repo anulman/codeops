@@ -537,6 +537,17 @@ const listener = createPlaneWebhookRequestListener({
         codingRequests: codingRequestStore,
         pullRequestBindings,
         workflowBindings,
+        begin: ({ projectId, workItemId }) =>
+          transitionWorkItemFrom({
+            projectId,
+            workItemId,
+            expectedStateIds: [
+              authority.stateIds.ready,
+              authority.stateIds.inProgress,
+              authority.stateIds.needsAttention,
+            ],
+            targetStateId: authority.stateIds.inProgress,
+          }),
         enqueue: enqueueCoding,
       });
     },
@@ -606,7 +617,7 @@ const listener = createPlaneWebhookRequestListener({
         notice.projectId,
         notice.workspaceId,
       );
-      const { inProgress, needsAttention } = authority.stateIds;
+      const { ready, inProgress, needsAttention } = authority.stateIds;
       const workflowBinding = await workflowBindings.getByWorkItem(
         notice.workItemId,
       );
@@ -630,7 +641,10 @@ const listener = createPlaneWebhookRequestListener({
           await transitionWorkItemFrom({
             projectId: notice.projectId,
             workItemId: notice.workItemId,
-            expectedStateIds: [inProgress, needsAttention],
+            // Older existing-PR adoptions were enqueued before their Plane
+            // ticket moved from Ready. Preserve a fail-closed recovery path
+            // for those exact active workflow and pull-request bindings.
+            expectedStateIds: [ready, inProgress, needsAttention],
             targetStateId: needsAttention,
           });
         }

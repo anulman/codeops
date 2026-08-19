@@ -23,6 +23,7 @@ function recordingFetch() {
       method: init.method,
       headers: Object.fromEntries(new Headers(init.headers)),
       body: init.body === undefined ? undefined : JSON.parse(init.body),
+      signal: init.signal,
     };
     calls.push(call);
     if (call.url.endsWith(`/work-items/${workItemId}/`)) {
@@ -213,7 +214,10 @@ test("maps the content-only client to Plane work-item endpoints", async () => {
       (call) =>
         call.url.startsWith(
           "https://plane.example.test/api/v1/workspaces/codeops/projects/",
-        ) && call.headers["x-api-key"] === apiKey,
+        ) &&
+        call.headers["x-api-key"] === apiKey &&
+        call.signal instanceof AbortSignal &&
+        call.signal.aborted === false,
     ),
   );
   assert.ok(
