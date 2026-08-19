@@ -87,7 +87,7 @@ export function buildRunResources(
   }
   const modelBudgetAuthority = agentJobModelBudgetAuthority(request, input.runId);
   const tokenInput = {
-    subject: input.runId,
+    subject: modelBudgetAuthority?.budgetId ?? input.runId,
     signingKey: input.modelAuth.signingKey,
     model: "gpt-5.6-sol",
     reasoningEffort: "high" as const,

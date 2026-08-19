@@ -618,7 +618,8 @@ test("binds adopted pull-request Agent tokens to their durable session budget", 
   const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url"));
   assert.match(payload.budgetId, /^ses_[0-9a-f]{24}$/);
   assert.equal(payload.generation, 1);
-  assert.equal(payload.sub, identity.runId);
+  assert.equal(payload.sub, payload.budgetId);
+  assert.notEqual(payload.sub, identity.runId);
 });
 
 test("retains passing coding evidence and mounts the exact cumulative patch for an isolated critic", async () => {
