@@ -7,6 +7,7 @@ import type {
 import {
   getWebPushConfiguration,
   registerWebPushSubscription,
+  reportWebPushFailure,
   revokeWebPushSubscription,
 } from "@/lib/sessionBroker.data";
 
@@ -22,6 +23,20 @@ type PromptState =
   | "enabled"
   | "blocked"
   | "failed";
+type FailureStage = "read-existing" | "revoke" | "subscribe" | "serialize" | "register";
+type FailureDiagnostic = { readonly stage: FailureStage; readonly name: string; readonly message: string };
+
+class WebPushEnableError extends Error {
+  readonly stage: FailureStage;
+  override readonly cause: unknown;
+
+  constructor(stage: FailureStage, cause: unknown) {
+    super(cause instanceof Error ? cause.message : "Unknown Web Push failure");
+    this.name = "WebPushEnableError";
+    this.stage = stage;
+    this.cause = cause;
+  }
+}
 
 function isInstalled(): boolean {
   return window.matchMedia("(display-mode: standalone)").matches ||
@@ -74,13 +89,56 @@ function wireSubscription(
   };
 }
 
+async function activeServiceWorkerRegistration(): Promise<ServiceWorkerRegistration> {
+  await navigator.serviceWorker.register("/session-notifications-sw.js", { scope: "/" });
+  return navigator.serviceWorker.ready;
+}
+
+function diagnostic(error: unknown): FailureDiagnostic {
+  const stage = error instanceof WebPushEnableError ? error.stage : "subscribe";
+  const cause = error instanceof WebPushEnableError ? error.cause : error;
+  const rawName = cause instanceof Error ? cause.name : "UnknownError";
+  const rawMessage = cause instanceof Error ? cause.message : "Unknown Web Push failure";
+  return {
+    stage,
+    name: /^[A-Za-z][A-Za-z0-9._-]*$/.test(rawName) ? rawName.slice(0, 64) : "UnknownError",
+    message: rawMessage.trim().slice(0, 240) || "Unknown Web Push failure",
+  };
+}
+
+function workerState(registration: ServiceWorkerRegistration): ServiceWorkerState | "missing" {
+  return registration.active?.state ?? registration.waiting?.state ?? registration.installing?.state ?? "missing";
+}
+
+function serializeSubscription(subscription: PushSubscription): WebPushSubscription {
+  try {
+    return wireSubscription(subscription);
+  } catch (error) {
+    throw new WebPushEnableError("serialize", error);
+  }
+}
+
+async function persistSubscription(subscription: PushSubscription): Promise<void> {
+  try {
+    await registerWebPushSubscription({ data: serializeSubscription(subscription) });
+  } catch (error) {
+    if (error instanceof WebPushEnableError) throw error;
+    throw new WebPushEnableError("register", error);
+  }
+}
+
 async function ensureSubscription(
   registration: ServiceWorkerRegistration,
   configuration: WebPushConfiguration,
 ): Promise<void> {
   if (!configuration.enabled || configuration.publicKey === null) return;
   const expectedKey = applicationServerKey(configuration.publicKey);
-  let existing = await registration.pushManager.getSubscription();
+  let existing: PushSubscription | null;
+  try {
+    existing = await registration.pushManager.getSubscription();
+  } catch (error) {
+    throw new WebPushEnableError("read-existing", error);
+  }
   if (existing !== null) {
     const currentKey = existing.options.applicationServerKey === null
       ? null
@@ -90,16 +148,27 @@ async function ensureSubscription(
       currentKey.length !== expectedKey.length ||
       currentKey.some((value, index) => value !== expectedKey[index])
     ) {
-      await revokeWebPushSubscription({ data: wireSubscription(existing) }).catch(() => undefined);
-      await existing.unsubscribe();
+      try {
+        await revokeWebPushSubscription({ data: serializeSubscription(existing) }).catch(() => undefined);
+        await existing.unsubscribe();
+      } catch (error) {
+        throw new WebPushEnableError("revoke", error);
+      }
       existing = null;
     }
   }
-  const subscription = existing ?? await registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: expectedKey,
-  });
-  await registerWebPushSubscription({ data: wireSubscription(subscription) });
+  let subscription = existing;
+  if (subscription === null) {
+    try {
+      subscription = await registration.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: expectedKey,
+      });
+    } catch (error) {
+      throw new WebPushEnableError("subscribe", error);
+    }
+  }
+  await persistSubscription(subscription);
 }
 
 async function subscribeFromUserGesture(
@@ -110,12 +179,17 @@ async function subscribeFromUserGesture(
   // WebKit consumes transient user activation when it prompts for push
   // permission. Start the subscription synchronously from the click handler;
   // a separate permission-request round trip loses that gesture.
-  const subscriptionPromise = registration.pushManager.subscribe({
-    userVisibleOnly: true,
-    applicationServerKey: applicationServerKey(configuration.publicKey),
-  });
-  const subscription = await subscriptionPromise;
-  await registerWebPushSubscription({ data: wireSubscription(subscription) });
+  let subscription: PushSubscription;
+  try {
+    const subscriptionPromise = registration.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: applicationServerKey(configuration.publicKey),
+    });
+    subscription = await subscriptionPromise;
+  } catch (error) {
+    throw new WebPushEnableError("subscribe", error);
+  }
+  await persistSubscription(subscription);
 }
 
 export function SessionNotifications() {
@@ -123,6 +197,7 @@ export function SessionNotifications() {
   const [configuration, setConfiguration] = useState<WebPushConfiguration | null>(null);
   const [registration, setRegistration] = useState<ServiceWorkerRegistration | null>(null);
   const [subscribed, setSubscribed] = useState(false);
+  const [failure, setFailure] = useState<FailureDiagnostic | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -133,7 +208,7 @@ export function SessionNotifications() {
         !("PushManager" in window)
       ) return;
       const [nextRegistration, nextConfiguration] = await Promise.all([
-        navigator.serviceWorker.register("/session-notifications-sw.js", { scope: "/" }),
+        activeServiceWorkerRegistration(),
         getWebPushConfiguration(),
       ]);
       if (cancelled || !nextConfiguration.enabled) return;
@@ -144,8 +219,20 @@ export function SessionNotifications() {
         try {
           await ensureSubscription(nextRegistration, nextConfiguration);
           if (!cancelled) setSubscribed(true);
-        } catch {
-          if (!cancelled) setState("failed");
+        } catch (error) {
+          if (!cancelled) {
+            const nextFailure = diagnostic(error);
+            setFailure(nextFailure);
+            setState("failed");
+            void reportWebPushFailure({ data: {
+              version: "codeops.web-push-failure-diagnostic/v1",
+              flow: "automatic",
+              ...nextFailure,
+              permission: Notification.permission,
+              serviceWorkerState: workerState(nextRegistration),
+              installed: isInstalled(),
+            } }).catch(() => undefined);
+          }
         }
         return;
       }
@@ -213,7 +300,9 @@ export function SessionNotifications() {
     : state === "enabled"
     ? "This device can receive permission requests, failures, completed work, idle checkpoints, and budget limits."
     : state === "failed"
-    ? "The permission or push subscription could not be completed. Try again from this device."
+    ? failure === null
+      ? "The permission or push subscription could not be completed. Try again from this device."
+      : `Web Push ${failure.stage} failed (${failure.name}): ${failure.message}`
     : "Get permission requests, failures, completed work, idle checkpoints, and budget limits while this app is suspended.";
   return (
     <aside {...sx("fixed bottom-3 right-3 z-20 w-[min(22rem,calc(100vw-1.5rem))] rounded-xl border border-white/[0.1] bg-[#171719] p-3 shadow-xl lg:bottom-3 lg:left-32 lg:right-auto")}>
@@ -232,12 +321,23 @@ export function SessionNotifications() {
                 registration,
                 configuration,
               );
+              setFailure(null);
               setState("enabling");
               void subscriptionPromise.then(() => {
                 setSubscribed(true);
                 setState("enabled");
-              }).catch(() => {
+              }).catch((error) => {
+                const nextFailure = diagnostic(error);
+                setFailure(nextFailure);
                 setState(Notification.permission === "denied" ? "blocked" : "failed");
+                void reportWebPushFailure({ data: {
+                  version: "codeops.web-push-failure-diagnostic/v1",
+                  flow: "gesture",
+                  ...nextFailure,
+                  permission: Notification.permission,
+                  serviceWorkerState: workerState(registration),
+                  installed: isInstalled(),
+                } }).catch(() => undefined);
               });
             }}
             {...sx("rounded-md bg-[#6d6af7] px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-[#7c79ff] disabled:opacity-45")}

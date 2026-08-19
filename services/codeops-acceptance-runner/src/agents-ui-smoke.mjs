@@ -176,6 +176,18 @@ export async function runAgentsUiSmoke(input = {}) {
             state: "visible",
             timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
           });
+          const serviceWorker = await page.evaluate(async () => {
+            const ready = await navigator.serviceWorker.ready;
+            return {
+              active: ready.active?.state ?? null,
+              controller: navigator.serviceWorker.controller?.state ?? null,
+            };
+          });
+          if (serviceWorker.active !== "activated") {
+            throw new Error(
+              `desktop Web Push UI became available without an active service worker: ${JSON.stringify(serviceWorker)}`,
+            );
+          }
           await enable.click();
           await page.getByText("Notifications are enabled", { exact: true }).waitFor({
             state: "visible",

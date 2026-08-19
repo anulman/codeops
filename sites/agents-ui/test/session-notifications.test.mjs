@@ -24,6 +24,10 @@ test("ships one installable manifest and one notification click route", async ()
   assert.match(component, /Settings → Notifications → Agent Sessions/);
   assert.match(component, /removeItem\(DISMISS_KEY\)/);
   assert.match(component, /pushManager\.subscribe/);
+  assert.match(component, /return navigator\.serviceWorker\.ready/);
+  assert.match(component, /Web Push \$\{failure\.stage\} failed \(\$\{failure\.name\}\): \$\{failure\.message\}/);
+  assert.match(data, /agents_ui_web_push_enable_failed/);
+  assert.match(data, /codeops\.web-push-failure-diagnostic\/v1/);
   assert.match(
     component,
     /function subscribeFromUserGesture[\s\S]*const subscriptionPromise = registration\.pushManager\.subscribe[\s\S]*await subscriptionPromise/,
