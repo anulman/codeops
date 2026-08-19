@@ -31,6 +31,22 @@ export async function runAgentsUiSmoke(input = {}) {
   const baseUrl = parseAgentsUiBaseUrl(
     input.baseUrl ?? process.env.CODEOPS_AGENTS_UI_BASE_URL ?? "",
   );
+  const fetcher = input.fetch ?? fetch;
+  for (const asset of [
+    { path: "/manifest.webmanifest", pattern: /"display"\s*:\s*"standalone"/ },
+    { path: "/session-notifications-sw.js", pattern: /addEventListener\("push"/ },
+  ]) {
+    const response = await fetcher(new URL(asset.path, baseUrl), {
+      headers: input.extraHTTPHeaders,
+      redirect: "error",
+    });
+    const body = await response.text();
+    if (response.status !== 200 || !asset.pattern.test(body)) {
+      throw new Error(
+        `agents UI static asset ${asset.path} is unavailable or invalid`,
+      );
+    }
+  }
   const browser = await (input.chromium ?? chromium).launch({
     headless: true,
     args: ["--disable-dev-shm-usage", "--no-sandbox"],

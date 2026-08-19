@@ -52,6 +52,22 @@ function fakeChromium({ overflow = false, typographyDrift = false } = {}) {
   };
 }
 
+function fakeStaticAssets({ missingPath } = {}) {
+  const requests = [];
+  const fetch = async (url, options) => {
+    const parsed = new URL(url);
+    requests.push({ url: parsed.href, options });
+    if (parsed.pathname === missingPath) {
+      return { status: 404, text: async () => "not found" };
+    }
+    const body = parsed.pathname === "/manifest.webmanifest"
+      ? '{"display":"standalone"}'
+      : 'self.addEventListener("push", () => undefined);';
+    return { status: 200, text: async () => body };
+  };
+  return { fetch, requests };
+}
+
 test("accepts only an exact external HTTPS or bounded local origin", () => {
   for (const valid of [
     "https://agents.codeops.example",
@@ -73,11 +89,20 @@ test("accepts only an exact external HTTPS or bounded local origin", () => {
 
 test("checks fleet and new-session surfaces", async () => {
   const chromium = fakeChromium();
+  const assets = fakeStaticAssets();
   await runAgentsUiSmoke({
     baseUrl: "http://codeops-agents-ui:3000",
     chromium,
+    fetch: assets.fetch,
     sessionId: "ses_legacy_workspace_042",
   });
+  assert.deepEqual(
+    assets.requests.map(({ url }) => url),
+    [
+      "http://codeops-agents-ui:3000/manifest.webmanifest",
+      "http://codeops-agents-ui:3000/session-notifications-sw.js",
+    ],
+  );
   assert.deepEqual(
     chromium.contexts.map(({ options }) => options.viewport),
     [
@@ -146,6 +171,7 @@ test("fails closed on horizontal overflow", async () => {
     runAgentsUiSmoke({
       baseUrl: "http://codeops-agents-ui:3000",
       chromium: fakeChromium({ overflow: true }),
+      fetch: fakeStaticAssets().fetch,
       extraHTTPHeaders: {},
     }),
     /horizontal overflow/,
@@ -157,8 +183,20 @@ test("fails closed on dense typography drift", async () => {
     runAgentsUiSmoke({
       baseUrl: "http://codeops-agents-ui:3000",
       chromium: fakeChromium({ typographyDrift: true }),
+      fetch: fakeStaticAssets().fetch,
       sessionId: "ses_legacy_workspace_042",
     }),
     /typography drift.*expected 11\/16px, received 11\/24px/,
+  );
+});
+
+test("fails closed when the notification worker is missing", async () => {
+  await assert.rejects(
+    runAgentsUiSmoke({
+      baseUrl: "http://codeops-agents-ui:3000",
+      chromium: fakeChromium(),
+      fetch: fakeStaticAssets({ missingPath: "/session-notifications-sw.js" }).fetch,
+    }),
+    /static asset \/session-notifications-sw\.js is unavailable or invalid/,
   );
 });
