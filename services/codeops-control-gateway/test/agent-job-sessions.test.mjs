@@ -162,3 +162,81 @@ test("persists adopted Agent terminal output as bounded commandless progress", a
   assert.equal(snapshot.state, "completed");
   assert.equal(snapshot.eventCursor, 4);
 });
+
+function inMemorySessionClient() {
+  const state = { calls: [], snapshot: undefined };
+  return {
+    state,
+    client: {
+      async query(sql, values = []) {
+        state.calls.push({ sql, values });
+        if (sql.includes("INSERT INTO codeops.sessions")) {
+          state.snapshot = JSON.parse(values[3]);
+          return { rowCount: 1, rows: [] };
+        }
+        if (sql.includes("SELECT snapshot_json FROM codeops.sessions")) {
+          return { rowCount: 1, rows: [{ snapshot_json: state.snapshot }] };
+        }
+        if (sql.includes("UPDATE codeops.sessions")) {
+          state.snapshot = JSON.parse(values[1]);
+        }
+        return { rowCount: 1, rows: [] };
+      },
+    },
+  };
+}
+
+test("reconciles an exact failed Agent Job from a retained completed result", async () => {
+  const { client, state } = inMemorySessionClient();
+  const job = request("critic-agent", 1);
+  await projectAgentJobSessionStarted({ client, request: job, runId: "retained-run" });
+  await projectAgentJobSessionTerminal({
+    client,
+    request: job,
+    runId: "retained-run",
+    response: "The first dispatcher attempt failed.",
+    state: "failed",
+  });
+  await projectAgentJobSessionTerminal({
+    client,
+    request: job,
+    runId: "retained-run",
+    response: "The retained critic result passed.",
+    state: "completed",
+    source: "retained-reconciliation",
+  });
+
+  assert.equal(state.snapshot.state, "completed");
+  assert.equal(state.snapshot.eventCursor, 6);
+  const messages = state.calls
+    .filter(({ sql, values }) => sql.includes("INSERT INTO codeops.session_events") && values[4] === "acp_update")
+    .map(({ values }) => JSON.parse(values[5]).message.messageId);
+  assert.deepEqual(messages, [
+    "agent-job-response:retained-run",
+    "agent-job-response:retained-run:reconciled",
+  ]);
+});
+
+test("rejects a live completed result after a failed Agent Job terminal", async () => {
+  const { client } = inMemorySessionClient();
+  const job = request("critic-agent", 1);
+  await projectAgentJobSessionStarted({ client, request: job, runId: "conflict-run" });
+  await projectAgentJobSessionTerminal({
+    client,
+    request: job,
+    runId: "conflict-run",
+    response: "Failed.",
+    state: "failed",
+  });
+  await assert.rejects(
+    projectAgentJobSessionTerminal({
+      client,
+      request: job,
+      runId: "conflict-run",
+      response: "Unexpected live completion.",
+      state: "completed",
+      source: "live",
+    }),
+    /conflicts with stored state/,
+  );
+});

@@ -111,6 +111,12 @@ export {
   type SessionRuntimePermissionSubmission,
 } from "./session-runtime.js";
 export {
+  sessionSupervisionReconciliationRequestSchema,
+  sessionSupervisionReconciliationResultSchema,
+  type SessionSupervisionReconciliationRequest,
+  type SessionSupervisionReconciliationResult,
+} from "./session-supervision.js";
+export {
   DEFAULT_SESSION_BUDGET_LIMITS,
   projectSessionBudget,
   sessionBudgetLimitsSchema,
@@ -443,6 +449,12 @@ export const adoptedPullRequestSchema = z
       .min(1)
       .max(256)
       .regex(/^[A-Za-z0-9][A-Za-z0-9._:@/-]*$/),
+    supervisorSessionId: z
+      .string()
+      .min(1)
+      .max(128)
+      .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]*$/)
+      .optional(),
     rationale: safeText(2_000),
   })
   .strict()
