@@ -102,6 +102,22 @@ async function ensureSubscription(
   await registerWebPushSubscription({ data: wireSubscription(subscription) });
 }
 
+async function subscribeFromUserGesture(
+  registration: ServiceWorkerRegistration,
+  configuration: WebPushConfiguration,
+): Promise<void> {
+  if (!configuration.enabled || configuration.publicKey === null) return;
+  // WebKit consumes transient user activation when it prompts for push
+  // permission. Start the subscription synchronously from the click handler;
+  // a separate permission-request round trip loses that gesture.
+  const subscriptionPromise = registration.pushManager.subscribe({
+    userVisibleOnly: true,
+    applicationServerKey: applicationServerKey(configuration.publicKey),
+  });
+  const subscription = await subscriptionPromise;
+  await registerWebPushSubscription({ data: wireSubscription(subscription) });
+}
+
 export function SessionNotifications() {
   const [state, setState] = useState<PromptState>("hidden");
   const [configuration, setConfiguration] = useState<WebPushConfiguration | null>(null);
@@ -214,16 +230,11 @@ export function SessionNotifications() {
             onClick={async () => {
               setState("enabling");
               try {
-                const permission = await Notification.requestPermission();
-                if (permission !== "granted") {
-                  setState(permission === "denied" ? "blocked" : "hidden");
-                  return;
-                }
-                await ensureSubscription(registration, configuration);
+                await subscribeFromUserGesture(registration, configuration);
                 setSubscribed(true);
                 setState("enabled");
               } catch {
-                setState("failed");
+                setState(Notification.permission === "denied" ? "blocked" : "failed");
               }
             }}
             {...sx("rounded-md bg-[#6d6af7] px-2 py-1 text-[10px] font-semibold text-white transition hover:bg-[#7c79ff] disabled:opacity-45")}
