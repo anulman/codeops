@@ -34,7 +34,11 @@ function requestInit() {
   return {
     method: "POST",
     headers: new Headers({ "Content-Type": "application/json" }),
-    body: Buffer.from(JSON.stringify({ model: "gpt-5.6-sol", background: true })),
+    body: Buffer.from(JSON.stringify({
+      model: "gpt-5.6-sol",
+      background: true,
+      max_output_tokens: 32_768,
+    })),
   };
 }
 
@@ -60,6 +64,7 @@ test("uses ChatGPT without exposing OAuth material to the caller", async () => {
   assert.equal(calls[0].init.headers.get("originator"), "codex_cli_rs");
   assert.notEqual(calls[0].init.headers.get("Authorization"), "Bearer api-fallback");
   assert.equal(JSON.parse(calls[0].init.body).background, undefined);
+  assert.equal(JSON.parse(calls[0].init.body).max_output_tokens, undefined);
   assert.equal(JSON.stringify(calls).includes("refresh-one"), false);
   assert.equal(JSON.stringify(calls).includes("api-fallback"), false);
 });
@@ -98,23 +103,25 @@ test("refreshes once, rotates the cache, and removes an API key", async () => {
 
 test("falls back only for explicit subscription rejection", async () => {
   const file = await authFile();
-  const urls = [];
+  const calls = [];
   const broker = createProviderBroker({
     primaryMode: "chatgpt-primary",
     chatGptAuthFile: file,
     apiKey: "api-fallback",
     allowApiKeyFallback: true,
     now: () => now,
-    fetch: async (url) => {
-      urls.push(url);
-      return new Response("result", { status: urls.length === 1 ? 429 : 200 });
+    fetch: async (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) });
+      return new Response("result", { status: calls.length === 1 ? 429 : 200 });
     },
   });
   assert.equal((await broker(providerBrokerConstants.OPENAI_RESPONSES_URL, requestInit())).status, 200);
-  assert.deepEqual(urls, [
+  assert.deepEqual(calls.map(({ url }) => url), [
     providerBrokerConstants.CHATGPT_RESPONSES_URL,
     providerBrokerConstants.OPENAI_RESPONSES_URL,
   ]);
+  assert.equal(calls[0].body.max_output_tokens, undefined);
+  assert.equal(calls[1].body.max_output_tokens, 32_768);
 });
 
 test("keeps OAuth and API-key credentials on their respective routes", async () => {
