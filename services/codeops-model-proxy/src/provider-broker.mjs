@@ -83,6 +83,10 @@ function providerHeaders(headers, authorization, accountId = null) {
 function chatGptBody(body) {
   const parsed = JSON.parse(Buffer.from(body).toString("utf8"));
   delete parsed.background;
+  // The ChatGPT Codex endpoint does not accept the public Responses API
+  // max_output_tokens field. CodeOps still enforces that authority before
+  // routing and settles the proved usage against the durable model budget.
+  delete parsed.max_output_tokens;
   return Buffer.from(JSON.stringify(parsed));
 }
 
