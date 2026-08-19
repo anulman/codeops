@@ -584,6 +584,43 @@ test("delivers immutable ticket and sibling decision context to coding jobs", ()
   );
 });
 
+test("binds adopted pull-request Agent tokens to their durable session budget", () => {
+  const adopted = structuredClone(codingDispatch);
+  adopted.codingRound = 1;
+  adopted.codingRequest.adoptedPullRequest = {
+    version: "codeops.adopted-pull-request/v1",
+    repository: "example-org/example-repository",
+    pullRequestNumber: 158,
+    headSha: projectContext.baseSha,
+    headRef: "feat/existing-pr",
+    baseSha: "0".repeat(40),
+    baseRef: "main",
+    title: "Review the exact existing PR",
+    url: "https://github.com/example-org/example-repository/pull/158",
+    adoptedAt: "2026-08-18T07:00:00.000Z",
+    sessionOwnerPrincipalId: "access:aidan@example.com",
+    rationale: "Run the exact PR head through the critic loop.",
+  };
+  const identity = createRunIdentity(adopted);
+  const resources = buildRunResources({
+    namespace: "codeops-trial",
+    ...identity,
+    repositoryUrl: "https://github.com/example-org/example-repository",
+    agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+    sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+    repositoryReadToken: "repo-token",
+    modelAuth,
+  }, adopted);
+  const token = Buffer.from(
+    resources[0].data["model-proxy-token"],
+    "base64",
+  ).toString("utf8");
+  const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url"));
+  assert.match(payload.budgetId, /^ses_[0-9a-f]{24}$/);
+  assert.equal(payload.generation, 1);
+  assert.equal(payload.sub, identity.runId);
+});
+
 test("retains passing coding evidence and mounts the exact cumulative patch for an isolated critic", async () => {
   const rootDirectory = await mkdtemp(path.join(os.tmpdir(), "codeops-critic-"));
   const initial = { ...codingDispatch, codingRound: 1 };

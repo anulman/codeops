@@ -6,6 +6,7 @@ import {
   projectAgentJobSessionStarted,
   projectAgentJobSessionTerminal,
 } from "../dist/agent-job-sessions.js";
+import { agentJobModelBudgetAuthority } from "../dist/agent-job-identity.js";
 
 const adoptedPullRequest = {
   version: "codeops.adopted-pull-request/v1",
@@ -53,6 +54,10 @@ test("describes visible deterministic work-item and reviewer sessions for adopte
   assert.equal(reviewer.identity.agentRole, "critic");
   assert.match(reviewer.identity.displayName, /PR #158 · Reviewer Session/);
   assert.notEqual(worker.sessionId, reviewer.sessionId);
+  assert.deepEqual(
+    agentJobModelBudgetAuthority(request("critic-agent", 1), "critic-run"),
+    { budgetId: reviewer.sessionId, generation: 1 },
+  );
 });
 
 test("does not project unrelated Agent Jobs", () => {

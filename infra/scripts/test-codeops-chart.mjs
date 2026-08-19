@@ -240,6 +240,51 @@ test("renders one portable CodeOps package with immutable images", () => {
   assert.notEqual(controlGatewayAccount.automountServiceAccountToken, false);
 });
 
+test("isolates subscription auth in the model proxy and keeps API fallback", () => {
+  const resources = render([
+    "--set", "modelProxy.provider.primary=chatgpt-primary",
+    "--set", "modelProxy.provider.apiKeyFallback=true",
+    "--set", "modelProxy.provider.chatgptAuthClaimName=agents-system-codex-auth",
+  ]);
+  const modelProxy = resource(resources, "Deployment", "team-a-codeops-model-proxy");
+  const container = modelProxy.spec.template.spec.containers[0];
+  const env = Object.fromEntries(container.env.map(({ name, value }) => [name, value]));
+  assert.equal(modelProxy.spec.strategy.type, "Recreate");
+  assert.equal(modelProxy.spec.template.spec.securityContext.fsGroup, 1000);
+  assert.equal(
+    modelProxy.spec.template.spec.securityContext.fsGroupChangePolicy,
+    "OnRootMismatch",
+  );
+  assert.equal(env.CODEOPS_MODEL_PROVIDER_PRIMARY, "chatgpt-primary");
+  assert.equal(env.CODEOPS_MODEL_API_KEY_FALLBACK, "true");
+  assert.equal(env.CODEOPS_CHATGPT_AUTH_FILE, "/var/lib/codeops-codex/auth.json");
+  assert.deepEqual(container.volumeMounts, [
+    { name: "chatgpt-auth", mountPath: "/var/lib/codeops-codex" },
+  ]);
+  assert.deepEqual(modelProxy.spec.template.spec.volumes, [{
+    name: "chatgpt-auth",
+    persistentVolumeClaim: { claimName: "agents-system-codex-auth" },
+  }]);
+  const serialized = JSON.stringify(resources);
+  assert.equal(serialized.match(/agents-system-codex-auth/g)?.length, 1);
+  assert.match(JSON.stringify(container.env), /openai-api-key/);
+
+  for (const extra of [
+    ["--set", "modelProxy.provider.primary=chatgpt-primary"],
+    [
+      "--set", "modelProxy.provider.primary=chatgpt-primary",
+      "--set", "modelProxy.provider.chatgptAuthClaimName=agents-system-codex-auth",
+      "--set", "modelProxy.replicas=2",
+    ],
+  ]) {
+    assert.throws(() => render(extra));
+  }
+  assert.throws(
+    () => render(["--set", "modelProxy.provider.primary=unknown"]),
+    /modelProxy\.provider\.primary must be api-key or chatgpt-primary/,
+  );
+});
+
 test("runs migration as an ordinary install Job and a pre-upgrade hook", () => {
   const migration = resource(
     renderUpgrade(),

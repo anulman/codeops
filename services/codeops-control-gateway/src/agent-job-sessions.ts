@@ -10,9 +10,12 @@ import {
   type AgentJobDispatchRequest,
 } from "@codeops/codeops-contracts";
 import { buildAgentPrompt } from "./core.js";
+import { agentJobSessionId } from "./agent-job-identity.js";
 import { initializeSessionFromJob } from "./session-job-initialization.js";
 import type { TransactionClient } from "./session-broker-repository.js";
 import { sessionCapabilitiesFor } from "./session-broker-transitions.js";
+
+export { agentJobSessionId } from "./agent-job-identity.js";
 
 function hash(value: string): string {
   return createHash("sha256").update(value).digest("hex");
@@ -21,10 +24,6 @@ function hash(value: string): string {
 function deterministicUuid(value: string): string {
   const digest = hash(value);
   return `${digest.slice(0, 8)}-${digest.slice(8, 12)}-4${digest.slice(13, 16)}-a${digest.slice(17, 20)}-${digest.slice(20, 32)}`;
-}
-
-export function agentJobSessionId(runId: string): string {
-  return `ses_${hash(`agent-job:${runId}`).slice(0, 24)}`;
 }
 
 export function describeAgentJobSession(request: AgentJobDispatchRequest, runId: string) {
