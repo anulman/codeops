@@ -26,6 +26,14 @@ const workspaceArtifactsUrl = new URL("../sql/workspace-checkpoint-artifacts.sql
 const workspaceArtifactsRevertUrl = new URL("../sql/workspace-checkpoint-artifacts-revert.sql", import.meta.url);
 const sessionNotificationsUrl = new URL("../sql/session-notifications.sql", import.meta.url);
 const sessionNotificationsRevertUrl = new URL("../sql/session-notifications-revert.sql", import.meta.url);
+const sessionNotificationKeyConstraintUrl = new URL(
+  "../sql/session-notification-key-constraint-v2.sql",
+  import.meta.url,
+);
+const sessionNotificationKeyConstraintRevertUrl = new URL(
+  "../sql/session-notification-key-constraint-v2-revert.sql",
+  import.meta.url,
+);
 const modelBudgetLedgerUrl = new URL("../sql/session-model-budget-ledger-v2.sql", import.meta.url);
 const modelBudgetLedgerRevertUrl = new URL("../sql/session-model-budget-ledger-v2-revert.sql", import.meta.url);
 const modelBudgetFunctionsUrl = new URL("../sql/session-model-budget-ledger-functions-v1.sql", import.meta.url);
@@ -273,6 +281,21 @@ test("defines reversible principal-bound Web Push delivery state", async () => {
     revert,
     /^BEGIN;[\s\S]*DROP TABLE IF EXISTS codeops\.session_notification_deliveries;[\s\S]*DROP TABLE IF EXISTS codeops\.web_push_subscriptions;[\s\S]*COMMIT;\n$/,
   );
+});
+
+test("uses PostgreSQL-safe Web Push key bounds and proves the maximum insert", async () => {
+  const sql = await readFile(sessionNotificationKeyConstraintUrl, "utf8");
+  const revert = await readFile(sessionNotificationKeyConstraintRevertUrl, "utf8");
+  assert.match(sql, /char_length\(p256dh\) BETWEEN 40 AND 256/);
+  assert.match(sql, /p256dh ~ '\^\[A-Za-z0-9_-\]\+\$'/);
+  assert.doesNotMatch(sql, /\{40,256\}/);
+  assert.match(sql, /LIKE codeops\.web_push_subscriptions INCLUDING CONSTRAINTS/);
+  assert.match(sql, /repeat\('A', 256\)/);
+  assert.match(sql, /INSERT INTO web_push_subscription_constraint_probe/);
+  assert.match(revert, /char_length\(p256dh\) BETWEEN 40 AND 256/);
+  assert.doesNotMatch(revert, /\{40,256\}/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });
 
 test("orders migration and reversion around foreign-key dependencies", async () => {

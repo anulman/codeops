@@ -3,6 +3,7 @@ import test from "node:test";
 
 import {
   InvalidSessionNotificationRequestError,
+  sessionNotificationFailureEvidence,
   serveSessionNotifications,
 } from "../dist/session-notification-http.js";
 import { WebPushSubscriptionConflictError } from "../dist/session-notification-store.js";
@@ -118,4 +119,26 @@ test("rejects malformed input before the store and hides binding details", async
       publicKey: null,
     },
   }), { status: 503, body: { status: "notifications-disabled" } });
+});
+
+test("reports bounded database failure evidence without request data", () => {
+  const error = Object.assign(new Error("private endpoint and key material"), {
+    code: "2201B",
+    constraint: "web_push_subscriptions_p256dh_check",
+    detail: "private subscription values",
+  });
+  assert.deepEqual(sessionNotificationFailureEvidence(error), {
+    event: "session_notification_request_failed",
+    errorType: "Error",
+    databaseCode: "2201B",
+    constraint: "web_push_subscriptions_p256dh_check",
+  });
+  assert.deepEqual(sessionNotificationFailureEvidence({
+    name: "Bad name!",
+    code: "not-safe",
+    constraint: "private value = secret",
+  }), {
+    event: "session_notification_request_failed",
+    errorType: "UnknownError",
+  });
 });

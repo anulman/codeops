@@ -90,6 +90,7 @@ import {
 } from "./workspace-launch-http.js";
 import {
   InvalidSessionNotificationRequestError,
+  sessionNotificationFailureEvidence,
   serveSessionNotifications,
 } from "./session-notification-http.js";
 import {
@@ -737,6 +738,11 @@ const server = createServer((request, response) => {
         return;
       }
     } catch (error) {
+      if (!(error instanceof InvalidSessionNotificationRequestError)) {
+        process.stderr.write(`${JSON.stringify(
+          sessionNotificationFailureEvidence(error),
+        )}\n`);
+      }
       json(
         response,
         error instanceof InvalidSessionNotificationRequestError ? 400 : 503,

@@ -32,6 +32,33 @@ function principal(headers: IncomingHttpHeaders): string {
 
 export class InvalidSessionNotificationRequestError extends Error {}
 
+function boundedIdentifier(value: unknown): string | undefined {
+  return typeof value === "string" && /^[A-Za-z0-9_]{1,128}$/.test(value)
+    ? value
+    : undefined;
+}
+
+export function sessionNotificationFailureEvidence(error: unknown): Readonly<{
+  event: "session_notification_request_failed";
+  errorType: string;
+  databaseCode?: string;
+  constraint?: string;
+}> {
+  const record = error !== null && typeof error === "object"
+    ? error as { readonly name?: unknown; readonly code?: unknown; readonly constraint?: unknown }
+    : {};
+  return {
+    event: "session_notification_request_failed",
+    errorType: boundedIdentifier(record.name) ?? "UnknownError",
+    ...(typeof record.code === "string" && /^[0-9A-Z]{5}$/.test(record.code)
+      ? { databaseCode: record.code }
+      : {}),
+    ...(boundedIdentifier(record.constraint) === undefined
+      ? {}
+      : { constraint: boundedIdentifier(record.constraint)! }),
+  };
+}
+
 export async function serveSessionNotifications(input: {
   readonly method: string | undefined;
   readonly url: string | undefined;
