@@ -3,7 +3,11 @@ import type {
   CandidateCheckpoint,
 } from "@codeops/codeops-contracts";
 import { buildAgentPrompt } from "./core.js";
-import { createModelProxyToken } from "@codeops/codeops-contracts/model-proxy";
+import {
+  createModelProxyToken,
+  createSessionModelProxyToken,
+} from "@codeops/codeops-contracts/model-proxy";
+import { agentJobModelBudgetAuthority } from "./agent-job-identity.js";
 
 interface ResourceConfig {
   readonly namespace: string;
@@ -81,13 +85,20 @@ export function buildRunResources(
   ) {
     throw new Error("model proxy origin must be the internal service");
   }
-  const modelProxyToken = createModelProxyToken({
+  const modelBudgetAuthority = agentJobModelBudgetAuthority(request, input.runId);
+  const tokenInput = {
     subject: input.runId,
     signingKey: input.modelAuth.signingKey,
     model: "gpt-5.6-sol",
-    reasoningEffort: "high",
+    reasoningEffort: "high" as const,
     issuedAt: input.modelAuth.issuedAt,
-  });
+  };
+  const modelProxyToken = modelBudgetAuthority === null
+    ? createModelProxyToken(tokenInput)
+    : createSessionModelProxyToken({
+        ...tokenInput,
+        ...modelBudgetAuthority,
+      });
   const prompt = buildAgentPrompt(request);
   const workspaceReadOnly = request.role === "qa-contract-researcher";
   const projectContext =

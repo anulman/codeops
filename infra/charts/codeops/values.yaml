@@ -66,6 +66,11 @@ modelProxy:
   secretName: codeops-model-proxy-credentials
   databaseUrlKey: database-url
   databaseRoleKey: database-role
+  provider:
+    primary: api-key
+    apiKeyFallback: false
+    chatgptAuthClaimName: ""
+    chatgptAuthFile: /var/lib/codeops-codex/auth.json
   resources:
     requests: { cpu: 50m, memory: 128Mi }
     limits: { cpu: 500m, memory: 512Mi }

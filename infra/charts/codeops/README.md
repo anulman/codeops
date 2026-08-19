@@ -236,6 +236,16 @@ settlement functions. It cannot read or write ledger tables directly. The
 coding-agent container never mounts the reusable OpenAI credential, database
 credential, or reusable Codex state.
 
+The default provider mode is `modelProxy.provider.primary=api-key`. To use a
+ChatGPT subscription as the primary provider, set `primary=chatgpt-primary`,
+set `chatgptAuthClaimName` to a dedicated ReadWriteOnce PVC in the release
+namespace, and keep `replicas=1`. The PVC must contain the Codex OAuth cache at
+`chatgptAuthFile`. Set `apiKeyFallback=true` to retain the `openai-api-key` as
+the fallback. The model proxy mounts and rotates the OAuth cache. Agent Jobs do
+not mount it. The broker falls back only before subscription inference starts
+or after an explicit 401, 403, or 429 response. It does not replay an ambiguous
+transport failure or a 5xx response.
+
 Coding agents use cached Codex web search for ordinary research. Codex
 auto-review evaluates exceptional command-level network requests without a
 human prompt for each request. Kubernetes NetworkPolicies continue to deny

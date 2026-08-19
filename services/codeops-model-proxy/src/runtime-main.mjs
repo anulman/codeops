@@ -3,6 +3,7 @@ import pg from "pg";
 import { ENV } from "varlock/env";
 import { createModelProxyRequestListener } from "./core.mjs";
 import { createModelBudgetLedger } from "./model-budget-ledger.mjs";
+import { createProviderBroker } from "./provider-broker.mjs";
 
 const port = Number(ENV.CODEOPS_MODEL_PROXY_PORT);
 if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
@@ -28,6 +29,13 @@ recoveryTimer.unref();
 const server = createServer(
   createModelProxyRequestListener({
     openAiApiKey: ENV.OPENAI_API_KEY,
+    fetch: createProviderBroker({
+      primaryMode: ENV.CODEOPS_MODEL_PROVIDER_PRIMARY,
+      apiKey: ENV.OPENAI_API_KEY,
+      chatGptAuthFile: ENV.CODEOPS_CHATGPT_AUTH_FILE,
+      allowApiKeyFallback: ENV.CODEOPS_MODEL_API_KEY_FALLBACK,
+      log: (event) => console.log(JSON.stringify(event)),
+    }),
     signingKey: ENV.CODEOPS_MODEL_PROXY_SIGNING_KEY,
     modelBudgetLedger,
   }),

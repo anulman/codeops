@@ -1,5 +1,14 @@
 apiVersion: apps/v1
 kind: Deployment
+{{- if not (has .Values.modelProxy.provider.primary (list "api-key" "chatgpt-primary")) }}
+{{- fail "modelProxy.provider.primary must be api-key or chatgpt-primary" }}
+{{- end }}
+{{- if and (eq .Values.modelProxy.provider.primary "chatgpt-primary") (ne (int .Values.modelProxy.replicas) 1) }}
+{{- fail "modelProxy.replicas must be 1 for chatgpt-primary auth" }}
+{{- end }}
+{{- if and (eq .Values.modelProxy.provider.primary "chatgpt-primary") (empty .Values.modelProxy.provider.chatgptAuthClaimName) }}
+{{- fail "modelProxy.provider.chatgptAuthClaimName is required for chatgpt-primary auth" }}
+{{- end }}
 metadata:
   name: {{ include "codeops.fullname" . }}-model-proxy
   namespace: {{ .Release.Namespace }}
@@ -8,6 +17,8 @@ metadata:
     app.kubernetes.io/component: model-proxy
 spec:
   replicas: {{ .Values.modelProxy.replicas }}
+  strategy:
+    type: {{ ternary "Recreate" "RollingUpdate" (eq .Values.modelProxy.provider.primary "chatgpt-primary") }}
   selector:
     matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-model-proxy }
   template:
@@ -28,6 +39,10 @@ spec:
         runAsNonRoot: true
         runAsUser: 1000
         runAsGroup: 1000
+        {{- if eq .Values.modelProxy.provider.primary "chatgpt-primary" }}
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        {{- end }}
         seccompProfile: { type: RuntimeDefault }
       containers:
         - name: model-proxy
@@ -37,6 +52,11 @@ spec:
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef: { name: {{ .Values.modelProxy.secretName }}, key: openai-api-key }
+            - { name: CODEOPS_MODEL_PROVIDER_PRIMARY, value: {{ .Values.modelProxy.provider.primary | quote }} }
+            - { name: CODEOPS_MODEL_API_KEY_FALLBACK, value: {{ .Values.modelProxy.provider.apiKeyFallback | quote }} }
+            {{- if eq .Values.modelProxy.provider.primary "chatgpt-primary" }}
+            - { name: CODEOPS_CHATGPT_AUTH_FILE, value: {{ .Values.modelProxy.provider.chatgptAuthFile | quote }} }
+            {{- end }}
             - name: CODEOPS_MODEL_PROXY_SIGNING_KEY
               valueFrom:
                 secretKeyRef: { name: {{ .Values.modelProxy.secretName }}, key: signing-key }
@@ -56,6 +76,17 @@ spec:
             allowPrivilegeEscalation: false
             readOnlyRootFilesystem: true
             capabilities: { drop: [ALL] }
+          {{- if eq .Values.modelProxy.provider.primary "chatgpt-primary" }}
+          volumeMounts:
+            - name: chatgpt-auth
+              mountPath: {{ dir .Values.modelProxy.provider.chatgptAuthFile | quote }}
+          {{- end }}
+      {{- if eq .Values.modelProxy.provider.primary "chatgpt-primary" }}
+      volumes:
+        - name: chatgpt-auth
+          persistentVolumeClaim:
+            claimName: {{ .Values.modelProxy.provider.chatgptAuthClaimName | quote }}
+      {{- end }}
 ---
 apiVersion: v1
 kind: Service
