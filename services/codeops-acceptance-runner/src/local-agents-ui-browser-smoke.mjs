@@ -17,6 +17,7 @@ const token = "r".repeat(64);
 const writeToken = "w".repeat(64);
 const ownerPrincipal = "codeops:agents-ui";
 const brokerRequests = [];
+const webPushPublicKey = "B".repeat(87);
 const legacyWorkspaceFixture = JSON.parse(
   await readFile(
     path.join(
@@ -85,12 +86,44 @@ async function waitForUi(origin, child) {
   throw new Error(`Agents UI did not become ready: ${lastResponse}`);
 }
 
-const broker = createServer((request, response) => {
+const broker = createServer(async (request, response) => {
   brokerRequests.push({
     url: request.url,
     authorization: request.headers.authorization,
     principal: request.headers["x-codeops-principal"],
   });
+  if (
+    request.url === "/v1/session-notifications/config" &&
+    request.method === "GET" &&
+    request.headers.authorization === `Bearer ${token}`
+  ) {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      version: "codeops.web-push-configuration/v1",
+      enabled: true,
+      publicKey: webPushPublicKey,
+    }));
+    return;
+  }
+  if (
+    request.url === "/v1/session-notifications/subscriptions" &&
+    request.method === "POST" &&
+    request.headers.authorization === `Bearer ${writeToken}` &&
+    request.headers["x-codeops-principal"] === ownerPrincipal
+  ) {
+    let body = "";
+    for await (const chunk of request) body += chunk;
+    const subscription = JSON.parse(body);
+    brokerRequests.at(-1).subscriptionDeviceId = subscription.deviceId;
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify({
+      version: "codeops.web-push-subscription-result/v1",
+      subscriptionId: `sha256:${"c".repeat(64)}`,
+      deviceId: subscription.deviceId,
+      status: "active",
+    }));
+    return;
+  }
   if (
     request.url === "/v1/sessions?limit=100" &&
     request.headers.authorization === `Bearer ${token}` &&
@@ -168,6 +201,7 @@ try {
       HOST: "127.0.0.1",
       PORT: String(uiPort),
       CODEOPS_SESSION_BROKER_URL: `http://127.0.0.1:${brokerPort}`,
+      CODEOPS_SESSION_NOTIFICATION_URL: `http://127.0.0.1:${brokerPort}`,
       CODEOPS_SESSION_BROKER_READ_TOKEN_FILE: readTokenPath,
       CODEOPS_SESSION_BROKER_WRITE_TOKEN_FILE: writeTokenPath,
       CODEOPS_SESSION_OWNER_FIXED_PRINCIPAL: ownerPrincipal,
@@ -182,7 +216,19 @@ try {
   const origin = `http://127.0.0.1:${uiPort}`;
   try {
     await waitForUi(origin, ui);
-    await runAgentsUiSmoke({ baseUrl: origin, sessionId: legacySessionId });
+    await runAgentsUiSmoke({
+      baseUrl: origin,
+      sessionId: legacySessionId,
+      verifyNotificationGesture: true,
+    });
+    const subscriptions = brokerRequests.filter(
+      ({ url }) => url === "/v1/session-notifications/subscriptions",
+    );
+    if (subscriptions.length !== 1 || !subscriptions[0].subscriptionDeviceId) {
+      throw new Error(
+        `notification subscription persistence proof failed: ${JSON.stringify(subscriptions)}`,
+      );
+    }
   } catch (error) {
     throw new Error(`${error instanceof Error ? error.message : String(error)}\nBroker requests: ${JSON.stringify(brokerRequests)}\n${logs.slice(-8_000)}`);
   }

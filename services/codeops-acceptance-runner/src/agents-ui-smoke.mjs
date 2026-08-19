@@ -113,6 +113,46 @@ export async function runAgentsUiSmoke(input = {}) {
       });
       try {
         const page = await context.newPage();
+        if (target.name === "desktop" && input.verifyNotificationGesture) {
+          await page.addInitScript(() => {
+            const subscription = {
+              endpoint: "https://fcm.googleapis.com/fcm/send/codeops-browser-proof",
+              expirationTime: null,
+              options: { applicationServerKey: null },
+              toJSON: () => ({
+                endpoint: "https://fcm.googleapis.com/fcm/send/codeops-browser-proof",
+                expirationTime: null,
+                keys: {
+                  auth: "abcdefghijklmnop",
+                  p256dh: "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmn",
+                },
+              }),
+            };
+            class ProofPushManager {
+              async getSubscription() { return null; }
+              subscribe() {
+                globalThis.__codeopsPushSubscriptionGesture = {
+                  active: navigator.userActivation.isActive,
+                  hasBeenActive: navigator.userActivation.hasBeenActive,
+                };
+                return Promise.resolve(subscription);
+              }
+            }
+            const pushManager = new ProofPushManager();
+            Object.defineProperty(globalThis, "PushManager", {
+              configurable: true,
+              value: ProofPushManager,
+            });
+            Object.defineProperty(globalThis, "Notification", {
+              configurable: true,
+              value: { permission: "default" },
+            });
+            Object.defineProperty(ServiceWorkerRegistration.prototype, "pushManager", {
+              configurable: true,
+              get: () => pushManager,
+            });
+          });
+        }
         const response = await page.goto(
           new URL(target.path ?? "/", baseUrl).href,
           {
@@ -129,6 +169,26 @@ export async function runAgentsUiSmoke(input = {}) {
           await page
             .getByRole(locator.role, { name: locator.name })
             .waitFor({ state: "visible", timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS });
+        }
+        if (target.name === "desktop" && input.verifyNotificationGesture) {
+          const enable = page.getByRole("button", { name: "Enable notifications" });
+          await enable.waitFor({
+            state: "visible",
+            timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          });
+          await enable.click();
+          await page.getByText("Notifications are enabled", { exact: true }).waitFor({
+            state: "visible",
+            timeout: input.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+          });
+          const gesture = await page.evaluate(
+            () => globalThis.__codeopsPushSubscriptionGesture ?? null,
+          );
+          if (gesture?.active !== true || gesture.hasBeenActive !== true) {
+            throw new Error(
+              `desktop Web Push subscription lost user activation: ${JSON.stringify(gesture)}`,
+            );
+          }
         }
         const overflow = await page.evaluate(
           () => document.documentElement.scrollWidth > window.innerWidth,
