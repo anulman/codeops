@@ -171,27 +171,6 @@ async function ensureSubscription(
   await persistSubscription(subscription);
 }
 
-async function subscribeFromUserGesture(
-  registration: ServiceWorkerRegistration,
-  configuration: WebPushConfiguration,
-): Promise<void> {
-  if (!configuration.enabled || configuration.publicKey === null) return;
-  // WebKit consumes transient user activation when it prompts for push
-  // permission. Start the subscription synchronously from the click handler;
-  // a separate permission-request round trip loses that gesture.
-  let subscription: PushSubscription;
-  try {
-    const subscriptionPromise = registration.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: applicationServerKey(configuration.publicKey),
-    });
-    subscription = await subscriptionPromise;
-  } catch (error) {
-    throw new WebPushEnableError("subscribe", error);
-  }
-  await persistSubscription(subscription);
-}
-
 export function SessionNotifications() {
   const [state, setState] = useState<PromptState>("hidden");
   const [configuration, setConfiguration] = useState<WebPushConfiguration | null>(null);
@@ -317,10 +296,23 @@ export function SessionNotifications() {
             type="button"
             disabled={state === "enabling"}
             onClick={() => {
-              const subscriptionPromise = subscribeFromUserGesture(
-                registration,
-                configuration,
-              );
+              // Keep the browser subscription call directly inside the click
+              // stack. WebKit can consume transient activation when prompting.
+              if (!configuration.enabled || configuration.publicKey === null) return;
+              let subscriptionPromise: Promise<void>;
+              try {
+                subscriptionPromise = registration.pushManager.subscribe({
+                  userVisibleOnly: true,
+                  applicationServerKey: applicationServerKey(configuration.publicKey),
+                }).then(
+                  (subscription) => persistSubscription(subscription),
+                  (error: unknown) => {
+                    throw new WebPushEnableError("subscribe", error);
+                  },
+                );
+              } catch (error) {
+                subscriptionPromise = Promise.reject(new WebPushEnableError("subscribe", error));
+              }
               setFailure(null);
               setState("enabling");
               void subscriptionPromise.then(() => {

@@ -28,14 +28,13 @@ test("ships one installable manifest and one notification click route", async ()
   assert.match(component, /Web Push \$\{failure\.stage\} failed \(\$\{failure\.name\}\): \$\{failure\.message\}/);
   assert.match(data, /agents_ui_web_push_enable_failed/);
   assert.match(data, /codeops\.web-push-failure-diagnostic\/v1/);
+  assert.doesNotMatch(component, /subscribeFromUserGesture/);
   assert.match(
     component,
-    /function subscribeFromUserGesture[\s\S]*const subscriptionPromise = registration\.pushManager\.subscribe[\s\S]*await subscriptionPromise/,
+    /onClick=\{\(\) => \{[\s\S]*subscriptionPromise = registration\.pushManager\.subscribe\([\s\S]*\)\.then\([\s\S]*setState\("enabling"\)/,
   );
-  assert.match(
-    component,
-    /onClick=\{\(\) => \{\s*const subscriptionPromise = subscribeFromUserGesture\([\s\S]*setState\("enabling"\)/,
-  );
+  const gestureHandler = component.match(/onClick=\{\(\) => \{[\s\S]*?setState\("enabling"\)/)?.[0] ?? "";
+  assert.doesNotMatch(gestureHandler, /\basync\b|\bawait\b/);
   assert.equal(data.match(/sessionNotificationClient\(\)/g)?.length, 3);
   assert.doesNotMatch(
     data,
