@@ -674,6 +674,20 @@ test("retains passing coding evidence and mounts the exact cumulative patch for 
       claimName: "codeops-control-gateway-evidence",
       readOnly: true,
     });
+    assert.deepEqual(pod.affinity, {
+      podAffinity: {
+        requiredDuringSchedulingIgnoredDuringExecution: [
+          {
+            labelSelector: {
+              matchLabels: {
+                "app.kubernetes.io/name": "codeops-control-gateway",
+              },
+            },
+            topologyKey: "kubernetes.io/hostname",
+          },
+        ],
+      },
+    });
     const candidateMount = pod.initContainers[0].volumeMounts.find(
       (mount) => mount.name === "candidate",
     );
@@ -695,6 +709,12 @@ test("retains passing coding evidence and mounts the exact cumulative patch for 
         container.volumeMounts.some((mount) => mount.name === "candidate"),
       ),
       false,
+    );
+    const withoutAffinity = structuredClone(resources);
+    delete withoutAffinity[2].spec.template.spec.affinity;
+    assert.throws(
+      () => assertRunResources(withoutAffinity),
+      /candidate evidence claim boundary drifted/,
     );
 
     const review = {
@@ -1209,6 +1229,7 @@ test("builds Agent Jobs from portable chart runtime identity", () => {
     pod.volumes.find(({ name }) => name === "candidate"),
     undefined,
   );
+  assert.equal(pod.affinity, undefined);
   assert.equal(
     resources[3].spec.egress[0].to[0].podSelector.matchLabels["app.kubernetes.io/name"],
     "team-a-codeops-model-proxy",

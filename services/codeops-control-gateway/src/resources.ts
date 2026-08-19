@@ -68,6 +68,7 @@ export function buildRunResources(
   const modelProxyPodName = input.modelProxyPodName ?? modelProxyServiceName;
   const evidenceClaimName =
     input.evidenceClaimName ?? "codeops-control-gateway-evidence";
+  const controlGatewayPodName = evidenceClaimName.replace(/-evidence$/, "");
   if (
     modelProxyOrigin.protocol !== "http:" ||
     modelProxyOrigin.hostname !== modelProxyServiceName ||
@@ -198,6 +199,24 @@ export function buildRunResources(
             nodeSelector: input.nodeSelector ?? {
               "codeops.example/codeops": "true",
             },
+            ...(input.candidate
+              ? {
+                  affinity: {
+                    podAffinity: {
+                      requiredDuringSchedulingIgnoredDuringExecution: [
+                        {
+                          labelSelector: {
+                            matchLabels: {
+                              "app.kubernetes.io/name": controlGatewayPodName,
+                            },
+                          },
+                          topologyKey: "kubernetes.io/hostname",
+                        },
+                      ],
+                    },
+                  },
+                }
+              : {}),
             securityContext: {
               runAsNonRoot: true,
               runAsUser: 1000,
@@ -581,6 +600,7 @@ export function assertRunResources(
     throw new Error("Agent Job resources must remain tokenless");
   }
   const pod = job.spec.template.spec as {
+    affinity?: unknown;
     containers?: {
       name?: string;
       env?: { name?: string; value?: string }[];
@@ -631,6 +651,23 @@ export function assertRunResources(
     );
     const candidateClaimName =
       candidateVolume.persistentVolumeClaim?.claimName ?? "";
+    const expectedAffinity = {
+      podAffinity: {
+        requiredDuringSchedulingIgnoredDuringExecution: [
+          {
+            labelSelector: {
+              matchLabels: {
+                "app.kubernetes.io/name": candidateClaimName.replace(
+                  /-evidence$/,
+                  "",
+                ),
+              },
+            },
+            topologyKey: "kubernetes.io/hostname",
+          },
+        ],
+      },
+    };
     if (
       candidateClaimName.length > 253 ||
       !/^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?-control-gateway-evidence$/.test(
@@ -642,6 +679,7 @@ export function assertRunResources(
       !/^agent-runs\/[a-z0-9-]+\/changes\.patch$/.test(
         mount.subPath ?? "",
       ) ||
+      JSON.stringify(pod.affinity) !== JSON.stringify(expectedAffinity) ||
       pod.containers?.some((container) =>
         container.volumeMounts?.some(
           (candidate) => candidate.name === "candidate",
@@ -656,5 +694,8 @@ export function assertRunResources(
     Number(candidateVolume !== undefined)
   ) {
     throw new Error("unexpected Agent Job persistent claim");
+  }
+  if (!candidateVolume && pod.affinity !== undefined) {
+    throw new Error("Agent Job affinity is limited to candidate evidence");
   }
 }
