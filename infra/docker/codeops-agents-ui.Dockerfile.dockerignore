@@ -24,3 +24,5 @@
 !sites/agents-ui/postcss.config.mjs
 !sites/agents-ui/src/
 !sites/agents-ui/src/**
+!sites/agents-ui/public/
+!sites/agents-ui/public/**

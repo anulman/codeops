@@ -30,10 +30,13 @@ COPY packages/codeops-contracts/tsconfig.json packages/codeops-contracts/tsconfi
 COPY packages/codeops-contracts/src ./packages/codeops-contracts/src
 COPY sites/agents-ui/tsconfig.json sites/agents-ui/vite.config.ts sites/agents-ui/postcss.config.mjs ./sites/agents-ui/
 COPY sites/agents-ui/src ./sites/agents-ui/src
+COPY sites/agents-ui/public ./sites/agents-ui/public
 RUN nub run --filter @codeops/codeops-contracts build \
   && nub run --filter @codeops/agents-ui build \
   && nub run --filter @codeops/agents-ui typecheck \
-  && test -f sites/agents-ui/.output/server/index.mjs
+  && test -f sites/agents-ui/.output/server/index.mjs \
+  && test -f sites/agents-ui/.output/public/manifest.webmanifest \
+  && test -f sites/agents-ui/.output/public/session-notifications-sw.js
 
 FROM node:24-bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/anulman/codeops" \
