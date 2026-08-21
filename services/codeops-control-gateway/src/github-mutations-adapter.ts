@@ -183,6 +183,21 @@ async function gitReference(
   ));
 }
 
+async function optionalGitReference(
+  authority: RepositoryAuthority,
+  branchName: string,
+  requestFetch: typeof fetch,
+) {
+  const response = await githubJsonResponse(
+    authority,
+    apiUrl(authority, `/git/ref/heads/${encodeURIComponent(branchName)}`),
+    requestFetch,
+    {},
+    [200, 404],
+  );
+  return response.status === 404 ? null : gitReferenceResponse.parse(response.body);
+}
+
 function providerEffectText(operationId: string): string {
   return `codeops-provider-effect:${operationId}`;
 }
@@ -357,11 +372,24 @@ export function createGitHubMutationReconciler(input: {
     const result = await (async () => {
     switch (request.operation) {
       case "branch_publish": {
-        const current = await gitReference(
+        const current = await optionalGitReference(
           authority,
           request.input.branchName,
           requestFetch,
         );
+        if (current === null) {
+          return windowElapsed
+            ? {
+                state: "reconciled_not_observed",
+                result: null,
+                summary: "The branch is absent after the provider consistency window.",
+              }
+            : {
+                state: "unknown",
+                result: null,
+                summary: "The branch is absent, but the provider consistency window has not elapsed.",
+              };
+        }
         const commit = gitCommitResponse.parse(await githubJson(
           authority,
           apiUrl(authority, `/git/commits/${current.object.sha}`),

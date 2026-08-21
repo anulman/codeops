@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  loadUnknownProviderEffectReconciliation,
   listProviderEffectReceipts,
   operatorResolveProviderEffect,
   recordProviderEffectReconciliation,
@@ -25,6 +26,20 @@ const row = {
   reconciliation_action: "search_review_thread_marker",
   resolution_summary: null,
 };
+
+test("moves only stale attempting effects into reconciliation", async () => {
+  const calls = [];
+  await assert.rejects(loadUnknownProviderEffectReconciliation({
+    async query(text, values) {
+      calls.push({ text, values });
+      return { rowCount: text.startsWith("UPDATE") ? 1 : 0, rows: [] };
+    },
+  }, row.effect_id, "operator@example.com"), /was not found/);
+  assert.match(calls[0].text, /state = 'attempting'/);
+  assert.match(calls[0].text, /interval '5 minutes'/);
+  assert.match(calls[0].text, /session\.owner_principal_id = \$2/);
+  assert.deepEqual(calls[0].values, [row.effect_id, "operator@example.com"]);
+});
 
 test("projects bounded provider effect attention without raw provider evidence", async () => {
   const calls = [];

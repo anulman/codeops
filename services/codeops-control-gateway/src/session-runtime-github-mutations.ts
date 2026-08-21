@@ -43,6 +43,8 @@ interface StoredMutationRow extends Record<string, unknown> {
 
 export class GitHubMutationProviderNoEffectError extends Error {}
 
+export const GITHUB_MUTATION_PROVIDER_TIMEOUT_MS = 120_000;
+
 export type SessionRuntimeGitHubMutationAuthorization =
   | {
       readonly disposition: "authorized";
@@ -530,7 +532,7 @@ export function createGitHubMutationProviderClient(input: {
           "content-type": "application/json; charset=utf-8",
         },
         body: JSON.stringify(request),
-        signal: AbortSignal.timeout(30_000),
+        signal: AbortSignal.timeout(GITHUB_MUTATION_PROVIDER_TIMEOUT_MS),
       },
     );
     if (response.status === 409) {
