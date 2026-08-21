@@ -8,6 +8,8 @@ packages/*
 !packages/codeops-contracts/**
 !infra/
 infra/*
+!infra/licenses/
+!infra/licenses/NUB-LICENSE
 !infra/scripts/
 infra/scripts/*
 !infra/scripts/rewrite-workspace-dependency-for-npm.mjs

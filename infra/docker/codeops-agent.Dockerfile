@@ -1,4 +1,4 @@
-FROM node:24-bookworm-slim AS build
+FROM node:24-trixie-slim AS build
 WORKDIR /repo
 
 COPY tsconfig.json ./tsconfig.json
@@ -20,17 +20,38 @@ RUN node infra/scripts/rewrite-workspace-dependency-for-npm.mjs services/codeops
   && cp packages/codeops-contracts/package.json services/codeops-agent/node_modules/@codeops/codeops-contracts/ \
   && cp -R packages/codeops-contracts/dist services/codeops-agent/node_modules/@codeops/codeops-contracts/
 
-FROM node:24-bookworm-slim
+FROM node:24-trixie-slim
 LABEL org.opencontainers.image.source="https://github.com/anulman/codeops" \
       org.opencontainers.image.licenses="Apache-2.0"
 
 WORKDIR /opt/codeops-agent
 COPY LICENSE THIRD_PARTY_NOTICES.md /usr/share/licenses/codeops/
+COPY LICENSE /usr/share/licenses/helm/LICENSE
+COPY infra/licenses/NUB-LICENSE /usr/share/licenses/nub/LICENSE
 COPY --from=build /repo/services/codeops-agent/package.json ./
 COPY --from=build /repo/services/codeops-agent/package-lock.json ./
 COPY --from=build /repo/services/codeops-agent/node_modules ./node_modules
+ARG HELM_VERSION=3.19.2
+ARG HELM_LINUX_AMD64_SHA256=2114c9dea2844dce6d0ee2d792a9aae846be8cf53d5b19dc2988b5a0e8fec26e
+ARG NUB_VERSION=0.1.11
+ARG NUB_LINUX_X64_SHA256=d227290e3a45c05ff20508a961f01950c50a138b08caf76d59f403e8a721330d
 RUN apt-get update \
-  && apt-get install -y --no-install-recommends ca-certificates git socat \
+  && apt-get install -y --no-install-recommends ca-certificates curl git socat \
+  && curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+       --output /tmp/helm.tar.gz "https://get.helm.sh/helm-v${HELM_VERSION}-linux-amd64.tar.gz" \
+  && echo "${HELM_LINUX_AMD64_SHA256}  /tmp/helm.tar.gz" | sha256sum --check --strict \
+  && tar -xzf /tmp/helm.tar.gz -C /tmp \
+  && install -m 0555 /tmp/linux-amd64/helm /usr/local/bin/helm \
+  && curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+       --output /tmp/nub.tar.gz "https://github.com/nubjs/nub/releases/download/v${NUB_VERSION}/nub-linux-x64.tar.gz" \
+  && echo "${NUB_LINUX_X64_SHA256}  /tmp/nub.tar.gz" | sha256sum --check --strict \
+  && tar -xzf /tmp/nub.tar.gz -C /tmp \
+  && install -m 0555 /tmp/bin/nub /usr/local/bin/nub \
+  && ln -s nub /usr/local/bin/nubx \
+  && helm version --short \
+  && nub --version \
+  && rm -rf /tmp/helm.tar.gz /tmp/nub.tar.gz /tmp/linux-amd64 /tmp/bin \
+  && apt-get purge -y --auto-remove curl \
   && rm -rf /var/lib/apt/lists/*
 
 COPY services/codeops-agent/entrypoint.sh /usr/local/bin/codeops-agent-entrypoint

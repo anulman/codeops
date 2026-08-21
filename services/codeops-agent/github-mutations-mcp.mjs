@@ -22,7 +22,49 @@ const repository = {
 };
 const pullRequestNumber = { type: "integer", minimum: 1, maximum: 2147483647 };
 const expectedHeadSha = { type: "string", pattern: "^[0-9a-f]{40}$" };
+const branch = { type: "string", minLength: 1, maxLength: 255 };
 const tools = [
+  {
+    name: "github.branch_publish",
+    path: "/v1/github-mutations/branch/publish",
+    description: "Publish one branch from bounded text replacements against an exact base commit after explicit allow-once permission.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      required: ["repository", "expectedHeadSha", "baseBranch", "branchName", "commitMessage", "changes"],
+      properties: {
+        repository, expectedHeadSha, baseBranch: branch, branchName: branch,
+        commitMessage: { type: "string", minLength: 1, maxLength: 500 },
+        changes: {
+          type: "array", minItems: 1, maxItems: 20,
+          items: {
+            type: "object", additionalProperties: false,
+            required: ["path", "oldText", "newText"],
+            properties: {
+              path: { type: "string", minLength: 1, maxLength: 2000 },
+              oldText: { type: "string", minLength: 1, maxLength: 100000 },
+              newText: { type: "string", maxLength: 100000 },
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: "github.pull_request_create",
+    path: "/v1/github-mutations/pull-request/create",
+    description: "Create one pull request after exact head/base ref preflight and explicit allow-once permission.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      required: ["repository", "expectedHeadSha", "expectedBaseSha", "headBranch", "baseBranch", "title", "body", "draft"],
+      properties: {
+        repository, expectedHeadSha, expectedBaseSha: expectedHeadSha,
+        headBranch: branch, baseBranch: branch,
+        title: { type: "string", minLength: 1, maxLength: 500 },
+        body: { type: "string", maxLength: 50000 },
+        draft: { type: "boolean" },
+      },
+    },
+  },
   {
     name: "github.pull_request_update_branch",
     path: "/v1/github-mutations/pull-request/update-branch",
@@ -46,7 +88,7 @@ const tools = [
         expectedBaseSha: expectedHeadSha,
         title: { type: "string", minLength: 1, maxLength: 500 },
         body: { type: "string", maxLength: 50000 },
-        baseBranch: { type: "string", minLength: 1, maxLength: 255 },
+        baseBranch: branch,
       },
     },
   },

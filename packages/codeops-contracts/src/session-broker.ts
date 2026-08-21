@@ -257,6 +257,8 @@ export const sessionPermissionOperationSchema = z.discriminatedUnion("kind", [
         .string()
         .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
       operation: z.enum([
+        "branch_publish",
+        "pull_request_create",
         "pull_request_update_branch",
         "pull_request_update",
         "review_thread_reply",

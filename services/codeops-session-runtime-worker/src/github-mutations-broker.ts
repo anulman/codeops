@@ -2,10 +2,12 @@ import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
   canonicalJsonText,
+  githubBranchPublishInputSchema,
   githubCheckRerunInputSchema,
   githubMutationResultSchema,
   githubPullRequestUpdateBranchInputSchema,
   githubPullRequestUpdateInputSchema,
+  githubPullRequestCreateInputSchema,
   githubReviewThreadReplyInputSchema,
   sessionPermissionOperationSchema,
   type GitHubMutationOperation,
@@ -18,6 +20,8 @@ import type {
 
 const MAX_BODY_BYTES = 64 * 1_024;
 const routes = new Map<string, GitHubMutationOperation>([
+  ["/v1/github-mutations/branch/publish", "branch_publish"],
+  ["/v1/github-mutations/pull-request/create", "pull_request_create"],
   ["/v1/github-mutations/pull-request/update-branch", "pull_request_update_branch"],
   ["/v1/github-mutations/pull-request/update", "pull_request_update"],
   ["/v1/github-mutations/review-thread/reply", "review_thread_reply"],
@@ -34,6 +38,8 @@ function mutationRequest(
   rawInput: unknown,
 ): RuntimeGitHubMutationRequest {
   const schemas = {
+    branch_publish: githubBranchPublishInputSchema,
+    pull_request_create: githubPullRequestCreateInputSchema,
     pull_request_update_branch: githubPullRequestUpdateBranchInputSchema,
     pull_request_update: githubPullRequestUpdateInputSchema,
     review_thread_reply: githubReviewThreadReplyInputSchema,
@@ -75,6 +81,10 @@ function permissionTarget(request: RuntimeGitHubMutationRequest): {
   targetId: string | null;
 } {
   switch (request.operation) {
+    case "branch_publish":
+      return { pullRequestNumber: null, targetId: request.input.branchName };
+    case "pull_request_create":
+      return { pullRequestNumber: null, targetId: request.input.headBranch };
     case "pull_request_update_branch":
     case "pull_request_update":
       return { pullRequestNumber: request.input.pullRequestNumber, targetId: null };
@@ -137,7 +147,7 @@ export class GitHubMutationsBroker {
         request: {
           requestId: permissionRequestId,
           title: `Allow ${operation.replaceAll("_", " ")} once in ${mutation.input.repository}?`,
-          description: "CodeOps will reject repository, target, or head drift before it performs this one GitHub operation.",
+          description: "CodeOps will reject repository, target, branch, or commit drift before it performs this one GitHub operation.",
           operation: permissionOperation,
           operationDigest: digest(permissionOperation),
           options: [

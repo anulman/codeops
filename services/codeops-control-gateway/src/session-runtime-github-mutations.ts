@@ -94,6 +94,10 @@ function permissionTarget(request: SessionRuntimeGitHubMutationRequest): {
   readonly targetId: string | null;
 } {
   switch (request.operation) {
+    case "branch_publish":
+      return { pullRequestNumber: null, targetId: request.input.branchName };
+    case "pull_request_create":
+      return { pullRequestNumber: null, targetId: request.input.headBranch };
     case "pull_request_update_branch":
     case "pull_request_update":
       return { pullRequestNumber: request.input.pullRequestNumber, targetId: null };
@@ -111,6 +115,10 @@ function reconciliationAction(
   operation: GitHubMutationProviderRequest["operation"],
 ): string {
   switch (operation) {
+    case "branch_publish":
+      return "inspect_branch_commit";
+    case "pull_request_create":
+      return "search_pull_request_marker";
     case "pull_request_update":
       return "inspect_pull_request";
     case "review_thread_reply":
