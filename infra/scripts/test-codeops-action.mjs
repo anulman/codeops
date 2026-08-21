@@ -63,3 +63,26 @@ test("browser acceptance bounds Ubuntu mirror failures", async () => {
   assert.match(install.run, /timeout --signal=TERM --kill-after=30s 10m/);
   assert.match(install.run, /install --with-deps chromium/);
 });
+
+test("CI installs Nub from the exact immutable release artifact", async () => {
+  const source = await readFile(
+    new URL("../../.github/workflows/ci.yml", import.meta.url),
+    "utf8",
+  );
+  const workflow = parse(source);
+
+  for (const jobName of ["verify", "agents-ui-browser-acceptance"]) {
+    const install = workflow.jobs[jobName].steps.find(
+      ({ name }) => name === "Install Nub",
+    );
+    assert.match(
+      install.run,
+      /github\.com\/nubjs\/nub\/releases\/download\/v0\.1\.11\/nub-linux-x64\.tar\.gz/,
+    );
+    assert.match(
+      install.run,
+      /d227290e3a45c05ff20508a961f01950c50a138b08caf76d59f403e8a721330d/,
+    );
+    assert.doesNotMatch(install.run, /nubjs\.com\/install\.sh/);
+  }
+});

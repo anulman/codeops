@@ -5,12 +5,16 @@ WORKDIR /repo
 RUN apt-get update \
   && apt-get install --yes --no-install-recommends ca-certificates curl g++ make python3 \
   && rm -rf /var/lib/apt/lists/* \
-  && for attempt in 1 2 3 4 5; do \
-       curl --fail --silent --show-error --location --retry 5 --retry-all-errors https://nubjs.com/install.sh \
-         | bash -s -- 0.1.11 && break; \
-       [ "$attempt" = 5 ] && exit 1; \
-       sleep $((attempt * 2)); \
-     done
+  && curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
+       --output /tmp/nub.tar.gz \
+       https://github.com/nubjs/nub/releases/download/v0.1.11/nub-linux-x64.tar.gz \
+  && echo "d227290e3a45c05ff20508a961f01950c50a138b08caf76d59f403e8a721330d  /tmp/nub.tar.gz" \
+       | sha256sum --check --strict \
+  && tar -xzf /tmp/nub.tar.gz -C /tmp \
+  && install -m 0555 /tmp/bin/nub /usr/local/bin/nub \
+  && ln -s nub /usr/local/bin/nubx \
+  && nub --version \
+  && rm -rf /tmp/nub.tar.gz /tmp/bin /tmp/runtime
 COPY package.json lock.yaml .npmrc ./
 COPY packages/codeops-contracts/package.json ./packages/codeops-contracts/package.json
 COPY services/codeops-acceptance-runner/package.json ./services/codeops-acceptance-runner/package.json

@@ -29,12 +29,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$HOME/.nub/bin"
           curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
-            --connect-timeout 10 --max-time 60 --output /tmp/nub-install.sh \
-            https://nubjs.com/install.sh
-          echo "dd263aba5655a47d9e287cfff96775a856200f0ba20b916fc2919219a33db0dd  /tmp/nub-install.sh" \
+            --connect-timeout 10 --max-time 60 --output /tmp/nub.tar.gz \
+            https://github.com/nubjs/nub/releases/download/v0.1.11/nub-linux-x64.tar.gz
+          echo "d227290e3a45c05ff20508a961f01950c50a138b08caf76d59f403e8a721330d  /tmp/nub.tar.gz" \
             | sha256sum --check --strict
-          NUB_NO_MODIFY_PATH=1 bash /tmp/nub-install.sh 0.1.11
+          tar -xzf /tmp/nub.tar.gz -C /tmp
+          install -m 0555 /tmp/bin/nub "$HOME/.nub/bin/nub"
+          ln -s nub "$HOME/.nub/bin/nubx"
+          "$HOME/.nub/bin/nub" --version
+          rm -rf /tmp/nub.tar.gz /tmp/bin /tmp/runtime
           echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
 
       - name: Install frozen dependencies
@@ -91,12 +96,17 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
+          mkdir -p "$HOME/.nub/bin"
           curl --fail --silent --show-error --location --retry 5 --retry-all-errors \
-            --connect-timeout 10 --max-time 60 --output /tmp/nub-install.sh \
-            https://nubjs.com/install.sh
-          echo "dd263aba5655a47d9e287cfff96775a856200f0ba20b916fc2919219a33db0dd  /tmp/nub-install.sh" \
+            --connect-timeout 10 --max-time 60 --output /tmp/nub.tar.gz \
+            https://github.com/nubjs/nub/releases/download/v0.1.11/nub-linux-x64.tar.gz
+          echo "d227290e3a45c05ff20508a961f01950c50a138b08caf76d59f403e8a721330d  /tmp/nub.tar.gz" \
             | sha256sum --check --strict
-          NUB_NO_MODIFY_PATH=1 bash /tmp/nub-install.sh 0.1.11
+          tar -xzf /tmp/nub.tar.gz -C /tmp
+          install -m 0555 /tmp/bin/nub "$HOME/.nub/bin/nub"
+          ln -s nub "$HOME/.nub/bin/nubx"
+          "$HOME/.nub/bin/nub" --version
+          rm -rf /tmp/nub.tar.gz /tmp/bin /tmp/runtime
           echo "$HOME/.nub/bin" >> "$GITHUB_PATH"
 
       - name: Install frozen dependencies
