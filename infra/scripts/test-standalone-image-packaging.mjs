@@ -89,6 +89,9 @@ test("packages the Agents UI from the frozen standalone workspace", async () => 
   assert.match(source, /nub install --frozen-lockfile/);
   assert.match(source, /services\/codeops-acceptance-runner\/package\.json/);
   assert.match(source, /nub run --filter @codeops\/agents-ui build/);
+  assert.match(source, /d227290e3a45c05ff20508a961f01950c50a138b08caf76d59f403e8a721330d/);
+  assert.doesNotMatch(source, /nubjs\.com\/install\.sh/);
+  assert.match(source, /rm -rf \/tmp\/nub\.tar\.gz \/tmp\/bin \/tmp\/runtime/);
   assert.match(source, /sites\/agents-ui\/\.output\/server\/index\.mjs/);
   assert.match(source, /sites\/agents-ui\/postcss\.config\.mjs/);
   assert.doesNotMatch(source, /COPY --from=build .*node_modules/);

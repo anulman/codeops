@@ -199,8 +199,8 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
       if (step.uses) assert.match(step.uses, /@[0-9a-f]{40}$/);
     }
   }
-  assert.match(serialized, /dd263aba5655a47d9e287cfff96775a856200f0ba20b916fc2919219a33db0dd/);
-  assert.doesNotMatch(serialized, /install\.sh.*\|\s*bash/);
+  assert.match(serialized, /d227290e3a45c05ff20508a961f01950c50a138b08caf76d59f403e8a721330d/);
+  assert.doesNotMatch(serialized, /nubjs\.com\/install\.sh/);
   assert.match(serialized, /Reject artifact identity reuse/);
   assert.match(serialized, /refs\/remotes\/origin\/main/);
   assert.match(serialized, /refusing to overwrite existing image identity/);
