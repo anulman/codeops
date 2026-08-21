@@ -28,6 +28,16 @@ stored snapshot, checkpoint, cursor, or evidence. This preserves the existing
 0.4.2 rollback input while the current fleet and Agents UI use the strict
 policy-bearing identity.
 
+Authenticated session fleet, detail, and event reads are global. A session
+owner principal remains immutable provenance and still fences session commands.
+Provider-effect reads and mutations remain principal-bound. CodeOps does not
+yet have a separate session read-permission model.
+
+Web Push notification fan-out is organization-wide. Each notification creates
+a delivery for every active subscription, regardless of the session owner.
+Subscription registration and revocation remain bound to the principal and
+device.
+
 Current limitations:
 
 - Production onboarding requires repository-scoped GitHub and Plane authority.
