@@ -269,6 +269,8 @@ export {
   type SessionRuntimeGitHubReadRequest,
 } from "./github-reads.js";
 export {
+  githubBranchPublishInputSchema,
+  githubBranchPublishResultSchema,
   githubCheckRerunInputSchema,
   githubCheckRerunResultSchema,
   githubMutationOperationSchema,
@@ -280,6 +282,8 @@ export {
   githubPullRequestUpdateBranchResultSchema,
   githubPullRequestUpdateInputSchema,
   githubPullRequestUpdateResultSchema,
+  githubPullRequestCreateInputSchema,
+  githubPullRequestCreateResultSchema,
   githubReviewThreadReplyInputSchema,
   githubReviewThreadReplyResultSchema,
   providerEffectReceiptSchema,

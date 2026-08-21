@@ -89,6 +89,16 @@ async function githubJson(
   requestFetch: typeof fetch,
   init: RequestInit = {},
 ): Promise<unknown> {
+  return (await githubJsonResponse(authority, url, requestFetch, init, [200, 201, 202, 204])).body;
+}
+
+async function githubJsonResponse(
+  authority: RepositoryAuthority,
+  url: URL | string,
+  requestFetch: typeof fetch,
+  init: RequestInit = {},
+  statuses: readonly number[] = [200],
+): Promise<{ readonly status: number; readonly body: unknown }> {
   const response = await readProviderResponse({
     fetch: requestFetch,
     url,
@@ -97,14 +107,17 @@ async function githubJson(
       headers: { ...headers(authority), ...(init.headers ?? {}) },
     },
     maxBytes: MAX_GITHUB_JSON_BYTES,
-    statuses: [200, 201, 202, 204],
+    statuses,
     mediaTypes: ["json"],
   });
   if (response.bytes.byteLength === 0) {
-    return null;
+    return { status: response.status, body: null };
   }
   try {
-    return JSON.parse(decodeProviderResponseText(response.bytes));
+    return {
+      status: response.status,
+      body: JSON.parse(decodeProviderResponseText(response.bytes)),
+    };
   } catch (error) {
     throw new Error("GitHub mutation response is not valid JSON", { cause: error });
   }
@@ -115,8 +128,9 @@ const pullRequestResponse = z
     number: z.number().int().positive(),
     title: z.string(),
     body: z.string().nullable(),
+    draft: z.boolean().optional(),
     base: z.object({ ref: z.string(), sha: z.string() }).passthrough(),
-    head: z.object({ sha: z.string() }).passthrough(),
+    head: z.object({ ref: z.string().optional(), sha: z.string() }).passthrough(),
     html_url: z.string(),
   })
   .passthrough();
@@ -131,9 +145,97 @@ async function pullRequest(
   );
 }
 
+const gitReferenceResponse = z.object({
+  ref: z.string(),
+  object: z.object({ sha: z.string(), type: z.string() }).passthrough(),
+}).passthrough();
+const gitCommitResponse = z.object({
+  sha: z.string(),
+  message: z.string(),
+  tree: z.object({ sha: z.string() }).passthrough(),
+  parents: z.array(z.object({ sha: z.string() }).passthrough()),
+}).passthrough();
+const gitTreeResponse = z.object({
+  sha: z.string(),
+  tree: z.array(z.object({
+    path: z.string(),
+    mode: z.string(),
+    type: z.string(),
+    sha: z.string(),
+  }).passthrough()).max(100_000),
+}).passthrough();
+const gitBlobResponse = z.object({
+  sha: z.string(),
+  encoding: z.literal("base64"),
+  content: z.string(),
+}).passthrough();
+const gitWriteResponse = z.object({ sha: z.string() }).passthrough();
+
+async function gitReference(
+  authority: RepositoryAuthority,
+  branchName: string,
+  requestFetch: typeof fetch,
+) {
+  return gitReferenceResponse.parse(await githubJson(
+    authority,
+    apiUrl(authority, `/git/ref/heads/${branchName.split("/").map(encodeURIComponent).join("/")}`),
+    requestFetch,
+  ));
+}
+
+function providerEffectText(operationId: string): string {
+  return `codeops-provider-effect:${operationId}`;
+}
+
+async function requireMissingBranch(
+  authority: RepositoryAuthority,
+  branchName: string,
+  requestFetch: typeof fetch,
+): Promise<void> {
+  const response = await githubJsonResponse(
+    authority,
+    apiUrl(authority, `/git/ref/heads/${branchName.split("/").map(encodeURIComponent).join("/")}`),
+    requestFetch,
+    {},
+    [200, 404],
+  );
+  if (response.status !== 404) {
+    throw new Error("GitHub publication branch already exists");
+  }
+}
+
+async function treeEntry(
+  authority: RepositoryAuthority,
+  rootTreeSha: string,
+  repositoryPath: string,
+  requestFetch: typeof fetch,
+): Promise<{ readonly mode: string; readonly sha: string }> {
+  let treeSha = rootTreeSha;
+  const parts = repositoryPath.split("/");
+  for (const [index, part] of parts.entries()) {
+    const tree = gitTreeResponse.parse(await githubJson(
+      authority,
+      apiUrl(authority, `/git/trees/${treeSha}`),
+      requestFetch,
+    ));
+    const entry = tree.tree.find((candidate) => candidate.path === part);
+    const final = index === parts.length - 1;
+    if (entry === undefined || (final ? entry.type !== "blob" : entry.type !== "tree")) {
+      throw new Error(`GitHub base tree does not contain the required ${final ? "file" : "directory"}`);
+    }
+    if (final) return { mode: entry.mode, sha: entry.sha };
+    treeSha = entry.sha;
+  }
+  throw new Error("GitHub repository path is empty");
+}
+
 function expectedPermissionOperation(request: GitHubMutationProviderRequest) {
   const target = (() => {
     switch (request.operation) {
+      case "branch_publish":
+        return { pullRequestNumber: null, targetId: request.input.branchName };
+      case "pull_request_create":
+        return { pullRequestNumber: null, targetId: request.input.headBranch };
       case "pull_request_update_branch":
       case "pull_request_update":
         return {
@@ -254,6 +356,87 @@ export function createGitHubMutationReconciler(input: {
     const windowElapsed = observedAt.getTime() - attemptedAt.getTime() >= consistencyWindowMs;
     const result = await (async () => {
     switch (request.operation) {
+      case "branch_publish": {
+        const current = await gitReference(
+          authority,
+          request.input.branchName,
+          requestFetch,
+        );
+        const commit = gitCommitResponse.parse(await githubJson(
+          authority,
+          apiUrl(authority, `/git/commits/${current.object.sha}`),
+          requestFetch,
+        ));
+        const satisfied =
+          current.ref === `refs/heads/${request.input.branchName}` &&
+          current.object.type === "commit" &&
+          commit.sha === current.object.sha &&
+          commit.parents.length === 1 &&
+          commit.parents[0]?.sha === request.input.expectedHeadSha &&
+          commit.message.split(/\r?\n/).includes(providerEffectText(request.operationId));
+        if (!satisfied) {
+          return { state: "unknown", result: null, summary: "The branch commit does not contain the exact operation identity and base parent." };
+        }
+        return {
+          state: "reconciled_satisfied",
+          result: githubMutationResultSchema.parse({
+            version: "codeops.github-branch-publish-result/v1",
+            repository: authority.repository,
+            operationId: request.operationId,
+            baseBranch: request.input.baseBranch,
+            branchName: request.input.branchName,
+            baseSha: request.input.expectedHeadSha,
+            headSha: commit.sha,
+            url: `https://github.com/${authority.repository}/tree/${request.input.branchName
+              .split("/")
+              .map(encodeURIComponent)
+              .join("/")}`,
+          }),
+          summary: "The exact branch commit marker and base parent match.",
+        };
+      }
+      case "pull_request_create": {
+        const { owner } = repositoryParts(authority);
+        const query = apiUrl(authority, "/pulls");
+        query.searchParams.set("state", "all");
+        query.searchParams.set("head", `${owner}:${request.input.headBranch}`);
+        query.searchParams.set("base", request.input.baseBranch);
+        query.searchParams.set("per_page", "100");
+        const pulls = z.array(pullRequestResponse).max(100).parse(
+          await githubJson(authority, query, requestFetch),
+        );
+        const marker = `<!-- ${providerEffectText(request.operationId)} -->`;
+        const current = pulls.find((candidate) =>
+          candidate.body?.split(/\r?\n/).includes(marker)
+        );
+        if (
+          current === undefined ||
+          current.head.sha !== request.input.expectedHeadSha ||
+          current.base.sha !== request.input.expectedBaseSha ||
+          current.head.ref !== request.input.headBranch ||
+          current.base.ref !== request.input.baseBranch
+        ) {
+          return { state: "unknown", result: null, summary: "No pull request has the exact operation marker and ref identities." };
+        }
+        return {
+          state: "reconciled_satisfied",
+          result: githubMutationResultSchema.parse({
+            version: "codeops.github-pull-request-create-result/v1",
+            repository: authority.repository,
+            operationId: request.operationId,
+            pullRequestNumber: current.number,
+            headSha: current.head.sha,
+            baseSha: current.base.sha,
+            headBranch: current.head.ref,
+            baseBranch: current.base.ref,
+            title: current.title,
+            body: request.input.body,
+            draft: current.draft ?? false,
+            url: current.html_url,
+          }),
+          summary: "The pull request has the exact operation marker and ref identities.",
+        };
+      }
       case "pull_request_update": {
         const current = await pullRequest(authority, request.input.pullRequestNumber, requestFetch);
         const satisfied =
@@ -392,6 +575,246 @@ export function createGitHubMutationAdapter(input: {
     repositoryParts(authority);
 
     switch (request.operation) {
+      case "branch_publish": {
+        const baseCommit = await preflight(async () => {
+          const current = await gitReference(
+            authority,
+            request.input.baseBranch,
+            requestFetch,
+          );
+          if (
+            current.ref !== `refs/heads/${request.input.baseBranch}` ||
+            current.object.type !== "commit" ||
+            current.object.sha !== request.input.expectedHeadSha
+          ) {
+            throw new Error("GitHub base branch changed before publication");
+          }
+          await requireMissingBranch(authority, request.input.branchName, requestFetch);
+          const commit = gitCommitResponse.parse(await githubJson(
+            authority,
+            apiUrl(authority, `/git/commits/${request.input.expectedHeadSha}`),
+            requestFetch,
+          ));
+          if (commit.sha !== request.input.expectedHeadSha) {
+            throw new Error("GitHub base commit identity changed before publication");
+          }
+          return commit;
+        });
+        const preparedChanges: Array<{
+          readonly path: string;
+          readonly mode: string;
+          readonly content: string;
+        }> = [];
+        for (const change of request.input.changes) {
+          const entry = await preflight(() => treeEntry(
+            authority,
+            baseCommit.tree.sha,
+            change.path,
+            requestFetch,
+          ));
+          if (!new Set(["100644", "100755"]).has(entry.mode)) {
+            throw new GitHubMutationPreflightNoEffectError(
+              "GitHub publication supports regular files only",
+            );
+          }
+          const blob = await preflight(async () => gitBlobResponse.parse(
+            await githubJson(
+              authority,
+              apiUrl(authority, `/git/blobs/${entry.sha}`),
+              requestFetch,
+            ),
+          ));
+          if (blob.sha !== entry.sha) {
+            throw new GitHubMutationPreflightNoEffectError(
+              "GitHub base blob identity changed before publication",
+            );
+          }
+          const encoded = blob.content.replace(/\s/g, "");
+          if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+            throw new GitHubMutationPreflightNoEffectError(
+              "GitHub base blob content is not canonical base64",
+            );
+          }
+          const source = new TextDecoder("utf-8", { fatal: true }).decode(
+            Buffer.from(encoded, "base64"),
+          );
+          const first = source.indexOf(change.oldText);
+          if (first < 0 || first !== source.lastIndexOf(change.oldText)) {
+            throw new GitHubMutationPreflightNoEffectError(
+              "GitHub publication old text must match exactly once",
+            );
+          }
+          const content = `${source.slice(0, first)}${change.newText}${source.slice(first + change.oldText.length)}`;
+          if (content === source) {
+            throw new GitHubMutationPreflightNoEffectError(
+              "GitHub publication change must modify the file",
+            );
+          }
+          preparedChanges.push({ path: change.path, mode: entry.mode, content });
+        }
+        const treeUpdates: Array<{
+          readonly path: string;
+          readonly mode: string;
+          readonly type: "blob";
+          readonly sha: string;
+        }> = [];
+        for (const change of preparedChanges) {
+          const createdBlob = gitWriteResponse.parse(await githubJson(
+            authority,
+            apiUrl(authority, "/git/blobs"),
+            requestFetch,
+            {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ content: change.content, encoding: "utf-8" }),
+            },
+          ));
+          treeUpdates.push({
+            path: change.path,
+            mode: change.mode,
+            type: "blob",
+            sha: createdBlob.sha,
+          });
+        }
+        const createdTree = gitWriteResponse.parse(await githubJson(
+          authority,
+          apiUrl(authority, "/git/trees"),
+          requestFetch,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              base_tree: baseCommit.tree.sha,
+              tree: treeUpdates,
+            }),
+          },
+        ));
+        const commit = gitWriteResponse.parse(await githubJson(
+          authority,
+          apiUrl(authority, "/git/commits"),
+          requestFetch,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              message: `${request.input.commitMessage}\n\n${providerEffectText(request.operationId)}`,
+              tree: createdTree.sha,
+              parents: [request.input.expectedHeadSha],
+            }),
+          },
+        ));
+        await githubJson(
+          authority,
+          apiUrl(authority, "/git/refs"),
+          requestFetch,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              ref: `refs/heads/${request.input.branchName}`,
+              sha: commit.sha,
+            }),
+          },
+        );
+        const after = await gitReference(
+          authority,
+          request.input.branchName,
+          requestFetch,
+        );
+        if (
+          after.ref !== `refs/heads/${request.input.branchName}` ||
+          after.object.type !== "commit" ||
+          after.object.sha !== commit.sha ||
+          after.object.sha === request.input.expectedHeadSha
+        ) {
+          throw new Error("GitHub publication branch identity changed during creation");
+        }
+        return githubMutationResultSchema.parse({
+          version: "codeops.github-branch-publish-result/v1",
+          repository: authority.repository,
+          operationId: request.operationId,
+          baseBranch: request.input.baseBranch,
+          branchName: request.input.branchName,
+          baseSha: request.input.expectedHeadSha,
+          headSha: after.object.sha,
+          url: `https://github.com/${authority.repository}/tree/${request.input.branchName
+            .split("/")
+            .map(encodeURIComponent)
+            .join("/")}`,
+        });
+      }
+      case "pull_request_create": {
+        await preflight(async () => {
+          const head = await gitReference(authority, request.input.headBranch, requestFetch);
+          const base = await gitReference(authority, request.input.baseBranch, requestFetch);
+          if (
+            head.ref !== `refs/heads/${request.input.headBranch}` ||
+            base.ref !== `refs/heads/${request.input.baseBranch}` ||
+            head.object.type !== "commit" ||
+            base.object.type !== "commit" ||
+            head.object.sha !== request.input.expectedHeadSha ||
+            base.object.sha !== request.input.expectedBaseSha
+          ) {
+            throw new Error("GitHub pull-request refs changed before creation");
+          }
+          const { owner } = repositoryParts(authority);
+          const query = apiUrl(authority, "/pulls");
+          query.searchParams.set("state", "all");
+          query.searchParams.set("head", `${owner}:${request.input.headBranch}`);
+          query.searchParams.set("base", request.input.baseBranch);
+          query.searchParams.set("per_page", "1");
+          const existing = z.array(pullRequestResponse).max(1).parse(
+            await githubJson(authority, query, requestFetch),
+          );
+          if (existing.length !== 0) {
+            throw new Error("GitHub pull request already exists for the exact branches");
+          }
+        });
+        const marker = `<!-- ${providerEffectText(request.operationId)} -->`;
+        const created = pullRequestResponse.parse(await githubJson(
+          authority,
+          apiUrl(authority, "/pulls"),
+          requestFetch,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              title: request.input.title,
+              body: `${request.input.body}\n\n${marker}`,
+              head: request.input.headBranch,
+              base: request.input.baseBranch,
+              draft: request.input.draft,
+            }),
+          },
+        ));
+        const after = await pullRequest(authority, created.number, requestFetch);
+        if (
+          after.number !== created.number ||
+          after.head.sha !== request.input.expectedHeadSha ||
+          after.base.sha !== request.input.expectedBaseSha ||
+          after.head.ref !== request.input.headBranch ||
+          after.base.ref !== request.input.baseBranch ||
+          after.title !== request.input.title ||
+          after.body !== `${request.input.body}\n\n${marker}` ||
+          (after.draft ?? false) !== request.input.draft
+        ) {
+          throw new Error("GitHub pull-request identity changed during creation");
+        }
+        return githubMutationResultSchema.parse({
+          version: "codeops.github-pull-request-create-result/v1",
+          repository: authority.repository,
+          operationId: request.operationId,
+          pullRequestNumber: after.number,
+          headSha: after.head.sha,
+          baseSha: after.base.sha,
+          headBranch: after.head.ref,
+          baseBranch: after.base.ref,
+          title: after.title,
+          body: request.input.body,
+          draft: after.draft ?? false,
+          url: after.html_url,
+        });
+      }
       case "pull_request_update_branch": {
         await preflight(async () => {
           const value = await pullRequest(

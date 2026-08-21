@@ -50,6 +50,13 @@ const migrations = [
     url: new URL("../sql/provider-effect-receipts-v1.sql", import.meta.url),
   },
   {
+    name: "provider-effect-publication-operations-v2",
+    url: new URL(
+      "../sql/provider-effect-publication-operations-v2.sql",
+      import.meta.url,
+    ),
+  },
+  {
     name: "work-item-lifecycle-journal-v1",
     url: new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url),
   },

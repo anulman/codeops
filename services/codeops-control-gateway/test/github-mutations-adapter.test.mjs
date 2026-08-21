@@ -39,6 +39,10 @@ function permissionOperation(operation, input) {
     ? { pullRequestNumber: null, targetId: String(input.checkRunId) }
     : operation === "review_thread_reply"
       ? { pullRequestNumber: input.pullRequestNumber, targetId: input.threadId }
+      : operation === "branch_publish"
+        ? { pullRequestNumber: null, targetId: input.branchName }
+        : operation === "pull_request_create"
+          ? { pullRequestNumber: null, targetId: input.headBranch }
       : { pullRequestNumber: input.pullRequestNumber, targetId: null };
   return {
     kind: "github_mutation",
@@ -193,6 +197,150 @@ test("executes only four bounded routes with preflight and postflight identity p
   }
 });
 
+test("publishes one exact branch from bounded text replacements", async () => {
+  const branchName = "codeops/alpha34-consumer";
+  const published = "e".repeat(40);
+  const responses = [
+    json({ ref: "refs/heads/main", object: { sha: head, type: "commit" } }),
+    json({ message: "Not Found" }, 404),
+    json({ sha: head, message: "base", tree: { sha: "1".repeat(40) }, parents: [] }),
+    json({ sha: "1".repeat(40), tree: [{ path: "package.json", mode: "100644", type: "blob", sha: "2".repeat(40) }] }),
+    json({ sha: "2".repeat(40), encoding: "base64", content: Buffer.from('{"version":"alpha.33"}\n').toString("base64") }),
+    json({ sha: "3".repeat(40) }, 201),
+    json({ sha: "4".repeat(40) }, 201),
+    json({ sha: published }, 201),
+    json({ ref: `refs/heads/${branchName}`, object: { sha: published, type: "commit" } }, 201),
+    json({ ref: `refs/heads/${branchName}`, object: { sha: published, type: "commit" } }),
+  ];
+  const calls = [];
+  const mutate = createGitHubMutationAdapter({
+    resolve: () => authority,
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return responses.shift();
+    },
+  });
+  const result = await mutate(request("branch_publish", {
+    repository,
+    expectedHeadSha: head,
+    baseBranch: "main",
+    branchName,
+    commitMessage: "Repin CodeOps alpha.34",
+    changes: [{ path: "package.json", oldText: "alpha.33", newText: "alpha.34" }],
+  }));
+  assert.equal(result.version, "codeops.github-branch-publish-result/v1");
+  assert.equal(result.baseSha, head);
+  assert.equal(result.headSha, published);
+  assert.equal(result.url, `https://github.com/${repository}/tree/${branchName}`);
+  assert.deepEqual(calls.map(({ init }) => init.method ?? "GET"), [
+    "GET", "GET", "GET", "GET", "GET", "POST", "POST", "POST", "POST", "GET",
+  ]);
+  const commitBody = JSON.parse(calls[7].init.body);
+  assert.deepEqual(commitBody.parents, [head]);
+  assert.match(commitBody.message, new RegExp(operationId));
+  assert.equal(responses.length, 0);
+});
+
+test("completes every branch publication read before the first provider write", async () => {
+  const responses = [
+    json({ ref: "refs/heads/main", object: { sha: head, type: "commit" } }),
+    json({ message: "Not Found" }, 404),
+    json({ sha: head, message: "base", tree: { sha: "1".repeat(40) }, parents: [] }),
+    json({ sha: "1".repeat(40), tree: [{ path: "package.json", mode: "100644", type: "blob", sha: "2".repeat(40) }] }),
+    json({ sha: "2".repeat(40), encoding: "base64", content: Buffer.from("alpha.33\n").toString("base64") }),
+    json({ sha: "1".repeat(40), tree: [] }),
+  ];
+  const methods = [];
+  const mutate = createGitHubMutationAdapter({
+    resolve: () => authority,
+    fetch: async (_url, init) => {
+      methods.push(init.method ?? "GET");
+      return responses.shift();
+    },
+  });
+  await assert.rejects(mutate(request("branch_publish", {
+    repository,
+    expectedHeadSha: head,
+    baseBranch: "main",
+    branchName: "codeops/alpha34-consumer",
+    commitMessage: "Repin CodeOps alpha.34",
+    changes: [
+      { path: "package.json", oldText: "alpha.33", newText: "alpha.34" },
+      { path: "missing.json", oldText: "alpha.33", newText: "alpha.34" },
+    ],
+  })), /no remote effect occurred/);
+  assert.deepEqual(methods, ["GET", "GET", "GET", "GET", "GET", "GET"]);
+  assert.equal(responses.length, 0);
+});
+
+test("creates one pull request after exact head and base ref proof", async () => {
+  const branchName = "codeops/alpha34-consumer";
+  const pr = pull({
+    title: "Repin CodeOps alpha.34",
+    body: `Qualified consumer update.\n\n<!-- codeops-provider-effect:${operationId} -->`,
+    draft: false,
+    head: { ref: branchName, sha: head },
+    base: { ref: "main", sha: base },
+  });
+  const responses = [
+    json({ ref: `refs/heads/${branchName}`, object: { sha: head, type: "commit" } }),
+    json({ ref: "refs/heads/main", object: { sha: base, type: "commit" } }),
+    json([]),
+    json(pr, 201),
+    json(pr),
+  ];
+  const calls = [];
+  const mutate = createGitHubMutationAdapter({
+    resolve: () => authority,
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return responses.shift();
+    },
+  });
+  const result = await mutate(request("pull_request_create", {
+    repository,
+    expectedHeadSha: head,
+    expectedBaseSha: base,
+    headBranch: branchName,
+    baseBranch: "main",
+    title: "Repin CodeOps alpha.34",
+    body: "Qualified consumer update.",
+    draft: false,
+  }));
+  assert.equal(result.version, "codeops.github-pull-request-create-result/v1");
+  assert.equal(result.pullRequestNumber, 27);
+  assert.equal(result.body, "Qualified consumer update.");
+  assert.deepEqual(calls.map(({ init }) => init.method ?? "GET"), ["GET", "GET", "GET", "POST", "GET"]);
+  assert.equal(responses.length, 0);
+});
+
+test("rejects pull-request ref-name drift before the provider write", async () => {
+  const responses = [
+    json({ ref: "refs/heads/foreign", object: { sha: head, type: "commit" } }),
+    json({ ref: "refs/heads/main", object: { sha: base, type: "commit" } }),
+  ];
+  const methods = [];
+  const mutate = createGitHubMutationAdapter({
+    resolve: () => authority,
+    fetch: async (_url, init) => {
+      methods.push(init.method ?? "GET");
+      return responses.shift();
+    },
+  });
+  await assert.rejects(mutate(request("pull_request_create", {
+    repository,
+    expectedHeadSha: head,
+    expectedBaseSha: base,
+    headBranch: "codeops/alpha34-consumer",
+    baseBranch: "main",
+    title: "Repin CodeOps alpha.34",
+    body: "Qualified consumer update.",
+    draft: false,
+  })), /no remote effect occurred/);
+  assert.deepEqual(methods, ["GET", "GET"]);
+  assert.equal(responses.length, 0);
+});
+
 test("builds one exact hidden review marker from the provider effect identity", () => {
   assert.equal(
     githubEffectMarker(operationId),
@@ -235,6 +383,57 @@ test("rejects stale heads and forged permission digests before a provider effect
 test("reconciles each mutation only from operation-specific attributable evidence", async () => {
   const attemptedAt = new Date("2026-08-16T00:00:00.000Z");
   const observedAt = new Date("2026-08-16T00:02:00.000Z");
+
+  const branchInput = {
+    repository,
+    expectedHeadSha: head,
+    baseBranch: "main",
+    branchName: "codeops/alpha34-consumer",
+    commitMessage: "Repin CodeOps alpha.34",
+    changes: [{ path: "package.json", oldText: "alpha.33", newText: "alpha.34" }],
+  };
+  const branchResponses = [
+    json({ ref: `refs/heads/${branchInput.branchName}`, object: { sha: "e".repeat(40), type: "commit" } }),
+    json({
+      sha: "e".repeat(40),
+      message: `${branchInput.commitMessage}\n\ncodeops-provider-effect:${operationId}`,
+      tree: { sha: "f".repeat(40) },
+      parents: [{ sha: head }],
+    }),
+  ];
+  const reconcilePublishedBranch = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async () => branchResponses.shift(),
+  });
+  assert.equal(
+    (await reconcilePublishedBranch(request("branch_publish", branchInput), attemptedAt, observedAt)).state,
+    "reconciled_satisfied",
+  );
+
+  const createInput = {
+    repository,
+    expectedHeadSha: head,
+    expectedBaseSha: base,
+    headBranch: branchInput.branchName,
+    baseBranch: "main",
+    title: "Repin CodeOps alpha.34",
+    body: "Qualified consumer update.",
+    draft: false,
+  };
+  const reconcileCreatedPull = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async () => json([pull({
+      title: createInput.title,
+      body: `${createInput.body}\n\n<!-- codeops-provider-effect:${operationId} -->`,
+      draft: false,
+      head: { ref: createInput.headBranch, sha: head },
+      base: { ref: createInput.baseBranch, sha: base },
+    })]),
+  });
+  assert.equal(
+    (await reconcileCreatedPull(request("pull_request_create", createInput), attemptedAt, observedAt)).state,
+    "reconciled_satisfied",
+  );
 
   const updateInput = {
     repository,

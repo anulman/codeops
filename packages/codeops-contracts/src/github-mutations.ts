@@ -31,6 +31,18 @@ const branch = z
       ),
     "GitHub branch name is invalid",
   );
+const repositoryPath = z
+  .string()
+  .min(1)
+  .max(2_000)
+  .refine(
+    (value) =>
+      !value.startsWith("/") &&
+      !value.endsWith("/") &&
+      !value.includes("\\") &&
+      !value.split("/").some((part) => part === "" || part === "." || part === ".."),
+    "GitHub repository path is invalid",
+  );
 const webUrl = z
   .string()
   .url()
@@ -90,7 +102,64 @@ export const githubCheckRerunInputSchema = z
   })
   .strict();
 
+export const githubBranchPublishInputSchema = z
+  .object({
+    repository,
+    expectedHeadSha: gitSha,
+    baseBranch: branch,
+    branchName: branch,
+    commitMessage: z.string().trim().min(1).max(500),
+    changes: z.array(z.object({
+      path: repositoryPath,
+      oldText: z.string().min(1).max(100_000),
+      newText: z.string().max(100_000),
+    }).strict()).min(1).max(20),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.baseBranch === input.branchName) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Published branch must differ from its base branch",
+        path: ["branchName"],
+      });
+    }
+    if (new Set(input.changes.map(({ path }) => path)).size !== input.changes.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Published branch changes must use unique paths",
+        path: ["changes"],
+      });
+    }
+    if (new TextEncoder().encode(JSON.stringify(input)).byteLength > 40_000) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "Published branch input exceeds 40000 bytes",
+        path: ["changes"],
+      });
+    }
+  });
+
+export const githubPullRequestCreateInputSchema = z
+  .object({
+    repository,
+    expectedHeadSha: gitSha,
+    expectedBaseSha: gitSha,
+    headBranch: branch,
+    baseBranch: branch,
+    title: z.string().trim().min(1).max(500),
+    body: z.string().max(50_000),
+    draft: z.boolean(),
+  })
+  .strict()
+  .refine(
+    (input) => input.headBranch !== input.baseBranch,
+    "Pull-request head and base branches must differ",
+  );
+
 export const githubMutationOperationSchema = z.enum([
+  "branch_publish",
+  "pull_request_create",
   "pull_request_update_branch",
   "pull_request_update",
   "review_thread_reply",
@@ -110,6 +179,8 @@ export const providerEffectStateSchema = z.enum([
 
 export const providerEffectReconciliationActionSchema = z.enum([
   "none",
+  "inspect_branch_commit",
+  "search_pull_request_marker",
   "inspect_pull_request",
   "search_review_thread_marker",
   "compare_pull_request_head",
@@ -202,6 +273,14 @@ const providerMutationBase = z.object({
 function mutationRequestBranches<T extends z.ZodRawShape>(base: z.ZodObject<T>) {
   return [
     base.extend({
+      operation: z.literal("branch_publish"),
+      input: githubBranchPublishInputSchema,
+    }).strict(),
+    base.extend({
+      operation: z.literal("pull_request_create"),
+      input: githubPullRequestCreateInputSchema,
+    }).strict(),
+    base.extend({
       operation: z.literal("pull_request_update_branch"),
       input: githubPullRequestUpdateBranchInputSchema,
     }).strict(),
@@ -239,6 +318,43 @@ export const githubMutationReconciliationProviderRequestSchema = z
   .strict();
 
 const resultBase = { repository, operationId } as const;
+
+export const githubBranchPublishResultSchema = z
+  .object({
+    version: z.literal("codeops.github-branch-publish-result/v1"),
+    ...resultBase,
+    baseBranch: branch,
+    branchName: branch,
+    baseSha: gitSha,
+    headSha: gitSha,
+    url: webUrl,
+  })
+  .strict()
+  .refine(
+    ({ baseSha, headSha }) => baseSha !== headSha,
+    "Published branch result must advance the base commit",
+  );
+
+export const githubPullRequestCreateResultSchema = z
+  .object({
+    version: z.literal("codeops.github-pull-request-create-result/v1"),
+    ...resultBase,
+    pullRequestNumber,
+    headSha: gitSha,
+    baseSha: gitSha,
+    headBranch: branch,
+    baseBranch: branch,
+    title: z.string().max(500),
+    body: z.string().max(50_000),
+    draft: z.boolean(),
+    url: webUrl,
+  })
+  .strict()
+  .refine(
+    ({ pullRequestNumber: number, repository: repo, url }) =>
+      new URL(url).pathname === `/${repo}/pull/${number}`,
+    "GitHub pull-request URL identity is inconsistent",
+  );
 
 export const githubPullRequestUpdateBranchResultSchema = z
   .object({
@@ -307,6 +423,8 @@ export const githubCheckRerunResultSchema = z
   .strict();
 
 export const githubMutationResultSchema = z.union([
+  githubBranchPublishResultSchema,
+  githubPullRequestCreateResultSchema,
   githubPullRequestUpdateBranchResultSchema,
   githubPullRequestUpdateResultSchema,
   githubReviewThreadReplyResultSchema,

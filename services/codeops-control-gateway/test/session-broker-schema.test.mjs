@@ -18,6 +18,8 @@ const requestScopedGithubMutationsUrl = new URL("../sql/session-runtime-github-m
 const requestScopedGithubMutationsRevertUrl = new URL("../sql/session-runtime-github-mutations-request-scoped-v2-revert.sql", import.meta.url);
 const providerEffectReceiptsUrl = new URL("../sql/provider-effect-receipts-v1.sql", import.meta.url);
 const providerEffectReceiptsRevertUrl = new URL("../sql/provider-effect-receipts-v1-revert.sql", import.meta.url);
+const providerEffectPublicationUrl = new URL("../sql/provider-effect-publication-operations-v2.sql", import.meta.url);
+const providerEffectPublicationRevertUrl = new URL("../sql/provider-effect-publication-operations-v2-revert.sql", import.meta.url);
 const lifecycleJournalUrl = new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url);
 const lifecycleJournalRevertUrl = new URL("../sql/work-item-lifecycle-journal-revert.sql", import.meta.url);
 const workspaceLaunchUrl = new URL("../sql/workspace-launch.sql", import.meta.url);
@@ -236,6 +238,20 @@ test("migrates authorization consumption into explicit provider effect state", a
   assert.match(revert, /CREATE TABLE codeops\.session_runtime_github_mutations/);
   assert.match(revert, /CASE state WHEN 'succeeded' THEN 'completed' ELSE 'started' END/);
   assert.doesNotMatch(revert, /DELETE|TRUNCATE/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
+});
+
+test("adds reversible publication operations to provider effect receipts", async () => {
+  const sql = await readFile(providerEffectPublicationUrl, "utf8");
+  const revert = await readFile(providerEffectPublicationRevertUrl, "utf8");
+  assert.match(sql, /'branch_publish'/);
+  assert.match(sql, /'pull_request_create'/);
+  assert.match(sql, /'inspect_branch_commit'/);
+  assert.match(sql, /'search_pull_request_marker'/);
+  assert.doesNotMatch(sql, /DELETE|TRUNCATE|DROP TABLE/);
+  assert.match(revert, /cannot remove publication operations while their provider effects exist/);
+  assert.doesNotMatch(revert, /DELETE|TRUNCATE|DROP TABLE/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });

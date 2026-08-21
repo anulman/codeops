@@ -52,6 +52,53 @@ test("gates each bounded mutation on one exact allow-once decision", async () =>
   }
 });
 
+test("binds branch publication permission to the exact target and replacements", async () => {
+  const broker = new GitHubMutationsBroker();
+  const port = await broker.listen(0);
+  const permissions = [];
+  const publishedHead = "b".repeat(40);
+  try {
+    await broker.run(dispatch, {
+      async requestPermission(input) {
+        permissions.push(input.request);
+        return { outcome: "selected", acpOptionId: "allow-once" };
+      },
+      async mutateGitHub(input) {
+        return {
+          version: "codeops.github-branch-publish-result/v1",
+          repository,
+          operationId: input.operationId,
+          baseBranch: input.input.baseBranch,
+          branchName: input.input.branchName,
+          baseSha: input.input.expectedHeadSha,
+          headSha: publishedHead,
+          url: "https://github.com/anulman/codeops/tree/codeops%2Falpha34-consumer",
+        };
+      },
+    }, async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/github-mutations/branch/publish`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          repository,
+          expectedHeadSha,
+          baseBranch: "main",
+          branchName: "codeops/alpha34-consumer",
+          commitMessage: "Repin CodeOps alpha.34",
+          changes: [{ path: "package.json", oldText: "alpha.33", newText: "alpha.34" }],
+        }),
+      });
+      assert.equal(response.status, 200);
+      assert.equal((await response.json()).headSha, publishedHead);
+    });
+    assert.equal(permissions[0].operation.operation, "branch_publish");
+    assert.equal(permissions[0].operation.targetId, "codeops/alpha34-consumer");
+    assert.match(permissions[0].operation.payloadJson, /alpha\.33/);
+  } finally {
+    await broker.close();
+  }
+});
+
 test("denial stops before the GitHub provider boundary", async () => {
   const broker = new GitHubMutationsBroker();
   const port = await broker.listen(0);

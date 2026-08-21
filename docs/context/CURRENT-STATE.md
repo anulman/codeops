@@ -22,6 +22,14 @@ a durable human permission decision for the same live prompt dispatch. The
 ACP agent receives no Plane credential. The trusted controller applies the
 idempotent provider mutation.
 
+Interactive ACP sessions can also publish one GitHub branch from bounded text
+replacements against an exact base commit and create one pull request after
+exact head/base ref checks. Each operation requires a durable allow-once
+decision. The trusted controller owns the repository write token, provider
+effect receipt, and ambiguity reconciliation. The agent image includes pinned
+Helm 3.19.2 and Nub 0.1.11 binaries so a session can run the supported chart
+and workspace gates before it requests publication.
+
 The Session Broker projects pre-policy 0.4.2 workspace snapshots into the
 immutable `implement` policy at the read boundary. It does not rewrite the
 stored snapshot, checkpoint, cursor, or evidence. This preserves the existing

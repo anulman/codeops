@@ -17,6 +17,30 @@ const claimToken = "11111111-1111-4111-8111-111111111111";
 
 const operations = [
   {
+    operation: "branch_publish",
+    input: {
+      repository,
+      expectedHeadSha,
+      baseBranch: "main",
+      branchName: "codeops/alpha34-consumer",
+      commitMessage: "Repin CodeOps alpha.34",
+      changes: [{ path: "package.json", oldText: "alpha.33", newText: "alpha.34" }],
+    },
+  },
+  {
+    operation: "pull_request_create",
+    input: {
+      repository,
+      expectedHeadSha,
+      expectedBaseSha: "c".repeat(40),
+      headBranch: "codeops/alpha34-consumer",
+      baseBranch: "main",
+      title: "Repin CodeOps alpha.34",
+      body: "Qualified consumer update.",
+      draft: false,
+    },
+  },
+  {
     operation: "pull_request_update_branch",
     input: { repository, pullRequestNumber: 27, expectedHeadSha },
   },
@@ -46,7 +70,7 @@ const operations = [
   },
 ];
 
-test("accepts only the four bounded exact-head GitHub mutations", () => {
+test("accepts only the six bounded exact-head GitHub mutations", () => {
   for (const mutation of operations) {
     const parsed = sessionRuntimeGitHubMutationRequestSchema.parse({
       version: "codeops.session-runtime-github-mutation-request/v1",

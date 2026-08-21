@@ -4,6 +4,13 @@ CodeOps source is licensed under the Apache License, Version 2.0. CodeOps
 distributions also contain or refer to third-party software under separate
 licenses. Those licenses apply to the third-party software only.
 
+## Agent validation tools
+
+The CodeOps agent image includes Helm 3.19.2 under Apache License 2.0 and Nub
+0.1.11 under the MIT License. Their command-line binaries let an interactive
+session run the same pinned chart and workspace validation commands as CI.
+The image stores the applicable license texts under `/usr/share/licenses/`.
+
 ## Bundled Helm chart dependencies
 
 The CodeOps Helm archive bundles these upstream Helm charts:

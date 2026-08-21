@@ -22,6 +22,17 @@ test("packages the GitHub mutation MCP server as immutable agent-image content",
   );
 });
 
+test("pins the agent validation tools and verifies their archives", () => {
+  assert.equal((dockerfile.match(/^FROM node:24-trixie-slim/gm) ?? []).length, 2);
+  assert.match(dockerfile, /ARG HELM_VERSION=3\.19\.2/);
+  assert.match(dockerfile, /ARG HELM_LINUX_AMD64_SHA256=2114c9dea2844dce6d0ee2d792a9aae846be8cf53d5b19dc2988b5a0e8fec26e/);
+  assert.match(dockerfile, /ARG NUB_VERSION=0\.1\.11/);
+  assert.match(dockerfile, /ARG NUB_LINUX_X64_SHA256=d227290e3a45c05ff20508a961f01950c50a138b08caf76d59f403e8a721330d/);
+  assert.match(dockerfile, /sha256sum --check --strict/);
+  assert.match(dockerfile, /helm version --short/);
+  assert.match(dockerfile, /nub --version/);
+});
+
 function nextMessage(lines) {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error("MCP response timed out")), 5_000);
@@ -32,7 +43,7 @@ function nextMessage(lines) {
   });
 }
 
-test("advertises only four bounded mutation tools and relays one exact call", async () => {
+test("advertises only six bounded mutation tools and relays one exact call", async () => {
   const requests = [];
   const server = createServer((request, response) => {
     const chunks = [];
@@ -71,6 +82,8 @@ test("advertises only four bounded mutation tools and relays one exact call", as
     })}\n`);
     const listed = await nextMessage(lines);
     assert.deepEqual(listed.result.tools.map(({ name }) => name), [
+      "github.branch_publish",
+      "github.pull_request_create",
       "github.pull_request_update_branch",
       "github.pull_request_update",
       "github.review_thread_reply",
