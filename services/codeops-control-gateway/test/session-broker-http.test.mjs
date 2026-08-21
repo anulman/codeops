@@ -118,13 +118,13 @@ function request(database, url, overrides = {}) {
   });
 }
 
-test("authenticates and bounds the fleet read", async () => {
+test("authenticates and serves a globally visible bounded fleet", async () => {
   const database = new FakeClient();
   const result = await request(database, "/v1/sessions?limit=25");
   assert.equal(result.status, 200);
   assert.equal(result.body.version, "codeops.session-fleet/v1");
   assert.equal(result.body.sessions.length, 1);
-  assert.deepEqual(database.calls[0].values, [25, "access:aidan@example.com"]);
+  assert.deepEqual(database.calls[0].values, [25, null]);
 
   const unauthorized = await request(database, "/v1/sessions", { headers: {} });
   assert.deepEqual(unauthorized, { status: 401, body: { status: "unauthorized" } });
@@ -132,7 +132,7 @@ test("authenticates and bounds the fleet read", async () => {
   await assert.rejects(request(database, "/v1/sessions?unknown=1"), /unknown query/);
 });
 
-test("serves an owner-filtered fleet from a serialized 0.4.2 workspace snapshot", async () => {
+test("serves a globally visible fleet from a serialized 0.4.2 workspace snapshot", async () => {
   const fixture = JSON.parse(await readFile(legacyWorkspaceFixtureUrl, "utf8"));
   const database = new FakeClient({ sessions: [fixture.snapshot] });
   const result = await request(database, "/v1/sessions?limit=25", {
@@ -147,7 +147,7 @@ test("serves an owner-filtered fleet from a serialized 0.4.2 workspace snapshot"
   assert.equal(result.body.sessions[0].sessionId, fixture.snapshot.sessionId);
   assert.equal(result.body.sessions[0].identity.policy.mode, "implement");
   assert.deepEqual(result.body.sessions[0].identity.contextAttachments, []);
-  assert.deepEqual(database.calls[0].values, [25, fixture.ownerPrincipalId]);
+  assert.deepEqual(database.calls[0].values, [25, null]);
 });
 
 test("loads an exact session and returns an explicit miss", async () => {
@@ -155,6 +155,7 @@ test("loads an exact session and returns an explicit miss", async () => {
   const found = await request(database, "/v1/sessions/ses_91a4");
   assert.equal(found.status, 200);
   assert.equal(found.body.session.sessionId, "ses_91a4");
+  assert.deepEqual(database.calls[0].values, ["ses_91a4", null]);
 
   const missing = await request(database, "/v1/sessions/ses_missing");
   assert.deepEqual(missing, { status: 404, body: { status: "not-found" } });
@@ -170,9 +171,7 @@ test("loads one strict cursor page and exposes its committed next cursor", async
   assert.equal(result.status, 200);
   assert.equal(result.body.nextCursor, 185);
   assert.equal(result.body.events[0].cursor, 185);
-  assert.deepEqual(database.calls[0].values, [
-    "ses_91a4", 184, 50, "access:aidan@example.com",
-  ]);
+  assert.deepEqual(database.calls[0].values, ["ses_91a4", 184, 50, null]);
   await assert.rejects(request(database, "/v1/sessions/ses_91a4/events?afterCursor=-1"), /integer/);
   await assert.rejects(request(database, "/v1/sessions/ses_91a4/events?limit=1&limit=2"), /one integer/);
 });

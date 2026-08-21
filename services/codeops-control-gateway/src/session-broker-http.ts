@@ -80,6 +80,9 @@ export async function serveSessionBrokerRead(input: {
     );
   }
 
+  // Ownership remains immutable provenance. Authenticated session reads are
+  // fleet-wide until CodeOps introduces an explicit read-permission model.
+
   if (fleet) {
     requireOnly(url, ["limit"]);
     const limit = exactInteger(url, "limit", 100, 200);
@@ -87,7 +90,7 @@ export async function serveSessionBrokerRead(input: {
       status: 200,
       body: {
         version: "codeops.session-fleet/v1",
-        sessions: await listSessionSnapshots(input.database, limit, principalId),
+        sessions: await listSessionSnapshots(input.database, limit),
       },
     };
   }
@@ -113,7 +116,6 @@ export async function serveSessionBrokerRead(input: {
     const session = await loadSessionSnapshot(
       input.database,
       snapshotMatch[1]!,
-      principalId,
     );
     return session === null
       ? { status: 404, body: { status: "not-found" } }
@@ -130,7 +132,6 @@ export async function serveSessionBrokerRead(input: {
     sessionId: eventMatch![1]!,
     afterCursor,
     limit,
-    ownerPrincipalId: principalId,
   });
   return {
     status: 200,
