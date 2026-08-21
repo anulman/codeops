@@ -79,8 +79,14 @@ test("does not notify for initial projection, generation changes, or running pro
   }, { ...snapshot, state: "running", pendingPermission: null }), null);
 });
 
-test("projects one snapshot and fans one immutable notification to active subscriptions", async () => {
+test("fans one notification organization-wide to active subscriptions and replays idempotently", async () => {
   const calls = [];
+  const subscriptions = [
+    { subscriptionId: "subscription-a", principalId: "principal-a", status: "active" },
+    { subscriptionId: "subscription-b", principalId: "principal-b", status: "active" },
+    { subscriptionId: "subscription-revoked", principalId: "principal-a", status: "revoked" },
+  ];
+  const deliveries = new Map();
   const database = {
     async query(text, values = []) {
       calls.push({ text, values });
@@ -93,17 +99,47 @@ test("projects one snapshot and fans one immutable notification to active subscr
           exhausted_limit: null,
         }] };
       }
+      if (text.includes("INSERT INTO codeops.session_notification_deliveries")) {
+        const selectedSubscriptions = text.includes("WHERE status = 'active'")
+          ? subscriptions.filter(({ status }) => status === "active")
+          : subscriptions;
+        for (const subscription of selectedSubscriptions) {
+          const pair = `${values[0]}\0${subscription.subscriptionId}`;
+          if (!deliveries.has(pair)) {
+            deliveries.set(pair, {
+              notificationId: values[0],
+              subscriptionId: subscription.subscriptionId,
+              principalId: subscription.principalId,
+            });
+          }
+        }
+      }
       return { rowCount: 1, rows: [] };
     },
   };
-  assert.equal(await projectNextSessionNotification({
-    database,
-    now: "2026-08-14T23:41:00.000Z",
-  }), true);
+  const input = { database, now: "2026-08-14T23:41:00.000Z" };
+  assert.equal(await projectNextSessionNotification(input), true);
+  assert.equal(await projectNextSessionNotification(input), true);
   assert.equal(calls[0].text, "BEGIN");
   assert.match(calls[2].text, /session_notification_projections/);
   assert.match(calls[3].text, /session_notification_outbox/);
-  assert.match(calls[4].text, /WHERE status = 'active'/);
+  const deliveryWrites = calls.filter(({ text }) =>
+    text.includes("INSERT INTO codeops.session_notification_deliveries"));
+  assert.equal(deliveryWrites.length, 2);
+  assert.match(deliveryWrites[0].text, /WHERE status = 'active'/);
+  assert.doesNotMatch(deliveryWrites[0].text, /principal_id|owner/);
+  assert.match(
+    deliveryWrites[0].text,
+    /ON CONFLICT \(notification_id, subscription_id\) DO NOTHING/,
+  );
+  assert.deepEqual([...deliveries.values()].map(({ subscriptionId, principalId }) => ({
+    subscriptionId,
+    principalId,
+  })), [
+    { subscriptionId: "subscription-a", principalId: "principal-a" },
+    { subscriptionId: "subscription-b", principalId: "principal-b" },
+  ]);
+  assert.equal(new Set([...deliveries.values()].map(({ notificationId }) => notificationId)).size, 1);
   assert.equal(calls.at(-1).text, "COMMIT");
   assert.equal(JSON.stringify(calls).includes("secret command"), false);
 });
