@@ -86,6 +86,10 @@ test("builds isolated materializer and runtime Jobs on bounded persistent storag
   assert.equal(JSON.stringify(runtime).includes("https://github.com/"), false);
   assert.equal(JSON.stringify(runtime).includes("read-token-codeops"), false);
   assert.match(JSON.stringify(runtime), /ephemeral-storage/);
+  assert.deepEqual(
+    runtime.spec.template.spec.volumes.find(({ name }) => name === "temp")?.emptyDir,
+    { sizeLimit: "2Gi" },
+  );
   const runtimeEnvironment = runtime.spec.template.spec.containers[0].env;
   assert.equal(
     runtimeEnvironment.find((entry) => entry.name === "CODEOPS_SESSION_DISPLAY_NAME")?.value,

@@ -12,6 +12,7 @@
   "scripts": {
     "golden": "node src/golden-dogfood.mjs",
     "smoke:agents-ui": "node src/agents-ui-smoke.mjs",
+    "validate:visual": "node src/visual-acceptance-runner.mjs",
     "test": "node --test test/*.test.mjs",
     "test:browser": "node src/local-agents-ui-browser-smoke.mjs"
   },

@@ -25,5 +25,10 @@ browser test source or build a second runner image there. If a second control
 plane product later needs lower-level browser or evidence primitives, extract
 only those primitives after the second use case exists.
 
+For repository-owned pull-request visual proof, use the deterministic
+[exact-source visual acceptance path](visual-acceptance.md). It materializes
+the exact head and base and emits a digest-bound packet. It does not turn the
+product scenario into a CodeOps-owned test.
+
 The CodeOps chart creates no Ingress and implements no edge authentication.
 The deployment consumer owns both when it exposes the private Service.
