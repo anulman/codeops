@@ -17,6 +17,7 @@ import {
 import type { RepositoryAuthority } from "./repository-registry.js";
 
 const MAX_GITHUB_JSON_BYTES = 1 * 1_024 * 1_024;
+export const GITHUB_MUTATION_WRITE_TIMEOUT_MS = 120_000;
 
 export class GitHubMutationPreflightNoEffectError extends Error {}
 
@@ -109,6 +110,9 @@ async function githubJsonResponse(
     maxBytes: MAX_GITHUB_JSON_BYTES,
     statuses,
     mediaTypes: ["json"],
+    ...(init.method === undefined || init.method === "GET"
+      ? {}
+      : { timeoutMs: GITHUB_MUTATION_WRITE_TIMEOUT_MS }),
   });
   if (response.bytes.byteLength === 0) {
     return { status: response.status, body: null };

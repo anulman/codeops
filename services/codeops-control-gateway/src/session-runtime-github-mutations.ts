@@ -43,7 +43,7 @@ interface StoredMutationRow extends Record<string, unknown> {
 
 export class GitHubMutationProviderNoEffectError extends Error {}
 
-export const GITHUB_MUTATION_PROVIDER_TIMEOUT_MS = 120_000;
+export const GITHUB_MUTATION_PROVIDER_TIMEOUT_MS = 240_000;
 
 export type SessionRuntimeGitHubMutationAuthorization =
   | {

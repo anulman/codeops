@@ -4,8 +4,13 @@ import test from "node:test";
 import {
   createGitHubMutationAdapter,
   createGitHubMutationReconciler,
+  GITHUB_MUTATION_WRITE_TIMEOUT_MS,
   githubEffectMarker,
 } from "../dist/github-mutations-adapter.js";
+
+test("allows GitHub writes to outlive the legacy provider-response timeout", () => {
+  assert.equal(GITHUB_MUTATION_WRITE_TIMEOUT_MS, 120_000);
+});
 
 const repository = "anulman/codeops";
 const head = "a".repeat(40);
