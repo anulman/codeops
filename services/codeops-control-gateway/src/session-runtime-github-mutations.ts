@@ -23,6 +23,10 @@ import {
   selectClaimedWorkspaceSource,
   type ClaimedDispatchAuthority,
 } from "./claimed-dispatch-authority.js";
+import {
+  decodeProviderResponseText,
+  readProviderResponse,
+} from "./provider-response.js";
 
 export class SessionRuntimeGitHubMutationNotFoundError extends Error {}
 export class SessionRuntimeGitHubMutationConflictError extends Error {}
@@ -44,6 +48,7 @@ interface StoredMutationRow extends Record<string, unknown> {
 export class GitHubMutationProviderNoEffectError extends Error {}
 
 export const GITHUB_MUTATION_PROVIDER_TIMEOUT_MS = 240_000;
+const MAX_GITHUB_MUTATION_PROVIDER_RESPONSE_BYTES = 1_024 * 1_024;
 
 export type SessionRuntimeGitHubMutationAuthorization =
   | {
@@ -497,6 +502,7 @@ export function createGitHubMutationProviderClient(input: {
   readonly origin: string;
   readonly token: string;
   readonly fetch?: typeof fetch;
+  readonly timeoutMs?: number;
 }): (request: GitHubMutationProviderRequest) => Promise<GitHubMutationResult> {
   const origin = new URL(input.origin);
   if (
@@ -519,31 +525,39 @@ export function createGitHubMutationProviderClient(input: {
   return async (rawRequest) => {
     const request = githubMutationProviderRequestSchema.parse(rawRequest);
     const [owner, name] = request.input.repository.split("/");
-    const response = await (input.fetch ?? fetch)(
-      new URL(
+    const response = await readProviderResponse({
+      fetch: input.fetch ?? fetch,
+      url: new URL(
         `/v1/repositories/${encodeURIComponent(owner!)}/${encodeURIComponent(name!)}/github-mutations`,
         origin,
       ),
-      {
+      init: {
         method: "POST",
-        redirect: "error",
         headers: {
           authorization: `Bearer ${input.token}`,
           "content-type": "application/json; charset=utf-8",
         },
         body: JSON.stringify(request),
-        signal: AbortSignal.timeout(GITHUB_MUTATION_PROVIDER_TIMEOUT_MS),
       },
-    );
+      maxBytes: MAX_GITHUB_MUTATION_PROVIDER_RESPONSE_BYTES,
+      statuses: [200, 409],
+      mediaTypes: ["json"],
+      timeoutMs: input.timeoutMs ?? GITHUB_MUTATION_PROVIDER_TIMEOUT_MS,
+    });
     if (response.status === 409) {
       throw new GitHubMutationProviderNoEffectError(
         "GitHub mutation provider proved that no remote effect occurred",
       );
     }
-    if (!response.ok) {
-      throw new Error(`GitHub mutation provider returned HTTP ${response.status}`);
+    let body: unknown;
+    try {
+      body = JSON.parse(decodeProviderResponseText(response.bytes));
+    } catch (error) {
+      throw new Error("GitHub mutation provider response is not valid JSON", {
+        cause: error,
+      });
     }
-    return githubMutationResultSchema.parse(await response.json());
+    return githubMutationResultSchema.parse(body);
   };
 }
 
