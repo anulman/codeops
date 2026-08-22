@@ -15,7 +15,7 @@ import {
 } from "../dist/session-runtime-github-mutations.js";
 
 test("allows bounded publication requests to outlive the legacy timeout", () => {
-  assert.equal(GITHUB_MUTATION_PROVIDER_TIMEOUT_MS, 120_000);
+  assert.equal(GITHUB_MUTATION_PROVIDER_TIMEOUT_MS, 240_000);
 });
 
 const dispatchId = "11111111-1111-4111-8111-111111111111";
