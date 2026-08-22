@@ -474,6 +474,41 @@ test("calls only the internal mutation route with a distinct provider bearer", a
   }));
 });
 
+test("bounds the complete mutation provider response body", async () => {
+  const authorization = await authorizeSessionRuntimeGitHubMutation(new Client(), {
+    dispatchId,
+    workerId,
+    request: runtimeRequest(),
+    now: () => new Date("2026-08-14T15:07:00.000Z"),
+  });
+  let providerSignal;
+  const mutate = createGitHubMutationProviderClient({
+    origin: "http://team-a-codeops-control-gateway:8080",
+    token: "github-mutation-provider-token-with-distinct-authority",
+    timeoutMs: 10,
+    fetch: async (_url, init) => {
+      providerSignal = init.signal;
+      return new Response(new ReadableStream({
+        start(controller) {
+          init.signal.addEventListener(
+            "abort",
+            () => controller.error(init.signal.reason),
+            { once: true },
+          );
+        },
+      }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+  });
+  await assert.rejects(
+    mutate(authorization.request),
+    (error) => ["AbortError", "TimeoutError"].includes(error?.name),
+  );
+  assert.equal(providerSignal.aborted, true);
+});
+
 test("calls only the internal read-only reconciliation route", async () => {
   const authorization = await authorizeSessionRuntimeGitHubMutation(new Client(), {
     dispatchId,
@@ -543,7 +578,10 @@ test("distinguishes a proved no-effect provider response from ambiguity", async 
   const mutate = createGitHubMutationProviderClient({
     origin: "http://team-a-codeops-control-gateway:8080",
     token: "github-mutation-provider-token-with-distinct-authority",
-    fetch: async () => new Response('{"status":"no-effect"}', { status: 409 }),
+    fetch: async () => new Response('{"status":"no-effect"}', {
+      status: 409,
+      headers: { "content-type": "application/json" },
+    }),
   });
   await assert.rejects(
     mutate(authorization.request),
