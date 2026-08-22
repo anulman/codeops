@@ -459,7 +459,7 @@ export function buildWorkspaceResources(
               { name: "workspace", persistentVolumeClaim: { claimName: name } },
               { name: "session", emptyDir: { medium: "Memory", sizeLimit: "16Mi" } },
               { name: "session-state", emptyDir: { sizeLimit: "16Mi" } },
-              { name: "temp", emptyDir: { sizeLimit: "256Mi" } },
+              { name: "temp", emptyDir: { sizeLimit: "2Gi" } },
               { name: "session-secrets", secret: {
                 secretName: raw.sessionSecretsName,
                 defaultMode: 256,
