@@ -24,6 +24,12 @@ import {
 const MAX_ARTIFACT_BYTES = 1_000_000_000;
 const MAX_RESULT_BYTES = 4_000_000;
 const MAX_PROCESS_OUTPUT_BYTES = 64_000;
+const MIN_FRAME_EVENT_COUNT = 20;
+const MIN_CAPTURE_RATIO = 0.8;
+const MAX_INTER_FRAME_GAP_MS = 2_000;
+const MAX_CONSECUTIVE_GEOMETRY_DISCARDS = 3;
+const MAX_DURATION_DRIFT_MS = 2_500;
+const MAX_SOURCE_ASPECT_RATIO_DRIFT = 0.002;
 const REQUIRED_ENVIRONMENT = Object.freeze([
   "CODEOPS_VALIDATE_GITHUB_TOKEN_FILE",
   "CODEOPS_VALIDATE_PREVIEW_ATTESTATION_FILE",
@@ -194,19 +200,118 @@ function annotationFilter(annotations) {
   ).join(",");
 }
 
-async function deriveReviewerVideo({ canonicalFile, outputFile, annotations, ffmpeg, ffprobe, runProcess }) {
+async function deriveReviewerVideo({ canonicalFile, outputFile, annotations, canonicalVideo, ffmpeg, ffprobe, runProcess }) {
   await runProcess(ffmpeg, [
     "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", canonicalFile,
     "-vf", annotationFilter(annotations), "-c:v", "libx264", "-pix_fmt", "yuv420p",
     "-movflags", "+faststart", "-an", outputFile,
   ], { label: "reviewer video derivation" });
-  const probe = JSON.parse(await runProcess(ffprobe, [
-    "-v", "error", "-select_streams", "v:0", "-show_entries", "stream=codec_name",
-    "-of", "json", outputFile,
-  ], { label: "reviewer video probe" }));
-  if (probe.streams?.length !== 1 || probe.streams[0]?.codec_name !== "h264") {
-    throw new Error("derived reviewer video is not one H.264 stream");
+  const probe = await probeVideo({ file: outputFile, ffprobe, runProcess, label: "reviewer video probe" });
+  const videoStreams = probe.streams.filter(({ codec_type: type }) => type === "video");
+  const stream = videoStreams[0] ?? {};
+  const durationDriftMs = Math.abs(Math.round(Number(probe.format.duration) * 1_000) - canonicalVideo.encodedDurationMs);
+  if (probe.streams.length !== 1 || videoStreams.length !== 1 || stream.codec_name !== "h264"
+    || stream.width !== canonicalVideo.capture.outputWidth
+    || stream.height !== canonicalVideo.capture.outputHeight
+    || stream.pix_fmt !== "yuv420p"
+    || !Number.isFinite(durationDriftMs) || durationDriftMs > 1_000) {
+    throw new Error("derived reviewer video does not preserve the canonical H.264 geometry and duration");
   }
+  return probe;
+}
+
+async function probeVideo({ file, ffprobe, runProcess, label }) {
+  let probe;
+  try {
+    probe = JSON.parse(await runProcess(ffprobe, [
+      "-v", "error", "-count_frames",
+      "-show_entries", "format=format_name,duration:stream=codec_type,codec_name,width,height,pix_fmt,avg_frame_rate,nb_read_frames",
+      "-of", "json", file,
+    ], { label }));
+  } catch (error) {
+    throw new Error(`${label} did not return valid JSON`, { cause: error });
+  }
+  if (!probe || typeof probe !== "object" || !Array.isArray(probe.streams)
+    || !probe.format || typeof probe.format !== "object") throw new Error(`${label} shape is invalid`);
+  return probe;
+}
+
+async function inspectCanonicalVideo({ file, video, annotations, ffprobe, runProcess }) {
+  const captureRatio = video.captureAttemptCount > 0
+    ? video.controllerFrameCount / video.captureAttemptCount
+    : 0;
+  const terminalBlindIntervalMs = video.measuredDurationMs - video.lastFrameElapsedMs;
+  const sourceAspectRatioDrift = Math.abs(
+    (video.sourceWidth / video.sourceHeight) - (video.outputWidth / video.outputHeight),
+  );
+  const timingPassed = video.retainedFrameCount >= MIN_FRAME_EVENT_COUNT
+    && video.captureAttemptCount >= video.controllerFrameCount
+    && video.retainedFrameCount >= video.controllerFrameCount
+    && captureRatio >= MIN_CAPTURE_RATIO
+    && video.firstFrameElapsedMs <= MAX_INTER_FRAME_GAP_MS
+    && terminalBlindIntervalMs <= MAX_INTER_FRAME_GAP_MS
+    && video.maxInterFrameGapMs <= MAX_INTER_FRAME_GAP_MS
+    && video.nonMonotonicFrameCount === 0;
+  const geometryPassed = video.geometryDiscardedFrameCount
+      === video.captureAttemptCount - video.controllerFrameCount
+    && video.maxConsecutiveGeometryDiscardCount <= MAX_CONSECUTIVE_GEOMETRY_DISCARDS
+    && video.sourceGeometryMismatchCount === 0
+    && video.sourceAspectMismatchCount === 0
+    && video.viewportSizeMismatchCount === 0
+    && video.paddingPixels === 0
+    && sourceAspectRatioDrift <= MAX_SOURCE_ASPECT_RATIO_DRIFT
+    && (video.normalization !== "none"
+      || (video.sourceWidth === video.outputWidth && video.sourceHeight === video.outputHeight));
+  if (!timingPassed || !geometryPassed) {
+    throw new Error(`canonical video capture contract failed: timing=${timingPassed} geometry=${geometryPassed}`);
+  }
+
+  const probe = await probeVideo({ file, ffprobe, runProcess, label: "canonical WebM probe" });
+  const videoStreams = probe.streams.filter(({ codec_type: type }) => type === "video");
+  const stream = videoStreams[0] ?? {};
+  const encodedDurationMs = Math.round(Number(probe.format.duration) * 1_000);
+  const decodedFrameCount = Number(stream.nb_read_frames);
+  const durationDriftMs = Math.abs(encodedDurationMs - video.measuredDurationMs);
+  const formatNames = String(probe.format.format_name ?? "").split(",");
+  const mediaPassed = probe.streams.length === 1
+    && videoStreams.length === 1
+    && ["vp8", "vp9"].includes(stream.codec_name)
+    && formatNames.includes("webm")
+    && stream.width === video.outputWidth
+    && stream.height === video.outputHeight
+    && stream.pix_fmt === "yuv420p"
+    && Number.isInteger(decodedFrameCount)
+    && decodedFrameCount >= video.retainedFrameCount
+    && decodedFrameCount <= video.retainedFrameCount + 1
+    && Number.isFinite(encodedDurationMs)
+    && encodedDurationMs > 0
+    && durationDriftMs <= MAX_DURATION_DRIFT_MS;
+  if (!mediaPassed) {
+    throw new Error(`canonical WebM media contract failed: codec=${stream.codec_name ?? "missing"} format=${probe.format.format_name ?? "missing"} output=${stream.width ?? "missing"}x${stream.height ?? "missing"} frames=${stream.nb_read_frames ?? "missing"} duration=${probe.format.duration ?? "missing"}`);
+  }
+  if (annotations.some(({ endSeconds }) => endSeconds * 1_000 > encodedDurationMs)) {
+    throw new Error("canonical video annotation exceeds the encoded duration");
+  }
+  return {
+    capture: {
+      ...video,
+      captureRatio,
+      terminalBlindIntervalMs,
+      sourceAspectRatioDrift,
+    },
+    probe,
+    encodedDurationMs,
+    decodedFrameCount,
+    durationDriftMs,
+    limits: {
+      minFrameEventCount: MIN_FRAME_EVENT_COUNT,
+      minCaptureRatio: MIN_CAPTURE_RATIO,
+      maxInterFrameGapMs: MAX_INTER_FRAME_GAP_MS,
+      maxConsecutiveGeometryDiscards: MAX_CONSECUTIVE_GEOMETRY_DISCARDS,
+      maxDurationDriftMs: MAX_DURATION_DRIFT_MS,
+      maxSourceAspectRatioDrift: MAX_SOURCE_ASPECT_RATIO_DRIFT,
+    },
+  };
 }
 
 async function inspectArtifacts(result, outputDirectory, request) {
@@ -338,12 +443,20 @@ export async function runVisualAcceptance(rawRequest, input = {}) {
     }
     const artifacts = await inspectArtifacts(result, request.outputDirectory, request);
     const canonical = artifacts.find(({ role }) => role === "canonical-raw-video");
+    const canonicalVideo = await inspectCanonicalVideo({
+      file: path.join(request.outputDirectory, canonical.path),
+      video: result.video,
+      annotations: result.annotations,
+      ffprobe,
+      runProcess,
+    });
     const reviewerPath = "reviewer-annotated.noncanonical.mp4";
     const reviewerFile = path.join(request.outputDirectory, reviewerPath);
-    await deriveReviewerVideo({
+    const reviewerProbe = await deriveReviewerVideo({
       canonicalFile: path.join(request.outputDirectory, canonical.path),
       outputFile: reviewerFile,
       annotations: result.annotations,
+      canonicalVideo,
       ffmpeg,
       ffprobe,
       runProcess,
@@ -372,6 +485,7 @@ export async function runVisualAcceptance(rawRequest, input = {}) {
       previewImage: request.preview.image,
       runId: request.runId,
       browser: result.browser,
+      probe: reviewerProbe,
     };
     const validateRequestPath = path.join(request.outputDirectory, "request.json");
     await writeFile(validateRequestPath, `${canonicalJson(request)}\n`, { mode: 0o600, flag: "wx" });
@@ -418,6 +532,7 @@ export async function runVisualAcceptance(rawRequest, input = {}) {
       recommendations: request.recommendations,
       retention: request.retention,
       cleanup: result.cleanup,
+      video: canonicalVideo,
       artifacts: [...artifacts, reviewer, replay, validateRequest].sort((left, right) => left.path.localeCompare(right.path)),
     };
     const manifestPath = path.join(request.outputDirectory, "manifest.json");

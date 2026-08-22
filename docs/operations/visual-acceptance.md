@@ -15,8 +15,8 @@ The action fails unless it can:
   mode;
 - verify all required case, DOM, accessibility, network, console, privacy, and
   responsive assertions;
-- verify one unannotated canonical WebM and derive one labeled H.264 reviewer
-  MP4;
+- verify one unannotated canonical WebM with the timing, geometry, frame, and
+  decoded-media oracle below, then derive one labeled H.264 reviewer MP4;
 - verify zero run-owned properties, opportunities, customer files, and
   credentials after cleanup; and
 - persist and re-read every artifact before it writes the manifest and
@@ -84,9 +84,80 @@ argument and either `execute` or `cleanup` as its second argument. It must write
 the packet directory.
 
 The result must contain one canonical unannotated `video/webm` artifact. It
-also supplies time-bounded action labels. CodeOps applies those labels while it
-derives `reviewer-annotated.noncanonical.mp4`. The MP4 is always marked
-non-canonical.
+also supplies raw capture measurements and time-bounded action labels. CodeOps
+applies those labels only after it qualifies the WebM. The derived
+`reviewer-annotated.noncanonical.mp4` is always marked non-canonical.
+
+## Canonical capture strategy
+
+The scenario owns Playwright or CDP interaction. It must use Node monotonic
+callback-receipt time as the canonical capture clock. Browser-provided source
+timestamps are diagnostics only because they can regress.
+
+Capture and encode real variable-frame timing:
+
+1. Set and reverify one fixed output viewport before each controller capture.
+2. Capture the visible scrolled viewport. Do not assume document coordinates
+   `0,0` after `scrollIntoView`.
+3. Record every capture attempt, retained controller frame, geometry discard,
+   and retained continuity-watchdog frame.
+4. Hold the last retained frame through a static interval. Do not fabricate a
+   constant-rate timeline.
+5. If source normalization is necessary, scale to fill and center-crop. Do not
+   add grey, letterbox, or pillarbox padding.
+6. Emit the measured video fields in `scenario-result.json`.
+
+The `video` result object has this exact shape:
+
+```json
+{
+  "clock": "node-monotonic-receipt",
+  "measuredDurationMs": 86440,
+  "firstFrameElapsedMs": 18,
+  "lastFrameElapsedMs": 86424,
+  "retainedFrameCount": 482,
+  "controllerFrameCount": 470,
+  "captureAttemptCount": 472,
+  "geometryDiscardedFrameCount": 2,
+  "nonMonotonicFrameCount": 0,
+  "maxInterFrameGapMs": 1183,
+  "maxConsecutiveGeometryDiscardCount": 1,
+  "sourceGeometryMismatchCount": 0,
+  "sourceAspectMismatchCount": 0,
+  "viewportSizeMismatchCount": 0,
+  "sourceWidth": 1440,
+  "sourceHeight": 1000,
+  "outputWidth": 1440,
+  "outputHeight": 1000,
+  "normalization": "none",
+  "paddingPixels": 0
+}
+```
+
+`retainedFrameCount` includes compatible continuity-watchdog frames.
+`controllerFrameCount` includes only compatible controller captures.
+`geometryDiscardedFrameCount` must equal `captureAttemptCount` minus
+`controllerFrameCount`. Set `normalization` to
+`scale-fill-center-crop` only when the fixed source and output dimensions
+differ proportionally.
+
+CodeOps owns the qualification thresholds. It requires at least 20 canonical
+frame events, an 80% retained-controller-frame ratio, no monotonic regression,
+no first-frame, terminal-frame, or inter-frame blind interval above 2,000 ms,
+zero retained source/viewport geometry mismatches, exact discard accounting,
+at most three consecutive geometry discards, and zero padding.
+
+CodeOps then runs FFprobe independently. The canonical file must be WebM with
+exactly one VP8 or VP9 `yuv420p` video stream, no audio stream, the declared
+fixed output dimensions, and a decoded frame count equal to the retained event
+count or that count plus the required final concat frame. Encoded duration must
+be finite and within 2,500 ms of measured monotonic duration. Every annotation
+must end within the real encoded duration.
+
+The manifest retains the raw scenario measurements, computed coverage values,
+the complete FFprobe result, decoded frame count, duration drift, and CodeOps
+limits. A reviewer can therefore re-evaluate the qualification without trusting
+the MP4 overlay.
 
 ## Packet and publication
 

@@ -15,6 +15,8 @@ const ASSERTION_CATEGORIES = Object.freeze([
   "accessibility",
   "responsive",
 ]);
+const CAPTURE_CLOCK = "node-monotonic-receipt";
+const VIDEO_NORMALIZATIONS = new Set(["none", "scale-fill-center-crop"]);
 const ARTIFACT_ROLES = new Set([
   "canonical-raw-video",
   "screenshot",
@@ -67,6 +69,46 @@ function safeRelativePath(value, label) {
 
 function unique(values, label) {
   if (new Set(values).size !== values.length) fail(`${label} values must be unique`);
+}
+
+function finiteNumber(value, minimum, maximum, label) {
+  if (!Number.isFinite(value) || value < minimum || value > maximum) fail(`${label} is invalid`);
+  return value;
+}
+
+function nonNegativeInteger(value, label) {
+  if (!Number.isInteger(value) || value < 0) fail(`${label} is invalid`);
+  return value;
+}
+
+function videoDimension(value, label) {
+  if (!Number.isInteger(value) || value < 240 || value > 4_096) fail(`${label} is invalid`);
+  return value;
+}
+
+function parseVideoEvidence(raw) {
+  const video = exactObject(raw, [
+    "clock", "measuredDurationMs", "firstFrameElapsedMs", "lastFrameElapsedMs",
+    "retainedFrameCount", "controllerFrameCount", "captureAttemptCount", "geometryDiscardedFrameCount",
+    "nonMonotonicFrameCount", "maxInterFrameGapMs", "maxConsecutiveGeometryDiscardCount",
+    "sourceGeometryMismatchCount", "sourceAspectMismatchCount", "viewportSizeMismatchCount",
+    "sourceWidth", "sourceHeight", "outputWidth", "outputHeight", "normalization", "paddingPixels",
+  ], "video evidence");
+  if (video.clock !== CAPTURE_CLOCK) fail(`video evidence clock must be ${CAPTURE_CLOCK}`);
+  finiteNumber(video.measuredDurationMs, 1, 3_600_000, "video evidence measuredDurationMs");
+  finiteNumber(video.firstFrameElapsedMs, 0, video.measuredDurationMs, "video evidence firstFrameElapsedMs");
+  finiteNumber(video.lastFrameElapsedMs, video.firstFrameElapsedMs, video.measuredDurationMs, "video evidence lastFrameElapsedMs");
+  for (const field of [
+    "retainedFrameCount", "controllerFrameCount", "captureAttemptCount", "geometryDiscardedFrameCount",
+    "nonMonotonicFrameCount", "maxConsecutiveGeometryDiscardCount", "sourceGeometryMismatchCount",
+    "sourceAspectMismatchCount", "viewportSizeMismatchCount", "paddingPixels",
+  ]) nonNegativeInteger(video[field], `video evidence ${field}`);
+  finiteNumber(video.maxInterFrameGapMs, 0, 3_600_000, "video evidence maxInterFrameGapMs");
+  for (const field of ["sourceWidth", "sourceHeight", "outputWidth", "outputHeight"]) {
+    videoDimension(video[field], `video evidence ${field}`);
+  }
+  if (!VIDEO_NORMALIZATIONS.has(video.normalization)) fail("video evidence normalization is invalid");
+  return video;
 }
 
 export function parseVisualAcceptanceRequest(raw) {
@@ -186,7 +228,7 @@ export function parseVisualAcceptanceResult(raw, request) {
   const result = exactObject(raw, [
     "version", "repository", "pullRequest", "headSha", "baseSha", "previewOrigin", "previewImage",
     "runId", "browser", "startedAt", "completedAt", "cases", "artifacts",
-    "annotations", "cleanup",
+    "video", "annotations", "cleanup",
   ], "result");
   if (result.version !== "codeops.visual-acceptance-result/v1") fail("result version is unsupported");
   for (const field of ["repository", "pullRequest", "headSha", "baseSha", "runId"]) {
@@ -200,6 +242,7 @@ export function parseVisualAcceptanceResult(raw, request) {
   exactObject(result.browser, ["name", "version"], "result.browser");
   if (result.browser.name !== request.browser.name) fail("result browser name does not match the request");
   string(result.browser.version, /^[0-9]+(?:\.[0-9]+){1,3}$/, "result browser version", 40);
+  result.video = parseVideoEvidence(result.video);
 
   if (!Array.isArray(result.cases) || result.cases.length !== request.scenario.caseIds.length) fail("result cases do not match the request");
   for (const [index, item] of result.cases.entries()) {

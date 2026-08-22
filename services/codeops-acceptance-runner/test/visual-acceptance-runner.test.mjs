@@ -111,6 +111,28 @@ function result(overrides = {}) {
       caseResult("anonymous-landing", "desktop", ["success", "privacy", "responsive"]),
       caseResult("resume-dialog", "mobile", ["failure", "accessibility"]),
     ],
+    video: {
+      clock: "node-monotonic-receipt",
+      measuredDurationMs: 2_000,
+      firstFrameElapsedMs: 20,
+      lastFrameElapsedMs: 1_980,
+      retainedFrameCount: 20,
+      controllerFrameCount: 20,
+      captureAttemptCount: 20,
+      geometryDiscardedFrameCount: 0,
+      nonMonotonicFrameCount: 0,
+      maxInterFrameGapMs: 120,
+      maxConsecutiveGeometryDiscardCount: 0,
+      sourceGeometryMismatchCount: 0,
+      sourceAspectMismatchCount: 0,
+      viewportSizeMismatchCount: 0,
+      sourceWidth: 1440,
+      sourceHeight: 1000,
+      outputWidth: 1440,
+      outputHeight: 1000,
+      normalization: "none",
+      paddingPixels: 0,
+    },
     artifacts: [
       artifact("raw.webm", "canonical-raw-video", "video/webm"),
       artifact("dom.json", "dom-checkpoints", "application/json"),
@@ -186,6 +208,58 @@ async function writeScenarioArtifacts(outputDirectory, scenarioResult = result()
   await writeFile(path.join(outputDirectory, "scenario-result.json"), JSON.stringify(scenarioResult));
 }
 
+function videoProbe(overrides = {}) {
+  return JSON.stringify({
+    streams: [{
+      codec_type: "video",
+      codec_name: "vp8",
+      width: 1440,
+      height: 1000,
+      pix_fmt: "yuv420p",
+      avg_frame_rate: "10/1",
+      nb_read_frames: "20",
+      ...(overrides.stream ?? {}),
+    }],
+    format: { format_name: "matroska,webm", duration: "2.000000", ...(overrides.format ?? {}) },
+    ...overrides.root,
+  });
+}
+
+function reviewerProbe() {
+  return JSON.stringify({
+    streams: [{ codec_type: "video", codec_name: "h264", width: 1440, height: 1000, pix_fmt: "yuv420p" }],
+    format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", duration: "2.000000" },
+  });
+}
+
+async function runWithVideoOracle({ video = {}, probe = videoProbe(), annotations } = {}) {
+  const state = await harness();
+  const scenarioResult = result();
+  Object.assign(scenarioResult.video, video);
+  if (annotations) scenarioResult.annotations = annotations;
+  const runProcess = async (_command, args) => {
+    if (args.at(-1) === "execute") {
+      await writeScenarioArtifacts(state.outputDirectory, scenarioResult);
+      return "";
+    }
+    if (args.at(-1) === "cleanup") {
+      await writeFile(path.join(state.outputDirectory, "cleanup-verification.json"), JSON.stringify(scenarioResult.cleanup));
+      return "";
+    }
+    if (args[0] === "-nostdin") {
+      await writeFile(args.at(-1), "derived h264 mp4\n");
+      return "";
+    }
+    if (args[0] === "-v") return args.at(-1).endsWith(".webm") ? probe : reviewerProbe();
+    throw new Error(`unexpected process: ${args.join(" ")}`);
+  };
+  return runVisualAcceptance(state.request, {
+    environment: state.environment,
+    materialize: fakeMaterialize,
+    runProcess,
+  });
+}
+
 test("validates exact request and result identities and evidence", () => {
   const parsedRequest = parseVisualAcceptanceRequest(request("/tmp/codeops-packet"));
   assert.equal(parseVisualAcceptanceResult(result(), parsedRequest).cleanup.properties, 0);
@@ -206,6 +280,64 @@ test("validates exact request and result identities and evidence", () => {
   const failed = result();
   failed.cases[0].assertions[0].passed = false;
   assert.throws(() => parseVisualAcceptanceResult(failed, parsedRequest), /failed assertion/);
+  const wrongClock = result();
+  wrongClock.video.clock = "wall-clock";
+  assert.throws(() => parseVisualAcceptanceResult(wrongClock, parsedRequest), /clock must be node-monotonic-receipt/);
+});
+
+test("fails closed on sparse, discontinuous, or non-monotonic capture evidence", async (context) => {
+  const failures = [
+    ["minimum retained frames", { retainedFrameCount: 19, controllerFrameCount: 19 }, /timing=false/],
+    ["minimum controller capture ratio", { retainedFrameCount: 20, controllerFrameCount: 15, captureAttemptCount: 20, geometryDiscardedFrameCount: 5 }, /timing=false/],
+    ["first-frame coverage", { measuredDurationMs: 5_000, firstFrameElapsedMs: 2_001, lastFrameElapsedMs: 4_980 }, /timing=false/],
+    ["terminal-frame coverage", { measuredDurationMs: 5_000, lastFrameElapsedMs: 2_000 }, /timing=false/],
+    ["maximum inter-frame gap", { maxInterFrameGapMs: 2_001 }, /timing=false/],
+    ["monotonic frame order", { nonMonotonicFrameCount: 1 }, /timing=false/],
+  ];
+  for (const [name, video, pattern] of failures) {
+    await context.test(name, async () => assert.rejects(runWithVideoOracle({ video }), pattern));
+  }
+});
+
+test("fails closed on geometry, normalization, padding, and discard defects", async (context) => {
+  const failures = [
+    ["discard accounting", { captureAttemptCount: 21 }, /geometry=false/],
+    ["discard streak", { controllerFrameCount: 20, captureAttemptCount: 24, geometryDiscardedFrameCount: 4, maxConsecutiveGeometryDiscardCount: 4 }, /geometry=false/],
+    ["source geometry drift", { sourceGeometryMismatchCount: 1 }, /geometry=false/],
+    ["source aspect drift", { sourceAspectMismatchCount: 1 }, /geometry=false/],
+    ["viewport drift", { viewportSizeMismatchCount: 1 }, /geometry=false/],
+    ["grey or letterbox padding", { paddingPixels: 1 }, /geometry=false/],
+    ["undeclared normalization", { sourceWidth: 1280, sourceHeight: 889 }, /geometry=false/],
+    ["non-proportional normalized source", { sourceWidth: 1280, sourceHeight: 720, normalization: "scale-fill-center-crop" }, /geometry=false/],
+  ];
+  for (const [name, video, pattern] of failures) {
+    await context.test(name, async () => assert.rejects(runWithVideoOracle({ video }), pattern));
+  }
+});
+
+test("independently rejects malformed or misleading canonical WebM media", async (context) => {
+  const failures = [
+    ["codec", videoProbe({ stream: { codec_name: "h264" } }), {}],
+    ["container", videoProbe({ format: { format_name: "mov,mp4" } }), {}],
+    ["dimensions", videoProbe({ stream: { width: 1280 } }), {}],
+    ["pixel format", videoProbe({ stream: { pix_fmt: "yuv444p" } }), {}],
+    ["decoded frame coverage", videoProbe({ stream: { nb_read_frames: "19" } }), {}],
+    ["unexpected duplicated frames", videoProbe({ stream: { nb_read_frames: "22" } }), {}],
+    ["duration drift", videoProbe({ format: { duration: "4.501000" } }), {}],
+    ["audio stream", videoProbe({ root: { streams: [
+      { codec_type: "video", codec_name: "vp8", width: 1440, height: 1000, pix_fmt: "yuv420p", nb_read_frames: "20" },
+      { codec_type: "audio", codec_name: "opus" },
+    ] } }), {}],
+    ["annotation outside encoded duration", videoProbe(), {
+      annotations: [{ label: "Too late", startSeconds: 1.9, endSeconds: 2.1 }],
+    }],
+  ];
+  for (const [name, probe, input] of failures) {
+    await context.test(name, async () => assert.rejects(
+      runWithVideoOracle({ probe, ...input }),
+      /media contract failed|annotation exceeds/,
+    ));
+  }
 });
 
 test("creates a bound packet and marks the annotated MP4 non-canonical", async () => {
@@ -225,7 +357,7 @@ test("creates a bound packet and marks the annotated MP4 non-canonical", async (
       await writeFile(args.at(-1), "derived h264 mp4\n");
       return "";
     }
-    if (args[0] === "-v") return JSON.stringify({ streams: [{ codec_name: "h264" }] });
+    if (args[0] === "-v") return args.at(-1).endsWith(".webm") ? videoProbe() : reviewerProbe();
     throw new Error(`unexpected process: ${args.join(" ")}`);
   };
   const proof = await runVisualAcceptance(state.request, {
@@ -236,6 +368,9 @@ test("creates a bound packet and marks the annotated MP4 non-canonical", async (
   assert.equal(proof.manifest.status, "qualified");
   assert.equal(proof.manifest.identity.headSha, headSha);
   assert.equal(proof.manifest.cleanup.credentials, 0);
+  assert.equal(proof.manifest.video.durationDriftMs, 0);
+  assert.equal(proof.manifest.video.capture.captureRatio, 1);
+  assert.equal(proof.manifest.video.probe.streams[0].codec_name, "vp8");
   assert.deepEqual(proof.manifest.recommendations, state.request.recommendations);
   assert.equal(proof.qualification.headSha, headSha);
   assert.equal(proof.qualification.previewOrigin, state.request.preview.origin);
@@ -281,7 +416,7 @@ test("runs a digest-bound operator scenario without changing candidate bytes", a
       await writeFile(args.at(-1), "derived h264 mp4\n");
       return "";
     }
-    if (args[0] === "-v") return JSON.stringify({ streams: [{ codec_name: "h264" }] });
+    if (args[0] === "-v") return args.at(-1).endsWith(".webm") ? videoProbe() : reviewerProbe();
     throw new Error(`unexpected process: ${args.join(" ")}`);
   };
   const proof = await runVisualAcceptance(state.request, {
