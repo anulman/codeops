@@ -130,8 +130,18 @@ export async function readProviderResponse(input: {
     throw new Error("provider response timeout is invalid");
   }
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
+  const timeoutError = new DOMException(
+    "provider response deadline exceeded",
+    "TimeoutError",
+  );
+  let timeout: ReturnType<typeof setTimeout> | undefined;
+  const deadline = new Promise<never>((_resolve, reject) => {
+    timeout = setTimeout(() => {
+      controller.abort(timeoutError);
+      reject(timeoutError);
+    }, timeoutMs);
+  });
+  const read = async (): Promise<ProviderResponseBody> => {
     let response = await input.fetch(input.url, {
       ...input.init,
       redirect: "manual",
@@ -178,8 +188,11 @@ export async function readProviderResponse(input: {
       status: response.status,
       bytes: await readBoundedBytes(response, input.maxBytes),
     };
+  };
+  try {
+    return await Promise.race([read(), deadline]);
   } finally {
-    clearTimeout(timeout);
+    if (timeout !== undefined) clearTimeout(timeout);
   }
 }
 
