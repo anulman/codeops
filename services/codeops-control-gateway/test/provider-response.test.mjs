@@ -86,6 +86,22 @@ test("enforces timeout, status, media type, and UTF-8 boundaries", async () => {
     }),
     /aborted|abort|timeout/i,
   );
+  let nonCooperativeSignal;
+  await assert.rejects(
+    readProviderResponse({
+      fetch: async (_url, init) => {
+        nonCooperativeSignal = init.signal;
+        return await new Promise(() => {});
+      },
+      url: "https://api.github.com/example",
+      maxBytes: 10,
+      statuses: [200],
+      mediaTypes: ["json"],
+      timeoutMs: 5,
+    }),
+    (error) => error?.name === "TimeoutError",
+  );
+  assert.equal(nonCooperativeSignal.aborted, true);
   await assert.rejects(
     readProviderResponse({
       fetch: async () => new Response("not found", {
