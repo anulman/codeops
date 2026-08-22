@@ -516,3 +516,24 @@ test("reconciles each mutation only from operation-specific attributable evidenc
     checkRunId: 1234,
   }), attemptedAt, observedAt)).state, "unknown");
 });
+
+test("reconciles an absent publication branch after the consistency window", async () => {
+  const reconcile = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async () => json({ message: "Not Found" }, 404),
+  });
+  const input = {
+    repository,
+    expectedHeadSha: head,
+    baseBranch: "main",
+    branchName: "codeops/missing-publication",
+    commitMessage: "Publish candidate",
+    changes: [{ path: "package.json", oldText: "old", newText: "new" }],
+  };
+  const attemptedAt = new Date("2026-08-14T15:07:00.000Z");
+  assert.equal((await reconcile(
+    request("branch_publish", input),
+    attemptedAt,
+    new Date("2026-08-14T15:08:01.000Z"),
+  )).state, "reconciled_not_observed");
+});

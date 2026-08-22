@@ -124,6 +124,26 @@ export async function loadUnknownProviderEffectReconciliation(
   if (!/^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/.test(ownerPrincipalId)) {
     throw new Error("provider effect owner principal is invalid");
   }
+  await client.query(
+    `UPDATE codeops.provider_effect_receipts AS effect
+        SET state = 'unknown',
+            reconciliation_action = CASE effect.operation
+              WHEN 'branch_publish' THEN 'inspect_branch_commit'
+              WHEN 'pull_request_create' THEN 'search_pull_request_marker'
+              WHEN 'pull_request_update' THEN 'inspect_pull_request'
+              WHEN 'review_thread_reply' THEN 'search_review_thread_marker'
+              WHEN 'pull_request_update_branch' THEN 'compare_pull_request_head'
+              WHEN 'check_rerun' THEN 'inspect_check_attempts'
+            END,
+            updated_at = now()
+       FROM codeops.sessions AS session
+      WHERE effect.effect_id = $1
+        AND effect.state = 'attempting'
+        AND effect.attempted_at <= now() - interval '5 minutes'
+        AND session.session_id = effect.session_id
+        AND session.owner_principal_id = $2`,
+    [effectId, ownerPrincipalId],
+  );
   const result = await client.query<ReconciliationAuthorityRow>(
     `SELECT effect.effect_id, effect.session_id, effect.dispatch_id,
             effect.payload_digest, effect.permission_digest, effect.operation,
