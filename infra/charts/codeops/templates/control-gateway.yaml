@@ -123,6 +123,7 @@ spec:
             - { name: CODEOPS_PUBLICATION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/publication-token }
             {{- if .Values.proofPublisher.enabled }}
             - { name: CODEOPS_PROOF_PUBLISHER_ORIGIN, value: http://{{ include "codeops.fullname" . }}-proof-publisher:8080 }
+            - { name: CODEOPS_PROOF_PUBLISHER_PUBLIC_BASE_URL, value: {{ .Values.proofPublisher.s3.publicBaseUrl | quote }} }
             - { name: CODEOPS_PROOF_PUBLISHER_AUTH_TOKEN_FILE, value: /var/run/secrets/codeops-proof-publisher-auth/token }
             {{- end }}
             - { name: CODEOPS_WORKSPACE_LAUNCH_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/workspace-launch-token }

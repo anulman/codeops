@@ -20,6 +20,22 @@ const objectKeySchema = z
     },
   );
 
+const credentialFreeHttpsUrlSchema = z.string().url().superRefine((value, context) => {
+  const parsed = new URL(value);
+  if (
+    parsed.protocol !== "https:" ||
+    parsed.username !== "" ||
+    parsed.password !== "" ||
+    parsed.search !== "" ||
+    parsed.hash !== ""
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "public URL must be credential-free HTTPS without query or fragment",
+    });
+  }
+});
+
 const publicationIdentitySchema = z
   .object({
     repository: repositorySchema,
@@ -34,7 +50,7 @@ const reviewerVideoSchema = z
     kind: z.literal("reviewer-video"),
     mediaType: z.literal("video/mp4"),
     extension: z.literal("mp4"),
-    byteLength: z.number().int().positive().max(100 * 1024 * 1024),
+    byteLength: z.number().int().positive().max(50 * 1024 * 1024),
     sha256: digestSchema,
     bytesBase64: z.string().min(4),
   })
@@ -92,9 +108,7 @@ export const proofPublicationArtifactReceiptSchema = z
       z.literal("packet-index"),
     ]),
     objectKey: objectKeySchema,
-    publicUrl: z.string().url().refine((value) => value.startsWith("https://"), {
-      message: "public URL must use HTTPS",
-    }),
+    publicUrl: credentialFreeHttpsUrlSchema,
     mediaType: z.union([
       z.literal("video/mp4"),
       z.literal("image/png"),
@@ -146,13 +160,30 @@ const failureReceiptSchema = z
       z.literal("plugin_unavailable"),
     ]),
     retryable: z.boolean(),
+    publicationState: z.union([
+      z.literal("not-published"),
+      z.literal("staged"),
+    ]),
+    stagedObjectKeys: z.array(objectKeySchema).max(3),
   })
   .strict();
 
 export const proofPublicationReceiptSchema = z.discriminatedUnion("status", [
   successReceiptSchema,
   failureReceiptSchema,
-]);
+]).superRefine((value, context) => {
+  if (
+    value.status === "failed" &&
+    ((value.publicationState === "not-published" && value.stagedObjectKeys.length !== 0) ||
+      (value.publicationState === "staged" && value.stagedObjectKeys.length === 0))
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["stagedObjectKeys"],
+      message: "publication state must match staged object keys",
+    });
+  }
+});
 
 export type ProofPublicationArtifactInput = z.infer<
   typeof proofPublicationArtifactInputSchema

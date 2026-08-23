@@ -358,6 +358,10 @@ test("isolates the optional S3 proof publisher credential", () => {
     "http://team-a-codeops-proof-publisher:8080",
   );
   assert.equal(
+    gatewayContainer.env.find(({ name }) => name === "CODEOPS_PROOF_PUBLISHER_PUBLIC_BASE_URL").value,
+    "https://codeops-proofs.s3.bhs.example.test/",
+  );
+  assert.equal(
     gateway.spec.template.spec.volumes.find(({ name }) => name === "proof-publisher-auth").secret.secretName,
     "team-a-proof-auth",
   );

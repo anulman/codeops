@@ -52,16 +52,18 @@ const request = {
   ],
 };
 
-function fakeTransport() {
+function fakeTransport({ publicStatus = 200, failPutAt = null } = {}) {
   const objects = new Map();
   const puts = [];
+  let creations = 0;
   return {
     objects,
     puts,
+    get creations() { return creations; },
     transport: {
       async head(key) {
         const object = objects.get(key);
-        if (!object) return { status: 404, headers: new Headers() };
+        if (!object) return { status: 403, headers: new Headers() };
         return {
           status: 200,
           headers: new Headers({
@@ -74,9 +76,24 @@ function fakeTransport() {
       },
       async put(key, body, headers) {
         puts.push({ key, body: Buffer.from(body), headers: new Headers(headers) });
+        if (puts.length === failPutAt) return { status: 503, headers: new Headers() };
         if (objects.has(key)) return { status: 412, headers: new Headers() };
         objects.set(key, { body: Buffer.from(body), headers: new Headers(headers), etag: `"${puts.length}"` });
+        creations += 1;
         return { status: 200, headers: new Headers({ etag: `"${puts.length}"` }) };
+      },
+      async publicHead(url) {
+        if (publicStatus !== 200) return { status: publicStatus, headers: new Headers() };
+        const key = decodeURIComponent(new URL(url).pathname.slice(1));
+        const object = objects.get(key);
+        if (!object) return { status: 404, headers: new Headers() };
+        return {
+          status: 200,
+          headers: new Headers({
+            "content-length": String(object.body.byteLength),
+            "content-type": object.headers.get("content-type"),
+          }),
+        };
       },
     },
   };
@@ -113,8 +130,51 @@ test("replays exact objects without overwriting them", async () => {
   const publish = createS3ProofPublisher(config, { transport: fake.transport });
   assert.equal((await publish(request)).status, "published");
   assert.equal(fake.puts.length, 3);
+  assert.equal(fake.creations, 3);
   assert.equal((await publish(request)).status, "published");
-  assert.equal(fake.puts.length, 3);
+  assert.equal(fake.puts.length, 6);
+  assert.equal(fake.creations, 3);
+});
+
+test("uses conditional PUT before HEAD for a no-list S3 principal", async () => {
+  const calls = [];
+  const fake = fakeTransport();
+  const transport = {
+    ...fake.transport,
+    async put(...args) {
+      calls.push("PUT");
+      return fake.transport.put(...args);
+    },
+    async head(...args) {
+      calls.push("HEAD");
+      return fake.transport.head(...args);
+    },
+  };
+  const receipt = await createS3ProofPublisher(config, { transport })(request);
+  assert.equal(receipt.status, "published");
+  assert.deepEqual(calls.slice(0, 2), ["PUT", "HEAD"]);
+});
+
+test("fails unless every returned public URL is anonymously reachable", async () => {
+  const fake = fakeTransport({ publicStatus: 403 });
+  const receipt = await createS3ProofPublisher(config, { transport: fake.transport })(request);
+  assert.equal(receipt.status, "failed");
+  assert.equal(receipt.code, "verification_failed");
+  assert.equal(receipt.publicationState, "staged");
+  assert.equal(receipt.stagedObjectKeys.length, 1);
+  assert.match(receipt.stagedObjectKeys[0], /reviewer-video/);
+});
+
+test("reports partial immutable objects as staged until the packet index publishes", async () => {
+  const fake = fakeTransport({ failPutAt: 2 });
+  const receipt = await createS3ProofPublisher(config, { transport: fake.transport })(request);
+  assert.equal(receipt.status, "failed");
+  assert.equal(receipt.code, "upload_failed");
+  assert.equal(receipt.publicationState, "staged");
+  assert.equal(receipt.stagedObjectKeys.length, 2);
+  assert.match(receipt.stagedObjectKeys[0], /reviewer-video/);
+  assert.match(receipt.stagedObjectKeys[1], /poster/);
+  assert.equal(receipt.stagedObjectKeys.some((key) => key.includes("packet-index")), false);
 });
 
 test("fails closed for destination, artifact, and existing-object drift", async () => {
@@ -128,6 +188,8 @@ test("fails closed for destination, artifact, and existing-object drift", async 
     identity: request.identity,
     code: "destination_mismatch",
     retryable: false,
+    publicationState: "not-published",
+    stagedObjectKeys: [],
   });
   const invalid = structuredClone(request);
   invalid.artifacts[0].sha256 = `sha256:${"f".repeat(64)}`;
@@ -149,14 +211,19 @@ test("fails closed for destination, artifact, and existing-object drift", async 
 
 test("signs path-style S3 calls without putting credentials in the URL", async () => {
   const calls = [];
-  const transport = createAwsS3Transport(config, async (signed) => {
-    calls.push(signed);
+  const transport = createAwsS3Transport(config, async (input, init) => {
+    calls.push({ input, init });
     return new Response(null, { status: 404 });
   });
   await transport.head("owner/repo/object.mp4");
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].url, "https://s3.bhs.example.test/codeops-proofs/owner/repo/object.mp4");
-  assert.equal(calls[0].url.includes(config.accessKeyId), false);
-  assert.equal(calls[0].url.includes(config.secretAccessKey), false);
-  assert.match(calls[0].headers.get("authorization"), /^AWS4-HMAC-SHA256 /);
+  assert.equal(calls[0].input.url, "https://s3.bhs.example.test/codeops-proofs/owner/repo/object.mp4");
+  assert.equal(calls[0].input.url.includes(config.accessKeyId), false);
+  assert.equal(calls[0].input.url.includes(config.secretAccessKey), false);
+  assert.match(calls[0].input.headers.get("authorization"), /^AWS4-HMAC-SHA256 /);
+
+  await transport.publicHead("https://codeops-proofs.s3.bhs.example.test/owner/repo/object.mp4");
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].init.method, "HEAD");
+  assert.equal(new Headers(calls[1].init.headers).has("authorization"), false);
 });

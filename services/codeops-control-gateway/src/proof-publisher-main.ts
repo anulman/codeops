@@ -8,7 +8,7 @@ import {
   type S3ProofPublisherConfig,
 } from "./proof-publisher.js";
 
-const MAX_BODY_BYTES = 160 * 1024 * 1024;
+const MAX_BODY_BYTES = 84 * 1024 * 1024;
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -34,7 +34,7 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
   const declared = Number(request.headers["content-length"] ?? "0");
   if (Number.isFinite(declared) && declared > MAX_BODY_BYTES) {
     request.destroy();
-    throw new Error("request body exceeds 160 MiB");
+    throw new Error("request body exceeds 84 MiB");
   }
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -43,7 +43,7 @@ async function readJson(request: IncomingMessage): Promise<unknown> {
     bytes += buffer.byteLength;
     if (bytes > MAX_BODY_BYTES) {
       request.destroy();
-      throw new Error("request body exceeds 160 MiB");
+      throw new Error("request body exceeds 84 MiB");
     }
     chunks.push(buffer);
   }

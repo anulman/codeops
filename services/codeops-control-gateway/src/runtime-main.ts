@@ -266,10 +266,20 @@ if (publicationToken.length < 32 || publicationToken.length > 4_096) {
   throw new Error("publication token length is invalid");
 }
 const proofPublisherOrigin = process.env.CODEOPS_PROOF_PUBLISHER_ORIGIN?.trim() || null;
+const proofPublisherPublicBaseUrl =
+  process.env.CODEOPS_PROOF_PUBLISHER_PUBLIC_BASE_URL?.trim() || null;
 const proofPublisherTokenFile =
   process.env.CODEOPS_PROOF_PUBLISHER_AUTH_TOKEN_FILE?.trim() || null;
-if ((proofPublisherOrigin === null) !== (proofPublisherTokenFile === null)) {
-  throw new Error("proof publisher origin and token file must be configured together");
+if (
+  new Set([
+    proofPublisherOrigin === null,
+    proofPublisherPublicBaseUrl === null,
+    proofPublisherTokenFile === null,
+  ]).size !== 1
+) {
+  throw new Error(
+    "proof publisher origin, public base URL, and token file must be configured together",
+  );
 }
 const proofPublisherToken = proofPublisherTokenFile === null
   ? null
@@ -277,10 +287,13 @@ const proofPublisherToken = proofPublisherTokenFile === null
 if (proofPublisherToken === publicationToken) {
   throw new Error("proof publisher token must have a distinct authority");
 }
-const publishProof = proofPublisherOrigin === null || proofPublisherToken === null
+const publishProof = proofPublisherOrigin === null ||
+    proofPublisherPublicBaseUrl === null ||
+    proofPublisherToken === null
   ? null
   : createProofPublisherClient({
       origin: proofPublisherOrigin,
+      publicBaseUrl: proofPublisherPublicBaseUrl,
       token: proofPublisherToken,
     });
 const sessionBrokerReadToken = await secretFile(
@@ -1109,7 +1122,7 @@ const server = createServer((request, response) => {
       }
       try {
         const publication = proofPublicationRequestSchema.parse(
-          await readJson(request, 160 * 1024 * 1024),
+          await readJson(request, 84 * 1024 * 1024),
         );
         if (
           publication.identity.repository !==

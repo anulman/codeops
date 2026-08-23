@@ -29,6 +29,7 @@ export type S3Response = {
 export type S3Transport = {
   head(objectKey: string): Promise<S3Response>;
   put(objectKey: string, body: Uint8Array, headers: Headers): Promise<S3Response>;
+  publicHead(publicUrl: string): Promise<S3Response>;
 };
 
 type Dependencies = {
@@ -146,6 +147,18 @@ function verifyHead(response: S3Response, artifact: PreparedArtifact): string {
   return etag;
 }
 
+function verifyPublicHead(response: S3Response, artifact: PreparedArtifact): void {
+  if (response.status !== 200) {
+    throw new Error(`public verification returned HTTP ${response.status}`);
+  }
+  if (response.headers.get("content-length") !== String(artifact.bytes.byteLength)) {
+    throw new Error("public verification found byte-length drift");
+  }
+  if (response.headers.get("content-type") !== artifact.mediaType) {
+    throw new Error("public verification found media-type drift");
+  }
+}
+
 async function publishArtifact(
   config: S3ProofPublisherConfig,
   request: ProofPublicationRequest,
@@ -153,20 +166,12 @@ async function publishArtifact(
   transport: S3Transport,
 ): Promise<ProofPublicationArtifactReceipt> {
   const key = objectKey(request, artifact);
-  const existing = await transport.head(key);
-  let etag: string;
-  if (existing.status === 200) {
-    etag = verifyHead(existing, artifact);
-  } else if (existing.status === 404) {
-    const uploaded = await transport.put(key, artifact.bytes, expectedHeaders(artifact));
-    if (![200, 201, 204, 412].includes(uploaded.status)) {
-      throw new Error(`object upload returned HTTP ${uploaded.status}`);
-    }
-    etag = verifyHead(await transport.head(key), artifact);
-  } else {
-    throw new Error(`object preflight returned HTTP ${existing.status}`);
+  const uploaded = await transport.put(key, artifact.bytes, expectedHeaders(artifact));
+  if (![200, 201, 204, 412].includes(uploaded.status)) {
+    throw new Error(`object upload returned HTTP ${uploaded.status}`);
   }
-  return {
+  const etag = verifyHead(await transport.head(key), artifact);
+  const receipt = {
     kind: artifact.kind,
     objectKey: key,
     publicUrl: publicUrl(config, key),
@@ -175,6 +180,8 @@ async function publishArtifact(
     sha256: artifact.sha256,
     etag,
   };
+  verifyPublicHead(await transport.publicHead(receipt.publicUrl), artifact);
+  return receipt;
 }
 
 function failure(
@@ -182,6 +189,7 @@ function failure(
   request: ProofPublicationRequest,
   code: Extract<ProofPublicationReceipt, { status: "failed" }>['code'],
   retryable: boolean,
+  stagedObjectKeys: string[] = [],
 ): ProofPublicationReceipt {
   return proofPublicationReceiptSchema.parse({
     version: "codeops.proof-publication-receipt/v1",
@@ -191,6 +199,8 @@ function failure(
     identity: request.identity,
     code,
     retryable,
+    publicationState: stagedObjectKeys.length === 0 ? "not-published" : "staged",
+    stagedObjectKeys,
   });
 }
 
@@ -223,8 +233,11 @@ export function createS3ProofPublisher(config: S3ProofPublisherConfig, dependenc
       return failure(config, request, "artifact_invalid", false);
     }
 
+    const stagedObjectKeys: string[] = [];
     try {
+      stagedObjectKeys.push(objectKey(request, artifacts[0]!));
       const video = await publishArtifact(config, request, artifacts[0]!, dependencies.transport);
+      stagedObjectKeys.push(objectKey(request, artifacts[1]!));
       const poster = await publishArtifact(config, request, artifacts[1]!, dependencies.transport);
       const indexBytes = canonicalJsonBytes({
         version: "codeops.proof-publication-index/v1",
@@ -241,6 +254,7 @@ export function createS3ProofPublisher(config: S3ProofPublisherConfig, dependenc
         bytes: indexBytes,
         sha256: sha256(indexBytes),
       };
+      stagedObjectKeys.push(objectKey(request, indexArtifact));
       const index = await publishArtifact(config, request, indexArtifact, dependencies.transport);
       const expiresAt = new Date(now().getTime() + config.retentionDays * 86_400_000).toISOString();
       return proofPublicationReceiptSchema.parse({
@@ -254,9 +268,13 @@ export function createS3ProofPublisher(config: S3ProofPublisherConfig, dependenc
       });
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      if (/drift|conflict/i.test(message)) return failure(config, request, "object_conflict", false);
-      if (/verification|ETag/i.test(message)) return failure(config, request, "verification_failed", true);
-      return failure(config, request, "upload_failed", true);
+      if (/drift|conflict/i.test(message)) {
+        return failure(config, request, "object_conflict", false, stagedObjectKeys);
+      }
+      if (/verification|ETag/i.test(message)) {
+        return failure(config, request, "verification_failed", true, stagedObjectKeys);
+      }
+      return failure(config, request, "upload_failed", true, stagedObjectKeys);
     }
   };
 }
@@ -284,5 +302,14 @@ export function createAwsS3Transport(
   return {
     head: (key) => request("HEAD", key),
     put: (key, body, headers) => request("PUT", key, body, headers),
+    publicHead: async (publicUrl) => {
+      const url = requireHttpsUrl(publicUrl, "public object URL");
+      const response = await fetchImpl(url, {
+        method: "HEAD",
+        redirect: "error",
+        signal: AbortSignal.timeout(10_000),
+      });
+      return { status: response.status, headers: response.headers };
+    },
   };
 }

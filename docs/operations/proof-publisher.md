@@ -24,6 +24,21 @@ uses a dedicated OVHcloud Object Storage bucket.
 
 The publisher accepts `sensitive` classification so it can return a stable
 `sensitive_proof` failure receipt. It never uploads that classification.
+The request allows a maximum 50 MiB MP4 and 10 MiB poster inside an 84 MiB
+JSON body limit. This keeps base64 decoding within the publisher's default
+512 MiB memory limit.
+
+The publisher sends `PUT` with `If-None-Match: *` before authenticated `HEAD`.
+This supports a bucket-scoped principal that has object read and write access
+but no bucket list access. It verifies the stored metadata with authenticated
+`HEAD`. It then verifies each returned URL with an unauthenticated `HEAD`.
+
+S3 does not provide one transaction for three objects. The verified
+packet-index object is the publication marker. A failed receipt uses
+`publicationState: staged` and lists each immutable object key whose upload
+was attempted. These objects can remain anonymously readable until the bucket
+lifecycle rule expires them. Do not treat a video or poster object alone as a
+successful publication.
 
 ## Request path
 
@@ -38,7 +53,9 @@ Content-Type: application/json
 The control gateway verifies the repository route. It then relays the request
 to the internal publisher with the separate plugin token. The response is a
 `codeops.proof-publication-receipt/v1` object. A successful response includes
-the MP4 URL, poster URL, and packet-index URL.
+the MP4 URL, poster URL, and packet-index URL. The gateway independently binds
+the media digest, byte length, immutable object key, and public origin to the
+request before it returns the receipt.
 
 ## OVHcloud installation values
 
