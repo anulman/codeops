@@ -58,6 +58,26 @@ controlGateway:
     requests: { cpu: 100m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
 
+proofPublisher:
+  enabled: false
+  replicas: 1
+  destinationId: ""
+  s3:
+    endpoint: ""
+    publicBaseUrl: ""
+    bucket: ""
+    region: ""
+    credentialSecretName: codeops-proof-publisher-s3
+    accessKeyIdKey: access-key-id
+    secretAccessKeyKey: secret-access-key
+  auth:
+    secretName: codeops-proof-publisher-auth
+    tokenKey: token
+  retentionDays: 90
+  resources:
+    requests: { cpu: 25m, memory: 64Mi }
+    limits: { cpu: 500m, memory: 512Mi }
+
 modelProxy:
   replicas: 1
   image:

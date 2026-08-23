@@ -14,6 +14,7 @@
     "@codeops/codeops-contracts": "workspace:*",
     "@nats-io/jetstream": "3.4.0",
     "@nats-io/transport-node": "3.4.0",
+    "aws4fetch": "1.0.20",
     "pg": "8.22.0",
     "web-push": "3.6.7",
     "zod": "3.25.76"

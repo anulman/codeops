@@ -1,0 +1,93 @@
+{{- if .Values.proofPublisher.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "codeops.fullname" . }}-proof-publisher
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proof-publisher
+spec:
+  replicas: {{ .Values.proofPublisher.replicas }}
+  selector:
+    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-proof-publisher }
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: {{ include "codeops.fullname" . }}-proof-publisher
+        app.kubernetes.io/component: proof-publisher
+        app.kubernetes.io/part-of: codeops
+    spec:
+      automountServiceAccountToken: false
+      enableServiceLinks: false
+      imagePullSecrets:
+        {{- include "codeops.imagePullSecrets" . | nindent 8 }}
+      nodeSelector:
+        {{- toYaml .Values.nodeSelector | nindent 8 }}
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        runAsGroup: 1000
+        fsGroup: 1000
+        fsGroupChangePolicy: OnRootMismatch
+        seccompProfile: { type: RuntimeDefault }
+      containers:
+        - name: proof-publisher
+          image: {{ include "codeops.image" .Values.controlGateway.image | quote }}
+          imagePullPolicy: IfNotPresent
+          command: [node, services/codeops-control-gateway/dist/proof-publisher-main.js]
+          env:
+            - { name: CODEOPS_PROOF_PUBLISHER_DESTINATION_ID, value: {{ .Values.proofPublisher.destinationId | quote }} }
+            - { name: CODEOPS_PROOF_PUBLISHER_S3_ENDPOINT, value: {{ .Values.proofPublisher.s3.endpoint | quote }} }
+            - { name: CODEOPS_PROOF_PUBLISHER_PUBLIC_BASE_URL, value: {{ .Values.proofPublisher.s3.publicBaseUrl | quote }} }
+            - { name: CODEOPS_PROOF_PUBLISHER_S3_BUCKET, value: {{ .Values.proofPublisher.s3.bucket | quote }} }
+            - { name: CODEOPS_PROOF_PUBLISHER_S3_REGION, value: {{ .Values.proofPublisher.s3.region | quote }} }
+            - { name: CODEOPS_PROOF_PUBLISHER_RETENTION_DAYS, value: {{ .Values.proofPublisher.retentionDays | quote }} }
+            - { name: CODEOPS_PROOF_PUBLISHER_ACCESS_KEY_ID_FILE, value: /var/run/secrets/codeops-proof-s3/access-key-id }
+            - { name: CODEOPS_PROOF_PUBLISHER_SECRET_ACCESS_KEY_FILE, value: /var/run/secrets/codeops-proof-s3/secret-access-key }
+            - { name: CODEOPS_PROOF_PUBLISHER_AUTH_TOKEN_FILE, value: /var/run/secrets/codeops-proof-auth/token }
+            - { name: CODEOPS_HTTP_HOST, value: 0.0.0.0 }
+            - { name: CODEOPS_HTTP_PORT, value: "8080" }
+          ports: [{ name: http, containerPort: 8080 }]
+          startupProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 2, failureThreshold: 60 }
+          readinessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 5 }
+          livenessProbe: { httpGet: { path: /healthz, port: http }, periodSeconds: 10, failureThreshold: 6 }
+          resources:
+            {{- toYaml .Values.proofPublisher.resources | nindent 12 }}
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities: { drop: [ALL] }
+          volumeMounts:
+            - { name: s3-credentials, mountPath: /var/run/secrets/codeops-proof-s3, readOnly: true }
+            - { name: publisher-auth, mountPath: /var/run/secrets/codeops-proof-auth, readOnly: true }
+            - { name: temp, mountPath: /tmp }
+      volumes:
+        - name: s3-credentials
+          secret:
+            secretName: {{ .Values.proofPublisher.s3.credentialSecretName }}
+            defaultMode: 256
+            items:
+              - { key: {{ .Values.proofPublisher.s3.accessKeyIdKey }}, path: access-key-id }
+              - { key: {{ .Values.proofPublisher.s3.secretAccessKeyKey }}, path: secret-access-key }
+        - name: publisher-auth
+          secret:
+            secretName: {{ .Values.proofPublisher.auth.secretName }}
+            defaultMode: 256
+            items:
+              - { key: {{ .Values.proofPublisher.auth.tokenKey }}, path: token }
+        - name: temp
+          emptyDir: { sizeLimit: 64Mi }
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ include "codeops.fullname" . }}-proof-publisher
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: proof-publisher
+spec:
+  selector: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-proof-publisher }
+  ports: [{ name: http, protocol: TCP, port: 8080, targetPort: http }]
+{{- end }}

@@ -64,6 +64,9 @@ importers:
       '@nats-io/transport-node':
         specifier: 3.4.0
         version: 3.4.0
+      aws4fetch:
+        specifier: 1.0.20
+        version: 1.0.20
       pg:
         specifier: 8.22.0
         version: 8.22.0
@@ -1253,6 +1256,9 @@ packages:
 
   asn1.js@5.4.1:
     resolution: {integrity: sha512-+I//4cYPccV8LdmBLiX8CYvf9Sp3vQsrqu2QNXRcrbiWvcx/UdlFiqUJJzxRQxgsZmvhXhn4cSKeSmoFjVdupA==}
+
+  aws4fetch@1.0.20:
+    resolution: {integrity: sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==}
 
   babel-dead-code-elimination@1.0.12:
     resolution: {integrity: sha512-GERT7L2TiYcYDtYk1IpD+ASAYXjKbLTDPhBtYj7X1NuRMDTMtAx9kyBenub1Ev41lo91OHCKdmP+egTDmfQ7Ig==}
@@ -3608,6 +3614,8 @@ snapshots:
       inherits: 2.0.4
       minimalistic-assert: 1.0.1
       safer-buffer: 2.1.2
+
+  aws4fetch@1.0.20: {}
 
   babel-dead-code-elimination@1.0.12:
     dependencies:

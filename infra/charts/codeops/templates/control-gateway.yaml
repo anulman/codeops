@@ -121,6 +121,10 @@ spec:
             - { name: CODEOPS_REPOSITORY_HEAD_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/repository-head-token }
             - { name: CODEOPS_GITHUB_MUTATION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/github-mutation-token }
             - { name: CODEOPS_PUBLICATION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/publication-token }
+            {{- if .Values.proofPublisher.enabled }}
+            - { name: CODEOPS_PROOF_PUBLISHER_ORIGIN, value: http://{{ include "codeops.fullname" . }}-proof-publisher:8080 }
+            - { name: CODEOPS_PROOF_PUBLISHER_AUTH_TOKEN_FILE, value: /var/run/secrets/codeops-proof-publisher-auth/token }
+            {{- end }}
             - { name: CODEOPS_WORKSPACE_LAUNCH_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/workspace-launch-token }
             - { name: CODEOPS_REPOSITORY_REGISTRY_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-runtime-repositories/registry.json }
             - { name: CODEOPS_REQUIRED_REVIEW_CHECK_NAMES, value: {{ .Values.controlGateway.requiredReviewCheckNames | quote }} }
@@ -171,6 +175,9 @@ spec:
             {{- if .Values.controlGateway.webPush.enabled }}
             - { name: web-push-auth, mountPath: /var/run/secrets/codeops-web-push, readOnly: true }
             {{- end }}
+            {{- if .Values.proofPublisher.enabled }}
+            - { name: proof-publisher-auth, mountPath: /var/run/secrets/codeops-proof-publisher-auth, readOnly: true }
+            {{- end }}
             - { name: temp, mountPath: /tmp }
       volumes:
         - { name: evidence, persistentVolumeClaim: { claimName: {{ include "codeops.fullname" . }}-control-gateway-evidence } }
@@ -211,6 +218,14 @@ spec:
             defaultMode: 256
             items:
               - { key: {{ .Values.controlGateway.webPush.privateKeyKey }}, path: private-key }
+        {{- end }}
+        {{- if .Values.proofPublisher.enabled }}
+        - name: proof-publisher-auth
+          secret:
+            secretName: {{ .Values.proofPublisher.auth.secretName }}
+            defaultMode: 256
+            items:
+              - { key: {{ .Values.proofPublisher.auth.tokenKey }}, path: token }
         {{- end }}
         - name: temp
           emptyDir: { sizeLimit: 64Mi }

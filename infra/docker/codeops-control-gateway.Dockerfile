@@ -18,6 +18,7 @@ RUN services/codeops-control-gateway/node_modules/.bin/tsc -p packages/codeops-c
   && npm run build --prefix services/codeops-control-gateway \
   && npm prune --omit=dev --prefix services/codeops-control-gateway \
   && test -f services/codeops-control-gateway/dist/runtime-main.js \
+  && test -f services/codeops-control-gateway/dist/proof-publisher-main.js \
   && rm services/codeops-control-gateway/node_modules/@codeops/codeops-contracts \
   && mkdir services/codeops-control-gateway/node_modules/@codeops/codeops-contracts \
   && cp packages/codeops-contracts/package.json services/codeops-control-gateway/node_modules/@codeops/codeops-contracts/ \

@@ -234,6 +234,41 @@
 {{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .Values.controlGateway.repositoryAuthoritySecretName) -}}
 {{- fail "controlGateway.repositoryAuthoritySecretName must be one Kubernetes Secret name" -}}
 {{- end -}}
+{{- if .Values.proofPublisher.enabled -}}
+{{- if lt (int .Values.proofPublisher.replicas) 1 -}}
+{{- fail "proofPublisher requires at least one replica" -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9:._/-]{0,199}$" .Values.proofPublisher.destinationId) -}}
+{{- fail "proofPublisher.destinationId is invalid" -}}
+{{- end -}}
+{{- range (list .Values.proofPublisher.s3.endpoint .Values.proofPublisher.s3.publicBaseUrl) -}}
+{{- if not (regexMatch "^https://[A-Za-z0-9.-]+(:[0-9]{1,5})?/?$" .) -}}
+{{- fail "proofPublisher S3 URLs must be credential-free HTTPS origins" -}}
+{{- end -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9][a-z0-9.-]{1,62}[a-z0-9]$" .Values.proofPublisher.s3.bucket) -}}
+{{- fail "proofPublisher.s3.bucket is invalid" -}}
+{{- end -}}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$" .Values.proofPublisher.s3.region) -}}
+{{- fail "proofPublisher.s3.region is invalid" -}}
+{{- end -}}
+{{- range (list .Values.proofPublisher.s3.credentialSecretName .Values.proofPublisher.auth.secretName) -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" .) -}}
+{{- fail "proofPublisher Secret names are invalid" -}}
+{{- end -}}
+{{- end -}}
+{{- if eq .Values.proofPublisher.s3.credentialSecretName .Values.proofPublisher.auth.secretName -}}
+{{- fail "proofPublisher S3 credential and auth token must use distinct Secrets" -}}
+{{- end -}}
+{{- range (list .Values.proofPublisher.s3.accessKeyIdKey .Values.proofPublisher.s3.secretAccessKeyKey .Values.proofPublisher.auth.tokenKey) -}}
+{{- if not (regexMatch "^[A-Za-z0-9._-]+$" .) -}}
+{{- fail "proofPublisher Secret data keys are invalid" -}}
+{{- end -}}
+{{- end -}}
+{{- if or (lt (int .Values.proofPublisher.retentionDays) 1) (gt (int .Values.proofPublisher.retentionDays) 3650) -}}
+{{- fail "proofPublisher.retentionDays must be from 1 through 3650" -}}
+{{- end -}}
+{{- end -}}
 {{- if .Values.controlGateway.webPush.enabled -}}
 {{- if not (regexMatch "^[A-Za-z0-9_-]{80,128}$" .Values.controlGateway.webPush.publicKey) -}}
 {{- fail "controlGateway.webPush.publicKey must be one VAPID public key" -}}
