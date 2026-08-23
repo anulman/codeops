@@ -37,7 +37,7 @@ test("accepts a first-class scratch workspace launch", () => {
 });
 
 test("accepts up to four unique catalog sources", () => {
-  const sources = ["codeops", "renoconcierge", "understudy", "vocalpitch"].map(
+  const sources = ["service-api", "web-app", "worker", "shared-library"].map(
     (catalogKey) => ({ catalogKey }),
   );
   assert.equal(

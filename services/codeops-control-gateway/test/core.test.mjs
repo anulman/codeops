@@ -1248,7 +1248,7 @@ test("builds Agent Jobs from portable chart runtime identity", () => {
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
       repositoryReadToken: "repo-token",
       imagePullSecrets: [{ name: "team-a-registry" }],
-      nodeSelector: { "renoconcierge.ca/codeops": "true" },
+      nodeSelector: { "codeops.dev/operator": "true" },
       evidenceClaimName: "team-a-codeops-control-gateway-evidence",
       modelProxyServiceName: "team-a-codeops-model-proxy",
       modelProxyPodName: "team-a-codeops-model-proxy",
@@ -1262,7 +1262,7 @@ test("builds Agent Jobs from portable chart runtime identity", () => {
   assert.doesNotThrow(() => assertRunResources(resources));
   const pod = resources[2].spec.template.spec;
   assert.deepEqual(pod.imagePullSecrets, [{ name: "team-a-registry" }]);
-  assert.deepEqual(pod.nodeSelector, { "renoconcierge.ca/codeops": "true" });
+  assert.deepEqual(pod.nodeSelector, { "codeops.dev/operator": "true" });
   assert.equal(
     pod.volumes.find(({ name }) => name === "candidate"),
     undefined,

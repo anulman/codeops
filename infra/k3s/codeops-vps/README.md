@@ -1,7 +1,7 @@
 # CodeOps VPS development cluster
 
 This directory defines the single-node k3s cluster used to develop CodeOps on
-the VPS. It is separate from the OVH RenoConcierge cluster.
+the VPS. It is separate from consumer clusters.
 
 ## Boundaries
 
@@ -11,15 +11,15 @@ the VPS. It is separate from the OVH RenoConcierge cluster.
 - Service CIDR: `10.53.0.0/16`
 - Cluster ingress: ingress-nginx on NodePorts 32080 and 32443
 
-The separate CIDRs prevent the new cluster from reusing retired RenoConcierge
-ClusterIP addresses that remain in historical Caddy routes. The host firewall
-must reject the Kubernetes API and ingress NodePorts on the public interface.
+The separate CIDRs prevent the new cluster from reusing service addresses from
+other clusters. The host firewall must reject the Kubernetes API and ingress
+NodePorts on the public interface.
 
 ## Repository use
 
 The repository `.envrc` selects only this kubeconfig. Run `direnv allow` once.
-Do not merge this kubeconfig with the RenoConcierge kubeconfig. This reduces
-the risk of a command targeting the wrong cluster.
+Do not merge this kubeconfig with a consumer kubeconfig. This reduces the risk
+of a command targeting the wrong cluster.
 
 Verify the selected cluster before an effect:
 

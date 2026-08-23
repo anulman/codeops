@@ -41,9 +41,9 @@ function workspaceCatalog() {
     version: "codeops.workspace-catalog/v1",
     repositories: [
       {
-        key: "renoconcierge",
-        label: "RenoConcierge",
-        repository: "anulman/renoconcierge",
+        key: "example-app",
+        label: "Example app",
+        repository: "example-org/example-app",
         defaultRef: "main",
       },
       {

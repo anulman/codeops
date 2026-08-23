@@ -16,6 +16,7 @@ acceptance suites qualify each published release.
 - `services/codeops-acceptance-runner`: portable browser acceptance runner
 - `services/codeops-plane-controller`: work-item and GitHub controller
 - `services/codeops-control-gateway`: trusted session control gateway
+- optional S3 proof publisher: isolated publication process in the control-gateway image
 - `services/codeops-session-runtime-worker`: ACP runtime transport
 - `services/codeops-agent`: isolated coding-agent image
 - `services/codeops-model-proxy`: trusted OpenAI credential boundary
@@ -36,6 +37,9 @@ connect to external services or disable optional capabilities.
 
 See [Web Push notifications](docs/operations/web-push.md) to enable background
 session notifications, including installed Home Screen app support on iOS.
+See [S3 proof publisher](docs/operations/proof-publisher.md) to publish
+sanitized reviewer videos and packet indexes through an isolated
+S3-compatible credential boundary.
 
 ## System requirements
 

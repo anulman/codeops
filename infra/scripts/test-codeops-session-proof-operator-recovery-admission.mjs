@@ -23,7 +23,7 @@ const operator = {
     .update(Buffer.from(certificateData, "base64"))
     .digest("hex"),
 };
-const target = { context: "ovh-prod", server: "https://cluster.example.invalid" };
+const target = { context: "production", server: "https://cluster.example.invalid" };
 
 function namespaceResource() {
   return {

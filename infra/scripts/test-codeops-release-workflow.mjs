@@ -179,7 +179,7 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
       registryInstall.steps.findIndex(({ name }) => name === "Retain registry-install evidence"),
   );
   assert.match(quickstartValues.run, /profile: "custom"/);
-  assert.match(quickstartValues.run, /renoconcierge\.ca\/codeops/);
+  assert.match(quickstartValues.run, /codeops\.dev\/operator/);
   assert.doesNotMatch(quickstartValues.run, /GHCR_TOKEN/);
   assert.doesNotMatch(quickstartValues.run, /registry:/);
   assert.match(quickstartValues.run, /temporal: \{ enabled: false, driver: "none", deployment: "none" \}/);

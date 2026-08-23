@@ -140,7 +140,7 @@ export function buildAgentExecutionProofResources({ namespace, name, agentImage 
             spec: {
               automountServiceAccountToken: false,
               restartPolicy: "Never",
-              nodeSelector: { "renoconcierge.ca/codeops": "true" },
+              nodeSelector: { "codeops.dev/operator": "true" },
               securityContext: {
                 runAsNonRoot: true,
                 runAsUser: 1000,

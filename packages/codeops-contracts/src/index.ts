@@ -22,6 +22,16 @@ export {
   type EvidenceDeclaration,
 } from "./evidence-kind.js";
 export {
+  proofPublicationArtifactInputSchema,
+  proofPublicationArtifactReceiptSchema,
+  proofPublicationReceiptSchema,
+  proofPublicationRequestSchema,
+  type ProofPublicationArtifactInput,
+  type ProofPublicationArtifactReceipt,
+  type ProofPublicationReceipt,
+  type ProofPublicationRequest,
+} from "./proof-publication.js";
+export {
   adversarialReviewSchema,
   candidateCheckpointSchema,
   codingOutcomeSchema,

@@ -12,7 +12,6 @@ async function text(path) {
 test("the repository selects only the CodeOps VPS kubeconfig", async () => {
   const envrc = await text(".envrc");
   assert.match(envrc, /\.kube\/codeops-vps\.yaml/);
-  assert.doesNotMatch(envrc, /ovh-renoconcierge/);
 });
 
 test("the VPS k3s contract preserves the host and retired-cluster boundaries", async () => {

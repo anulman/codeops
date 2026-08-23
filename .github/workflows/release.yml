@@ -484,7 +484,6 @@ jobs:
         run: |
           kind create cluster --name codeops-registry --image kindest/node:v1.36.1 --wait 120s
           kubectl label node --all codeops.dev/operator=true
-          kubectl label node --all renoconcierge.ca/codeops=true
 
       - name: Download exact release manifest
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
@@ -562,7 +561,7 @@ jobs:
             import { writeFileSync } from "node:fs";
             const values = {
               profile: "custom",
-              nodeSelector: { "renoconcierge.ca/codeops": "true" },
+              nodeSelector: { "codeops.dev/operator": "true" },
               agentsUi: { access: { issuer: "https://example.cloudflareaccess.com" } },
               controlGateway: { kubernetesApiCidrs: [`${process.env.API_IP}/32`] },
               temporal: { enabled: false, driver: "none", deployment: "none" },

@@ -11,6 +11,7 @@ import {
 } from "./core.js";
 import {
   candidatePublicationSchema,
+  proofPublicationRequestSchema,
   githubMutationProviderRequestSchema,
   githubMutationReconciliationProviderRequestSchema,
   githubReadProviderRequestSchema,
@@ -32,6 +33,7 @@ import {
   loadInClusterKubernetesClient,
 } from "./kubernetes.js";
 import { publishCandidateRevision } from "./publication.js";
+import { createProofPublisherClient } from "./proof-publisher-client.js";
 import {
   projectAgentJobSessionStarted,
   projectAgentJobSessionTerminal,
@@ -195,13 +197,16 @@ function imagePullSecrets(name: string): readonly { readonly name: string }[] {
   return value as readonly { readonly name: string }[];
 }
 
-async function readJson(request: IncomingMessage): Promise<unknown> {
+async function readJson(
+  request: IncomingMessage,
+  maximumBytes = MAX_BODY_BYTES,
+): Promise<unknown> {
   const chunks: Buffer[] = [];
   let bytes = 0;
   for await (const chunk of request) {
     const buffer = Buffer.from(chunk);
     bytes += buffer.length;
-    if (bytes > MAX_BODY_BYTES) throw new Error("dispatch body exceeds 1 MiB");
+    if (bytes > maximumBytes) throw new Error("request body exceeds its limit");
     chunks.push(buffer);
   }
   if (bytes === 0) throw new Error("dispatch body is empty");
@@ -260,6 +265,37 @@ const publicationToken = await secretFile("CODEOPS_PUBLICATION_TOKEN_FILE");
 if (publicationToken.length < 32 || publicationToken.length > 4_096) {
   throw new Error("publication token length is invalid");
 }
+const proofPublisherOrigin = process.env.CODEOPS_PROOF_PUBLISHER_ORIGIN?.trim() || null;
+const proofPublisherPublicBaseUrl =
+  process.env.CODEOPS_PROOF_PUBLISHER_PUBLIC_BASE_URL?.trim() || null;
+const proofPublisherTokenFile =
+  process.env.CODEOPS_PROOF_PUBLISHER_AUTH_TOKEN_FILE?.trim() || null;
+if (
+  new Set([
+    proofPublisherOrigin === null,
+    proofPublisherPublicBaseUrl === null,
+    proofPublisherTokenFile === null,
+  ]).size !== 1
+) {
+  throw new Error(
+    "proof publisher origin, public base URL, and token file must be configured together",
+  );
+}
+const proofPublisherToken = proofPublisherTokenFile === null
+  ? null
+  : await secretFile("CODEOPS_PROOF_PUBLISHER_AUTH_TOKEN_FILE");
+if (proofPublisherToken === publicationToken) {
+  throw new Error("proof publisher token must have a distinct authority");
+}
+const publishProof = proofPublisherOrigin === null ||
+    proofPublisherPublicBaseUrl === null ||
+    proofPublisherToken === null
+  ? null
+  : createProofPublisherClient({
+      origin: proofPublisherOrigin,
+      publicBaseUrl: proofPublisherPublicBaseUrl,
+      token: proofPublisherToken,
+    });
 const sessionBrokerReadToken = await secretFile(
   "CODEOPS_SESSION_BROKER_READ_TOKEN_FILE",
 );
@@ -378,8 +414,7 @@ if (
 ) {
   throw new Error("workspace launch token must be one distinct authority");
 }
-if (
-  new Set([
+const controlGatewayAuthorities = [
     token,
     repositoryHeadToken,
     githubMutationToken,
@@ -390,8 +425,9 @@ if (
     sessionRuntimeWorkerToken,
     sessionJobInitializationToken,
     workspaceLaunchToken,
-  ]).size !== 10
-) {
+  ];
+if (proofPublisherToken !== null) controlGatewayAuthorities.push(proofPublisherToken);
+if (new Set(controlGatewayAuthorities).size !== controlGatewayAuthorities.length) {
   throw new Error("control gateway authorities must be mutually distinct");
 }
 const repositoryRegistry = await loadConfiguredRepositoryRegistry({
@@ -1059,6 +1095,46 @@ const server = createServer((request, response) => {
       );
     } catch {
       json(response, 404, { status: "not-found" });
+      return;
+    }
+    if (
+      request.method === "POST" &&
+      repositoryRoute?.path === "/proof-publications"
+    ) {
+      if (
+        !authenticateBearer(
+          typeof request.headers.authorization === "string"
+            ? request.headers.authorization
+            : undefined,
+          publicationToken,
+        )
+      ) {
+        json(response, 401, { status: "unauthorized" });
+        return;
+      }
+      if (!request.headers["content-type"]?.startsWith("application/json")) {
+        json(response, 415, { status: "unsupported-media-type" });
+        return;
+      }
+      if (publishProof === null) {
+        json(response, 503, { status: "plugin-unavailable" });
+        return;
+      }
+      try {
+        const publication = proofPublicationRequestSchema.parse(
+          await readJson(request, 84 * 1024 * 1024),
+        );
+        if (
+          publication.identity.repository !==
+          repositoryRoute.authority.repository
+        ) {
+          throw new Error("proof publication repository does not match its route");
+        }
+        const receipt = await publishProof(publication);
+        json(response, receipt.status === "published" ? 200 : 409, receipt);
+      } catch {
+        json(response, 503, { status: "unavailable" });
+      }
       return;
     }
     if (

@@ -318,6 +318,77 @@ test("wires Web Push only from an explicit public configuration and private Secr
   assert.equal(JSON.stringify(deployment).includes("privateKey"), false);
 });
 
+test("isolates the optional S3 proof publisher credential", () => {
+  const resources = render([
+    "--set", "proofPublisher.enabled=true",
+    "--set", "proofPublisher.destinationId=s3:test-region:codeops-proofs",
+    "--set", "proofPublisher.s3.endpoint=https://s3.region-1.example.test/",
+    "--set", "proofPublisher.s3.publicBaseUrl=https://codeops-proofs.s3.region-1.example.test/",
+    "--set", "proofPublisher.s3.bucket=codeops-proofs",
+    "--set", "proofPublisher.s3.region=region-1",
+    "--set", "proofPublisher.s3.credentialSecretName=team-a-proof-s3",
+    "--set", "proofPublisher.auth.secretName=team-a-proof-auth",
+  ]);
+  const publisher = resource(resources, "Deployment", "team-a-codeops-proof-publisher");
+  const container = publisher.spec.template.spec.containers[0];
+  assert.equal(publisher.spec.template.spec.automountServiceAccountToken, false);
+  assert.equal(
+    container.image,
+    "ghcr.io/anulman/codeops/control-gateway@sha256:1212121212121212121212121212121212121212121212121212121212121212",
+  );
+  assert.deepEqual(container.command, [
+    "node",
+    "services/codeops-control-gateway/dist/proof-publisher-main.js",
+  ]);
+  const s3 = publisher.spec.template.spec.volumes.find(({ name }) => name === "s3-credentials");
+  assert.equal(s3.secret.secretName, "team-a-proof-s3");
+  assert.deepEqual(s3.secret.items, [
+    { key: "access-key-id", path: "access-key-id" },
+    { key: "secret-access-key", path: "secret-access-key" },
+  ]);
+  const serializedOtherWorkloads = JSON.stringify(resources.filter(({ kind, metadata }) =>
+    ["Deployment", "Job", "StatefulSet"].includes(kind) &&
+    metadata?.name !== "team-a-codeops-proof-publisher"
+  ));
+  assert.doesNotMatch(serializedOtherWorkloads, /team-a-proof-s3|CODEOPS_PROOF_PUBLISHER_ACCESS_KEY/);
+  const gateway = resource(resources, "Deployment", "team-a-codeops-control-gateway");
+  const gatewayContainer = gateway.spec.template.spec.containers[0];
+  assert.equal(
+    gatewayContainer.env.find(({ name }) => name === "CODEOPS_PROOF_PUBLISHER_ORIGIN").value,
+    "http://team-a-codeops-proof-publisher:8080",
+  );
+  assert.equal(
+    gatewayContainer.env.find(({ name }) => name === "CODEOPS_PROOF_PUBLISHER_PUBLIC_BASE_URL").value,
+    "https://codeops-proofs.s3.region-1.example.test/",
+  );
+  assert.equal(
+    gateway.spec.template.spec.volumes.find(({ name }) => name === "proof-publisher-auth").secret.secretName,
+    "team-a-proof-auth",
+  );
+  const policy = resource(resources, "NetworkPolicy", "team-a-codeops-proof-publisher");
+  assert.deepEqual(
+    policy.spec.ingress[0].from[0].podSelector.matchLabels,
+    { "app.kubernetes.io/name": "team-a-codeops-control-gateway" },
+  );
+  assert.deepEqual(
+    policy.spec.egress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)).sort(),
+    ["TCP:443", "TCP:53", "UDP:53"],
+  );
+  resource(resources, "Service", "team-a-codeops-proof-publisher");
+
+  assert.throws(() => render(["--set", "proofPublisher.enabled=true"]));
+  assert.throws(() => render([
+    "--set", "proofPublisher.enabled=true",
+    "--set", "proofPublisher.destinationId=s3:test-region:codeops-proofs",
+    "--set", "proofPublisher.s3.endpoint=https://s3.region-1.example.test/",
+    "--set", "proofPublisher.s3.publicBaseUrl=https://codeops-proofs.s3.region-1.example.test/",
+    "--set", "proofPublisher.s3.bucket=codeops-proofs",
+    "--set", "proofPublisher.s3.region=region-1",
+    "--set", "proofPublisher.s3.credentialSecretName=same-secret",
+    "--set", "proofPublisher.auth.secretName=same-secret",
+  ]));
+});
+
 test("renders the optional runtime egress proxy as one fail-closed boundary", () => {
   const resources = render([
     "--set", "runtimeEgressProxy.enabled=true",
