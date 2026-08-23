@@ -201,23 +201,50 @@ function annotationFilter(annotations) {
 }
 
 async function deriveReviewerVideo({ canonicalFile, outputFile, annotations, canonicalVideo, ffmpeg, ffprobe, runProcess }) {
+  const trimStartSeconds = Math.min(...annotations.map(({ startSeconds }) => startSeconds));
+  const reviewerAnnotations = annotations.map(({ label, startSeconds, endSeconds }) => ({
+    label,
+    startSeconds: Math.max(0, startSeconds - trimStartSeconds),
+    endSeconds: endSeconds - trimStartSeconds,
+  }));
+  const expectedDurationMs = canonicalVideo.encodedDurationMs - Math.round(trimStartSeconds * 1_000);
+  if (!Number.isFinite(trimStartSeconds) || trimStartSeconds < 0 || expectedDurationMs <= 0) {
+    throw new Error("reviewer video trim boundary is invalid");
+  }
+  const filters = [
+    `trim=start=${trimStartSeconds}`,
+    "setpts=PTS-STARTPTS",
+    annotationFilter(reviewerAnnotations),
+  ].filter(Boolean).join(",");
   await runProcess(ffmpeg, [
     "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", canonicalFile,
-    "-vf", annotationFilter(annotations), "-c:v", "libx264", "-pix_fmt", "yuv420p",
+    "-vf", filters, "-c:v", "libx264", "-pix_fmt", "yuv420p",
     "-movflags", "+faststart", "-an", outputFile,
   ], { label: "reviewer video derivation" });
   const probe = await probeVideo({ file: outputFile, ffprobe, runProcess, label: "reviewer video probe" });
   const videoStreams = probe.streams.filter(({ codec_type: type }) => type === "video");
   const stream = videoStreams[0] ?? {};
-  const durationDriftMs = Math.abs(Math.round(Number(probe.format.duration) * 1_000) - canonicalVideo.encodedDurationMs);
+  const encodedDurationMs = Math.round(Number(probe.format.duration) * 1_000);
+  const durationDriftMs = Math.abs(encodedDurationMs - expectedDurationMs);
   if (probe.streams.length !== 1 || videoStreams.length !== 1 || stream.codec_name !== "h264"
     || stream.width !== canonicalVideo.capture.outputWidth
     || stream.height !== canonicalVideo.capture.outputHeight
     || stream.pix_fmt !== "yuv420p"
+    || !Number.isFinite(encodedDurationMs) || encodedDurationMs <= 0
     || !Number.isFinite(durationDriftMs) || durationDriftMs > 1_000) {
-    throw new Error("derived reviewer video does not preserve the canonical H.264 geometry and duration");
+    throw new Error("derived reviewer video does not preserve the trimmed H.264 geometry and duration");
   }
-  return probe;
+  return {
+    probe,
+    trim: {
+      strategy: "first-annotation-start",
+      sourceStartSeconds: trimStartSeconds,
+      canonicalDurationMs: canonicalVideo.encodedDurationMs,
+      expectedDurationMs,
+      encodedDurationMs,
+      durationDriftMs,
+    },
+  };
 }
 
 async function probeVideo({ file, ffprobe, runProcess, label }) {
@@ -452,7 +479,7 @@ export async function runVisualAcceptance(rawRequest, input = {}) {
     });
     const reviewerPath = "reviewer-annotated.noncanonical.mp4";
     const reviewerFile = path.join(request.outputDirectory, reviewerPath);
-    const reviewerProbe = await deriveReviewerVideo({
+    const reviewerVideo = await deriveReviewerVideo({
       canonicalFile: path.join(request.outputDirectory, canonical.path),
       outputFile: reviewerFile,
       annotations: result.annotations,
@@ -485,7 +512,8 @@ export async function runVisualAcceptance(rawRequest, input = {}) {
       previewImage: request.preview.image,
       runId: request.runId,
       browser: result.browser,
-      probe: reviewerProbe,
+      probe: reviewerVideo.probe,
+      trim: reviewerVideo.trim,
     };
     const validateRequestPath = path.join(request.outputDirectory, "request.json");
     await writeFile(validateRequestPath, `${canonicalJson(request)}\n`, { mode: 0o600, flag: "wx" });

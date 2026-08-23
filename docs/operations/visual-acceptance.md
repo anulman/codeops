@@ -85,7 +85,9 @@ the packet directory.
 
 The result must contain one canonical unannotated `video/webm` artifact. It
 also supplies raw capture measurements and time-bounded action labels. CodeOps
-applies those labels only after it qualifies the WebM. The derived
+applies those labels only after it qualifies the WebM. CodeOps keeps the
+canonical WebM untrimmed. It starts the derived reviewer MP4 at the earliest
+annotation, which marks the first reviewer-relevant action. The derived
 `reviewer-annotated.noncanonical.mp4` is always marked non-canonical.
 
 ## Canonical capture strategy
@@ -153,6 +155,13 @@ fixed output dimensions, and a decoded frame count equal to the retained event
 count or that count plus the required final concat frame. Encoded duration must
 be finite and within 2,500 ms of measured monotonic duration. Every annotation
 must end within the real encoded duration.
+
+After the canonical checks pass, CodeOps trims only the derived reviewer MP4.
+It rebases each annotation to the new zero timestamp, probes the reviewer MP4,
+and requires its duration to match the canonical duration minus the earliest
+annotation start. The manifest records the trim strategy, source start,
+canonical duration, expected reviewer duration, encoded reviewer duration, and
+duration drift. The canonical WebM and its digest do not change.
 
 The manifest retains the raw scenario measurements, computed coverage values,
 the complete FFprobe result, decoded frame count, duration drift, and CodeOps
