@@ -225,14 +225,14 @@ function videoProbe(overrides = {}) {
   });
 }
 
-function reviewerProbe() {
+function reviewerProbe(duration = "2.000000") {
   return JSON.stringify({
     streams: [{ codec_type: "video", codec_name: "h264", width: 1440, height: 1000, pix_fmt: "yuv420p" }],
-    format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", duration: "2.000000" },
+    format: { format_name: "mov,mp4,m4a,3gp,3g2,mj2", duration },
   });
 }
 
-async function runWithVideoOracle({ video = {}, probe = videoProbe(), annotations } = {}) {
+async function runWithVideoOracle({ video = {}, probe = videoProbe(), reviewer = reviewerProbe(), annotations } = {}) {
   const state = await harness();
   const scenarioResult = result();
   Object.assign(scenarioResult.video, video);
@@ -250,7 +250,7 @@ async function runWithVideoOracle({ video = {}, probe = videoProbe(), annotation
       await writeFile(args.at(-1), "derived h264 mp4\n");
       return "";
     }
-    if (args[0] === "-v") return args.at(-1).endsWith(".webm") ? probe : reviewerProbe();
+    if (args[0] === "-v") return args.at(-1).endsWith(".webm") ? probe : reviewer;
     throw new Error(`unexpected process: ${args.join(" ")}`);
   };
   return runVisualAcceptance(state.request, {
@@ -340,6 +340,63 @@ test("independently rejects malformed or misleading canonical WebM media", async
   }
 });
 
+test("trims the reviewer MP4 at the first annotation and preserves canonical timing", async () => {
+  const state = await harness();
+  const scenarioResult = result({
+    annotations: [
+      { label: "First action", startSeconds: 0.5, endSeconds: 1.25 },
+      { label: "Second action", startSeconds: 1.25, endSeconds: 2 },
+    ],
+  });
+  const calls = [];
+  const runProcess = async (_command, args) => {
+    calls.push(args);
+    if (args.at(-1) === "execute") {
+      await writeScenarioArtifacts(state.outputDirectory, scenarioResult);
+      return "";
+    }
+    if (args.at(-1) === "cleanup") {
+      await writeFile(path.join(state.outputDirectory, "cleanup-verification.json"), JSON.stringify(scenarioResult.cleanup));
+      return "";
+    }
+    if (args[0] === "-nostdin") {
+      await writeFile(args.at(-1), "derived h264 mp4\n");
+      return "";
+    }
+    if (args[0] === "-v") return args.at(-1).endsWith(".webm") ? videoProbe() : reviewerProbe("1.500000");
+    throw new Error(`unexpected process: ${args.join(" ")}`);
+  };
+  const proof = await runVisualAcceptance(state.request, {
+    environment: state.environment,
+    materialize: fakeMaterialize,
+    runProcess,
+  });
+  const reviewer = proof.manifest.artifacts.find(({ role }) => role === "noncanonical-reviewer-video");
+  assert.deepEqual(reviewer.trim, {
+    strategy: "first-annotation-start",
+    sourceStartSeconds: 0.5,
+    canonicalDurationMs: 2_000,
+    expectedDurationMs: 1_500,
+    encodedDurationMs: 1_500,
+    durationDriftMs: 0,
+  });
+  const ffmpegArgs = calls.find((args) => args[0] === "-nostdin");
+  const filters = ffmpegArgs[ffmpegArgs.indexOf("-vf") + 1];
+  assert.match(filters, /^trim=start=0\.5,setpts=PTS-STARTPTS,/);
+  assert.match(filters, /between\(t,0,0\.75\)/);
+  assert.equal(proof.manifest.video.encodedDurationMs, 2_000);
+});
+
+test("rejects a reviewer MP4 whose duration does not match the trimmed interval", async () => {
+  await assert.rejects(
+    runWithVideoOracle({
+      annotations: [{ label: "First action", startSeconds: 0.5, endSeconds: 2 }],
+      reviewer: reviewerProbe("3.000000"),
+    }),
+    /trimmed H\.264 geometry and duration/,
+  );
+});
+
 test("creates a bound packet and marks the annotated MP4 non-canonical", async () => {
   const state = await harness();
   const calls = [];
@@ -383,6 +440,8 @@ test("creates a bound packet and marks the annotated MP4 non-canonical", async (
     annotated: true,
     contentType: "video/mp4",
   });
+  assert.equal(reviewer.trim.strategy, "first-annotation-start");
+  assert.equal(reviewer.trim.sourceStartSeconds, 0);
   assert.equal(proof.manifest.artifacts.find(({ role }) => role === "canonical-raw-video").contentType, "video/webm");
   for (const evidence of proof.manifest.artifacts) {
     assert.equal(Number.isInteger(evidence.bytes) && evidence.bytes > 0, true);
