@@ -20,7 +20,7 @@ const operator = {
   uid: null,
   credentialSha256: "9".repeat(64),
 };
-const target = { context: "ovh-prod", server: "https://cluster.example.invalid" };
+const target = { context: "production", server: "https://cluster.example.invalid" };
 const approvedAt = "2026-08-05T05:00:00.000Z";
 const expiresAt = "2026-08-05T08:00:00.000Z";
 const artifactIds = [

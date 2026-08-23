@@ -8,13 +8,13 @@ import {
 const request = {
   version: "codeops.proof-publication-request/v1",
   plugin: "codeops.proof-publisher.s3/v1",
-  expectedDestinationId: "ovh:bhs:codeops-proofs",
+  expectedDestinationId: "s3:test-region:codeops-proofs",
   classification: "sanitized-public",
   identity: {
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-app",
     pullRequestNumber: 157,
     headSha: "a".repeat(40),
-    runId: "pr157-alpha40-01",
+    runId: "pr157-run-01",
   },
   artifacts: [
     {
@@ -64,8 +64,8 @@ test("rejects credentials, mutable identity, and unknown versions", () => {
 
 test("accepts exact success and failure receipts without provider credentials", () => {
   const baseArtifact = {
-    objectKey: `anulman/renoconcierge/pull-157/${"a".repeat(40)}/pr157-alpha40-01/reviewer-video-${"b".repeat(64)}.mp4`,
-    publicUrl: "https://codeops-proofs.s3.bhs.example.test/proof.mp4",
+    objectKey: `example-org/example-app/pull-157/${"a".repeat(40)}/pr157-run-01/reviewer-video-${"b".repeat(64)}.mp4`,
+    publicUrl: "https://codeops-proofs.s3.region-1.example.test/proof.mp4",
     byteLength: 3,
     sha256: `sha256:${"b".repeat(64)}`,
     etag: "etag",
@@ -78,8 +78,8 @@ test("accepts exact success and failure receipts without provider credentials", 
     identity: request.identity,
     artifacts: [
       { ...baseArtifact, kind: "reviewer-video", mediaType: "video/mp4" },
-      { ...baseArtifact, kind: "poster", mediaType: "image/png", objectKey: baseArtifact.objectKey.replace("reviewer-video", "poster"), publicUrl: "https://codeops-proofs.s3.bhs.example.test/poster.png" },
-      { ...baseArtifact, kind: "packet-index", mediaType: "application/json", objectKey: baseArtifact.objectKey.replace("reviewer-video", "packet-index"), publicUrl: "https://codeops-proofs.s3.bhs.example.test/index.json" },
+      { ...baseArtifact, kind: "poster", mediaType: "image/png", objectKey: baseArtifact.objectKey.replace("reviewer-video", "poster"), publicUrl: "https://codeops-proofs.s3.region-1.example.test/poster.png" },
+      { ...baseArtifact, kind: "packet-index", mediaType: "application/json", objectKey: baseArtifact.objectKey.replace("reviewer-video", "packet-index"), publicUrl: "https://codeops-proofs.s3.region-1.example.test/index.json" },
     ],
     expiresAt: "2026-11-21T19:52:00.000Z",
   };

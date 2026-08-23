@@ -321,11 +321,11 @@ test("wires Web Push only from an explicit public configuration and private Secr
 test("isolates the optional S3 proof publisher credential", () => {
   const resources = render([
     "--set", "proofPublisher.enabled=true",
-    "--set", "proofPublisher.destinationId=ovh:bhs:codeops-proofs",
-    "--set", "proofPublisher.s3.endpoint=https://s3.bhs.example.test/",
-    "--set", "proofPublisher.s3.publicBaseUrl=https://codeops-proofs.s3.bhs.example.test/",
+    "--set", "proofPublisher.destinationId=s3:test-region:codeops-proofs",
+    "--set", "proofPublisher.s3.endpoint=https://s3.region-1.example.test/",
+    "--set", "proofPublisher.s3.publicBaseUrl=https://codeops-proofs.s3.region-1.example.test/",
     "--set", "proofPublisher.s3.bucket=codeops-proofs",
-    "--set", "proofPublisher.s3.region=bhs",
+    "--set", "proofPublisher.s3.region=region-1",
     "--set", "proofPublisher.s3.credentialSecretName=team-a-proof-s3",
     "--set", "proofPublisher.auth.secretName=team-a-proof-auth",
   ]);
@@ -359,7 +359,7 @@ test("isolates the optional S3 proof publisher credential", () => {
   );
   assert.equal(
     gatewayContainer.env.find(({ name }) => name === "CODEOPS_PROOF_PUBLISHER_PUBLIC_BASE_URL").value,
-    "https://codeops-proofs.s3.bhs.example.test/",
+    "https://codeops-proofs.s3.region-1.example.test/",
   );
   assert.equal(
     gateway.spec.template.spec.volumes.find(({ name }) => name === "proof-publisher-auth").secret.secretName,
@@ -379,11 +379,11 @@ test("isolates the optional S3 proof publisher credential", () => {
   assert.throws(() => render(["--set", "proofPublisher.enabled=true"]));
   assert.throws(() => render([
     "--set", "proofPublisher.enabled=true",
-    "--set", "proofPublisher.destinationId=ovh:bhs:codeops-proofs",
-    "--set", "proofPublisher.s3.endpoint=https://s3.bhs.example.test/",
-    "--set", "proofPublisher.s3.publicBaseUrl=https://codeops-proofs.s3.bhs.example.test/",
+    "--set", "proofPublisher.destinationId=s3:test-region:codeops-proofs",
+    "--set", "proofPublisher.s3.endpoint=https://s3.region-1.example.test/",
+    "--set", "proofPublisher.s3.publicBaseUrl=https://codeops-proofs.s3.region-1.example.test/",
     "--set", "proofPublisher.s3.bucket=codeops-proofs",
-    "--set", "proofPublisher.s3.region=bhs",
+    "--set", "proofPublisher.s3.region=region-1",
     "--set", "proofPublisher.s3.credentialSecretName=same-secret",
     "--set", "proofPublisher.auth.secretName=same-secret",
   ]));

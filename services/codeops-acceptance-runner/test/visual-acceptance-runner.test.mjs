@@ -20,12 +20,12 @@ const digest = (bytes) => `sha256:${createHash("sha256").update(bytes).digest("h
 function request(outputDirectory) {
   return {
     version: "codeops.visual-acceptance-request/v1",
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-app",
     pullRequest: 157,
     headSha,
     baseSha,
     preview: {
-      origin: "https://pr-157.preview.renoconcierge.ca",
+      origin: "https://pr-157.preview.example.test",
       image: "sha-d3bfea6",
     },
     runId: "pr157-a80ed388-01",
@@ -97,11 +97,11 @@ function artifact(pathname, role, contentType, extra = {}) {
 function result(overrides = {}) {
   return {
     version: "codeops.visual-acceptance-result/v1",
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-app",
     pullRequest: 157,
     headSha,
     baseSha,
-    previewOrigin: "https://pr-157.preview.renoconcierge.ca",
+    previewOrigin: "https://pr-157.preview.example.test",
     previewImage: "sha-d3bfea6",
     runId: "pr157-a80ed388-01",
     browser: { name: "chromium", version: "140.0.7339.16" },
@@ -165,10 +165,10 @@ async function harness() {
     writeFile(files.token, "github-read-token-for-test\n", { mode: 0o600 }),
     writeFile(files.attestation, JSON.stringify({
       version: "codeops.preview-attestation/v1",
-      repository: "anulman/renoconcierge",
+      repository: "example-org/example-app",
       pullRequest: 157,
       headSha,
-      previewOrigin: "https://pr-157.preview.renoconcierge.ca",
+      previewOrigin: "https://pr-157.preview.example.test",
       previewImage: "sha-d3bfea6",
       attestedAt: "2026-08-20T19:59:00Z",
     }), { mode: 0o600 }),

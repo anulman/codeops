@@ -328,7 +328,7 @@ spec:
             cidr: __CODEOPS_KUBERNETES_API_CIDR__
       ports:
         - { protocol: TCP, port: 443 }
-        # OVH's kubernetes Service DNATs 443 to the same exact /32 on 6443.
+        # Some managed clusters map Service traffic on 443 to the API /32 on 6443.
         # CNIs may enforce egress after that translation.
         - { protocol: TCP, port: 6443 }
     - to:

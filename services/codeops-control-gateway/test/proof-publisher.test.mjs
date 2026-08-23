@@ -11,11 +11,11 @@ const videoBytes = Buffer.from("video-bytes");
 const posterBytes = Buffer.from("poster-bytes");
 
 const config = {
-  destinationId: "ovh:bhs:codeops-proofs",
-  endpoint: "https://s3.bhs.example.test/",
-  publicBaseUrl: "https://codeops-proofs.s3.bhs.example.test/",
+  destinationId: "s3:test-region:codeops-proofs",
+  endpoint: "https://s3.region-1.example.test/",
+  publicBaseUrl: "https://codeops-proofs.s3.region-1.example.test/",
   bucket: "codeops-proofs",
-  region: "bhs",
+  region: "region-1",
   retentionDays: 90,
   accessKeyId: "access-key-id",
   secretAccessKey: "secret-access-key",
@@ -27,10 +27,10 @@ const request = {
   expectedDestinationId: config.destinationId,
   classification: "sanitized-public",
   identity: {
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-app",
     pullRequestNumber: 157,
     headSha: "a".repeat(40),
-    runId: "pr157-alpha40-01",
+    runId: "pr157-run-01",
   },
   artifacts: [
     {
@@ -114,7 +114,7 @@ test("publishes exact immutable proof objects and returns a bound receipt", asyn
     assert.equal(put.headers.get("if-none-match"), "*");
     assert.equal(put.headers.get("x-amz-acl"), "public-read");
     assert.equal(put.headers.get("cache-control"), "public, max-age=31536000, immutable");
-    assert.match(put.key, /^anulman\/renoconcierge\/pull-157\/a{40}\/pr157-alpha40-01\//);
+    assert.match(put.key, /^example-org\/example-app\/pull-157\/a{40}\/pr157-run-01\//);
   }
   assert.equal(fake.puts[0].headers.get("content-disposition"), 'inline; filename="reviewer-video.mp4"');
   assert.equal(fake.puts[1].headers.get("content-disposition"), 'inline; filename="poster.png"');
@@ -180,7 +180,7 @@ test("reports partial immutable objects as staged until the packet index publish
 test("fails closed for destination, artifact, and existing-object drift", async () => {
   const fake = fakeTransport();
   const publish = createS3ProofPublisher(config, { transport: fake.transport });
-  assert.deepEqual(await publish({ ...request, expectedDestinationId: "ovh:bhs:other" }), {
+  assert.deepEqual(await publish({ ...request, expectedDestinationId: "s3:test-region:other" }), {
     version: "codeops.proof-publication-receipt/v1",
     plugin: "codeops.proof-publisher.s3/v1",
     status: "failed",
@@ -217,12 +217,12 @@ test("signs path-style S3 calls without putting credentials in the URL", async (
   });
   await transport.head("owner/repo/object.mp4");
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].input.url, "https://s3.bhs.example.test/codeops-proofs/owner/repo/object.mp4");
+  assert.equal(calls[0].input.url, "https://s3.region-1.example.test/codeops-proofs/owner/repo/object.mp4");
   assert.equal(calls[0].input.url.includes(config.accessKeyId), false);
   assert.equal(calls[0].input.url.includes(config.secretAccessKey), false);
   assert.match(calls[0].input.headers.get("authorization"), /^AWS4-HMAC-SHA256 /);
 
-  await transport.publicHead("https://codeops-proofs.s3.bhs.example.test/owner/repo/object.mp4");
+  await transport.publicHead("https://codeops-proofs.s3.region-1.example.test/owner/repo/object.mp4");
   assert.equal(calls.length, 2);
   assert.equal(calls[1].init.method, "HEAD");
   assert.equal(new Headers(calls[1].init.headers).has("authorization"), false);

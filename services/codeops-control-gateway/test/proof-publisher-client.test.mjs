@@ -8,10 +8,10 @@ const sha256 = `sha256:${createHash("sha256").update(bytes).digest("hex")}`;
 const request = {
   version: "codeops.proof-publication-request/v1",
   plugin: "codeops.proof-publisher.s3/v1",
-  expectedDestinationId: "ovh:bhs:codeops-proofs",
+  expectedDestinationId: "s3:test-region:codeops-proofs",
   classification: "sanitized-public",
   identity: {
-    repository: "anulman/renoconcierge",
+    repository: "example-org/example-app",
     pullRequestNumber: 157,
     headSha: "a".repeat(40),
     runId: "run-1",
@@ -21,11 +21,11 @@ const request = {
     { kind: "poster", mediaType: "image/png", extension: "png", byteLength: bytes.length, sha256, bytesBase64: bytes.toString("base64") },
   ],
 };
-const publicBaseUrl = "https://codeops-proofs.s3.bhs.example.test/";
+const publicBaseUrl = "https://codeops-proofs.s3.region-1.example.test/";
 
 function objectKey(artifact) {
   return [
-    "anulman/renoconcierge",
+    "example-org/example-app",
     "pull-157",
     "a".repeat(40),
     "run-1",
@@ -90,7 +90,7 @@ test("binds successful artifact receipts to request bytes, keys, and public orig
   const posterKey = objectKey(poster);
   const indexSha256 = `sha256:${"c".repeat(64)}`;
   const indexKey = [
-    "anulman/renoconcierge",
+    "example-org/example-app",
     "pull-157",
     "a".repeat(40),
     "run-1",

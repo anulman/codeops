@@ -185,7 +185,7 @@ test("routes runtime HTTP traffic through only the exact internal egress proxy",
 
 test("puts exact source authority only in the init-only immutable Secret", () => {
   const resources = buildWorkspaceResources(config([
-    { catalogKey: "renoconcierge", repository: "anulman/RenoConcierge" },
+    { catalogKey: "example-app", repository: "example-org/Example-App" },
     { catalogKey: "codeops", repository: "anulman/CodeOps" },
   ]));
   assert.doesNotThrow(() => assertWorkspaceResources(resources));

@@ -7,6 +7,11 @@ installation can manage multiple allowlisted repositories. Plane supplies
 human-visible work items. Temporal supplies durable workflow execution.
 PostgreSQL stores control-plane state. JetStream transports lifecycle events.
 
+Keep CodeOps product-neutral. Put consumer-specific names, repositories,
+domains, infrastructure providers, and deployment values in the consumer
+repository or installation configuration. Use generic examples in CodeOps
+source, tests, documentation, and pull requests.
+
 Read [`docs/context/CURRENT-STATE.md`](docs/context/CURRENT-STATE.md) before a
 change. Use the remaining files in `docs/context/` for product, domain,
 decision, and source context.

@@ -140,9 +140,9 @@ test("admits a first-class scratch or multi-source workspace identity", () => {
       version: "codeops.workspace/v1",
       sources: [
         {
-          catalogKey: "renoconcierge",
-          repository: "anulman/RenoConcierge",
-          checkoutPath: "sources/renoconcierge",
+          catalogKey: "example-app",
+          repository: "example-org/Example-App",
+          checkoutPath: "sources/example-app",
           requestedRef: "main",
           resolvedSha: "c".repeat(40),
         },

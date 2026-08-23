@@ -16,9 +16,9 @@
         "version": "codeops.workspace/v1",
         "sources": [
           {
-            "catalogKey": "renoconcierge",
-            "repository": "anulman/renoconcierge",
-            "checkoutPath": "sources/renoconcierge",
+            "catalogKey": "example-app",
+            "repository": "example-org/example-app",
+            "checkoutPath": "sources/example-app",
             "requestedRef": "main",
             "resolvedSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
           },
@@ -54,8 +54,8 @@
       "workspaceManifestDigest": "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc",
       "sourcePatches": [
         {
-          "catalogKey": "renoconcierge",
-          "repository": "anulman/renoconcierge",
+          "catalogKey": "example-app",
+          "repository": "example-org/example-app",
           "baseSha": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "patchDigest": "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
         }

@@ -5,8 +5,7 @@ CodeOps publication request. It returns an identity-bound receipt with the
 immutable object URLs, SHA-256 digests, ETags, and expected expiration time.
 
 The contract is provider-neutral. A CodeOps installation selects an
-S3-compatible endpoint through Helm values. The RenoConcierge installation
-uses a dedicated OVHcloud Object Storage bucket.
+S3-compatible endpoint through Helm values.
 
 ## Security boundary
 
@@ -57,7 +56,7 @@ the MP4 URL, poster URL, and packet-index URL. The gateway independently binds
 the media digest, byte length, immutable object key, and public origin to the
 request before it returns the receipt.
 
-## OVHcloud installation values
+## Installation values
 
 Create a new bucket for this purpose. Do not reuse an application bucket or the
 short-retention acceptance bucket. Configure a 90-day lifecycle rule on the new
@@ -66,11 +65,11 @@ bucket before enabling the plugin.
 ```yaml
 proofPublisher:
   enabled: true
-  destinationId: ovh:<region>:codeops-proofs
+  destinationId: s3:<region>:codeops-proofs
   retentionDays: 90
   s3:
-    endpoint: https://s3.<region>.io.cloud.ovh.net/
-    publicBaseUrl: https://codeops-proofs.s3.<region>.io.cloud.ovh.net/
+    endpoint: https://s3.<region>.example.test/
+    publicBaseUrl: https://codeops-proofs.s3.<region>.example.test/
     bucket: codeops-proofs
     region: <region>
     credentialSecretName: codeops-proof-publisher-s3
@@ -82,10 +81,10 @@ proofPublisher:
 ```
 
 Create the two Kubernetes Secrets outside Helm. Use a no-echo operator prompt
-for the OVH access key and secret key. Generate the internal plugin token from
+for the S3 access key and secret key. Generate the internal plugin token from
 a cryptographically secure random source. Do not put either Secret value in a
 values file, repository, Job result, log, or chat message.
 
-Enabling the plugin is not permission to create the OVH bucket or principal,
-release CodeOps, deploy the RenoConcierge installation, or publish a GitHub PR
+Enabling the plugin is not permission to create the bucket or principal,
+release CodeOps, deploy a consumer installation, or publish a GitHub PR
 comment. Keep each operation as a separate gate.
