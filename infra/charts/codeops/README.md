@@ -236,6 +236,29 @@ settlement functions. It cannot read or write ledger tables directly. The
 coding-agent container never mounts the reusable OpenAI credential, database
 credential, or reusable Codex state.
 
+To expose Plane admission through the live controller Service, enable the
+repository-qualified webhook Ingress:
+
+```yaml
+githubController:
+  webhookIngress:
+    enabled: true
+    className: nginx
+    annotations:
+      cert-manager.io/cluster-issuer: letsencrypt
+    host: work.example.com
+    tlsSecretName: codeops-plane-webhook-tls
+    repositories:
+      - example/codeops-demo
+```
+
+Configure Plane with
+`https://work.example.com/webhooks/plane/example/codeops-demo`. The Ingress
+uses one exact path for each admitted repository and forwards to the stable
+`<release>-codeops-github-controller` Service. Helm upgrades can replace the
+controller image without changing the Plane webhook URL. The chart does not
+expose the unqualified legacy `/webhooks/plane` path.
+
 The default provider mode is `modelProxy.provider.primary=api-key`. To use a
 ChatGPT subscription as the primary provider, set `primary=chatgpt-primary`,
 set `chatgptAuthClaimName` to a dedicated ReadWriteOnce PVC in the release

@@ -84,6 +84,32 @@
 {{- if and .Values.plane.adapter.enabled .Values.plane.adapter.onboardingRequired -}}
 {{- fail "Plane adapter cannot be enabled while onboarding is required" -}}
 {{- end -}}
+{{- $webhookIngress := .Values.githubController.webhookIngress -}}
+{{- if $webhookIngress.enabled -}}
+{{- if not .Values.plane.adapter.enabled -}}
+{{- fail "githubController.webhookIngress requires the Plane adapter" -}}
+{{- end -}}
+{{- if or (gt (len $webhookIngress.host) 253) (contains ".." $webhookIngress.host) (not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])$" $webhookIngress.host)) -}}
+{{- fail "githubController.webhookIngress.host must be one exact lowercase DNS name" -}}
+{{- end -}}
+{{- if and (not (empty $webhookIngress.className)) (not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $webhookIngress.className)) -}}
+{{- fail "githubController.webhookIngress.className must be one Kubernetes name" -}}
+{{- end -}}
+{{- if not (regexMatch "^[a-z0-9]([-a-z0-9.]*[a-z0-9])?$" $webhookIngress.tlsSecretName) -}}
+{{- fail "githubController.webhookIngress.tlsSecretName must be one Kubernetes Secret name" -}}
+{{- end -}}
+{{- if or (eq (len $webhookIngress.repositories) 0) (gt (len $webhookIngress.repositories) 64) -}}
+{{- fail "githubController.webhookIngress.repositories must contain 1 to 64 repository identities" -}}
+{{- end -}}
+{{- if ne (len ($webhookIngress.repositories | uniq)) (len $webhookIngress.repositories) -}}
+{{- fail "githubController.webhookIngress.repositories must be unique" -}}
+{{- end -}}
+{{- range $webhookIngress.repositories -}}
+{{- if not (regexMatch "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$" .) -}}
+{{- fail "githubController.webhookIngress.repositories entries must be owner/repository identities" -}}
+{{- end -}}
+{{- end -}}
+{{- end -}}
 {{- if eq .Values.profile "full-managed" -}}
 {{- if or (ne .Values.postgresql.deployment "managed") (ne .Values.temporal.deployment "managed") (ne .Values.jetstream.deployment "managed") (ne .Values.plane.deployment "managed") -}}
 {{- fail "full-managed requires managed PostgreSQL, Temporal, JetStream, and Plane" -}}
