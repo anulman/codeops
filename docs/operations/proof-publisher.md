@@ -56,6 +56,25 @@ the MP4 URL, poster URL, and packet-index URL. The gateway independently binds
 the media digest, byte length, immutable object key, and public origin to the
 request before it returns the receipt.
 
+## GitHub proof note
+
+Use `renderGitHubProofNote` after a successful publication. The function is
+included in the control-gateway build as `dist/github-proof-note.js`. Pass the
+exact publication receipt, CodeOps release identity, reviewer trim offset, and
+encoded reviewer duration.
+
+The renderer produces one inline poster image that links to the reviewer MP4:
+
+```markdown
+[![CodeOps UI proof — click to watch the reviewer video](poster-url)](video-url)
+```
+
+The note does not show separate links for the video, poster, or packet index.
+It keeps the video digest, trim offset, encoded duration, packet-index digest,
+and retention date as non-link evidence. Pass the complete rendered note to
+the exact-head `pull_request_update` operation. The proof publisher remains
+GitHub-neutral. The GitHub mutation adapter remains presentation-neutral.
+
 ## Installation values
 
 Create a new bucket for this purpose. Do not reuse an application bucket or the
