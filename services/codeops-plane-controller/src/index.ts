@@ -205,6 +205,7 @@ const planeCeIssueWebhookSchema = z
     action: z.literal("updated"),
     webhook_id: uuid,
     workspace_id: uuid,
+    workspace_slug: z.string().min(1).max(255).optional(),
     data: z
       .object({
         id: uuid,

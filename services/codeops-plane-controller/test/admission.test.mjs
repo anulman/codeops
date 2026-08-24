@@ -164,6 +164,7 @@ const readyPayload = {
   action: "updated",
   webhook_id: cePayload.webhook_id,
   workspace_id: payload.workspace_id,
+  workspace_slug: "example-workspace",
   data: {
     ...source.workItem,
     state: {
@@ -184,6 +185,21 @@ const readyPayload = {
     },
   },
 };
+
+test("rejects signed issue events with unknown top-level fields before admission", async () => {
+  let loads = 0;
+  const input = signedReadyInput({
+    payload: { ...readyPayload, unexpected: true },
+  });
+  input.loadSource = async () => {
+    loads += 1;
+    throw new Error("mutable source must not load");
+  };
+
+  assert.equal(identifyPlaneReadyTransition(input), null);
+  assert.equal(await admitPlaneReadyTransition(input), null);
+  assert.equal(loads, 0);
+});
 
 function researchPacket() {
   const projectContext = compileProjectContext({
