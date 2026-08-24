@@ -161,4 +161,38 @@ spec:
   selector: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-github-controller }
   ports:
     - { name: http, protocol: TCP, port: 8080, targetPort: http }
+{{- if .Values.githubController.webhookIngress.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: {{ include "codeops.fullname" . }}-github-controller
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: github-controller
+  {{- with .Values.githubController.webhookIngress.annotations }}
+  annotations:
+    {{- toYaml . | nindent 4 }}
+  {{- end }}
+spec:
+  {{- with .Values.githubController.webhookIngress.className }}
+  ingressClassName: {{ . | quote }}
+  {{- end }}
+  rules:
+    - host: {{ .Values.githubController.webhookIngress.host | quote }}
+      http:
+        paths:
+          {{- range .Values.githubController.webhookIngress.repositories }}
+          - path: {{ printf "/webhooks/plane/%s" . | quote }}
+            pathType: Exact
+            backend:
+              service:
+                name: {{ include "codeops.fullname" $ }}-github-controller
+                port: { name: http }
+          {{- end }}
+  tls:
+    - hosts: [{{ .Values.githubController.webhookIngress.host | quote }}]
+      secretName: {{ .Values.githubController.webhookIngress.tlsSecretName | quote }}
+{{- end }}
 {{- end }}

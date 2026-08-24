@@ -618,6 +618,72 @@ test("keeps the Agents UI private", () => {
   );
 });
 
+test("routes repository-qualified Plane webhooks through the stable controller Service", () => {
+  const ingressSets = [
+    "githubController.webhookIngress.enabled=true",
+    "githubController.webhookIngress.className=nginx",
+    "githubController.webhookIngress.host=work.example.com",
+    "githubController.webhookIngress.tlsSecretName=codeops-plane-webhook-tls",
+    "githubController.webhookIngress.annotations.cert-manager\\.io/cluster-issuer=letsencrypt",
+    "githubController.webhookIngress.repositories[0]=anulman/renoconcierge",
+    "githubController.webhookIngress.repositories[1]=anulman/codeops",
+  ];
+  const resources = render(ingressSets.flatMap((value) => ["--set", value]));
+  const ingress = resource(
+    resources,
+    "Ingress",
+    "team-a-codeops-github-controller",
+  );
+  assert.equal(ingress.metadata.namespace, "engineering");
+  assert.equal(
+    ingress.metadata.annotations["cert-manager.io/cluster-issuer"],
+    "letsencrypt",
+  );
+  assert.equal(ingress.spec.ingressClassName, "nginx");
+  assert.deepEqual(ingress.spec.tls, [{
+    hosts: ["work.example.com"],
+    secretName: "codeops-plane-webhook-tls",
+  }]);
+  assert.deepEqual(
+    ingress.spec.rules[0].http.paths.map((path) => ({
+      path: path.path,
+      pathType: path.pathType,
+      service: path.backend.service.name,
+      port: path.backend.service.port.name,
+    })),
+    [
+      {
+        path: "/webhooks/plane/anulman/renoconcierge",
+        pathType: "Exact",
+        service: "team-a-codeops-github-controller",
+        port: "http",
+      },
+      {
+        path: "/webhooks/plane/anulman/codeops",
+        pathType: "Exact",
+        service: "team-a-codeops-github-controller",
+        port: "http",
+      },
+    ],
+  );
+  assert.equal(
+    ingress.spec.rules[0].http.paths.some(
+      ({ path }) => path === "/webhooks/plane",
+    ),
+    false,
+  );
+
+  const upgraded = renderUpgrade([
+    ...ingressSets.flatMap((value) => ["--set", value]),
+    "--set",
+    `githubController.image.digest=sha256:${"7".repeat(64)}`,
+  ]);
+  assert.deepEqual(
+    resource(upgraded, "Ingress", "team-a-codeops-github-controller"),
+    ingress,
+  );
+});
+
 test("defaults to deny and opens only explicit component paths", () => {
   const resources = render();
   const policies = resources.filter(({ kind }) => kind === "NetworkPolicy");
@@ -917,6 +983,12 @@ test("accepts arbitrary namespaces and fails closed on invalid configuration", (
     ["--namespace", "engineering", "--set", "agentsUi.authentication.fixedPrincipal=", "--set", "agentsUi.authentication.principalHeader="],
     ["--namespace", "engineering", "--set", "agentsUi.authentication.principalHeader=x-authenticated-principal"],
     ["--namespace", "engineering", "--set", "agentsUi.authentication.fixedPrincipal=", "--set", "agentsUi.authentication.principalHeader=X-Authenticated-Principal"],
+    ["--namespace", "engineering", "--set", "githubController.webhookIngress.enabled=true"],
+    ["--namespace", "engineering", "--set", "githubController.webhookIngress.enabled=true", "--set", "githubController.webhookIngress.host=*.example.com"],
+    ["--namespace", "engineering", "--set", "githubController.webhookIngress.enabled=true", "--set", "githubController.webhookIngress.host=work.example.com", "--set", "githubController.webhookIngress.tlsSecretName=Invalid_Name", "--set", "githubController.webhookIngress.repositories[0]=anulman/renoconcierge"],
+    ["--namespace", "engineering", "--set", "plane.adapter.enabled=false", "--set", "githubController.webhookIngress.enabled=true", "--set", "githubController.webhookIngress.host=work.example.com", "--set", "githubController.webhookIngress.tlsSecretName=codeops-webhook-tls", "--set", "githubController.webhookIngress.repositories[0]=anulman/renoconcierge"],
+    ["--namespace", "engineering", "--set", "githubController.webhookIngress.enabled=true", "--set", "githubController.webhookIngress.host=work.example.com", "--set", "githubController.webhookIngress.tlsSecretName=codeops-webhook-tls", "--set", "githubController.webhookIngress.repositories[0]=not-a-repository"],
+    ["--namespace", "engineering", "--set", "githubController.webhookIngress.enabled=true", "--set", "githubController.webhookIngress.host=work.example.com", "--set", "githubController.webhookIngress.tlsSecretName=codeops-webhook-tls", "--set", "githubController.webhookIngress.repositories[0]=anulman/renoconcierge", "--set", "githubController.webhookIngress.repositories[1]=anulman/renoconcierge"],
   ];
   for (const extra of cases) {
     assert.throws(() => helm([

@@ -130,6 +130,13 @@ githubController:
   repositoryContexts: []
   storageClassName: ""
   storage: 2Gi
+  webhookIngress:
+    enabled: false
+    className: ""
+    annotations: {}
+    host: ""
+    tlsSecretName: ""
+    repositories: []
   resources:
     requests: { cpu: 50m, memory: 256Mi }
     limits: { cpu: "1", memory: 1Gi }
