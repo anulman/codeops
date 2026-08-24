@@ -49,7 +49,7 @@ const receipt = {
   expiresAt: "2026-11-22T00:09:16.321Z",
 };
 
-test("renders one inline poster linked to the reviewer video", () => {
+test("renders a linked poster and a proof packet link", () => {
   const note = renderGitHubProofNote({
     receipt,
     release: "v0.5.0-alpha.43",
@@ -61,7 +61,8 @@ test("renders one inline poster linked to the reviewer video", () => {
   assert.equal(note.split("\n").filter((line) => line === linkedPoster).length, 1);
   assert.equal(note.split(posterUrl).length - 1, 1);
   assert.equal(note.split(videoUrl).length - 1, 1);
-  assert.equal(note.includes(indexUrl), false);
+  assert.equal(note.split(indexUrl).length - 1, 1);
+  assert.equal(note.includes(`[Open the proof packet](${indexUrl})`), true);
   assert.equal(note.includes("Watch the reviewer video"), false);
   assert.equal(note.includes("View the poster"), false);
   assert.equal(note.includes("Open the packet index"), false);

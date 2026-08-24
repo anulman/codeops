@@ -75,6 +75,8 @@ export function renderGitHubProofNote(input: GitHubProofNoteInput): string {
     "",
     linkedPoster,
     "",
+    `[Open the proof packet](${packetIndex.publicUrl})`,
+    "",
     `- Reviewer video SHA-256: \`${video.sha256.slice("sha256:".length)}\``,
     `- Reviewer trim: first meaningful action at \`${seconds(trimStart)}s\`; encoded reviewer duration \`${seconds(duration)}s\``,
     `- Packet index SHA-256: \`${packetIndex.sha256.slice("sha256:".length)}\``,

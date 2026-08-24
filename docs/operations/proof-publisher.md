@@ -69,11 +69,12 @@ The renderer produces one inline poster image that links to the reviewer MP4:
 [![CodeOps UI proof — click to watch the reviewer video](poster-url)](video-url)
 ```
 
-The note does not show separate links for the video, poster, or packet index.
-It keeps the video digest, trim offset, encoded duration, packet-index digest,
-and retention date as non-link evidence. Pass the complete rendered note to
-the exact-head `pull_request_update` operation. The proof publisher remains
-GitHub-neutral. The GitHub mutation adapter remains presentation-neutral.
+The note does not show separate links for the video or poster. It shows one
+separate link to the proof packet index. It also keeps the video digest, trim
+offset, encoded duration, packet-index digest, and retention date as evidence.
+Pass the complete rendered note to the exact-head `pull_request_update`
+operation. The proof publisher remains GitHub-neutral. The GitHub mutation
+adapter remains presentation-neutral.
 
 ## Installation values
 
