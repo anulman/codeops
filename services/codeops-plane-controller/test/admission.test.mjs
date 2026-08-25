@@ -483,7 +483,12 @@ test("admits only a signed allowlisted human transition into configured Ready", 
 });
 
 test("admits Ready tickets assigned only to registered AI personas", async () => {
-  const input = signedReadyInput();
+  const input = signedReadyInput({
+    payload: {
+      ...readyPayload,
+      data: { ...readyPayload.data, assignees: [readyPersonaId] },
+    },
+  });
   input.loadSource = async () => ({
     ...source,
     workItem: {
@@ -496,8 +501,45 @@ test("admits Ready tickets assigned only to registered AI personas", async () =>
   assert.notEqual(await admitPlaneReadyTransition(input), null);
 });
 
-test("ignores human-assigned Ready tickets", async () => {
+test("admits Plane CE Ready snapshots after its bounded post-event timestamp bump", async () => {
   const input = signedReadyInput();
+  input.loadSource = async () => ({
+    ...source,
+    workItem: {
+      ...source.workItem,
+      state: readyStateId,
+      // Plane CE advanced the API snapshot by 76.885 ms after it created the
+      // signed Ready event during the live RenoConcierge trial.
+      updated_at: "2026-07-27T02:45:00.076885Z",
+    },
+  });
+  assert.notEqual(await admitPlaneReadyTransition(input), null);
+});
+
+test("fails Ready admission closed on material snapshot drift inside the timestamp window", async () => {
+  const input = signedReadyInput();
+  input.loadSource = async () => ({
+    ...source,
+    workItem: {
+      ...source.workItem,
+      name: "Different work after authorization",
+      state: readyStateId,
+      updated_at: "2026-07-27T02:45:00.076885Z",
+    },
+  });
+  await assert.rejects(
+    admitPlaneReadyTransition(input),
+    /outside the signed event scope/,
+  );
+});
+
+test("ignores human-assigned Ready tickets", async () => {
+  const input = signedReadyInput({
+    payload: {
+      ...readyPayload,
+      data: { ...readyPayload.data, assignees: [actorId] },
+    },
+  });
   input.loadSource = async () => ({
     ...source,
     workItem: {
@@ -511,14 +553,20 @@ test("ignores human-assigned Ready tickets", async () => {
 });
 
 test("fails closed for unknown Ready assignee identities", async () => {
-  const input = signedReadyInput();
+  const unknownAssigneeId = "55555555-5555-4555-8555-555555555555";
+  const input = signedReadyInput({
+    payload: {
+      ...readyPayload,
+      data: { ...readyPayload.data, assignees: [unknownAssigneeId] },
+    },
+  });
   input.loadSource = async () => ({
     ...source,
     workItem: {
       ...source.workItem,
       state: readyStateId,
       updated_at: readyUpdatedAt,
-      assignees: ["55555555-5555-4555-8555-555555555555"],
+      assignees: [unknownAssigneeId],
     },
   });
   await assert.rejects(
@@ -554,15 +602,21 @@ test("identifies every signed allowlisted human lifecycle transition", () => {
 });
 
 test("derives Ready acceptance criteria from Plane CE description HTML", async () => {
-  const input = signedReadyInput();
+  const descriptionHtml =
+    "<p>Build every fixture.</p><ul><li>Verify exact creation &amp; reset.</li></ul>";
+  const input = signedReadyInput({
+    payload: {
+      ...readyPayload,
+      data: { ...readyPayload.data, description_html: descriptionHtml },
+    },
+  });
   input.loadSource = async () => ({
     project: source.project,
     workItem: {
       ...source.workItem,
       state: readyStateId,
       updated_at: readyUpdatedAt,
-      description_html:
-        "<p>Build every fixture.</p><ul><li>Verify exact creation &amp; reset.</li></ul>",
+      description_html: descriptionHtml,
       description_stripped: undefined,
     },
   });
@@ -588,7 +642,12 @@ test("Ready admission is stable across delivery retries", async () => {
 });
 
 test("fails Ready admission closed without bounded acceptance criteria", async () => {
-  const input = signedReadyInput();
+  const input = signedReadyInput({
+    payload: {
+      ...readyPayload,
+      data: { ...readyPayload.data, description_html: "<p> </p>" },
+    },
+  });
   input.loadSource = async () => ({
     project: source.project,
     workItem: {
