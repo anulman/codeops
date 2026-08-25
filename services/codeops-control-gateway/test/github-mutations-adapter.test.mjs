@@ -246,6 +246,82 @@ test("publishes one exact branch from bounded text replacements", async () => {
   assert.equal(responses.length, 0);
 });
 
+test("publishes one non-empty new regular file after proving the path is absent", async () => {
+  const branchName = "codeops/evidence";
+  const published = "e".repeat(40);
+  const responses = [
+    json({ ref: "refs/heads/main", object: { sha: head, type: "commit" } }),
+    json({ message: "Not Found" }, 404),
+    json({ sha: head, message: "base", tree: { sha: "1".repeat(40) }, parents: [] }),
+    json({ sha: "1".repeat(40), tree: [] }),
+    json({ sha: "2".repeat(40) }, 201),
+    json({ sha: "3".repeat(40) }, 201),
+    json({ sha: published }, 201),
+    json({ ref: `refs/heads/${branchName}`, object: { sha: published, type: "commit" } }, 201),
+    json({ ref: `refs/heads/${branchName}`, object: { sha: published, type: "commit" } }),
+  ];
+  const calls = [];
+  const mutate = createGitHubMutationAdapter({
+    resolve: () => authority,
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return responses.shift();
+    },
+  });
+  const result = await mutate(request("branch_publish", {
+    repository,
+    expectedHeadSha: head,
+    baseBranch: "main",
+    branchName,
+    commitMessage: "Add bounded evidence",
+    changes: [{ path: "evidence.md", oldText: "", newText: "proof\n" }],
+  }));
+  assert.equal(result.headSha, published);
+  assert.deepEqual(calls.map(({ init }) => init.method ?? "GET"), [
+    "GET", "GET", "GET", "GET", "POST", "POST", "POST", "POST", "GET",
+  ]);
+  assert.deepEqual(JSON.parse(calls[4].init.body), {
+    content: "proof\n",
+    encoding: "utf-8",
+  });
+  assert.deepEqual(JSON.parse(calls[5].init.body).tree, [{
+    path: "evidence.md",
+    mode: "100644",
+    type: "blob",
+    sha: "2".repeat(40),
+  }]);
+  assert.equal(responses.length, 0);
+});
+
+test("rejects new-file publication when the path already exists", async () => {
+  const responses = [
+    json({ ref: "refs/heads/main", object: { sha: head, type: "commit" } }),
+    json({ message: "Not Found" }, 404),
+    json({ sha: head, message: "base", tree: { sha: "1".repeat(40) }, parents: [] }),
+    json({ sha: "1".repeat(40), tree: [
+      { path: "evidence.md", mode: "100644", type: "blob", sha: "2".repeat(40) },
+    ] }),
+  ];
+  const methods = [];
+  const mutate = createGitHubMutationAdapter({
+    resolve: () => authority,
+    fetch: async (_url, init) => {
+      methods.push(init.method ?? "GET");
+      return responses.shift();
+    },
+  });
+  await assert.rejects(mutate(request("branch_publish", {
+    repository,
+    expectedHeadSha: head,
+    baseBranch: "main",
+    branchName: "codeops/evidence",
+    commitMessage: "Add bounded evidence",
+    changes: [{ path: "evidence.md", oldText: "", newText: "proof\n" }],
+  })), /path already exists/);
+  assert.deepEqual(methods, ["GET", "GET", "GET", "GET"]);
+  assert.equal(responses.length, 0);
+});
+
 test("completes every branch publication read before the first provider write", async () => {
   const responses = [
     json({ ref: "refs/heads/main", object: { sha: head, type: "commit" } }),

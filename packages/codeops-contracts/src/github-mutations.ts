@@ -111,9 +111,17 @@ export const githubBranchPublishInputSchema = z
     commitMessage: z.string().trim().min(1).max(500),
     changes: z.array(z.object({
       path: repositoryPath,
-      oldText: z.string().min(1).max(100_000),
+      oldText: z.string().max(100_000),
       newText: z.string().max(100_000),
-    }).strict()).min(1).max(20),
+    }).strict().superRefine((change, context) => {
+      if (change.oldText.length === 0 && change.newText.length === 0) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          message: "A new published file must not be empty",
+          path: ["newText"],
+        });
+      }
+    })).min(1).max(20),
   })
   .strict()
   .superRefine((input, context) => {
