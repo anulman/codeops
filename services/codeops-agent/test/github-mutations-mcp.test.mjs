@@ -93,6 +93,13 @@ test("advertises only six bounded mutation tools and relays one exact call", asy
       listed.result.tools.some(({ name }) => /merge|close|release|deploy|delete/.test(name)),
       false,
     );
+    const branchPublish = listed.result.tools.find(
+      ({ name }) => name === "github.branch_publish",
+    );
+    assert.equal(
+      branchPublish.inputSchema.properties.changes.items.properties.oldText.minLength,
+      undefined,
+    );
 
     child.stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",

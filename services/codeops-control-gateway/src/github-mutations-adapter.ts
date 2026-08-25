@@ -248,6 +248,37 @@ async function treeEntry(
   throw new Error("GitHub repository path is empty");
 }
 
+async function optionalTreeEntry(
+  authority: RepositoryAuthority,
+  rootTreeSha: string,
+  repositoryPath: string,
+  requestFetch: typeof fetch,
+): Promise<{ readonly mode: string; readonly sha: string } | null> {
+  let treeSha = rootTreeSha;
+  const parts = repositoryPath.split("/");
+  for (const [index, part] of parts.entries()) {
+    const tree = gitTreeResponse.parse(await githubJson(
+      authority,
+      apiUrl(authority, `/git/trees/${treeSha}`),
+      requestFetch,
+    ));
+    const entry = tree.tree.find((candidate) => candidate.path === part);
+    if (entry === undefined) return null;
+    const final = index === parts.length - 1;
+    if (final) {
+      if (entry.type !== "blob") {
+        throw new Error("GitHub publication path is not a regular file");
+      }
+      return { mode: entry.mode, sha: entry.sha };
+    }
+    if (entry.type !== "tree") {
+      throw new Error("GitHub publication parent path is not a directory");
+    }
+    treeSha = entry.sha;
+  }
+  throw new Error("GitHub repository path is empty");
+}
+
 function expectedPermissionOperation(request: GitHubMutationProviderRequest) {
   const target = (() => {
     switch (request.operation) {
@@ -638,6 +669,25 @@ export function createGitHubMutationAdapter(input: {
           readonly content: string;
         }> = [];
         for (const change of request.input.changes) {
+          if (change.oldText.length === 0) {
+            const entry = await preflight(() => optionalTreeEntry(
+              authority,
+              baseCommit.tree.sha,
+              change.path,
+              requestFetch,
+            ));
+            if (entry !== null) {
+              throw new GitHubMutationPreflightNoEffectError(
+                "GitHub new-file publication path already exists",
+              );
+            }
+            preparedChanges.push({
+              path: change.path,
+              mode: "100644",
+              content: change.newText,
+            });
+            continue;
+          }
           const entry = await preflight(() => treeEntry(
             authority,
             baseCommit.tree.sha,

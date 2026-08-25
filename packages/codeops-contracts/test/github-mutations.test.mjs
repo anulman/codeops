@@ -98,6 +98,28 @@ test("accepts only the six bounded exact-head GitHub mutations", () => {
   }));
 });
 
+test("accepts bounded non-empty new files for branch publication", () => {
+  const branch = operations[0];
+  const parsed = sessionRuntimeGitHubMutationRequestSchema.parse({
+    version: "codeops.session-runtime-github-mutation-request/v1",
+    claimToken,
+    operationId,
+    ...branch,
+    input: {
+      ...branch.input,
+      changes: [{ path: "docs/evidence.md", oldText: "", newText: "proof\n" }],
+    },
+  });
+  assert.equal(parsed.input.changes[0].oldText, "");
+  assert.throws(() => sessionRuntimeGitHubMutationRequestSchema.parse({
+    ...parsed,
+    input: {
+      ...parsed.input,
+      changes: [{ path: "docs/evidence.md", oldText: "", newText: "" }],
+    },
+  }));
+});
+
 test("requires optimistic concurrency and bounded pull-request fields", () => {
   const base = {
     version: "codeops.session-runtime-github-mutation-request/v1",

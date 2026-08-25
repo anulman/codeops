@@ -41,7 +41,7 @@ const tools = [
             required: ["path", "oldText", "newText"],
             properties: {
               path: { type: "string", minLength: 1, maxLength: 2000 },
-              oldText: { type: "string", minLength: 1, maxLength: 100000 },
+              oldText: { type: "string", maxLength: 100000 },
               newText: { type: "string", maxLength: 100000 },
             },
           },
