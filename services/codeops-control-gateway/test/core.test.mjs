@@ -4,7 +4,10 @@ import { mkdtemp, readFile, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { createProjectContext } from "@codeops/codeops-contracts";
+import {
+  adversarialReviewSchema,
+  createProjectContext,
+} from "@codeops/codeops-contracts";
 import {
   authenticateBearer,
   buildAgentPrompt,
@@ -582,6 +585,55 @@ test("delivers immutable ticket and sibling decision context to coding jobs", ()
       .find((volume) => volume.name === "run-input")
       .secret.items.some((item) => item.path === "coding-request.json"),
   );
+});
+
+test("critic prompt keeps an empty fast-follow pass inside the strict review schema", () => {
+  const runId = "agent-critic-prompt-fixture";
+  const critic = {
+    ...codingDispatch,
+    role: "critic-agent",
+    codingRound: 1,
+    candidate: {
+      round: 1,
+      runId,
+      checkpoint: {
+        uri: `artifact:///agent-runs/${runId}/checkpoint.json`,
+        digest: `sha256:${"c".repeat(64)}`,
+        sizeBytes: 1,
+      },
+      patch: {
+        uri: `artifact:///agent-runs/${runId}/changes.patch`,
+        digest: `sha256:${"d".repeat(64)}`,
+        sizeBytes: 0,
+      },
+      codingOutcome: {
+        version: "codeops.coding-outcome/v1",
+        summary: "Implemented the bounded fixture.",
+        tests: [{
+          command: "node --test test/routing.test.mjs",
+          status: "passed",
+          summary: "Focused routing behavior is green.",
+        }],
+      },
+    },
+  };
+  const promptLines = buildAgentPrompt(critic).split("\n");
+  assert.deepEqual(
+    promptLines.filter((line) => line.includes("planeMutationAuthorized")),
+    [
+      "For each fastFollowRecommendations item, set planeMutationAuthorized to false. The field belongs inside each recommendation item only.",
+      "Never emit planeMutationAuthorized at the review root, including when fastFollowRecommendations is empty.",
+    ],
+  );
+
+  const shapeInstruction = promptLines.indexOf(
+    "Return only one JSON object, without Markdown fences, matching this shape:",
+  );
+  assert.notEqual(shapeInstruction, -1);
+  const terminalReview = JSON.parse(promptLines[shapeInstruction + 1]);
+  assert.deepEqual(terminalReview.fastFollowRecommendations, []);
+  assert.equal(Object.hasOwn(terminalReview, "planeMutationAuthorized"), false);
+  assert.deepEqual(adversarialReviewSchema.parse(terminalReview), terminalReview);
 });
 
 test("binds adopted pull-request Agent tokens to their durable session budget", () => {
