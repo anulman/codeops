@@ -148,6 +148,7 @@ export {
 
 const uuid = z.string().uuid();
 const gitSha = z.string().regex(/^[0-9a-f]{40}$/);
+const maximumPlaneReadySnapshotAdvanceMs = 1_000;
 
 const planeV2CommentWebhookSchema = z
   .object({
@@ -211,6 +212,12 @@ const planeCeIssueWebhookSchema = z
         id: uuid,
         project: uuid,
         workspace: uuid,
+        name: z.string(),
+        description_html: z.string().max(100_000).nullable().optional(),
+        priority: z.string(),
+        labels: z.array(uuid),
+        assignees: z.array(uuid),
+        parent: uuid.nullable().optional(),
         state: z
           .object({
             id: uuid,
@@ -894,6 +901,12 @@ export async function admitPlaneReadyTransition(input: {
     .array(workItemSnapshotSchema)
     .max(200)
     .parse(source.projectWorkItems ?? []);
+  const snapshotDriftMs =
+    Date.parse(workItem.updated_at) - Date.parse(payload.data.updated_at);
+  const signedLabels = [...payload.data.labels].sort();
+  const snapshotLabels = [...workItem.labels].sort();
+  const signedAssignees = [...payload.data.assignees].sort();
+  const snapshotAssignees = [...workItem.assignees].sort();
   if (
     workItem.id !== payload.data.id ||
     workItem.project !== payload.data.project ||
@@ -901,7 +914,16 @@ export async function admitPlaneReadyTransition(input: {
     project.id !== payload.data.project ||
     project.workspace !== payload.workspace_id ||
     workItem.state !== readyStateId ||
-    workItem.updated_at !== payload.data.updated_at
+    workItem.name !== payload.data.name ||
+    (workItem.description_html ?? null) !==
+      (payload.data.description_html ?? null) ||
+    workItem.priority !== payload.data.priority ||
+    JSON.stringify(snapshotLabels) !== JSON.stringify(signedLabels) ||
+    JSON.stringify(snapshotAssignees) !== JSON.stringify(signedAssignees) ||
+    (workItem.parent ?? null) !== (payload.data.parent ?? null) ||
+    !Number.isFinite(snapshotDriftMs) ||
+    snapshotDriftMs < 0 ||
+    snapshotDriftMs > maximumPlaneReadySnapshotAdvanceMs
   ) {
     throw new Error("Plane Ready snapshot is outside the signed event scope");
   }
