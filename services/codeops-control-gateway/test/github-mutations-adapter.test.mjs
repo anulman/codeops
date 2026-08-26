@@ -329,7 +329,6 @@ test("completes every branch publication read before the first provider write", 
     json({ sha: head, message: "base", tree: { sha: "1".repeat(40) }, parents: [] }),
     json({ sha: "1".repeat(40), tree: [{ path: "package.json", mode: "100644", type: "blob", sha: "2".repeat(40) }] }),
     json({ sha: "2".repeat(40), encoding: "base64", content: Buffer.from("alpha.33\n").toString("base64") }),
-    json({ sha: "1".repeat(40), tree: [] }),
   ];
   const methods = [];
   const mutate = createGitHubMutationAdapter({
@@ -350,7 +349,7 @@ test("completes every branch publication read before the first provider write", 
       { path: "missing.json", oldText: "alpha.33", newText: "alpha.34" },
     ],
   })), /no remote effect occurred/);
-  assert.deepEqual(methods, ["GET", "GET", "GET", "GET", "GET", "GET"]);
+  assert.deepEqual(methods, ["GET", "GET", "GET", "GET", "GET"]);
   assert.equal(responses.length, 0);
 });
 

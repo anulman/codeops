@@ -623,9 +623,12 @@ const checkRunResponse = z
   })
   .passthrough();
 
+export const GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS = 230_000;
+
 export function createGitHubMutationAdapter(input: {
   readonly resolve: (repository: string) => RepositoryAuthority;
   readonly fetch?: typeof fetch;
+  readonly branchPublicationTimeoutMs?: number;
 }): (request: GitHubMutationProviderRequest) => Promise<GitHubMutationResult> {
   const requestFetch = input.fetch ?? fetch;
   return async (rawRequest) => {
@@ -639,178 +642,114 @@ export function createGitHubMutationAdapter(input: {
 
     switch (request.operation) {
       case "branch_publish": {
-        const baseCommit = await preflight(async () => {
-          const current = await gitReference(
-            authority,
-            request.input.baseBranch,
-            requestFetch,
-          );
-          if (
-            current.ref !== `refs/heads/${request.input.baseBranch}` ||
-            current.object.type !== "commit" ||
-            current.object.sha !== request.input.expectedHeadSha
-          ) {
-            throw new Error("GitHub base branch changed before publication");
-          }
-          await requireMissingBranch(authority, request.input.branchName, requestFetch);
-          const commit = gitCommitResponse.parse(await githubJson(
-            authority,
-            apiUrl(authority, `/git/commits/${request.input.expectedHeadSha}`),
-            requestFetch,
-          ));
-          if (commit.sha !== request.input.expectedHeadSha) {
-            throw new Error("GitHub base commit identity changed before publication");
-          }
-          return commit;
-        });
-        const preparedChanges: Array<{
-          readonly path: string;
-          readonly mode: string;
-          readonly content: string;
-        }> = [];
-        for (const change of request.input.changes) {
-          if (change.oldText.length === 0) {
-            const entry = await preflight(() => optionalTreeEntry(
-              authority,
-              baseCommit.tree.sha,
-              change.path,
-              requestFetch,
-            ));
-            if (entry !== null) {
-              throw new GitHubMutationPreflightNoEffectError(
-                "GitHub new-file publication path already exists",
-              );
-            }
-            preparedChanges.push({
-              path: change.path,
-              mode: "100644",
-              content: change.newText,
-            });
-            continue;
-          }
-          const entry = await preflight(() => treeEntry(
-            authority,
-            baseCommit.tree.sha,
-            change.path,
-            requestFetch,
-          ));
-          if (!new Set(["100644", "100755"]).has(entry.mode)) {
-            throw new GitHubMutationPreflightNoEffectError(
-              "GitHub publication supports regular files only",
-            );
-          }
-          const blob = await preflight(async () => gitBlobResponse.parse(
-            await githubJson(
-              authority,
-              apiUrl(authority, `/git/blobs/${entry.sha}`),
-              requestFetch,
-            ),
-          ));
-          if (blob.sha !== entry.sha) {
-            throw new GitHubMutationPreflightNoEffectError(
-              "GitHub base blob identity changed before publication",
-            );
-          }
-          const encoded = blob.content.replace(/\s/g, "");
-          if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
-            throw new GitHubMutationPreflightNoEffectError(
-              "GitHub base blob content is not canonical base64",
-            );
-          }
-          const source = new TextDecoder("utf-8", { fatal: true }).decode(
-            Buffer.from(encoded, "base64"),
-          );
-          const first = source.indexOf(change.oldText);
-          if (first < 0 || first !== source.lastIndexOf(change.oldText)) {
-            throw new GitHubMutationPreflightNoEffectError(
-              "GitHub publication old text must match exactly once",
-            );
-          }
-          const content = `${source.slice(0, first)}${change.newText}${source.slice(first + change.oldText.length)}`;
-          if (content === source) {
-            throw new GitHubMutationPreflightNoEffectError(
-              "GitHub publication change must modify the file",
-            );
-          }
-          preparedChanges.push({ path: change.path, mode: entry.mode, content });
-        }
-        const treeUpdates: Array<{
-          readonly path: string;
-          readonly mode: string;
-          readonly type: "blob";
-          readonly sha: string;
-        }> = [];
-        for (const change of preparedChanges) {
-          const createdBlob = gitWriteResponse.parse(await githubJson(
-            authority,
-            apiUrl(authority, "/git/blobs"),
-            requestFetch,
-            {
-              method: "POST",
-              headers: { "Content-Type": "application/json" },
-              body: JSON.stringify({ content: change.content, encoding: "utf-8" }),
-            },
-          ));
-          treeUpdates.push({
-            path: change.path,
-            mode: change.mode,
-            type: "blob",
-            sha: createdBlob.sha,
-          });
-        }
-        const createdTree = gitWriteResponse.parse(await githubJson(
-          authority,
-          apiUrl(authority, "/git/trees"),
-          requestFetch,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              base_tree: baseCommit.tree.sha,
-              tree: treeUpdates,
-            }),
-          },
-        ));
-        const commit = gitWriteResponse.parse(await githubJson(
-          authority,
-          apiUrl(authority, "/git/commits"),
-          requestFetch,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              message: `${request.input.commitMessage}\n\n${providerEffectText(request.operationId)}`,
-              tree: createdTree.sha,
-              parents: [request.input.expectedHeadSha],
-            }),
-          },
-        ));
-        await githubJson(
-          authority,
-          apiUrl(authority, "/git/refs"),
-          requestFetch,
-          {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({
-              ref: `refs/heads/${request.input.branchName}`,
-              sha: commit.sha,
-            }),
-          },
-        );
-        const after = await gitReference(
-          authority,
-          request.input.branchName,
-          requestFetch,
-        );
+        const publicationTimeoutMs = input.branchPublicationTimeoutMs ??
+          GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS;
         if (
-          after.ref !== `refs/heads/${request.input.branchName}` ||
-          after.object.type !== "commit" ||
-          after.object.sha !== commit.sha ||
-          after.object.sha === request.input.expectedHeadSha
+          !Number.isSafeInteger(publicationTimeoutMs) ||
+          publicationTimeoutMs < 1 ||
+          publicationTimeoutMs > GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS
         ) {
-          throw new Error("GitHub publication branch identity changed during creation");
+          throw new Error("GitHub branch publication timeout is invalid");
         }
+        const publicationDeadline = Date.now() + publicationTimeoutMs;
+        const publicationJsonResponse = async (
+          path: string,
+          init: RequestInit = {},
+          statuses: readonly number[] = [200, 201, 202, 204],
+        ): Promise<{ readonly status: number; readonly body: unknown }> => {
+          const remainingMs = publicationDeadline - Date.now();
+          if (remainingMs < 1) {
+            throw new DOMException(
+              "GitHub branch publication deadline exceeded",
+              "TimeoutError",
+            );
+          }
+          const operationTimeoutMs = init.method === undefined || init.method === "GET"
+            ? 30_000
+            : GITHUB_MUTATION_WRITE_TIMEOUT_MS;
+          const response = await readProviderResponse({
+            fetch: requestFetch,
+            url: apiUrl(authority, path),
+            init: {
+              ...init,
+              headers: { ...headers(authority), ...(init.headers ?? {}) },
+            },
+            maxBytes: MAX_GITHUB_JSON_BYTES,
+            statuses,
+            mediaTypes: ["json"],
+            timeoutMs: Math.min(operationTimeoutMs, remainingMs),
+          });
+          if (response.bytes.byteLength === 0) {
+            return { status: response.status, body: null };
+          }
+          try {
+            return {
+              status: response.status,
+              body: JSON.parse(decodeProviderResponseText(response.bytes)),
+            };
+          } catch (error) {
+            throw new Error("GitHub mutation response is not valid JSON", { cause: error });
+          }
+        };
+        const publicationJson = async (
+          path: string,
+          init: RequestInit = {},
+        ): Promise<unknown> => (await publicationJsonResponse(path, init)).body;
+        const { publishGitHubBranch } = await import("./github-branch-publication.js");
+        const headSha = await publishGitHubBranch({
+          request,
+          preflight,
+          effectText: providerEffectText,
+          provider: {
+            readBranch: async (branchName, allowMissing = false) => {
+              const response = await publicationJsonResponse(
+                `/git/ref/heads/${branchName.split("/").map(encodeURIComponent).join("/")}`,
+                {},
+                allowMissing ? [200, 404] : [200],
+              );
+              return response.status === 404
+                ? null
+                : gitReferenceResponse.parse(response.body);
+            },
+            readCommit: async (sha) => gitCommitResponse.parse(
+              await publicationJson(`/git/commits/${sha}`),
+            ),
+            readTree: async (sha) => gitTreeResponse.parse(
+              await publicationJson(`/git/trees/${sha}`),
+            ),
+            readBlob: async (sha) => gitBlobResponse.parse(
+              await publicationJson(`/git/blobs/${sha}`),
+            ),
+            createBlob: async (content) => gitWriteResponse.parse(
+              await publicationJson("/git/blobs", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ content, encoding: "utf-8" }),
+              }),
+            ).sha,
+            createTree: async (baseTreeSha, tree) => gitWriteResponse.parse(
+              await publicationJson("/git/trees", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ base_tree: baseTreeSha, tree }),
+              }),
+            ).sha,
+            createCommit: async (message, tree, parent) => gitWriteResponse.parse(
+              await publicationJson("/git/commits", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ message, tree, parents: [parent] }),
+              }),
+            ).sha,
+            createBranch: async (branchName, sha) => {
+              await publicationJson("/git/refs", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ ref: `refs/heads/${branchName}`, sha }),
+              });
+            },
+          },
+        });
         return githubMutationResultSchema.parse({
           version: "codeops.github-branch-publish-result/v1",
           repository: authority.repository,
@@ -818,7 +757,7 @@ export function createGitHubMutationAdapter(input: {
           baseBranch: request.input.baseBranch,
           branchName: request.input.branchName,
           baseSha: request.input.expectedHeadSha,
-          headSha: after.object.sha,
+          headSha,
           url: `https://github.com/${authority.repository}/tree/${request.input.branchName
             .split("/")
             .map(encodeURIComponent)
