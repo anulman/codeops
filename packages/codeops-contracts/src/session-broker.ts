@@ -35,6 +35,52 @@ export const sessionOwnerPrincipalSchema = z
 const safeText = (maximum: number) => z.string().min(1).max(maximum);
 const optionalText = (maximum: number) => z.string().max(maximum).optional();
 
+const kubernetesResourceIdentitySchema = z
+  .object({
+    name: identifier,
+    uid: uuid,
+    resourceVersion: z.string().regex(/^[1-9][0-9]{0,39}$/),
+  })
+  .strict();
+
+export const sessionRuntimeTerminalObservationSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-terminal-observation/v1"),
+    sessionId: identifier,
+    generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    leaseId: uuid,
+    runId: workflowRunIdentifier,
+    job: kubernetesResourceIdentitySchema,
+    pod: kubernetesResourceIdentitySchema.nullable(),
+    cause: z
+      .object({
+        type: z.enum([
+          "completed",
+          "failed",
+          "evicted",
+          "deadline_exceeded",
+          "cancelled",
+        ]),
+        reason: safeText(500),
+        message: z.string().max(4_000).nullable(),
+        exitCode: z.number().int().min(0).max(255).nullable(),
+      })
+      .strict(),
+    terminalAt: isoDateTime,
+    observedAt: isoDateTime,
+  })
+  .strict()
+  .refine(
+    (observation) =>
+      Date.parse(observation.observedAt) >= Date.parse(observation.terminalAt),
+    "runtime terminal observation cannot precede the terminal fact",
+  )
+  .refine(
+    (observation) =>
+      observation.cause.type !== "evicted" || observation.pod !== null,
+    "an evicted runtime requires the exact Pod identity",
+  );
+
 export const SESSION_BROKER_VERSION = {
   snapshot: "codeops.session-snapshot/v1",
   checkpoint: "codeops.session-checkpoint/v1",

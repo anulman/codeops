@@ -214,6 +214,12 @@ export function buildWorkspaceResources(
       .update(raw.principalId)
       .digest("hex"),
   };
+  const runtimeAnnotations = {
+    ...annotations,
+    "codeops.example/session-generation": "1",
+    "codeops.example/session-lease-id": raw.leaseId,
+    "codeops.example/session-run-id": raw.runId,
+  };
   const securityContext = {
     allowPrivilegeEscalation: false,
     readOnlyRootFilesystem: true,

@@ -52,6 +52,14 @@ const agentTerminalProgressRevertUrl = new URL(
   "../sql/session-agent-terminal-progress-v1-revert.sql",
   import.meta.url,
 );
+const runtimeTerminalReconciliationUrl = new URL(
+  "../sql/session-runtime-terminal-reconciliation-v1.sql",
+  import.meta.url,
+);
+const runtimeTerminalReconciliationRevertUrl = new URL(
+  "../sql/session-runtime-terminal-reconciliation-v1-revert.sql",
+  import.meta.url,
+);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");

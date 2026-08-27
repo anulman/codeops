@@ -469,9 +469,17 @@ const database = new Pool({
 });
 const migrationClient = await database.connect();
 try {
+  const retainedRuntimeJobUids =
+    await listRetainedInteractiveRuntimeJobUids(
+      migrationClient,
+      (name) => kubernetes.getJob(name),
+    );
   await migrateSessionBroker(migrationClient, {
     legacySessionOwnerPrincipalId:
       process.env.CODEOPS_LEGACY_SESSION_OWNER_PRINCIPAL_ID?.trim() || undefined,
+    ...(retainedRuntimeJobUids === undefined
+      ? {}
+      : { retainedRuntimeJobUids }),
   });
 } finally {
   migrationClient.release();

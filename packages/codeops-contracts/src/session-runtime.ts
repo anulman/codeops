@@ -365,3 +365,6 @@ export type SessionRuntimePermissionPoll = z.infer<
 export type SessionRuntimePermissionResult = z.infer<
   typeof sessionRuntimePermissionResultSchema
 >;
+export type SessionRuntimeTerminalObservation = z.infer<
+  typeof sessionRuntimeTerminalObservationSchema
+>;

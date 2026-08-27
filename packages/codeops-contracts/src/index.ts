@@ -112,6 +112,7 @@ export {
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
+  sessionRuntimeTerminalObservationSchema,
   type SessionRuntimeCommand,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,

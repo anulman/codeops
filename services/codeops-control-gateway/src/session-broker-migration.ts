@@ -147,7 +147,7 @@ export async function applySessionBrokerMigration(
   client: TransactionClient,
   sql: string,
   migrationName = "session-broker-v1",
-  settings: { readonly legacySessionOwnerPrincipalId?: string } = {},
+  settings: MigrationSettings = {},
 ): Promise<"applied" | "current"> {
   const sha256 = migrationDigest(sql);
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
@@ -185,6 +185,22 @@ export async function applySessionBrokerMigration(
       await client.query(
         "SELECT pg_catalog.set_config('codeops.legacy_session_owner_principal_id', $1, true)",
         [settings.legacySessionOwnerPrincipalId],
+      );
+    }
+    if (settings.retainedRuntimeJobUids !== undefined) {
+      const uids = settings.retainedRuntimeJobUids;
+      if (
+        uids.some((uid) => !kubernetesUidPattern.test(uid)) ||
+        new Set(uids).size !== uids.length ||
+        uids.some((uid, index) => index > 0 && uids[index - 1]! >= uid)
+      ) {
+        throw new Error(
+          "retained runtime Job UID allowlist must be unique and sorted",
+        );
+      }
+      await client.query(
+        "SELECT pg_catalog.set_config('codeops.retained_runtime_job_uids', $1, true)",
+        [JSON.stringify(uids)],
       );
     }
 
