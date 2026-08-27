@@ -111,9 +111,23 @@ const migrations = [
       import.meta.url,
     ),
   },
+  {
+    name: "session-runtime-terminal-reconciliation-v1",
+    url: new URL(
+      "../sql/session-runtime-terminal-reconciliation-v1.sql",
+      import.meta.url,
+    ),
+  },
 ] as const;
 
 const ownerPrincipalPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
+const kubernetesUidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+interface MigrationSettings {
+  readonly legacySessionOwnerPrincipalId?: string;
+  readonly retainedRuntimeJobUids?: readonly string[];
+}
 
 function migrationDigest(sql: string): string {
   return createHash("sha256").update(sql).digest("hex");

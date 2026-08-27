@@ -184,6 +184,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "session-model-budget-recovery-v1",
     "session-owner-v1",
     "session-agent-terminal-progress-v1",
+    "session-runtime-terminal-reconciliation-v1",
   ]);
 });
 

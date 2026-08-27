@@ -14,6 +14,7 @@ import {
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
+  sessionRuntimeTerminalObservationSchema,
   sessionSnapshotSchema,
   workspaceSessionIdentitySchema,
   temporalCodeOpsSessionIdentitySchema,

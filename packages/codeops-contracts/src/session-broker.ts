@@ -1079,6 +1079,7 @@ export const sessionEventSchema = z
       "checkpoint_committed",
       "lease_changed",
       "session_archived",
+      "runtime_terminal",
     ]),
     message: z
       .discriminatedUnion("role", [

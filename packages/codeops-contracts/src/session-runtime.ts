@@ -6,8 +6,10 @@ import {
   sessionIdentitySchema,
   sessionSnapshotSchema,
   sessionTimelineUpdateSchema,
+  sessionRuntimeTerminalObservationSchema,
   type SessionCommand,
 } from "./session-broker.js";
+export { sessionRuntimeTerminalObservationSchema } from "./session-broker.js";
 
 const uuid = z.string().uuid();
 const identifier = z

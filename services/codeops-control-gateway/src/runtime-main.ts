@@ -126,6 +126,13 @@ import {
   reconcileWorkspaceLaunch,
   workspaceLaunchRuntimeIdentity,
 } from "./workspace-launch-controller.js";
+import {
+  listInteractiveRuntimeCandidates,
+  listRetainedInteractiveRuntimeJobUids,
+  observeInteractiveRuntimeTerminal,
+  recordInteractiveRuntimeJobProgress,
+  reconcileInteractiveRuntimeTerminal,
+} from "./session-runtime-terminal-reconciler.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 

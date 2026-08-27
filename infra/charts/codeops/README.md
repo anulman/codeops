@@ -4,6 +4,15 @@ This chart packages the CodeOps control plane. The release name, namespace,
 node selector, storage class, image registry, and Secret names are
 configurable. All CodeOps images must use exact SHA-256 digests.
 
+The control gateway fairly polls the fixed interactive Workspace runtime Jobs.
+An unambiguous terminal Job releases the exact active Session lease, or closes
+an exact hibernated generation under its retained released lease identity, and
+records its Kubernetes cause. Job deletion alone is not cancellation evidence.
+Operators can inspect the Session `runtime_terminal` event for the Job and Pod
+UIDs, resource versions, reason, message, and exit code. Durable scan progress
+resumes after a control-gateway restart. Reconciliation does not create a
+replacement runtime or release scheduler capacity.
+
 The chart contains:
 
 - dedicated PostgreSQL storage for session state;
