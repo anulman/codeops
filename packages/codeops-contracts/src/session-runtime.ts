@@ -197,6 +197,8 @@ export const sessionRuntimeForkMaterialSchema = z.union([
     ),
 ]);
 
+export const MAX_SESSION_TIMELINE_UPDATES = 2_000;
+
 export const sessionRuntimeCompletionSchema = z.discriminatedUnion("type", [
   completionBase
     .extend({
@@ -205,7 +207,10 @@ export const sessionRuntimeCompletionSchema = z.discriminatedUnion("type", [
         .object({
           response: z.string().max(200_000),
           stopReason: promptStopReason,
-          updates: z.array(sessionTimelineUpdateSchema).max(499).optional(),
+          updates: z
+            .array(sessionTimelineUpdateSchema)
+            .max(MAX_SESSION_TIMELINE_UPDATES)
+            .optional(),
         })
         .strict(),
     })

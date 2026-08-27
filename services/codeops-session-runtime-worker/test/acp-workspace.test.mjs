@@ -192,6 +192,25 @@ test("retains bounded ACP mode, configuration, command, and usage updates", () =
   );
 });
 
+test("retains at most 2000 ACP timeline updates without changing the byte ceiling", () => {
+  let capture = { response: "", updates: [] };
+  for (let index = 0; index < 2_000; index += 1) {
+    capture = captureAcpTimelineUpdate(capture, {
+      sessionUpdate: "current_mode_update",
+      currentModeId: "code",
+    });
+  }
+  assert.equal(capture.updates.length, 2_000);
+  assert.ok(Buffer.byteLength(JSON.stringify(capture.updates)) < 800_000);
+  assert.throws(
+    () => captureAcpTimelineUpdate(capture, {
+      sessionUpdate: "current_mode_update",
+      currentModeId: "code",
+    }),
+    /ACP timeline exceeds 2000 retained updates/,
+  );
+});
+
 test("falls back to a new ACP session only when session/fork is unsupported", async () => {
   const calls = [];
   assert.equal(await forkOrCreateAcpSession({

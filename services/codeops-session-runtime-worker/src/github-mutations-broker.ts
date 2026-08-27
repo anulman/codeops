@@ -18,7 +18,7 @@ import type {
   RuntimeGitHubMutationRequest,
 } from "./transport.js";
 
-const MAX_BODY_BYTES = 64 * 1_024;
+const MAX_BODY_BYTES = 256 * 1_024;
 const routes = new Map<string, GitHubMutationOperation>([
   ["/v1/github-mutations/branch/publish", "branch_publish"],
   ["/v1/github-mutations/pull-request/create", "pull_request_create"],

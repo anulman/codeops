@@ -154,10 +154,13 @@ export const githubBranchPublishInputSchema = z
         path: ["changes"],
       });
     }
-    if (new TextEncoder().encode(JSON.stringify(input)).byteLength > 40_000) {
+    if (
+      new TextEncoder().encode(JSON.stringify(input)).byteLength >
+      262_144
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "Published branch input exceeds 40000 bytes",
+        message: "Published branch input exceeds 262144 bytes",
         path: ["changes"],
       });
     }
