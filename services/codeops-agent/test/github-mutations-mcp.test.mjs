@@ -100,6 +100,10 @@ test("advertises only six bounded mutation tools and relays one exact call", asy
       branchPublish.inputSchema.properties.changes.items.properties.oldText.minLength,
       undefined,
     );
+    assert.deepEqual(branchPublish.inputSchema.properties.mode.enum, ["create", "fast_forward"]);
+    assert.match(branchPublish.description, /atomically compares expectedBranchHeadSha/);
+    assert.match(branchPublish.inputSchema.properties.expectedBranchHeadEffectId.description, /durable successful CodeOps publication effect/);
+    assert.match(branchPublish.inputSchema.properties.expectedHeadSha.description, /not the atomic target-ref fence/);
 
     child.stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",

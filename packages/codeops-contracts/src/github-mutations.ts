@@ -105,7 +105,10 @@ export const githubCheckRerunInputSchema = z
 export const githubBranchPublishInputSchema = z
   .object({
     repository,
-    expectedHeadSha: gitSha,
+    mode: z.enum(["create", "fast_forward"]).optional(),
+    expectedHeadSha: gitSha.describe("Admitted base-branch snapshot checked during publication preflight; not the atomic target-ref fence for fast-forward publication"),
+    expectedBranchHeadSha: gitSha.optional(),
+    expectedBranchHeadEffectId: operationId.optional(),
     baseBranch: branch,
     branchName: branch,
     commitMessage: z.string().trim().min(1).max(500),
@@ -125,6 +128,18 @@ export const githubBranchPublishInputSchema = z
   })
   .strict()
   .superRefine((input, context) => {
+    if (input.mode === "fast_forward" && input.expectedBranchHeadSha === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Fast-forward publication requires the expected branch head", path: ["expectedBranchHeadSha"] });
+    }
+    if (input.mode === "fast_forward" && input.expectedBranchHeadEffectId === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Fast-forward publication requires prior provider-effect evidence", path: ["expectedBranchHeadEffectId"] });
+    }
+    if (input.mode !== "fast_forward" && input.expectedBranchHeadSha !== undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Create publication must not bind an existing branch head", path: ["expectedBranchHeadSha"] });
+    }
+    if (input.mode !== "fast_forward" && input.expectedBranchHeadEffectId !== undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Create publication must not claim prior provider-effect evidence", path: ["expectedBranchHeadEffectId"] });
+    }
     if (input.baseBranch === input.branchName) {
       context.addIssue({
         code: z.ZodIssueCode.custom,

@@ -5,10 +5,8 @@ import {
   canonicalJsonText,
   sha256CanonicalJsonDigest,
 } from "@codeops/codeops-contracts";
-import {
-  createGitHubMutationAdapter,
-  GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS,
-} from "../dist/github-mutations-adapter.js";
+import { GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS } from "../dist/github-mutations-adapter.js";
+import { createGitHubMutationAdapter } from "../dist/github-branch-fast-forward.js";
 
 const repository = "anulman/codeops";
 const head = "a".repeat(40);
