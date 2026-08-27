@@ -52,6 +52,14 @@ const agentTerminalProgressRevertUrl = new URL(
   "../sql/session-agent-terminal-progress-v1-revert.sql",
   import.meta.url,
 );
+const runtimeTerminalReconciliationUrl = new URL(
+  "../sql/session-runtime-terminal-reconciliation-v1.sql",
+  import.meta.url,
+);
+const runtimeTerminalReconciliationRevertUrl = new URL(
+  "../sql/session-runtime-terminal-reconciliation-v1-revert.sql",
+  import.meta.url,
+);
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");
@@ -189,6 +197,25 @@ test("admits only the commandless progress events emitted by adopted Agent sessi
     revert,
     /event_type IN \('session_created', 'permission_requested'\)/,
   );
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
+});
+
+test("persists exact terminal identity and a durable fair scan cursor", async () => {
+  const sql = await readFile(runtimeTerminalReconciliationUrl, "utf8");
+  const revert = await readFile(runtimeTerminalReconciliationRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.session_runtime_terminal_observations/);
+  assert.match(sql, /CREATE TABLE codeops\.session_runtime_job_progress/);
+  assert.match(sql, /CREATE TABLE codeops\.session_runtime_legacy_job_allowlist/);
+  assert.match(sql, /CREATE TABLE codeops\.session_runtime_reconciliation_scan/);
+  assert.match(sql, /job_uid uuid PRIMARY KEY/);
+  assert.match(sql, /UNIQUE \(session_id, generation\)/);
+  assert.match(sql, /job_resource_version numeric\(40, 0\)/);
+  assert.match(sql, /last_session_id text NOT NULL/);
+  assert.match(sql, /current_setting\('codeops\.retained_runtime_job_uids'\)/);
+  assert.match(sql, /event_type IN \([\s\S]*'runtime_terminal'/);
+  assert.match(revert, /cannot remove runtime terminal reconciliation while observations exist/);
+  assert.match(revert, /cannot remove runtime terminal reconciliation while Job progress exists/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });

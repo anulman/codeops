@@ -135,10 +135,48 @@ test("binds an explicit legacy owner only inside the owner migration transaction
     text === "CREATE TABLE example (id bigint);"));
 });
 
+test("binds a unique sorted retained runtime Job UID allowlist only on upgrade", async () => {
+  const retained = [
+    "22222222-2222-4222-8222-222222222222",
+    "33333333-3333-4333-8333-333333333333",
+  ];
+  const client = fakeClient();
+  await applySessionBrokerMigration(client, migration,
+    "session-runtime-terminal-reconciliation-v1",
+    { retainedRuntimeJobUids: retained });
+  const setting = client.calls.find(({ text }) =>
+    text.includes("set_config('codeops.retained_runtime_job_uids'"));
+  assert.deepEqual(setting.values, [JSON.stringify(retained)]);
+
+  for (const rejected of [
+    [retained[0], retained[0]],
+    [...retained].reverse(),
+    ["not-a-kubernetes-uid"],
+  ]) {
+    const invalid = fakeClient();
+    await assert.rejects(applySessionBrokerMigration(invalid, migration,
+      "session-runtime-terminal-reconciliation-v1",
+      { retainedRuntimeJobUids: rejected }), /unique and sorted/);
+    assert.equal(invalid.calls.at(-1).text, "ROLLBACK");
+  }
+
+  const digest = client.calls.find(({ text }) =>
+    text.includes("INSERT INTO codeops.schema_migrations")).values[1];
+  const restart = fakeClient(digest);
+  assert.equal(await applySessionBrokerMigration(restart, migration,
+    "session-runtime-terminal-reconciliation-v1",
+    { retainedRuntimeJobUids: [
+      "66666666-6666-4666-8666-666666666666",
+    ] }), "current");
+  assert.equal(restart.calls.some(({ text }) =>
+    text.includes("set_config('codeops.retained_runtime_job_uids'")), false);
+});
+
 test("applies broker runtime, lifecycle journal, launches, and notifications in order", async () => {
   const client = fakeClient();
   const results = await migrateSessionBroker(client);
   assert.deepEqual(results, [
+    "applied",
     "applied",
     "applied",
     "applied",
@@ -184,6 +222,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "session-model-budget-recovery-v1",
     "session-owner-v1",
     "session-agent-terminal-progress-v1",
+    "session-runtime-terminal-reconciliation-v1",
   ]);
 });
 

@@ -30,6 +30,14 @@ repository write token, provider effect receipt, and ambiguity reconciliation.
 The agent image includes pinned Helm 3.19.2 and Nub 0.1.11 binaries so a session
 can run the supported chart and workspace gates before it requests publication.
 
+The control gateway reconciles authoritative terminal Kubernetes Job and Pod
+facts for interactive Workspace Sessions. One identity-fenced transaction
+records the exact cause, releases an active Session lease, clears pending
+runtime authority, and retains restart progress. Hibernated Sessions remain
+eligible for terminal completion or failure under their durable released lease
+identity. Reconciliation is fair across polls and does not replace the runtime
+or release scheduler capacity.
+
 The Session Broker projects pre-policy 0.4.2 workspace snapshots into the
 immutable `implement` policy at the read boundary. It does not rewrite the
 stored snapshot, checkpoint, cursor, or evidence. This preserves the existing

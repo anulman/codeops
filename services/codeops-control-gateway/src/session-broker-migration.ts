@@ -111,9 +111,23 @@ const migrations = [
       import.meta.url,
     ),
   },
+  {
+    name: "session-runtime-terminal-reconciliation-v1",
+    url: new URL(
+      "../sql/session-runtime-terminal-reconciliation-v1.sql",
+      import.meta.url,
+    ),
+  },
 ] as const;
 
 const ownerPrincipalPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
+const kubernetesUidPattern =
+  /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/;
+
+interface MigrationSettings {
+  readonly legacySessionOwnerPrincipalId?: string;
+  readonly retainedRuntimeJobUids?: readonly string[];
+}
 
 function migrationDigest(sql: string): string {
   return createHash("sha256").update(sql).digest("hex");
@@ -133,7 +147,7 @@ export async function applySessionBrokerMigration(
   client: TransactionClient,
   sql: string,
   migrationName = "session-broker-v1",
-  settings: { readonly legacySessionOwnerPrincipalId?: string } = {},
+  settings: MigrationSettings = {},
 ): Promise<"applied" | "current"> {
   const sha256 = migrationDigest(sql);
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
@@ -173,6 +187,22 @@ export async function applySessionBrokerMigration(
         [settings.legacySessionOwnerPrincipalId],
       );
     }
+    if (settings.retainedRuntimeJobUids !== undefined) {
+      const uids = settings.retainedRuntimeJobUids;
+      if (
+        uids.some((uid) => !kubernetesUidPattern.test(uid)) ||
+        new Set(uids).size !== uids.length ||
+        uids.some((uid, index) => index > 0 && uids[index - 1]! >= uid)
+      ) {
+        throw new Error(
+          "retained runtime Job UID allowlist must be unique and sorted",
+        );
+      }
+      await client.query(
+        "SELECT pg_catalog.set_config('codeops.retained_runtime_job_uids', $1, true)",
+        [JSON.stringify(uids)],
+      );
+    }
 
     await client.query(stripTransactionEnvelope(sql));
     await client.query(
@@ -190,7 +220,7 @@ export async function applySessionBrokerMigration(
 
 export async function migrateSessionBroker(
   client: TransactionClient,
-  input: { readonly legacySessionOwnerPrincipalId?: string } = {},
+  input: MigrationSettings = {},
 ): Promise<readonly ("applied" | "current")[]> {
   const results: ("applied" | "current")[] = [];
   for (const migration of migrations) {
@@ -201,7 +231,9 @@ export async function migrateSessionBroker(
         migration.name,
         migration.name === "session-owner-v1"
           ? { legacySessionOwnerPrincipalId: input.legacySessionOwnerPrincipalId }
-          : {},
+          : migration.name === "session-runtime-terminal-reconciliation-v1"
+            ? { retainedRuntimeJobUids: input.retainedRuntimeJobUids ?? [] }
+            : {},
       ),
     );
   }

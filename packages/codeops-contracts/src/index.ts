@@ -112,6 +112,7 @@ export {
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
+  sessionRuntimeTerminalObservationSchema,
   type SessionRuntimeCommand,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
@@ -119,6 +120,7 @@ export {
   type SessionRuntimePermissionPoll,
   type SessionRuntimePermissionResult,
   type SessionRuntimePermissionSubmission,
+  type SessionRuntimeTerminalObservation,
 } from "./session-runtime.js";
 export {
   sessionSupervisionReconciliationRequestSchema,

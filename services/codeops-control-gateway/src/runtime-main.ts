@@ -126,6 +126,13 @@ import {
   reconcileWorkspaceLaunch,
   workspaceLaunchRuntimeIdentity,
 } from "./workspace-launch-controller.js";
+import {
+  listInteractiveRuntimeCandidates,
+  listRetainedInteractiveRuntimeJobUids,
+  observeInteractiveRuntimeTerminal,
+  recordInteractiveRuntimeJobProgress,
+  reconcileInteractiveRuntimeTerminal,
+} from "./session-runtime-terminal-reconciler.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -462,9 +469,17 @@ const database = new Pool({
 });
 const migrationClient = await database.connect();
 try {
+  const retainedRuntimeJobUids =
+    await listRetainedInteractiveRuntimeJobUids(
+      migrationClient,
+      (name) => kubernetes.getJob(name),
+    );
   await migrateSessionBroker(migrationClient, {
     legacySessionOwnerPrincipalId:
       process.env.CODEOPS_LEGACY_SESSION_OWNER_PRINCIPAL_ID?.trim() || undefined,
+    ...(retainedRuntimeJobUids === undefined
+      ? {}
+      : { retainedRuntimeJobUids }),
   });
 } finally {
   migrationClient.release();
@@ -688,6 +703,67 @@ const workspaceReconciliationTimer = setInterval(
 );
 workspaceReconciliationTimer.unref();
 scheduleWorkspaceReconciliation();
+
+let runtimeTerminalReconciliation: Promise<void> = Promise.resolve();
+function scheduleRuntimeTerminalReconciliation(): void {
+  runtimeTerminalReconciliation = runtimeTerminalReconciliation.then(async () => {
+    const client = await database.connect();
+    let candidates;
+    try {
+      candidates = await listInteractiveRuntimeCandidates(client);
+    } finally {
+      client.release();
+    }
+    for (const candidate of candidates) {
+      try {
+        const observedAt = new Date().toISOString();
+        const job = await kubernetes.getJob(candidate.jobName);
+        const progressClient = await database.connect();
+        let progress;
+        try {
+          progress = await recordInteractiveRuntimeJobProgress(progressClient, {
+            candidate,
+            job,
+            observedAt,
+          });
+        } finally {
+          progressClient.release();
+        }
+        if (progress === "stale") continue;
+        const observation = observeInteractiveRuntimeTerminal({
+          candidate,
+          job,
+          pods: await kubernetes.listRunPods(candidate.runId),
+          observedAt,
+        });
+        if (observation === null) continue;
+        const reconciliationClient = await database.connect();
+        try {
+          await reconcileInteractiveRuntimeTerminal(
+            reconciliationClient,
+            observation,
+          );
+        } finally {
+          reconciliationClient.release();
+        }
+      } catch (error) {
+        process.stderr.write(`${JSON.stringify({
+          event: "session_runtime_terminal_reconciliation_failed",
+          sessionId: candidate.sessionId,
+          generation: candidate.generation,
+          runId: candidate.runId,
+          error: error instanceof Error ? error.message : String(error),
+        })}\n`);
+      }
+    }
+  }).catch(() => undefined);
+}
+const runtimeTerminalReconciliationTimer = setInterval(
+  scheduleRuntimeTerminalReconciliation,
+  2_000,
+);
+runtimeTerminalReconciliationTimer.unref();
+scheduleRuntimeTerminalReconciliation();
 
 let sessionNotificationProjection: Promise<void> = Promise.resolve();
 function scheduleSessionNotificationProjection(): void {

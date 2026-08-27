@@ -14,6 +14,7 @@ import {
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
+  sessionRuntimeTerminalObservationSchema,
   sessionSnapshotSchema,
   workspaceSessionIdentitySchema,
   temporalCodeOpsSessionIdentitySchema,
@@ -108,6 +109,38 @@ test("binds a root Job initialization request to one created snapshot", () => {
     }).snapshot.sessionId,
     sessionId,
   );
+});
+
+test("binds a runtime terminal fact to exact Kubernetes and Session identity", () => {
+  const observation = sessionRuntimeTerminalObservationSchema.parse({
+    version: "codeops.session-runtime-terminal-observation/v1",
+    sessionId, generation: 3, leaseId, runId: "run-155",
+    job: { name: "workspace-runtime-155", uid: "44444444-4444-4444-8444-444444444444", resourceVersion: "184" },
+    pod: null,
+    cause: { type: "failed", reason: "BackoffLimitExceeded", message: "HTTP 409", exitCode: 1 },
+    terminalAt: "2026-08-27T12:04:00.000Z",
+    observedAt: "2026-08-27T12:05:00.000Z",
+  });
+  assert.equal(observation.job.resourceVersion, "184");
+  assert.throws(() => sessionRuntimeTerminalObservationSchema.parse({
+    ...observation, cause: { ...observation.cause, type: "evicted" },
+  }));
+  assert.throws(() => sessionRuntimeTerminalObservationSchema.parse({
+    ...observation,
+    job: { ...observation.job, resourceVersion: "1".repeat(41) },
+  }));
+  const event = {
+    version: SESSION_BROKER_VERSION.event,
+    eventId: `sha256:${"a".repeat(64)}`,
+    sessionId,
+    generation: 3,
+    cursor: 185,
+    type: "runtime_terminal",
+    runtimeTerminal: observation,
+    occurredAt: observation.observedAt,
+  };
+  assert.equal(sessionEventSchema.parse(event).type, "runtime_terminal");
+  assert.throws(() => sessionEventSchema.parse({ ...event, type: "state_changed" }));
 });
 
 test("keeps work-item identity optional for generic Agent Sessions", () => {
