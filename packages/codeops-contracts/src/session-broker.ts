@@ -1158,14 +1158,29 @@ export const sessionEventSchema = z
       .optional(),
     update: sessionTimelineUpdateSchema.optional(),
     action: sessionUserActionSchema.optional(),
+    runtimeTerminal: sessionRuntimeTerminalObservationSchema.optional(),
     occurredAt: isoDateTime,
   })
   .strict()
   .superRefine((event, context) => {
-    if ([event.message, event.update, event.action].filter(Boolean).length > 1) {
+    if (
+      [event.message, event.update, event.action, event.runtimeTerminal]
+        .filter(Boolean).length > 1
+    ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
-        message: "session event may contain only one message, update, or user action",
+        message:
+          "session event may contain only one message, update, user action, or runtime terminal fact",
+      });
+    }
+    if (
+      (event.type === "runtime_terminal") !==
+      (event.runtimeTerminal !== undefined)
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        message: "a runtime terminal event must contain exactly one terminal fact",
+        path: ["runtimeTerminal"],
       });
     }
     if (

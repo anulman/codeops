@@ -351,7 +351,7 @@ export function buildWorkspaceResources(
           "codeops.example/resource-role": "workspace-runtime",
           "codeops.example/run-id": raw.runId,
         },
-        annotations,
+        annotations: runtimeAnnotations,
       },
       spec: {
         backoffLimit: 0,

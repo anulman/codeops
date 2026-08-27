@@ -220,7 +220,7 @@ export async function applySessionBrokerMigration(
 
 export async function migrateSessionBroker(
   client: TransactionClient,
-  input: { readonly legacySessionOwnerPrincipalId?: string } = {},
+  input: MigrationSettings = {},
 ): Promise<readonly ("applied" | "current")[]> {
   const results: ("applied" | "current")[] = [];
   for (const migration of migrations) {
@@ -231,7 +231,9 @@ export async function migrateSessionBroker(
         migration.name,
         migration.name === "session-owner-v1"
           ? { legacySessionOwnerPrincipalId: input.legacySessionOwnerPrincipalId }
-          : {},
+          : migration.name === "session-runtime-terminal-reconciliation-v1"
+            ? { retainedRuntimeJobUids: input.retainedRuntimeJobUids ?? [] }
+            : {},
       ),
     );
   }

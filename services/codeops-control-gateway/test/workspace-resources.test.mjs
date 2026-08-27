@@ -78,6 +78,9 @@ test("builds isolated materializer and runtime Jobs on bounded persistent storag
   assert.equal(materializer.spec.template.spec.automountServiceAccountToken, false);
   assert.equal(runtime.spec.template.spec.automountServiceAccountToken, false);
   assert.equal(runtime.metadata.labels["codeops.example/run-id"], config().runId);
+  assert.equal(runtime.metadata.annotations["codeops.example/session-generation"], "1");
+  assert.equal(runtime.metadata.annotations["codeops.example/session-lease-id"], config().leaseId);
+  assert.equal(runtime.metadata.annotations["codeops.example/session-run-id"], config().runId);
   assert.equal(
     runtime.spec.template.metadata.labels["codeops.example/run-id"],
     config().runId,
