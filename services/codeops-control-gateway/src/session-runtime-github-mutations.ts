@@ -248,6 +248,56 @@ export async function authorizeSessionRuntimeGitHubMutation(
     );
   }
 
+  if (request.operation === "branch_publish" && request.input.mode === "fast_forward") {
+    const prior = await client.query<Record<string, unknown>>(
+      `SELECT effect.effect_id, effect.repository, effect.target_id,
+              effect.expected_head_sha, effect.state, effect.attempted_at,
+              effect.resolved_at, effect.evidence_json
+         FROM codeops.provider_effect_receipts AS effect
+         JOIN codeops.sessions AS session
+           ON session.session_id = effect.session_id
+        WHERE effect.effect_id = $1
+          AND effect.provider = 'github'
+          AND effect.operation = 'branch_publish'
+          AND effect.repository = $2
+          AND effect.target_id = $3
+          AND effect.state = 'succeeded'
+          AND effect.attempted_at IS NOT NULL
+          AND effect.resolved_at IS NOT NULL
+          AND effect.evidence_json IS NOT NULL
+          AND session.owner_principal_id = $4`,
+      [
+        request.input.expectedBranchHeadEffectId,
+        request.input.repository,
+        request.input.branchName,
+        dispatch.principalId,
+      ],
+    );
+    const effect = prior.rows.length === 1 ? prior.rows[0] : undefined;
+    const evidence = githubMutationResultSchema.safeParse(effect?.evidence_json);
+    if (
+      effect === undefined ||
+      !evidence.success ||
+      effect.effect_id !== request.input.expectedBranchHeadEffectId ||
+      effect.repository !== request.input.repository ||
+      effect.target_id !== request.input.branchName ||
+      effect.state !== "succeeded" ||
+      effect.attempted_at === null ||
+      effect.resolved_at === null ||
+      evidence.data.version !== "codeops.github-branch-publish-result/v1" ||
+      evidence.data.operationId !== effect.effect_id ||
+      evidence.data.repository !== request.input.repository ||
+      evidence.data.baseBranch !== request.input.baseBranch ||
+      evidence.data.branchName !== request.input.branchName ||
+      evidence.data.baseSha !== effect.expected_head_sha ||
+      evidence.data.headSha !== request.input.expectedBranchHeadSha
+    ) {
+      throw new SessionRuntimeGitHubMutationConflictError(
+        "fast-forward publication lacks matching durable branch evidence",
+      );
+    }
+  }
+
   const payloadDigest = digest(canonicalJsonText(request.input));
   const providerRequest = githubMutationProviderRequestSchema.parse({
     version: "codeops.github-mutation-provider-request/v1",

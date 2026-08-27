@@ -120,6 +120,29 @@ test("accepts bounded non-empty new files for branch publication", () => {
   }));
 });
 
+test("separates strict create and fast-forward branch publication modes", () => {
+  const create = operations[0];
+  const wrap = (input) => ({
+    version: "codeops.session-runtime-github-mutation-request/v1",
+    claimToken,
+    operationId,
+    ...create,
+    input,
+  });
+  const fastForward = {
+    ...create.input,
+    mode: "fast_forward",
+    expectedBranchHeadSha: "c".repeat(40),
+    expectedBranchHeadEffectId: `githubmutation-${"d".repeat(64)}`,
+  };
+  assert.equal(sessionRuntimeGitHubMutationRequestSchema.parse(wrap(fastForward)).input.mode, "fast_forward");
+  for (const key of ["expectedBranchHeadSha", "expectedBranchHeadEffectId"]) {
+    assert.throws(() => sessionRuntimeGitHubMutationRequestSchema.parse(wrap({ ...fastForward, [key]: undefined })));
+  }
+  assert.throws(() => sessionRuntimeGitHubMutationRequestSchema.parse(wrap({ ...fastForward, mode: "create" })));
+  assert.throws(() => sessionRuntimeGitHubMutationRequestSchema.parse(wrap({ ...fastForward, force: true })));
+});
+
 test("requires optimistic concurrency and bounded pull-request fields", () => {
   const base = {
     version: "codeops.session-runtime-github-mutation-request/v1",

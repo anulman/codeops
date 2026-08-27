@@ -20,10 +20,9 @@ import {
 } from "@codeops/codeops-contracts";
 import { createGitHubReadAdapter } from "./github-reads-adapter.js";
 import {
-  createGitHubMutationAdapter,
-  createGitHubMutationReconciler,
   GitHubMutationPreflightNoEffectError,
 } from "./github-mutations-adapter.js";
+import { createGitHubMutationAdapter, createGitHubMutationReconciler } from "./github-branch-fast-forward.js";
 import {
   linkGitHubPullRequestStack,
   loadGitHubPullRequestStack,

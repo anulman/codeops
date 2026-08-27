@@ -665,3 +665,59 @@ test("records unknown when the provider outcome or completion commit is ambiguou
     "unknown",
   );
 });
+
+test("requires exact principal-owned successful durable evidence for fast-forward", async () => {
+  const operation = "branch_publish";
+  const input = {
+    repository,
+    mode: "fast_forward",
+    expectedHeadSha: "a".repeat(40),
+    expectedBranchHeadSha: "b".repeat(40),
+    expectedBranchHeadEffectId: `githubmutation-${"1".repeat(64)}`,
+    baseBranch: "main",
+    branchName: "codeops/bootstrap",
+    commitMessage: "Continue bootstrap",
+    changes: [{ path: "proof.txt", oldText: "", newText: "proved\n" }],
+  };
+  const request = {
+    version: "codeops.session-runtime-github-mutation-request/v1",
+    claimToken,
+    operation,
+    operationId: `githubmutation-${createHash("sha256").update(canonical({ dispatchId, operation, input })).digest("hex")}`,
+    input,
+  };
+  const permissionOperation = { kind: "github_mutation", repository, operation, pullRequestNumber: null, targetId: input.branchName, expectedHeadSha: input.expectedHeadSha, payloadJson: canonical(input) };
+  const requestId = `permission-${createHash("sha256").update(canonical(permissionOperation)).update("\0").update(dispatchId).update("\0").update(request.operationId).digest("hex")}`;
+  const permissionValue = {
+    ...permission(),
+    toolCallId: request.operationId,
+    request: { ...permission().request, requestId, operation: permissionOperation, operationDigest: digest(canonical(permissionOperation)) },
+  };
+  const evidence = {
+    effect_id: input.expectedBranchHeadEffectId,
+    repository,
+    target_id: input.branchName,
+    expected_head_sha: "9".repeat(40),
+    state: "succeeded",
+    attempted_at: "2026-08-14T15:00:00.000Z",
+    resolved_at: "2026-08-14T15:01:00.000Z",
+    evidence_json: { version: "codeops.github-branch-publish-result/v1", repository, operationId: input.expectedBranchHeadEffectId, baseBranch: input.baseBranch, branchName: input.branchName, baseSha: "9".repeat(40), headSha: input.expectedBranchHeadSha, url: `https://github.com/${repository}/tree/codeops/bootstrap` },
+  };
+  class EvidenceClient extends Client {
+    constructor(prior) { super({ permissionValue }); this.prior = prior; }
+    async query(text, values = []) {
+      if (text.includes("session.owner_principal_id") && text.includes("effect.effect_id")) {
+        this.calls.push({ text, values });
+        return { rowCount: this.prior === null ? 0 : 1, rows: this.prior === null ? [] : [this.prior] };
+      }
+      return super.query(text, values);
+    }
+  }
+  const client = new EvidenceClient(evidence);
+  const authorization = { dispatchId, workerId, request, now: () => new Date("2026-08-14T15:07:00.000Z") };
+  assert.equal((await authorizeSessionRuntimeGitHubMutation(client, authorization)).disposition, "authorized");
+  const query = client.calls.find(({ text }) => text.includes("effect.effect_id"));
+  assert.match(query.text, /effect\.state = 'succeeded'/);
+  assert.deepEqual(query.values, [input.expectedBranchHeadEffectId, repository, input.branchName, "access:aidan@example.com"]);
+  await assert.rejects(authorizeSessionRuntimeGitHubMutation(new EvidenceClient({ ...evidence, state: "reconciled_satisfied" }), authorization), /lacks matching durable branch evidence/);
+});

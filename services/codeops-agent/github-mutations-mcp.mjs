@@ -27,12 +27,22 @@ const tools = [
   {
     name: "github.branch_publish",
     path: "/v1/github-mutations/branch/publish",
-    description: "Publish one branch from bounded text replacements against an exact base commit after explicit allow-once permission.",
+    description: "Publish one branch from bounded text replacements after explicit allow-once permission. expectedHeadSha binds the admitted base snapshot. Fast-forward atomically compares expectedBranchHeadSha on the existing target branch.",
     inputSchema: {
       type: "object", additionalProperties: false,
       required: ["repository", "expectedHeadSha", "baseBranch", "branchName", "commitMessage", "changes"],
+      allOf: [{
+        if: { properties: { mode: { const: "fast_forward" } }, required: ["mode"] },
+        then: { required: ["expectedBranchHeadSha", "expectedBranchHeadEffectId"] },
+        else: { not: { anyOf: [{ required: ["expectedBranchHeadSha"] }, { required: ["expectedBranchHeadEffectId"] }] } },
+      }],
       properties: {
-        repository, expectedHeadSha, baseBranch: branch, branchName: branch,
+        repository,
+        expectedHeadSha: { ...expectedHeadSha, description: "Admitted base-branch snapshot checked during preflight; not the atomic target-ref fence for fast-forward publication." },
+        baseBranch: branch, branchName: branch,
+        mode: { type: "string", enum: ["create", "fast_forward"] },
+        expectedBranchHeadSha: { ...expectedHeadSha, description: "Fast-forward only: exact target-branch commit atomically compared by GitHub." },
+        expectedBranchHeadEffectId: { type: "string", pattern: "^githubmutation-[0-9a-f]{64}$", description: "Fast-forward only: durable successful CodeOps publication effect that produced the expected target head." },
         commitMessage: { type: "string", minLength: 1, maxLength: 500 },
         changes: {
           type: "array", minItems: 1, maxItems: 20,
