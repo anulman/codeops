@@ -313,7 +313,7 @@ export const sessionPermissionOperationSchema = z.discriminatedUnion("kind", [
       pullRequestNumber: z.number().int().positive().max(2_147_483_647).nullable(),
       expectedHeadSha: gitSha,
       targetId: safeText(256).nullable(),
-      payloadJson: safeText(50_000),
+      payloadJson: safeText(262_144),
     })
     .strict(),
   z

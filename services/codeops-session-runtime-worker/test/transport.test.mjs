@@ -117,6 +117,21 @@ function json(value, status = 200, headers = {}) {
   });
 }
 
+test("transports at most 2000 retained ACP timeline updates", () => {
+  const updates = Array.from({ length: 2_000 }, () => ({
+    kind: "current_mode",
+    modeId: "code",
+  }));
+  assert.equal(buildSessionRuntimeCompletion(claim(), {
+    ...promptResult,
+    material: { ...promptResult.material, updates },
+  }, new Date("2026-08-04T20:03:00.000Z")).material.updates.length, 2_000);
+  assert.throws(() => buildSessionRuntimeCompletion(claim(), {
+    ...promptResult,
+    material: { ...promptResult.material, updates: [...updates, updates[0]] },
+  }, new Date("2026-08-04T20:03:00.000Z")));
+});
+
 test("claims and completes one exact dispatch through the worker-only boundary", async () => {
   const requests = [];
   const transport = new SessionRuntimeTransport({

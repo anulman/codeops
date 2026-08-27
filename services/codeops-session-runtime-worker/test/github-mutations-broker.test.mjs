@@ -99,6 +99,71 @@ test("binds branch publication permission to the exact target and replacements",
   }
 });
 
+test("relays branch publication input through the exact 256 KiB boundary", async () => {
+  const branchPublicationInputAtBytes = (targetBytes) => {
+    const input = {
+      repository,
+      expectedHeadSha,
+      baseBranch: "main",
+      branchName: "codeops/capacity-boundary",
+      commitMessage: "Exercise branch publication capacity",
+      changes: Array.from({ length: 3 }, (_, index) => ({
+        path: `capacity-${index}.txt`,
+        oldText: "",
+        newText: "x",
+      })),
+    };
+    let remaining = targetBytes - Buffer.byteLength(JSON.stringify(input));
+    for (const change of input.changes) {
+      const added = Math.min(remaining, 100_000 - change.newText.length);
+      change.newText += "x".repeat(added);
+      remaining -= added;
+    }
+    assert.equal(remaining, 0);
+    assert.equal(Buffer.byteLength(JSON.stringify(input)), targetBytes);
+    return input;
+  };
+  const broker = new GitHubMutationsBroker();
+  const port = await broker.listen(0);
+  const mutations = [];
+  try {
+    await broker.run(dispatch, {
+      async requestPermission() {
+        return { outcome: "selected", acpOptionId: "allow-once" };
+      },
+      async mutateGitHub(input) {
+        mutations.push(input);
+        return {
+          version: "codeops.github-branch-publish-result/v1",
+          repository,
+          operationId: input.operationId,
+          baseBranch: input.input.baseBranch,
+          branchName: input.input.branchName,
+          baseSha: input.input.expectedHeadSha,
+          headSha: "b".repeat(40),
+          url: "https://github.com/anulman/codeops/tree/codeops%2Fcapacity-boundary",
+        };
+      },
+    }, async () => {
+      const atLimit = await fetch(`http://127.0.0.1:${port}/v1/github-mutations/branch/publish`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(branchPublicationInputAtBytes(262_144)),
+      });
+      assert.equal(atLimit.status, 200);
+      const aboveLimit = await fetch(`http://127.0.0.1:${port}/v1/github-mutations/branch/publish`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(branchPublicationInputAtBytes(262_145)),
+      });
+      assert.equal(aboveLimit.status, 503);
+    });
+    assert.equal(mutations.length, 1);
+  } finally {
+    await broker.close();
+  }
+});
+
 test("denial stops before the GitHub provider boundary", async () => {
   const broker = new GitHubMutationsBroker();
   const port = await broker.listen(0);

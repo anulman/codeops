@@ -73,7 +73,10 @@ export const runtimeExecutionResultSchema = z.discriminatedUnion("type", [
             "refusal",
             "cancelled",
           ]),
-          updates: z.array(sessionTimelineUpdateSchema).max(499).optional(),
+          updates: z
+            .array(sessionTimelineUpdateSchema)
+            .max(2_000)
+            .optional(),
         })
         .strict(),
     })

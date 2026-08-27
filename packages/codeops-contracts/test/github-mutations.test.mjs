@@ -120,6 +120,59 @@ test("accepts bounded non-empty new files for branch publication", () => {
   }));
 });
 
+test("bounds the complete serialized branch publication input at 256 KiB", () => {
+  const branchPublicationInputAtBytes = (targetBytes) => {
+    const input = {
+      repository,
+      expectedHeadSha,
+      baseBranch: "main",
+      branchName: "codeops/capacity-boundary",
+      commitMessage: "Exercise branch publication capacity",
+      changes: Array.from({ length: 3 }, (_, index) => ({
+        path: `capacity-${index}.txt`,
+        oldText: "",
+        newText: "x",
+      })),
+    };
+    let remaining = targetBytes - Buffer.byteLength(JSON.stringify(input));
+    for (const change of input.changes) {
+      const added = Math.min(remaining, 100_000 - change.newText.length);
+      change.newText += "x".repeat(added);
+      remaining -= added;
+    }
+    assert.equal(remaining, 0);
+    assert.equal(Buffer.byteLength(JSON.stringify(input)), targetBytes);
+    return input;
+  };
+  const atLimit = branchPublicationInputAtBytes(262_144);
+  assert.equal(sessionRuntimeGitHubMutationRequestSchema.parse({
+    version: "codeops.session-runtime-github-mutation-request/v1",
+    claimToken,
+    operationId,
+    operation: "branch_publish",
+    input: atLimit,
+  }).input.changes.length, 3);
+  assert.equal(sessionPermissionOperationSchema.parse({
+    kind: "github_mutation",
+    repository,
+    operation: "branch_publish",
+    pullRequestNumber: null,
+    expectedHeadSha,
+    targetId: atLimit.branchName,
+    payloadJson: JSON.stringify(atLimit),
+  }).payloadJson.length, 262_144);
+  assert.throws(
+    () => sessionRuntimeGitHubMutationRequestSchema.parse({
+      version: "codeops.session-runtime-github-mutation-request/v1",
+      claimToken,
+      operationId,
+      operation: "branch_publish",
+      input: branchPublicationInputAtBytes(262_145),
+    }),
+    /Published branch input exceeds 262144 bytes/,
+  );
+});
+
 test("separates strict create and fast-forward branch publication modes", () => {
   const create = operations[0];
   const wrap = (input) => ({

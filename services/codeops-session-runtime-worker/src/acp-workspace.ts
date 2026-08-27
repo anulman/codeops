@@ -54,7 +54,7 @@ const MAX_SCRATCH_ENTRIES = 10_000;
 const MAX_SCRATCH_PATH_BYTES = 1_000_000;
 const MAX_SCRATCH_ARTIFACT_BYTES = 16_000_000;
 const MAX_ASSISTANT_RESPONSE_CHARS = 200_000;
-const MAX_TIMELINE_UPDATES = 499;
+const MAX_TIMELINE_UPDATES = 2_000;
 const MAX_TIMELINE_UPDATE_BYTES = 800_000;
 const GIT_SHA = /^[0-9a-f]{40}$/;
 
@@ -410,7 +410,9 @@ export function captureAcpTimelineUpdate(
   } else {
     updates.push(normalized);
   }
-  if (updates.length > MAX_TIMELINE_UPDATES) throw new Error("ACP timeline exceeds 499 retained updates");
+  if (updates.length > MAX_TIMELINE_UPDATES) {
+    throw new Error("ACP timeline exceeds 2000 retained updates");
+  }
   if (Buffer.byteLength(JSON.stringify(updates)) > MAX_TIMELINE_UPDATE_BYTES) {
     throw new Error("ACP timeline exceeds 800000 retained bytes");
   }
