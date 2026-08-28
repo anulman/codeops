@@ -15,9 +15,16 @@ import {
   readProviderResponse,
 } from "./provider-response.js";
 import type { RepositoryAuthority } from "./repository-registry.js";
+import {
+  GITHUB_BRANCH_PUBLICATION_DEADLINE_MS,
+  GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS,
+  GITHUB_BRANCH_PUBLICATION_WRITE_TIMEOUT_MS,
+  preflightGitHubBranchPublicationRequest,
+} from "./github-branch-publication.js";
 
 const MAX_GITHUB_JSON_BYTES = 1 * 1_024 * 1_024;
-export const GITHUB_MUTATION_WRITE_TIMEOUT_MS = 120_000;
+export const GITHUB_MUTATION_WRITE_TIMEOUT_MS =
+  GITHUB_BRANCH_PUBLICATION_WRITE_TIMEOUT_MS;
 
 export class GitHubMutationPreflightNoEffectError extends Error {}
 
@@ -623,7 +630,8 @@ const checkRunResponse = z
   })
   .passthrough();
 
-export const GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS = 230_000;
+export const GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS =
+  GITHUB_BRANCH_PUBLICATION_DEADLINE_MS;
 
 export function createGitHubMutationAdapter(input: {
   readonly resolve: (repository: string) => RepositoryAuthority;
@@ -642,6 +650,7 @@ export function createGitHubMutationAdapter(input: {
 
     switch (request.operation) {
       case "branch_publish": {
+        await preflight(async () => preflightGitHubBranchPublicationRequest(request.input));
         const publicationTimeoutMs = input.branchPublicationTimeoutMs ??
           GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS;
         if (
@@ -665,7 +674,7 @@ export function createGitHubMutationAdapter(input: {
             );
           }
           const operationTimeoutMs = init.method === undefined || init.method === "GET"
-            ? 30_000
+            ? GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS
             : GITHUB_MUTATION_WRITE_TIMEOUT_MS;
           const response = await readProviderResponse({
             fetch: requestFetch,
