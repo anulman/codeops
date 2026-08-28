@@ -53,7 +53,7 @@ function json(body, status = 200) {
 function fixture({ branchName, publicationTimeoutMs, writeBlob }) {
   const rootTree = "1".repeat(40);
   const published = "e".repeat(40);
-  const directories = Array.from({ length: 10 }, (_, index) =>
+  const directories = Array.from({ length: 8 }, (_, index) =>
     createHash("sha1").update(`tree-${index}`).digest("hex"));
   const changes = directories.map((_sha, index) => ({
     path: `dir-${index}/evidence.txt`,
@@ -154,7 +154,7 @@ test("bounds cached publication reads and writes before ordered visibility", asy
       return json({ sha: createHash("sha1").update(`blob-${index}`).digest("hex") }, 201);
     },
   });
-  const directoryPaths = new Set(Array.from({ length: 10 }, (_, index) =>
+  const directoryPaths = new Set(Array.from({ length: 8 }, (_, index) =>
     `/repos/anulman/codeops/git/trees/${createHash("sha1").update(`tree-${index}`).digest("hex")}`));
   const mutate = createGitHubMutationAdapter({
     resolve: () => authority,
@@ -225,11 +225,11 @@ test("stops dequeuing on the first failure and drains started writes", async () 
   assert.equal(base.calls.some(({ path }) => path.endsWith("/git/refs")), false);
 });
 
-test("uses one deadline across delayed blob waves", async () => {
+test("uses one deadline across delayed blob writes", async () => {
   const started = [];
   const base = fixture({
     branchName: "codeops/deadline-publication",
-    publicationTimeoutMs: 80,
+    publicationTimeoutMs: 40,
     writeBlob: ({ index, signal }) => new Promise((resolve, reject) => {
       started.push(index);
       const timer = setTimeout(() => {

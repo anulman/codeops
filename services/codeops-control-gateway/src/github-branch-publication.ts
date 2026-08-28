@@ -1,8 +1,18 @@
 export const GITHUB_BRANCH_PUBLICATION_CONCURRENCY = 4;
+export const GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS = 30_000;
+export const GITHUB_BRANCH_PUBLICATION_WRITE_TIMEOUT_MS = 120_000;
+export const GITHUB_BRANCH_PUBLICATION_DEADLINE_MS = 230_000;
+export const GITHUB_BRANCH_PUBLICATION_BODY_BYTES = 262_144;
+export const GITHUB_BRANCH_PUBLICATION_CHANGED_PATHS = 20;
+export const GITHUB_BRANCH_PUBLICATION_READ_WAVE_MS = 10_000;
+export const GITHUB_BRANCH_PUBLICATION_WRITE_WAVE_MS = 30_000;
+export const GITHUB_BRANCH_PUBLICATION_SAFETY_MARGIN_MS = 20_000;
 
 export type GitHubBranchPublicationRequest = {
   readonly operationId: string;
   readonly input: {
+    readonly repository?: string;
+    readonly mode?: "create" | "fast_forward";
     readonly expectedHeadSha: string;
     readonly baseBranch: string;
     readonly branchName: string;
@@ -14,6 +24,155 @@ export type GitHubBranchPublicationRequest = {
     }[];
   };
 };
+
+type GitHubBranchPublicationChange =
+  GitHubBranchPublicationRequest["input"]["changes"][number];
+
+function invalidRequestCounts(): Error {
+  return new Error("GitHub branch publication request counts are invalid");
+}
+
+export function estimateGitHubBranchPublicationDeadline(input: {
+  readonly readPhases: readonly number[];
+  readonly writePhases: readonly number[];
+}): number {
+  const phases = [...input.readPhases, ...input.writePhases];
+  if (phases.some((requests) =>
+    !Number.isSafeInteger(requests) || requests < 0
+  )) {
+    throw invalidRequestCounts();
+  }
+  const waves = (requests: number) => Math.ceil(
+    requests / GITHUB_BRANCH_PUBLICATION_CONCURRENCY,
+  );
+  const readWaves = input.readPhases.reduce(
+    (total, requests) => total + waves(requests),
+    0,
+  );
+  const writeWaves = input.writePhases.reduce(
+    (total, requests) => total + waves(requests),
+    0,
+  );
+  if (!Number.isSafeInteger(readWaves) || !Number.isSafeInteger(writeWaves)) {
+    throw invalidRequestCounts();
+  }
+  const estimatedDurationMs =
+    readWaves * GITHUB_BRANCH_PUBLICATION_READ_WAVE_MS +
+    writeWaves * GITHUB_BRANCH_PUBLICATION_WRITE_WAVE_MS +
+    GITHUB_BRANCH_PUBLICATION_SAFETY_MARGIN_MS;
+  if (!Number.isSafeInteger(estimatedDurationMs)) {
+    throw invalidRequestCounts();
+  }
+  return estimatedDurationMs;
+}
+
+function createTreeReadPhases(
+  changes: readonly GitHubBranchPublicationChange[],
+): readonly number[] {
+  const pathsByDepth: Set<string>[] = [];
+  for (const change of changes) {
+    const parts = change.path.split("/");
+    for (let index = 0; index < parts.length; index += 1) {
+      const paths = pathsByDepth[index] ?? new Set<string>();
+      paths.add(parts.slice(0, index).join("/"));
+      pathsByDepth[index] = paths;
+    }
+  }
+  return pathsByDepth.map((paths) => paths.size);
+}
+
+export type GitHubBranchPublicationPlan = {
+  readonly path: "create" | "fast_forward" | "replay";
+  readonly readRequests: number;
+  readonly writeRequests: number;
+  readonly readPhases: readonly number[];
+  readonly writePhases: readonly number[];
+  readonly estimatedDurationMs: number;
+};
+
+export function publicationPlan(input: Omit<GitHubBranchPublicationPlan,
+  "readRequests" | "writeRequests" | "estimatedDurationMs"
+>): GitHubBranchPublicationPlan {
+  const readRequests = input.readPhases.reduce((total, value) => total + value, 0);
+  const writeRequests = input.writePhases.reduce((total, value) => total + value, 0);
+  if (!Number.isSafeInteger(readRequests) || !Number.isSafeInteger(writeRequests)) {
+    throw invalidRequestCounts();
+  }
+  return {
+    ...input,
+    readRequests,
+    writeRequests,
+    estimatedDurationMs: estimateGitHubBranchPublicationDeadline(input),
+  };
+}
+
+export function preflightGitHubBranchPublicationRequest(
+  input: GitHubBranchPublicationRequest["input"],
+): {
+  readonly changedPaths: number;
+  readonly serializedBytes: number;
+  readonly plans: readonly GitHubBranchPublicationPlan[];
+  readonly estimatedDurationMs: number;
+} {
+  const paths = new Set(input.changes.map(({ path }) => path));
+  if (
+    paths.size !== input.changes.length ||
+    paths.size < 1 ||
+    paths.size > GITHUB_BRANCH_PUBLICATION_CHANGED_PATHS
+  ) {
+    throw new Error(
+      "GitHub branch publication requires 1 to 20 unique changed paths",
+    );
+  }
+  const serializedBytes = new TextEncoder().encode(
+    JSON.stringify(input),
+  ).byteLength;
+  if (serializedBytes > GITHUB_BRANCH_PUBLICATION_BODY_BYTES) {
+    throw new Error("GitHub branch publication input exceeds 262144 bytes");
+  }
+
+  const existingFiles = input.changes.filter(
+    ({ oldText }) => oldText.length > 0,
+  ).length;
+  const fastForward = input.mode === "fast_forward";
+  const plans = fastForward
+    ? [
+      publicationPlan({
+        path: "fast_forward",
+        // Four identity reads; prior tree; existing blobs; result tree; ref.
+        readPhases: [4, 1, existingFiles, 1, 1],
+        writePhases: [1],
+      }),
+      publicationPlan({
+        path: "replay",
+        // Four identity reads; two commits; prior tree; blobs; result tree.
+        readPhases: [4, 2, 1, existingFiles, 1],
+        writePhases: [],
+      }),
+    ]
+    : [publicationPlan({
+      path: "create",
+      // Initial identities; cached directory levels; blobs; final ref.
+      readPhases: [3, ...createTreeReadPhases(input.changes), existingFiles, 1],
+      // Parallel blobs, followed by sequential tree, commit, and branch writes.
+      writePhases: [input.changes.length, 1, 1, 1],
+    })];
+  const rejected = plans.find(({ estimatedDurationMs }) =>
+    estimatedDurationMs > GITHUB_BRANCH_PUBLICATION_DEADLINE_MS
+  );
+  if (rejected !== undefined) {
+    throw new Error(
+      `GitHub branch publication ${rejected.path} estimate exceeds the 230000 ms request deadline`,
+    );
+  }
+  const estimatedDurationMs = Math.max(...plans.map((plan) => plan.estimatedDurationMs));
+  return {
+    changedPaths: paths.size,
+    serializedBytes,
+    plans,
+    estimatedDurationMs,
+  };
+}
 
 type GitReference = {
   readonly ref: string;

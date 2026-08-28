@@ -11,7 +11,11 @@ import {
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
 import { createGitHubMutationAdapter as createBaseAdapter, createGitHubMutationReconciler as createBaseReconciler, GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS, GITHUB_MUTATION_WRITE_TIMEOUT_MS, GitHubMutationPreflightNoEffectError } from "./github-mutations-adapter.js";
-import { mapGitHubPublicationBounded } from "./github-branch-publication.js";
+import {
+  GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS,
+  mapGitHubPublicationBounded,
+  preflightGitHubBranchPublicationRequest,
+} from "./github-branch-publication.js";
 import { decodeProviderResponseText, readProviderResponse } from "./provider-response.js";
 import type { RepositoryAuthority } from "./repository-registry.js";
 
@@ -176,6 +180,8 @@ export function createGitHubMutationAdapter(input: { resolve: (repository: strin
     const request = githubMutationProviderRequestSchema.parse(raw);
     if (request.operation !== "branch_publish" || request.input.mode !== "fast_forward") return base(request);
     requireDigests(request);
+    const preflight = async <T>(operation: () => Promise<T>) => { try { return await operation(); } catch (error) { throw new GitHubMutationPreflightNoEffectError(`GitHub mutation preflight proved that no remote effect occurred: ${error instanceof Error ? error.message : "unknown preflight failure"}`, { cause: error }); } };
+    await preflight(async () => preflightGitHubBranchPublicationRequest(request.input));
     const authority = input.resolve(request.input.repository);
     if (authority.repository !== request.input.repository) throw new Error("GitHub mutation authority does not match the request");
     authorityParts(authority);
@@ -185,10 +191,9 @@ export function createGitHubMutationAdapter(input: { resolve: (repository: strin
     const json: Json = async (path, init = {}) => {
       const remaining = deadline - Date.now();
       if (remaining < 1) throw new DOMException("GitHub branch publication deadline exceeded", "TimeoutError");
-      const response = await readProviderResponse({ fetch: requestFetch, url: path === "https://api.github.com/graphql" ? path : api(authority, path), init: { ...init, headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${authority.writeToken}`, "User-Agent": "codeops-control-gateway", "X-GitHub-Api-Version": "2022-11-28", ...(init.headers ?? {}) } }, maxBytes: 1_024 * 1_024, statuses: [200], mediaTypes: ["json"], timeoutMs: Math.min(init.method === undefined || init.method === "GET" ? 30_000 : GITHUB_MUTATION_WRITE_TIMEOUT_MS, remaining) });
+      const response = await readProviderResponse({ fetch: requestFetch, url: path === "https://api.github.com/graphql" ? path : api(authority, path), init: { ...init, headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${authority.writeToken}`, "User-Agent": "codeops-control-gateway", "X-GitHub-Api-Version": "2022-11-28", ...(init.headers ?? {}) } }, maxBytes: 1_024 * 1_024, statuses: [200], mediaTypes: ["json"], timeoutMs: Math.min(init.method === undefined || init.method === "GET" ? GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS : GITHUB_MUTATION_WRITE_TIMEOUT_MS, remaining) });
       return JSON.parse(decodeProviderResponseText(response.bytes));
     };
-    const preflight = async <T>(operation: () => Promise<T>) => { try { return await operation(); } catch (error) { throw new GitHubMutationPreflightNoEffectError(`GitHub mutation preflight proved that no remote effect occurred: ${error instanceof Error ? error.message : "unknown preflight failure"}`, { cause: error }); } };
     const headSha = await publishGitHubFastForward({ request, json, preflight });
     return githubMutationResultSchema.parse({ version: "codeops.github-branch-publish-result/v1", repository: authority.repository, operationId: request.operationId, baseBranch: request.input.baseBranch, branchName: request.input.branchName, baseSha: request.input.expectedHeadSha, headSha, url: `https://github.com/${authority.repository}/tree/${request.input.branchName.split("/").map(encodeURIComponent).join("/")}` });
   };
