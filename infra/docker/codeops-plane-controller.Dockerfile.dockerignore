@@ -8,7 +8,6 @@
 !packages/
 !packages/codeops-contracts/
 !packages/codeops-contracts/package.json
-!packages/codeops-contracts/package-lock.json
 !packages/codeops-contracts/tsconfig.json
 !packages/codeops-contracts/tsconfig.build.json
 !packages/codeops-contracts/src/

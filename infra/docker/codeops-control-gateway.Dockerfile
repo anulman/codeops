@@ -2,8 +2,7 @@ FROM node:24-bookworm-slim AS build
 WORKDIR /repo
 
 COPY tsconfig.json ./tsconfig.json
-COPY packages/codeops-contracts/package.json packages/codeops-contracts/package-lock.json ./packages/codeops-contracts/
-RUN npm ci --ignore-scripts --omit=dev --prefix packages/codeops-contracts
+COPY packages/codeops-contracts/package.json ./packages/codeops-contracts/
 COPY packages/codeops-contracts/tsconfig.json packages/codeops-contracts/tsconfig.build.json ./packages/codeops-contracts/
 COPY packages/codeops-contracts/src ./packages/codeops-contracts/src
 
@@ -23,8 +22,7 @@ RUN services/codeops-control-gateway/node_modules/.bin/tsc -p packages/codeops-c
   && rm services/codeops-control-gateway/node_modules/@codeops/codeops-contracts \
   && mkdir services/codeops-control-gateway/node_modules/@codeops/codeops-contracts \
   && cp packages/codeops-contracts/package.json services/codeops-control-gateway/node_modules/@codeops/codeops-contracts/ \
-  && cp -R packages/codeops-contracts/dist services/codeops-control-gateway/node_modules/@codeops/codeops-contracts/ \
-  && cp -R packages/codeops-contracts/node_modules services/codeops-control-gateway/node_modules/@codeops/codeops-contracts/
+  && cp -R packages/codeops-contracts/dist services/codeops-control-gateway/node_modules/@codeops/codeops-contracts/
 
 FROM node:24-bookworm-slim
 LABEL org.opencontainers.image.source="https://github.com/anulman/codeops" \

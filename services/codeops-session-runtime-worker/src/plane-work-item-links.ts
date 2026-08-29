@@ -6,7 +6,7 @@ import { parseFragment, type DefaultTreeAdapterTypes } from "parse5";
 import {
   trustedPlaneWorkItemReferenceSchema,
   type TrustedPlaneWorkItemReference,
-} from "./session-broker.js";
+} from "@codeops/codeops-contracts/session-broker";
 
 type PositionedNode = {
   type: string;

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { linkTrustedPlaneWorkItemReferences } from "@codeops/codeops-contracts";
+import { linkTrustedPlaneWorkItemReferences } from "../dist/plane-work-item-links.js";
 
 function binding(overrides = {}) {
   return {

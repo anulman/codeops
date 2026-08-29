@@ -10,10 +10,10 @@ import {
   githubPullRequestCreateInputSchema,
   githubReviewThreadReplyInputSchema,
   sessionPermissionOperationSchema,
-  linkTrustedPlaneWorkItemReferences,
   type GitHubMutationOperation,
   type SessionRuntimeDispatch,
 } from "@codeops/codeops-contracts";
+import { linkTrustedPlaneWorkItemReferences } from "./plane-work-item-links.js";
 import type {
   RuntimeExecutionContext,
   RuntimeGitHubMutationRequest,

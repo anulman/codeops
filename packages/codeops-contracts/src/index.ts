@@ -98,7 +98,6 @@ export {
   type SessionTimelineUpdate,
   type SessionUserAction,
 } from "./session-broker.js";
-export { linkTrustedPlaneWorkItemReferences } from "./plane-work-item-links.js";
 export {
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeClaimResponseSchema,
