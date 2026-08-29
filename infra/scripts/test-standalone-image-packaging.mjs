@@ -112,6 +112,16 @@ test("rewrites every isolated npm service manifest before npm ci", async () => {
     assert.notEqual(install, -1, `${filename} must install the isolated service`);
     assert.ok(rewrite < install, `${filename} must rewrite before npm ci`);
     assert.match(
+      source,
+      /npm ci --ignore-scripts --omit=dev --prefix packages\/codeops-contracts/,
+      `${filename} must install the contract runtime dependencies`,
+    );
+    assert.match(
+      dockerignore,
+      /^!packages\/codeops-contracts\/package-lock\.json$/m,
+      `${filename} must include the contract lockfile in its build context`,
+    );
+    assert.match(
       dockerignore,
       /^!infra\/scripts\/rewrite-workspace-dependency-for-npm\.mjs$/m,
       `${filename} must include the rewrite helper in its build context`,
