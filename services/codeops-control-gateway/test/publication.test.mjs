@@ -95,6 +95,20 @@ test("publishes only the exact retained critic-approved patch as a fast-forward 
     assert.equal(result.previousHeadSha, expectedHeadSha);
     assert.equal(result.publishedHeadSha, publishedHeadSha);
     assert.equal(result.patchDigest, patchDigest);
+    const checkoutIndex = calls.findIndex(({ args }) =>
+      args.includes("checkout"),
+    );
+    const applyCheckIndex = calls.findIndex(
+      ({ args }) => args.includes("apply") && args.includes("--check"),
+    );
+    assert.ok(checkoutIndex >= 0);
+    assert.ok(applyCheckIndex > checkoutIndex);
+    assert.deepEqual(calls[checkoutIndex].args.slice(-4), [
+      "checkout",
+      "--detach",
+      "--force",
+      expectedHeadSha,
+    ]);
     assert.ok(
       calls.some(({ args }) =>
         args.includes(`HEAD:refs/heads/codeops/reviewed`),

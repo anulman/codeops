@@ -93,6 +93,14 @@ export async function publishCandidateRevision(input: {
     await git([
       "-C",
       repository,
+      "checkout",
+      "--detach",
+      "--force",
+      publication.expectedHeadSha,
+    ]);
+    await git([
+      "-C",
+      repository,
       "apply",
       "--check",
       "--whitespace=error-all",
