@@ -869,6 +869,12 @@ const listener = createPlaneWebhookRequestListener({
           webhookSecret,
           allowedHumanActorIds,
           aiPersonaUserIds: new Set(personaUserIds.keys()),
+          planeAuthority: {
+            apiOrigin: authority.apiOrigin,
+            workspaceSlug: authority.workspaceSlug,
+            workspaceId: authority.workspaceId,
+            projectId: authority.projectId,
+          },
           repository,
           controlPlaneSha,
           baseSha,

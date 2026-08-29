@@ -510,7 +510,6 @@ test("atomically inserts a fork child without overwriting its parent", async () 
     identity: {
       ...parent.identity,
       branch: "feat/agents-ui-child",
-      workflowId: "workflow-child",
       runId: "run-child",
       parentSessionId: parent.sessionId,
       forkedAtCursor: 184,
@@ -559,6 +558,207 @@ test("atomically inserts a fork child without overwriting its parent", async () 
   assert.equal(client.calls[insertIndex].values[0], "ses_child");
   assert.equal(client.calls[insertIndex].values[5], "user:aidan");
   assert.equal(client.calls.at(-1).text, "COMMIT");
+
+  const legacyDrifts = [
+    { ...child.identity, repository: "other-org/example-repository" },
+    { ...child.identity, baseSha: "c".repeat(40) },
+    { ...child.identity, workflowId: "workflow-156" },
+    {
+      ...child.identity,
+      workItemId: "88888888-8888-4888-8888-888888888888",
+    },
+    {
+      ...child.identity,
+      pullRequestNumber: 94,
+      pullRequestHeadSha: "c".repeat(40),
+    },
+    { ...child.identity, agentRole: "coding", round: 1 },
+  ];
+  for (const [index, identity] of legacyDrifts.entries()) {
+    const drifted = new FakeClient({ current: parent });
+    await assert.rejects(
+      execute(drifted, {
+        command: forkCommand,
+        mutate: () => mutation({
+          ...result,
+          snapshot: { ...child, identity },
+        }, [childEvent]),
+      }),
+      /immutable identity/,
+      `legacy immutable drift ${index}`,
+    );
+    assert.equal(drifted.calls.at(-1).text, "ROLLBACK");
+  }
+});
+
+test("persists forks only with the exact schema-parsed immutable identity", async () => {
+  const checkpointId = "22222222-2222-4222-8222-222222222222";
+  const parent = snapshot({
+    state: "completed",
+    identity: {
+      version: "codeops.temporal-session-identity/v2",
+      repository: "example-org/example-repository",
+      branch: "feat/agents-ui",
+      baseSha: "a".repeat(40),
+      workflowId: "workflow-155",
+      runId: "run-155",
+      displayName: "Coding round 1",
+      workItemId: "88888888-8888-4888-8888-888888888888",
+      pullRequestNumber: 94,
+      pullRequestHeadSha: "b".repeat(40),
+      agentRole: "coding",
+      round: 1,
+      parentSessionId: null,
+      forkedAtCursor: null,
+      planeWorkItem: {
+        version: "codeops.trusted-plane-work-item-reference/v1",
+        apiOrigin: "https://plane.example.com/",
+        workspaceSlug: "engineering",
+        workspaceId: "99999999-9999-4999-8999-999999999999",
+        projectId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+        projectIdentifier: "COAUTO",
+        workItemId: "88888888-8888-4888-8888-888888888888",
+        sequenceId: 19,
+        reference: "COAUTO-19",
+      },
+    },
+    lease: {
+      leaseId,
+      generation: 3,
+      status: "released",
+      releasedAt: "2026-08-04T03:04:00.000Z",
+    },
+    checkpoint: {
+      version: "codeops.session-checkpoint/v1",
+      checkpointId,
+      sessionId: "ses_91a4",
+      generation: 3,
+      baseSha: "a".repeat(40),
+      patchDigest: `sha256:${"b".repeat(64)}`,
+      acpSessionId: "acp-parent",
+      eventCursor: 184,
+      evidenceReferences: [],
+      createdAt: "2026-08-04T03:04:00.000Z",
+    },
+    capabilities: capabilities(["fork", "archive"]),
+  });
+  const forkCommand = {
+    version: "codeops.session-command/v1",
+    sessionId: parent.sessionId,
+    generation: parent.generation,
+    leaseId,
+    idempotencyKey,
+    type: "fork",
+    checkpointId,
+    parentEventCursor: 184,
+    title: "Alternative implementation",
+  };
+  const child = snapshot({
+    sessionId: "ses_trusted_child",
+    generation: 1,
+    identity: {
+      ...parent.identity,
+      branch: "feat/agents-ui-fork-1",
+      runId: "run-child",
+      displayName: "Alternative implementation",
+      parentSessionId: parent.sessionId,
+      forkedAtCursor: 184,
+    },
+    lease: {
+      leaseId: "77777777-7777-4777-8777-777777777777",
+      generation: 1,
+      status: "active",
+      holderId: "worker-child",
+      acquiredAt: "2026-08-04T03:04:01.000Z",
+      expiresAt: "2026-08-04T03:24:01.000Z",
+    },
+    checkpoint: null,
+    eventCursor: 1,
+    updatedAt: "2026-08-04T03:04:01.000Z",
+  });
+  const childEvent = event({
+    sessionId: child.sessionId,
+    generation: 1,
+    cursor: 1,
+    type: "session_created",
+  });
+  const resultFor = (identity) => ({
+    ...committed(parent),
+    type: "fork",
+    eventCursor: 1,
+    snapshot: { ...child, identity },
+  });
+  const exact = new FakeClient({ current: parent });
+  assert.equal(
+    (await execute(exact, {
+      command: forkCommand,
+      mutate: () => mutation(resultFor(child.identity), [childEvent]),
+    })).snapshot.identity.planeWorkItem.reference,
+    "COAUTO-19",
+  );
+
+  const planeMutation = (changes) => ({
+    ...child.identity,
+    planeWorkItem: { ...child.identity.planeWorkItem, ...changes },
+  });
+  const changedWorkItemId = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+  const { version: _version, planeWorkItem: _planeWorkItem, ...legacyDrift } =
+    child.identity;
+  const drifts = [
+    { ...child.identity, repository: "other-org/example-repository" },
+    { ...child.identity, baseSha: "c".repeat(40) },
+    { ...child.identity, workflowId: "workflow-156" },
+    {
+      ...planeMutation({ workItemId: changedWorkItemId }),
+      workItemId: changedWorkItemId,
+    },
+    { ...child.identity, pullRequestNumber: 95 },
+    { ...child.identity, pullRequestHeadSha: "c".repeat(40) },
+    { ...child.identity, agentRole: "critic" },
+    { ...child.identity, round: 2 },
+    planeMutation({ version: "codeops.trusted-plane-work-item-reference/v2" }),
+    planeMutation({ apiOrigin: "https://other-plane.example.com/" }),
+    planeMutation({ workspaceSlug: "other-workspace" }),
+    planeMutation({ workspaceId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc" }),
+    planeMutation({ projectId: "dddddddd-dddd-4ddd-8ddd-dddddddddddd" }),
+    planeMutation({ projectIdentifier: "OTHER", reference: "OTHER-19" }),
+    planeMutation({ workItemId: changedWorkItemId }),
+    planeMutation({ sequenceId: 20, reference: "COAUTO-20" }),
+    planeMutation({ reference: "COAUTO-20" }),
+    planeMutation({ unsupported: true }),
+    (() => {
+      const planeWorkItem = { ...child.identity.planeWorkItem };
+      delete planeWorkItem.workspaceId;
+      return { ...child.identity, planeWorkItem };
+    })(),
+    {
+      ...child.identity,
+      planeWorkItem: {
+        version: child.identity.planeWorkItem.version,
+        apiOrigin: child.identity.planeWorkItem.apiOrigin,
+        workspaceSlug: child.identity.planeWorkItem.workspaceSlug,
+        workspaceId: child.identity.planeWorkItem.projectId,
+        projectId: child.identity.planeWorkItem.workspaceId,
+        projectIdentifier: child.identity.planeWorkItem.projectIdentifier,
+        workItemId: child.identity.planeWorkItem.workItemId,
+        sequenceId: child.identity.planeWorkItem.sequenceId,
+        reference: child.identity.planeWorkItem.reference,
+      },
+    },
+    legacyDrift,
+  ];
+  for (const [index, identity] of drifts.entries()) {
+    const client = new FakeClient({ current: parent });
+    await assert.rejects(
+      execute(client, {
+        command: forkCommand,
+        mutate: () => mutation(resultFor(identity), [childEvent]),
+      }),
+      undefined,
+      `immutable drift ${index}`,
+    );
+    assert.equal(client.calls.at(-1).text, "ROLLBACK", `immutable drift ${index}`);
+  }
 });
 
 test("fails closed on fork lineage drift or an existing child identity", async () => {
@@ -601,7 +801,6 @@ test("fails closed on fork lineage drift or an existing child identity", async (
     generation: 1,
     identity: {
       ...parent.identity,
-      workflowId: "workflow-child",
       runId: "run-child",
       parentSessionId: parent.sessionId,
       forkedAtCursor: 184,

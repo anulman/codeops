@@ -9,6 +9,7 @@ import {
   sessionSupervisionReconciliationRequestSchema,
   sessionSupervisionReconciliationResultSchema,
   temporalCodeOpsSessionIdentitySchema,
+  trustedTemporalCodeOpsSessionIdentitySchema,
   type SessionSnapshot,
   type SessionSupervisionReconciliationRequest,
   type SessionSupervisionReconciliationResult,
@@ -39,8 +40,16 @@ function eventId(body: Readonly<Record<string, unknown>>): string {
   return `sha256:${digest(JSON.stringify(body))}`;
 }
 
+function parseTemporalChildIdentity(snapshot: SessionSnapshot) {
+  const identity = snapshot.identity;
+  return "version" in identity &&
+      identity.version === "codeops.temporal-session-identity/v2"
+    ? trustedTemporalCodeOpsSessionIdentitySchema.parse(identity)
+    : temporalCodeOpsSessionIdentitySchema.parse(identity);
+}
+
 function childResultUri(snapshot: SessionSnapshot): string | undefined {
-  const identity = temporalCodeOpsSessionIdentitySchema.parse(snapshot.identity);
+  const identity = parseTemporalChildIdentity(snapshot);
   return snapshot.state === "completed"
     ? `artifact:///agent-runs/${identity.runId}/result.json`
     : undefined;
@@ -49,8 +58,8 @@ function childResultUri(snapshot: SessionSnapshot): string | undefined {
 function assertChildIdentity(
   request: SessionSupervisionReconciliationRequest,
   snapshot: SessionSnapshot,
-): ReturnType<typeof temporalCodeOpsSessionIdentitySchema.parse> {
-  const identity = temporalCodeOpsSessionIdentitySchema.parse(snapshot.identity);
+): ReturnType<typeof parseTemporalChildIdentity> {
+  const identity = parseTemporalChildIdentity(snapshot);
   if (
     identity.repository !== request.repository ||
     identity.workItemId !== request.workItemId ||

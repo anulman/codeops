@@ -10,6 +10,7 @@ import {
   githubPullRequestCreateInputSchema,
   githubReviewThreadReplyInputSchema,
   sessionPermissionOperationSchema,
+  linkTrustedPlaneWorkItemReferences,
   type GitHubMutationOperation,
   type SessionRuntimeDispatch,
 } from "@codeops/codeops-contracts";
@@ -36,6 +37,7 @@ function mutationRequest(
   dispatchId: string,
   operation: GitHubMutationOperation,
   rawInput: unknown,
+  dispatch: SessionRuntimeDispatch,
 ): RuntimeGitHubMutationRequest {
   const schemas = {
     branch_publish: githubBranchPublishInputSchema,
@@ -45,7 +47,26 @@ function mutationRequest(
     review_thread_reply: githubReviewThreadReplyInputSchema,
     check_rerun: githubCheckRerunInputSchema,
   } as const;
-  const input = schemas[operation].parse(rawInput);
+  const identity = dispatch.snapshot?.identity;
+  const planeWorkItem = identity !== undefined && "version" in identity &&
+      identity.version === "codeops.temporal-session-identity/v2"
+    ? identity.planeWorkItem
+    : undefined;
+  let preparedInput = rawInput;
+  if (planeWorkItem !== undefined && operation === "pull_request_create") {
+    const input = githubPullRequestCreateInputSchema.parse(rawInput);
+    preparedInput = {
+      ...input,
+      body: linkTrustedPlaneWorkItemReferences(input.body, [planeWorkItem]),
+    };
+  } else if (planeWorkItem !== undefined && operation === "pull_request_update") {
+    const input = githubPullRequestUpdateInputSchema.parse(rawInput);
+    if (input.body !== undefined) preparedInput = {
+      ...input,
+      body: linkTrustedPlaneWorkItemReferences(input.body, [planeWorkItem]),
+    };
+  }
+  const input = schemas[operation].parse(preparedInput);
   return {
     operation,
     operationId: `githubmutation-${createHash("sha256")
@@ -126,6 +147,7 @@ export class GitHubMutationsBroker {
         active.dispatch.dispatchId,
         operation,
         await readJson(request),
+        active.dispatch,
       );
       const target = permissionTarget(mutation);
       const permissionOperation = sessionPermissionOperationSchema.parse({

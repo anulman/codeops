@@ -128,6 +128,24 @@ function database() {
   };
 }
 
+function trustedChildIdentity(identity) {
+  return {
+    version: "codeops.temporal-session-identity/v2",
+    ...identity,
+    planeWorkItem: {
+      version: "codeops.trusted-plane-work-item-reference/v1",
+      apiOrigin: "https://plane.example.com/",
+      workspaceSlug: "engineering",
+      workspaceId: "44444444-4444-4444-8444-444444444444",
+      projectId: "55555555-5555-4555-8555-555555555555",
+      projectIdentifier: "COAUTO",
+      workItemId,
+      sequenceId: 19,
+      reference: "COAUTO-19",
+    },
+  };
+}
+
 test("projects exact child state into the supervisor and replays idempotently", async () => {
   const client = database();
   const first = await reconcileSessionSupervision(client, request, {
@@ -143,6 +161,45 @@ test("projects exact child state into the supervisor and replays idempotently", 
   assert.deepEqual(replay.projected.map(({ disposition }) => disposition), ["existing", "existing"]);
   assert.equal(client.events.length, 2);
   assert.equal(client.sessions.get("ses_pm").snapshot_json.eventCursor, 7);
+});
+
+test("projects a started trusted Temporal v2 child", async () => {
+  const client = database();
+  const legacy = client.sessions.get("ses_worker").snapshot_json.identity;
+  client.sessions.get("ses_worker").snapshot_json = snapshot(
+    "ses_worker",
+    trustedChildIdentity(legacy),
+    "running",
+    4,
+  );
+  const result = await reconcileSessionSupervision(client, {
+    ...request,
+    childSessionIds: ["ses_worker"],
+  }, {
+    now: () => new Date("2026-08-19T20:00:00.000Z"),
+  });
+  assert.equal(result.projected[0].disposition, "created");
+  assert.equal(client.events[0].update.childState, "running");
+  assert.equal(client.events[0].update.resultUri, undefined);
+});
+
+test("projects a terminal trusted Temporal v2 child result", async () => {
+  const client = database();
+  const legacy = client.sessions.get("ses_reviewer").snapshot_json.identity;
+  client.sessions.get("ses_reviewer").snapshot_json.identity =
+    trustedChildIdentity(legacy);
+  const result = await reconcileSessionSupervision(client, {
+    ...request,
+    childSessionIds: ["ses_reviewer"],
+  }, {
+    now: () => new Date("2026-08-19T20:00:00.000Z"),
+  });
+  assert.equal(result.projected[0].disposition, "created");
+  assert.equal(client.events[0].update.childState, "completed");
+  assert.equal(
+    client.events[0].update.resultUri,
+    "artifact:///agent-runs/reviewer/result.json",
+  );
 });
 
 test("authenticates and validates the reconciliation HTTP boundary", async () => {

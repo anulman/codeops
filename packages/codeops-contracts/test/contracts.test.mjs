@@ -37,12 +37,61 @@ import {
   secretReferenceSchema,
   sessionSupervisionReconciliationRequestSchema,
   sessionSupervisionReconciliationResultSchema,
+  trustedPlaneWorkItemReferenceSchema,
   verifyPlaneWebhookSignature,
   workflowEventSchema,
   workflowStateSchema,
   workItemLifecycleEventSchema,
   workItemRequestSchema,
 } from "../dist/index.js";
+
+function trustedPlaneBinding(apiOrigin = "https://plane.example.com/") {
+  return {
+    version: "codeops.trusted-plane-work-item-reference/v1",
+    apiOrigin,
+    workspaceSlug: "engineering",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    projectId: "22222222-2222-4222-8222-222222222222",
+    projectIdentifier: "COAUTO",
+    workItemId: "33333333-3333-4333-8333-333333333333",
+    sequenceId: 19,
+    reference: "COAUTO-19",
+  };
+}
+
+test("admits only byte-exact canonical trusted Plane HTTPS origins", () => {
+  for (const apiOrigin of [
+    "https://plane.example.com/",
+    "https://plane.example.com:8443/",
+    "https://xn--bcher-kva.example/",
+  ]) {
+    assert.equal(
+      trustedPlaneWorkItemReferenceSchema.parse(trustedPlaneBinding(apiOrigin))
+        .apiOrigin,
+      apiOrigin,
+    );
+  }
+  for (const apiOrigin of [
+    "https://PLANE.example.com/",
+    "https://plane.example.com:443/",
+    "https:////evil.example/",
+    "https://plane.example.com/%2e%2e/",
+    "https://plane.example.com\n.evil.example/",
+    "https://bücher.example/",
+    "https://plane.example.com/?query=1",
+    "https://plane.example.com/#fragment",
+    "https://user@plane.example.com/",
+    "https://plane.example.com/path",
+    "http://plane.example.com/",
+    "https://plane.example.com",
+  ]) {
+    assert.throws(
+      () => trustedPlaneWorkItemReferenceSchema.parse(trustedPlaneBinding(apiOrigin)),
+      undefined,
+      apiOrigin,
+    );
+  }
+});
 
 test("binds session supervision reconciliation to exact parent, children, and PR identity", () => {
   const request = {
@@ -493,6 +542,17 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
   };
   const request = {
     version: contractVersions.codingRequest,
+    planeWorkItem: {
+      version: "codeops.trusted-plane-work-item-reference/v1",
+      apiOrigin: "https://plane.example.com/",
+      workspaceSlug: "engineering",
+      workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",
+      projectId: "45b87d89-0ce0-4d6f-8903-4070f1c67f1b",
+      projectIdentifier: "COAUTO",
+      workItemId: codingWorkItem.workItemId,
+      sequenceId: 19,
+      reference: "COAUTO-19",
+    },
     requestId: "coding-123",
     eventId: "ready-event:123",
     workspaceId: "d250cd44-fa71-42c2-b2b5-3c73227288fc",
@@ -611,6 +671,26 @@ test("binds a coding request to one admitted Plane revision and workflow", () =>
   assert.deepEqual(
     agentJobDispatchRequestSchema.parse(initialDispatch),
     initialDispatch,
+  );
+  const legacyRequest = {
+    ...request,
+    version: "codeops.coding-request/v2",
+  };
+  delete legacyRequest.planeWorkItem;
+  assert.deepEqual(codingRequestSchema.parse(legacyRequest), legacyRequest);
+  assert.deepEqual(
+    agentJobDispatchRequestSchema.parse({
+      ...initialDispatch,
+      version: "codeops.agent-job-dispatch/v1",
+      codingRequest: legacyRequest,
+    }).version,
+    "codeops.agent-job-dispatch/v1",
+  );
+  assert.throws(() =>
+    agentJobDispatchRequestSchema.parse({
+      ...initialDispatch,
+      version: "codeops.agent-job-dispatch/v1",
+    }),
   );
   const candidate = {
     ...makeAdversarialReview().candidate,

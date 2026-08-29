@@ -600,7 +600,6 @@ export function applyForkSessionTransition(
     identity: {
       ...snapshot.identity,
       ...(workspaceIdentity ? {} : { branch: material.branch }),
-      workflowId: material.workflowId,
       runId: material.runId,
       displayName: command.title,
       parentSessionId: snapshot.sessionId,

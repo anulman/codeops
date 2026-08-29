@@ -32,6 +32,14 @@ export interface WorkflowSnapshot {
   readonly summary: string;
 }
 
+export function agentJobDispatchVersion(
+  codingRequestVersion: "codeops.coding-request/v2" | "codeops.coding-request/v3",
+): "codeops.agent-job-dispatch/v1" | "codeops.agent-job-dispatch/v2" {
+  return codingRequestVersion === "codeops.coding-request/v3"
+    ? "codeops.agent-job-dispatch/v2"
+    : "codeops.agent-job-dispatch/v1";
+}
+
 export function transition(
   snapshot: WorkflowSnapshot,
   nextState: WorkflowState,

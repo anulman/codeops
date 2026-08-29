@@ -35,6 +35,39 @@ export const sessionOwnerPrincipalSchema = z
 const safeText = (maximum: number) => z.string().min(1).max(maximum);
 const optionalText = (maximum: number) => z.string().max(maximum).optional();
 
+export const trustedPlaneWorkItemReferenceSchema = z
+  .object({
+    version: z.literal("codeops.trusted-plane-work-item-reference/v1"),
+    apiOrigin: z
+      .string()
+      .max(1_024)
+      .refine((value) => {
+        if (/[\u0000-\u0020\u007f-\u009f]|\s/u.test(value)) return false;
+        try {
+          const url = new URL(value);
+          return url.protocol === "https:" && url.username === "" &&
+            url.password === "" && url.pathname === "/" &&
+            url.search === "" && url.hash === "" &&
+            value === `${url.origin}/`;
+        } catch {
+          return false;
+        }
+      }, "Plane browser origin must be one credential-free HTTPS origin"),
+    workspaceSlug: z.string().regex(/^[a-z0-9][a-z0-9-]{0,62}$/),
+    workspaceId: uuid,
+    projectId: uuid,
+    projectIdentifier: z.string().regex(/^[A-Z][A-Z0-9]{0,19}$/),
+    workItemId: uuid,
+    sequenceId: z.number().int().positive().max(2_147_483_647),
+    reference: z.string().regex(/^[A-Z][A-Z0-9]{0,19}-[1-9][0-9]{0,9}$/),
+  })
+  .strict()
+  .refine(
+    (binding) =>
+      binding.reference === `${binding.projectIdentifier}-${binding.sequenceId}`,
+    "Plane work-item reference must match its project and sequence identity",
+  );
+
 const kubernetesResourceIdentitySchema = z
   .object({
     name: identifier,
@@ -450,18 +483,6 @@ export const workspaceSessionIdentitySchema = refineSessionIdentity(
     .strict(),
 );
 
-export const sessionIdentitySchema = z.union([
-  legacySessionIdentitySchema,
-  workspaceSessionIdentitySchema,
-]);
-
-export function isWorkspaceSessionIdentity(
-  identity: z.infer<typeof sessionIdentitySchema>,
-): identity is z.infer<typeof workspaceSessionIdentitySchema> {
-  return "version" in identity &&
-    identity.version === "codeops.session-workspace-identity/v1";
-}
-
 export const temporalCodeOpsSessionIdentitySchema = legacySessionIdentitySchema
   .superRefine((identity, context) => {
     if (identity.workItemId === undefined) {
@@ -479,6 +500,66 @@ export const temporalCodeOpsSessionIdentitySchema = legacySessionIdentitySchema
       });
     }
   });
+
+export const trustedTemporalCodeOpsSessionIdentitySchema = refineSessionIdentity(
+  z
+    .object({
+      version: z.literal("codeops.temporal-session-identity/v2"),
+      repository: z
+        .string()
+        .regex(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/),
+      branch: safeText(200),
+      baseSha: gitSha,
+      planeWorkItem: trustedPlaneWorkItemReferenceSchema,
+      ...sessionIdentityCommonShape,
+    })
+    .strict(),
+).superRefine((identity, context) => {
+  if (identity.workItemId === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["workItemId"],
+      message: "Temporal CodeOps sessions require a Plane work item identity",
+    });
+  }
+  if (identity.workItemId !== identity.planeWorkItem.workItemId) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["planeWorkItem", "workItemId"],
+      message: "trusted Plane binding must match the session work item",
+    });
+  }
+  if (identity.agentRole === undefined || identity.round === undefined) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["agentRole"],
+      message: "Temporal CodeOps sessions require an agent role and round",
+    });
+  }
+  if (
+    identity.pullRequestNumber === undefined ||
+    identity.pullRequestHeadSha === undefined
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["pullRequestNumber"],
+      message: "trusted Temporal Plane sessions require exact pull-request identity",
+    });
+  }
+});
+
+export const sessionIdentitySchema = z.union([
+  legacySessionIdentitySchema,
+  workspaceSessionIdentitySchema,
+  trustedTemporalCodeOpsSessionIdentitySchema,
+]);
+
+export function isWorkspaceSessionIdentity(
+  identity: z.infer<typeof sessionIdentitySchema>,
+): identity is z.infer<typeof workspaceSessionIdentitySchema> {
+  return "version" in identity &&
+    identity.version === "codeops.session-workspace-identity/v1";
+}
 
 const currentSessionSnapshotSchema = z
   .object({
@@ -636,20 +717,34 @@ export const sessionSnapshotSchema = z.preprocess(
   currentSessionSnapshotSchema,
 );
 
-export const sessionJobInitializationRequestSchema = z
-  .object({
+const rootSessionIdentity = <Schema extends z.ZodTypeAny>(schema: Schema) =>
+  schema.refine(
+    (identity) =>
+      identity.parentSessionId === null && identity.forkedAtCursor === null,
+    "a Job may initialize only a root session",
+  );
+
+export const sessionJobInitializationRequestSchema = z.union([
+  z.object({
     version: z.literal("codeops.session-job-initialization/v1"),
     sessionId: identifier,
-    identity: sessionIdentitySchema.refine(
-      (identity) =>
-        identity.parentSessionId === null && identity.forkedAtCursor === null,
-      "a Job may initialize only a root session",
-    ),
+    identity: rootSessionIdentity(z.union([
+      legacySessionIdentitySchema,
+      workspaceSessionIdentitySchema,
+    ])),
     leaseId: uuid,
     holderId: identifier,
     ownerPrincipalId: sessionOwnerPrincipalSchema,
-  })
-  .strict();
+  }).strict(),
+  z.object({
+    version: z.literal("codeops.session-job-initialization/v2"),
+    sessionId: identifier,
+    identity: rootSessionIdentity(trustedTemporalCodeOpsSessionIdentitySchema),
+    leaseId: uuid,
+    holderId: identifier,
+    ownerPrincipalId: sessionOwnerPrincipalSchema,
+  }).strict(),
+]);
 
 export const sessionJobInitializationResponseSchema = z
   .object({
@@ -1341,6 +1436,9 @@ export type SessionWorkspaceCheckpoint = z.infer<
   typeof sessionWorkspaceCheckpointSchema
 >;
 export type SessionIdentity = z.infer<typeof sessionIdentitySchema>;
+export type TrustedPlaneWorkItemReference = z.infer<
+  typeof trustedPlaneWorkItemReferenceSchema
+>;
 export type LegacySessionIdentity = z.infer<typeof legacySessionIdentitySchema>;
 export type WorkspaceSessionIdentity = z.infer<
   typeof workspaceSessionIdentitySchema

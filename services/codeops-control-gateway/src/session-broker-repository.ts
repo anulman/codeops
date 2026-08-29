@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import {
   canonicalJsonText,
   isWorkspaceSessionIdentity,
+  legacySessionIdentitySchema,
   projectSessionBudget,
   projectSessionBudgetV2,
   SESSION_BROKER_VERSION,
@@ -9,6 +10,7 @@ import {
   sessionCommandSchema,
   sessionEventSchema,
   sessionSnapshotSchema,
+  trustedTemporalCodeOpsSessionIdentitySchema,
   type SessionCommand,
   type SessionCommandResult,
   type SessionEvent,
@@ -347,6 +349,45 @@ function requireResultIdentity(
   }
 }
 
+function immutableForkIdentityProjection(identity: SessionSnapshot["identity"]) {
+  const commonProjection = (parsed: {
+    readonly repository: string;
+    readonly baseSha: string;
+    readonly workflowId: string;
+    readonly workItemId?: string;
+    readonly pullRequestNumber?: number;
+    readonly pullRequestHeadSha?: string;
+    readonly agentRole?: string;
+    readonly round?: number;
+  }) => ({
+    repository: parsed.repository,
+    baseSha: parsed.baseSha,
+    workflowId: parsed.workflowId,
+    workItemId: parsed.workItemId ?? null,
+    pullRequestNumber: parsed.pullRequestNumber ?? null,
+    pullRequestHeadSha: parsed.pullRequestHeadSha ?? null,
+    agentRole: parsed.agentRole ?? null,
+    round: parsed.round ?? null,
+  });
+  if (
+    "version" in identity &&
+    identity.version === "codeops.temporal-session-identity/v2"
+  ) {
+    const parsed = trustedTemporalCodeOpsSessionIdentitySchema.parse(identity);
+    return {
+      version: parsed.version,
+      ...commonProjection(parsed),
+      planeWorkItem: parsed.planeWorkItem,
+    };
+  }
+  const parsed = legacySessionIdentitySchema.parse(identity);
+  return {
+    version: null,
+    ...commonProjection(parsed),
+    planeWorkItem: null,
+  };
+}
+
 function requireForkIdentity(
   snapshot: SessionSnapshot,
   command: Extract<SessionCommand, { readonly type: "fork" }>,
@@ -358,8 +399,8 @@ function requireForkIdentity(
     ? isWorkspaceSessionIdentity(childIdentity) &&
       canonicalJsonText(childIdentity.workspace) === canonicalJsonText(parentIdentity.workspace)
     : !isWorkspaceSessionIdentity(childIdentity) &&
-      childIdentity.repository === parentIdentity.repository &&
-      childIdentity.baseSha === parentIdentity.baseSha;
+      canonicalJsonText(immutableForkIdentityProjection(childIdentity)) ===
+        canonicalJsonText(immutableForkIdentityProjection(parentIdentity));
   if (
     snapshot.checkpoint?.checkpointId !== command.checkpointId ||
     snapshot.eventCursor !== command.parentEventCursor ||
@@ -369,7 +410,7 @@ function requireForkIdentity(
     result.snapshot.generation !== 1
   ) {
     throw new Error(
-      "fork must bind the exact parent checkpoint, cursor, repository, and base SHA",
+      "fork must bind the exact parent checkpoint, cursor, and immutable identity",
     );
   }
 }

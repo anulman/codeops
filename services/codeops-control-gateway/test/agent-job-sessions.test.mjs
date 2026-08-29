@@ -60,6 +60,25 @@ test("describes visible deterministic work-item and reviewer sessions for adopte
   );
 });
 
+test("projects the trusted provider reference on the production Agent Job session path", () => {
+  const job = request("coding-agent", 1);
+  job.codingRequest.version = "codeops.coding-request/v3";
+  job.codingRequest.planeWorkItem = {
+    version: "codeops.trusted-plane-work-item-reference/v1",
+    apiOrigin: "https://plane.example.com/",
+    workspaceSlug: "engineering",
+    workspaceId: "11111111-1111-4111-8111-111111111111",
+    projectId: "33333333-3333-4333-8333-333333333333",
+    projectIdentifier: "COAUTO",
+    workItemId: job.workItemId,
+    sequenceId: 19,
+    reference: "COAUTO-19",
+  };
+  const projected = describeAgentJobSession(job, "trusted-worker-run");
+  assert.equal(projected.identity.version, "codeops.temporal-session-identity/v2");
+  assert.equal(projected.identity.planeWorkItem.reference, "COAUTO-19");
+});
+
 test("does not project unrelated Agent Jobs", () => {
   assert.equal(
     describeAgentJobSession(

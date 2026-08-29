@@ -71,6 +71,8 @@ async function loadMutationAuthority(
     readonly workerId: string;
     readonly claimToken: string;
     readonly repository: string;
+    readonly pullRequestNumber: number | null;
+    readonly expectedHeadSha: string;
     readonly now: Date;
   },
 ): Promise<ClaimedDispatchAuthority> {
@@ -81,7 +83,24 @@ async function loadMutationAuthority(
       claimToken: input.claimToken,
       now: () => input.now,
     });
-    selectClaimedWorkspaceSource(authority, { repository: input.repository });
+    const identity = authority.snapshot.identity;
+    if (
+      "version" in identity &&
+      identity.version === "codeops.temporal-session-identity/v2"
+    ) {
+      if (
+        identity.repository !== input.repository ||
+        (input.pullRequestNumber !== null &&
+          identity.pullRequestNumber !== input.pullRequestNumber) ||
+        identity.pullRequestHeadSha !== input.expectedHeadSha
+      ) {
+        throw new ClaimedDispatchAuthorityConflictError(
+          "provider authority does not bind the exact Temporal repository, pull request, and head",
+        );
+      }
+    } else {
+      selectClaimedWorkspaceSource(authority, { repository: input.repository });
+    }
     return authority;
   } catch (error) {
     if (error instanceof ClaimedDispatchAuthorityNotFoundError) {
@@ -158,13 +177,17 @@ export async function authorizeSessionRuntimeGitHubMutation(
   },
 ): Promise<SessionRuntimeGitHubMutationAuthorization> {
   const request = sessionRuntimeGitHubMutationRequestSchema.parse(input.request);
-  const dispatch = (await loadMutationAuthority(client, {
+  const target = permissionTarget(request);
+  const authority = await loadMutationAuthority(client, {
     dispatchId: input.dispatchId,
     workerId: input.workerId,
     claimToken: request.claimToken,
     repository: request.input.repository,
+    pullRequestNumber: target.pullRequestNumber,
+    expectedHeadSha: request.input.expectedHeadSha,
     now: (input.now ?? (() => new Date()))(),
-  })).dispatch;
+  });
+  const dispatch = authority.dispatch;
   const expectedOperationId = `githubmutation-${createHash("sha256")
     .update(canonicalJsonText({
       dispatchId: dispatch.dispatchId,
@@ -312,7 +335,6 @@ export async function authorizeSessionRuntimeGitHubMutation(
       principalDigest: digest(dispatch.principalId),
     },
   });
-  const target = permissionTarget(request);
   const inserted = await client.query(
     `INSERT INTO codeops.provider_effect_receipts
        (effect_id, provider, repository, operation, pull_request_number,

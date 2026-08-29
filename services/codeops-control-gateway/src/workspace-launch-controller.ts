@@ -214,6 +214,7 @@ export async function reconcileWorkspaceLaunch(
       session.lease?.status !== "active" ||
       session.lease.leaseId !== identity.leaseId ||
       !("version" in session.identity) ||
+      session.identity.version !== "codeops.session-workspace-identity/v1" ||
       JSON.stringify(session.identity.policy) !== JSON.stringify(launch.policy) ||
       JSON.stringify(session.identity.contextAttachments ?? []) !==
         JSON.stringify(launch.contextAttachments) ||
