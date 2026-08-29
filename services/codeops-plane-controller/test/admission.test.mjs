@@ -65,6 +65,7 @@ const source = {
     module: null,
     parent: null,
     updated_at: "2026-07-26T02:00:00.000Z",
+    sequence_id: 19,
   },
   project: {
     id: payload.data.project_id,
@@ -72,6 +73,7 @@ const source = {
     name: "Onboarding Auth QA",
     description_html: "<p>Deterministic auth qualification.</p>",
     updated_at: "2026-07-26T01:00:00.000Z",
+    identifier: "COAUTO",
   },
   comments: [
     {
@@ -314,6 +316,12 @@ function signedReadyInput(overrides = {}) {
     allowedHumanActorIds: new Set([actorId]),
     aiPersonaUserIds: new Set([readyPersonaId]),
     readyStateId,
+    planeAuthority: {
+      apiOrigin: "https://plane.example.com/",
+      workspaceSlug: "example-workspace",
+      workspaceId: payload.workspace_id,
+      projectId: payload.data.project_id,
+    },
     repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha,
     baseSha,
@@ -380,6 +388,22 @@ test("admits an actionable non-persona Plane reply for exact-session steering", 
   assert.equal(admission.request.intent, "steering");
   assert.deepEqual(admission.request.personas, []);
   assert.equal(admission.request.comment, "Please continue with option B.");
+});
+
+test("admits production-shaped legacy comments without inventing a Plane reference", async () => {
+  const { sequence_id: _sequenceId, ...legacyWorkItem } = source.workItem;
+  const { identifier: _identifier, ...legacyProject } = source.project;
+  const legacySource = {
+    ...source,
+    workItem: legacyWorkItem,
+    project: legacyProject,
+  };
+  for (const input of [signedInput(), signedCeInput()]) {
+    input.loadSource = async () => legacySource;
+    const admission = await admitPlaneResearchComment(input);
+    assert.match(admission.planeRevisionDigest, /^sha256:[0-9a-f]{64}$/);
+    assert.equal("planeWorkItem" in admission.request, false);
+  }
 });
 
 test("uses the model result and ignores discussion before loading mutable source", async () => {
@@ -451,6 +475,8 @@ test("admits only a signed allowlisted human transition into configured Ready", 
   assert.equal(identified.eventId, admission.eventId);
   assert.equal(admission.request.workItem.workItemId, payload.entity_id);
   assert.equal(admission.request.projectId, payload.data.project_id);
+  assert.equal(admission.request.version, "codeops.coding-request/v3");
+  assert.equal(admission.request.planeWorkItem.reference, "COAUTO-19");
   assert.equal(admission.request.requestedBy, actorId);
   assert.equal(admission.request.workItem.baseSha, baseSha);
   assert.equal(
@@ -480,6 +506,36 @@ test("admits only a signed allowlisted human transition into configured Ready", 
   assert.equal(admission.request.ticketSnapshot.relations.length, 1);
   assert.match(admission.eventId, /^ready-event:[0-9a-f]{64}$/);
   assert.match(admission.planeRevisionDigest, /^sha256:[0-9a-f]{64}$/);
+});
+
+test("admits legacy Ready snapshots without inventing a trusted Plane reference", async () => {
+  for (const omitted of ["identifier", "sequence_id", "both"]) {
+    const input = signedReadyInput();
+    const project = { ...source.project };
+    const workItem = {
+      ...source.workItem,
+      state: readyStateId,
+      updated_at: readyUpdatedAt,
+    };
+    if (omitted === "identifier" || omitted === "both") delete project.identifier;
+    if (omitted === "sequence_id" || omitted === "both") delete workItem.sequence_id;
+    input.loadSource = async () => ({
+      ...source,
+      project,
+      workItem,
+      comments: [{
+        ...source.comments[0],
+        comment_html: "<p>Keep legacy COAUTO-19 comment text unchanged.</p>",
+      }],
+    });
+    const admission = await admitPlaneReadyTransition(input);
+    assert.equal(admission.request.version, "codeops.coding-request/v2");
+    assert.equal("planeWorkItem" in admission.request, false);
+    assert.equal(
+      admission.request.ticketSnapshot.relevantComments[0].bodyHtml,
+      "<p>Keep legacy COAUTO-19 comment text unchanged.</p>",
+    );
+  }
 });
 
 test("admits Ready tickets assigned only to registered AI personas", async () => {

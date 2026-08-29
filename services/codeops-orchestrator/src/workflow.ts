@@ -21,7 +21,11 @@ import type {
   ResearchProjectionResult,
 } from "./activities.js";
 import { agentJobActivityOptions } from "./activity-options.js";
-import { transition, type WorkflowSnapshot } from "./model.js";
+import {
+  agentJobDispatchVersion,
+  transition,
+  type WorkflowSnapshot,
+} from "./model.js";
 import { buildResearchPacket } from "./research.js";
 import {
   adversarialReviewMatchesCandidate,
@@ -118,6 +122,9 @@ export async function workItemWorkflow(
   const autonomousCritic =
     workItem.role === "coding-agent" &&
     patched("coding-autonomous-critic-v1");
+  const dispatchVersion = workItem.role === "coding-agent"
+    ? agentJobDispatchVersion(workItem.codingRequest.version)
+    : "codeops.agent-job-dispatch/v1";
   let snapshot: WorkflowSnapshot = {
     state: "requested",
     sequence: 0,
@@ -165,7 +172,7 @@ export async function workItemWorkflow(
     try {
       if (workItem.role === "coding-agent") {
         codingCheckpoint = await dispatchAgentJob({
-          version: "codeops.agent-job-dispatch/v1",
+          version: dispatchVersion,
           ...workItem,
           ...(autonomousCritic ? { codingRound: 1 } : {}),
         });
@@ -176,7 +183,7 @@ export async function workItemWorkflow(
         for (const persona of workItem.researchRequest.personas) {
           dispatches.push(
             await dispatchAgentJob({
-              version: "codeops.agent-job-dispatch/v1",
+              version: dispatchVersion,
               ...workItem,
               researchStage: { kind: "persona", persona },
             }),
@@ -192,7 +199,7 @@ export async function workItemWorkflow(
           return dispatch.researchResult.report;
         });
         synthesisDispatch = await dispatchAgentJob({
-          version: "codeops.agent-job-dispatch/v1",
+          version: dispatchVersion,
           ...workItem,
           researchStage: { kind: "synthesis", reports },
         });
@@ -266,7 +273,7 @@ export async function workItemWorkflow(
         let criticDispatch: DispatchResult;
         try {
           criticDispatch = await dispatchAgentJob({
-            version: "codeops.agent-job-dispatch/v1",
+            version: dispatchVersion,
             role: "critic-agent",
             workItemId: workItem.workItemId,
             workflowId: workItem.workflowId,
@@ -321,7 +328,7 @@ export async function workItemWorkflow(
         );
         try {
           candidateDispatch = await dispatchAgentJob({
-            version: "codeops.agent-job-dispatch/v1",
+            version: dispatchVersion,
             role: "coding-agent",
             workItemId: workItem.workItemId,
             workflowId: workItem.workflowId,

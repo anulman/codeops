@@ -601,6 +601,8 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
     "66666666-6666-4666-8666-666666666666",
     "77777777-7777-4777-8777-777777777777",
     "88888888-8888-4888-8888-888888888888",
+    "99999999-9999-4999-8999-999999999999",
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
   ];
   const lifecycle = new SocketAcpWorkspaceLifecycle({
     socketPath: "/run/codeops/agent.sock",
@@ -687,10 +689,48 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
   assert.equal(forked.type, "fork");
   assert.equal(forked.material.sessionId, "ses_77777777777747778777777777777777");
   assert.equal(forked.material.leaseId, "88888888-8888-4888-8888-888888888888");
+  assert.equal(forked.material.branch, "feat/agents-ui-fork-777777777777");
+  const trustedFork = await lifecycle.fork(dispatch(
+    "fork",
+    {
+      checkpointId: hibernate.material.checkpointId,
+      parentEventCursor: 3,
+      title: "Trusted Plane fork",
+    },
+    {
+      ...hibernated,
+      identity: {
+        version: "codeops.temporal-session-identity/v2",
+        ...identity,
+        workItemId: "11111111-1111-4111-8111-111111111111",
+        pullRequestNumber: 94,
+        pullRequestHeadSha: baseSha,
+        agentRole: "coding",
+        round: 1,
+        planeWorkItem: {
+          version: "codeops.trusted-plane-work-item-reference/v1",
+          apiOrigin: "https://plane.example.com/",
+          workspaceSlug: "engineering",
+          workspaceId: "22222222-2222-4222-8222-222222222222",
+          projectId: "33333333-3333-4333-8333-333333333333",
+          projectIdentifier: "COAUTO",
+          workItemId: "11111111-1111-4111-8111-111111111111",
+          sequenceId: 19,
+          reference: "COAUTO-19",
+        },
+      },
+    },
+  ));
+  assert.equal(
+    trustedFork.material.branch,
+    "feat/agents-ui-fork-999999999999",
+  );
+  assert.equal("workspace" in trustedFork.material, false);
   assert.deepEqual(calls, [
     ["new", root],
     ["prompt", "acp-session-parent", [{ type: "text", text: "Make one safe edit." }]],
     ["load", "acp-session-parent", root],
+    ["fork", "acp-session-parent", root],
     ["fork", "acp-session-parent", root],
   ]);
 });

@@ -15,7 +15,7 @@ import {
   recordTransition,
 } from "../dist/activities.js";
 import { agentJobActivityOptions } from "../dist/activity-options.js";
-import { transition } from "../dist/model.js";
+import { agentJobDispatchVersion, transition } from "../dist/model.js";
 import {
   adversarialReviewMatchesCandidate,
   candidateCheckpointFromDispatch,
@@ -30,6 +30,17 @@ test("does not automatically repeat Agent Job provider side effects", () => {
       maximumAttempts: 1,
     },
   });
+});
+
+test("advances the dispatch contract only with the trusted coding request", () => {
+  assert.equal(
+    agentJobDispatchVersion("codeops.coding-request/v2"),
+    "codeops.agent-job-dispatch/v1",
+  );
+  assert.equal(
+    agentJobDispatchVersion("codeops.coding-request/v3"),
+    "codeops.agent-job-dispatch/v2",
+  );
 });
 
 const projectContext = {

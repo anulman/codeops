@@ -19,7 +19,8 @@ export function issueSessionModelAuthority(
   input: SessionModelAuthorityInput,
 ): SessionModelAuthorityResult {
   const modelPolicy =
-    "version" in input.snapshot.identity
+    "version" in input.snapshot.identity &&
+      input.snapshot.identity.version === "codeops.session-workspace-identity/v1"
       ? input.snapshot.identity.policy.modelPolicy
       : {
           provider: "openai" as const,

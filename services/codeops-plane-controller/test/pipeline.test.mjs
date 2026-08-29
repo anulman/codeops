@@ -62,6 +62,7 @@ const source = {
     module: null,
     parent: null,
     updated_at: "2026-07-26T02:00:00.000Z",
+    sequence_id: 19,
   },
   project: {
     id: payload.data.project_id,
@@ -69,6 +70,7 @@ const source = {
     name: "Onboarding Auth QA",
     description_html: "<p>Deterministic auth qualification.</p>",
     updated_at: "2026-07-26T01:00:00.000Z",
+    identifier: "COAUTO",
   },
 };
 const readyStateId = "cc8562ab-79c7-4f1c-b4a2-1ed51dfcd6aa";
@@ -179,6 +181,12 @@ function readyWebhookInput(ledger, enqueue, body = readyPayload) {
     allowedHumanActorIds: new Set([actorId]),
     aiPersonaUserIds: new Set([aiAssigneeId]),
     readyStateId,
+    planeAuthority: {
+      apiOrigin: "https://plane.example.com/",
+      workspaceSlug: "example-workspace",
+      workspaceId: payload.workspace_id,
+      projectId: payload.data.project_id,
+    },
     repository: { owner: "example-org", name: "example-repository" },
     controlPlaneSha,
     baseSha,

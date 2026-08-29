@@ -406,6 +406,8 @@ test("forks one generation-one child with independent cursor lineage", () => {
   assert.equal(result.snapshot.generation, 1);
   assert.equal(result.snapshot.identity.parentSessionId, current.sessionId);
   assert.equal(result.snapshot.identity.forkedAtCursor, 184);
+  assert.equal(result.snapshot.identity.workflowId, current.identity.workflowId);
+  assert.equal(result.snapshot.identity.runId, "run-child");
   assert.equal(result.snapshot.identity.displayName, command.title);
   assert.equal(result.snapshot.eventCursor, 1);
   assert.equal(result.snapshot.budget.startedAt, occurredAt);
@@ -428,5 +430,101 @@ test("forks one generation-one child with independent cursor lineage", () => {
       },
       occurredAt,
     ),
+  );
+});
+
+test("uses legacy checkpoint and branch fork material for trusted Temporal v2 identity", () => {
+  const trusted = snapshot({ checkpoint: false });
+  trusted.identity = {
+    version: "codeops.temporal-session-identity/v2",
+    ...trusted.identity,
+    workItemId: "44444444-4444-4444-8444-444444444444",
+    pullRequestNumber: 94,
+    pullRequestHeadSha: "a".repeat(40),
+    agentRole: "coding",
+    round: 1,
+    planeWorkItem: {
+      version: "codeops.trusted-plane-work-item-reference/v1",
+      apiOrigin: "https://plane.example.com/",
+      workspaceSlug: "engineering",
+      workspaceId: "55555555-5555-4555-8555-555555555555",
+      projectId: "66666666-6666-4666-8666-666666666666",
+      projectIdentifier: "COAUTO",
+      workItemId: "44444444-4444-4444-8444-444444444444",
+      sequenceId: 19,
+      reference: "COAUTO-19",
+    },
+  };
+  const checkpoint = applyCheckpointSessionTransition(
+    trusted,
+    command("checkpoint"),
+    {
+      checkpointId,
+      patchDigest: `sha256:${"c".repeat(64)}`,
+      acpSessionId: "acp-trusted",
+      evidenceReferences: [],
+    },
+    occurredAt,
+  );
+  assert.equal(checkpoint.snapshot.checkpoint.version, "codeops.session-checkpoint/v1");
+  assert.throws(() =>
+    applyCheckpointSessionTransition(
+      trusted,
+      command("checkpoint"),
+      {
+        version: "codeops.session-workspace-checkpoint-material/v1",
+        checkpointId,
+        workspaceManifestDigest: `sha256:${"d".repeat(64)}`,
+        sourcePatches: [],
+        scratchArtifactDigest: `sha256:${"e".repeat(64)}`,
+        acpSessionId: "acp-trusted",
+        evidenceReferences: [],
+      },
+      occurredAt,
+    ),
+    /workspace identity/,
+  );
+
+  const terminal = {
+    ...checkpoint.snapshot,
+    state: "completed",
+    lease: {
+      ...checkpoint.snapshot.lease,
+      status: "released",
+      releasedAt: occurredAt,
+    },
+    capabilities: capabilities(["fork", "archive"]),
+  };
+  const forkCommand = {
+    ...command("fork"),
+    checkpointId,
+    parentEventCursor: terminal.eventCursor,
+    title: "Trusted Plane fork",
+  };
+  const lease = {
+    sessionId: "ses_trusted_child",
+    workflowId: "trusted-child",
+    runId: "trusted-child",
+    leaseId: "77777777-7777-4777-8777-777777777777",
+    holderId: "worker-child",
+    acquiredAt: occurredAt,
+    expiresAt: "2026-08-04T05:05:00.000Z",
+  };
+  const fork = applyForkSessionTransition(
+    terminal,
+    forkCommand,
+    { ...lease, branch: "feat/agents-ui-trusted-child" },
+    occurredAt,
+  );
+  assert.equal(fork.snapshot.identity.version, "codeops.temporal-session-identity/v2");
+  assert.equal(fork.snapshot.identity.branch, "feat/agents-ui-trusted-child");
+  assert.throws(() =>
+    applyForkSessionTransition(
+      terminal,
+      forkCommand,
+      { ...lease, workspace: true },
+      occurredAt,
+    ),
+    /workspace identity/,
   );
 });

@@ -210,11 +210,12 @@ function decision(permissionSubmission = permission(), decision = {
 }
 
 class Client {
-  constructor({ insertCount = 1, permissionValue = permission(), decisionValue, storedMutation = null } = {}) {
+  constructor({ insertCount = 1, permissionValue = permission(), decisionValue, storedMutation = null, dispatchValue = dispatch() } = {}) {
     this.insertCount = insertCount;
     this.permissionValue = permissionValue;
     this.decisionValue = decisionValue ?? decision(permissionValue);
     this.storedMutation = storedMutation;
+    this.dispatchValue = dispatchValue;
     this.calls = [];
   }
 
@@ -227,7 +228,7 @@ class Client {
       return {
         rowCount: 1,
         rows: [{
-          dispatch_json: dispatch(),
+          dispatch_json: this.dispatchValue,
           status: "claimed",
           claim_token: claimToken,
           claimed_by: workerId,
@@ -264,6 +265,245 @@ class Client {
     throw new Error(`unexpected query: ${text}`);
   }
 }
+
+function trustedDispatch(pullRequestNumber = 94) {
+  const trusted = dispatch();
+  trusted.snapshot.identity = {
+    version: "codeops.temporal-session-identity/v2",
+    repository,
+    branch: "codeops/trusted-link",
+    baseSha: "a".repeat(40),
+    workflowId: "coding-trusted-link",
+    runId: "agent-trusted-link",
+    workItemId: "33333333-3333-4333-8333-333333333333",
+    pullRequestNumber,
+    pullRequestHeadSha: "a".repeat(40),
+    planeWorkItem: {
+      version: "codeops.trusted-plane-work-item-reference/v1",
+      apiOrigin: "https://plane.example.com/",
+      workspaceSlug: "engineering",
+      workspaceId: "11111111-1111-4111-8111-111111111111",
+      projectId: "22222222-2222-4222-8222-222222222222",
+      projectIdentifier: "COAUTO",
+      workItemId: "33333333-3333-4333-8333-333333333333",
+      sequenceId: 19,
+      reference: "COAUTO-19",
+    },
+    agentRole: "coding",
+    round: 1,
+    parentSessionId: null,
+    forkedAtCursor: null,
+  };
+  return trusted;
+}
+
+function mutationRequest(operation, input) {
+  return {
+    version: "codeops.session-runtime-github-mutation-request/v1",
+    claimToken,
+    operation,
+    operationId: `githubmutation-${createHash("sha256")
+      .update(canonical({ dispatchId, operation, input }))
+      .digest("hex")}`,
+    input,
+  };
+}
+
+function exactPermission(request) {
+  const pullRequestNumber = [
+    "pull_request_update_branch",
+    "pull_request_update",
+    "review_thread_reply",
+  ].includes(request.operation)
+    ? request.input.pullRequestNumber
+    : null;
+  const targetId = request.operation === "pull_request_create"
+    ? request.input.headBranch
+    : request.operation === "branch_publish"
+      ? request.input.branchName
+      : request.operation === "review_thread_reply"
+        ? request.input.threadId
+        : request.operation === "check_rerun"
+          ? String(request.input.checkRunId)
+          : null;
+  const operation = {
+    kind: "github_mutation",
+    repository,
+    operation: request.operation,
+    pullRequestNumber,
+    expectedHeadSha: request.input.expectedHeadSha,
+    targetId,
+    payloadJson: canonical(request.input),
+  };
+  const submission = {
+    ...permission(),
+    claimToken,
+    toolCallId: request.operationId,
+    request: {
+      ...permission().request,
+      requestId: `permission-${createHash("sha256")
+        .update(canonical(operation)).update("\0").update(dispatchId)
+        .update("\0").update(request.operationId).digest("hex")}`,
+      operation,
+      operationDigest: digest(canonical(operation)),
+    },
+  };
+  return submission;
+}
+
+async function authorizeTrusted(request, pullRequestNumber = 94) {
+  const permissionValue = exactPermission(request);
+  const client = new Client({
+    permissionValue,
+    decisionValue: decision(permissionValue),
+    dispatchValue: trustedDispatch(pullRequestNumber),
+  });
+  const authorization = await authorizeSessionRuntimeGitHubMutation(client, {
+    dispatchId,
+    workerId,
+    request,
+    now: () => new Date("2026-08-14T15:07:00.000Z"),
+  });
+  return { authorization, client };
+}
+
+test("rejects trusted Temporal pull-request number drift before permission", async () => {
+  const request = mutationRequest("pull_request_update", {
+    repository,
+    pullRequestNumber: 95,
+    expectedHeadSha: "a".repeat(40),
+    expectedBaseSha: "b".repeat(40),
+    body: "Update the exact pull request.",
+  });
+  const permissionValue = exactPermission(request);
+  const client = new Client({
+    permissionValue,
+    decisionValue: decision(permissionValue),
+    dispatchValue: trustedDispatch(94),
+  });
+  await assert.rejects(
+    authorizeSessionRuntimeGitHubMutation(client, {
+      dispatchId,
+      workerId,
+      request,
+      now: () => new Date("2026-08-14T15:07:00.000Z"),
+    }),
+    /exact Temporal repository, pull request, and head/,
+  );
+  assert.equal(client.calls.length, 1);
+});
+
+test("rejects pull-request number drift for every numbered mutation", async () => {
+  const inputs = [
+    ["pull_request_update_branch", {
+      repository,
+      pullRequestNumber: 95,
+      expectedHeadSha: "a".repeat(40),
+    }],
+    ["review_thread_reply", {
+      repository,
+      pullRequestNumber: 95,
+      expectedHeadSha: "a".repeat(40),
+      threadId: "review-thread-1",
+      body: "Reply only on the immutable pull request.",
+    }],
+  ];
+  for (const [operation, input] of inputs) {
+    const request = mutationRequest(operation, input);
+    const permissionValue = exactPermission(request);
+    const client = new Client({
+      permissionValue,
+      decisionValue: decision(permissionValue),
+      dispatchValue: trustedDispatch(94),
+    });
+    await assert.rejects(
+      authorizeSessionRuntimeGitHubMutation(client, {
+        dispatchId,
+        workerId,
+        request,
+        now: () => new Date("2026-08-14T15:07:00.000Z"),
+      }),
+      /exact Temporal repository, pull request, and head/,
+      operation,
+    );
+    assert.equal(client.calls.length, 1, operation);
+  }
+});
+
+test("accepts matching and unnumbered trusted Temporal GitHub mutations", async () => {
+  const update = mutationRequest("pull_request_update", {
+    repository,
+    pullRequestNumber: 94,
+    expectedHeadSha: "a".repeat(40),
+    expectedBaseSha: "b".repeat(40),
+    body: "Update the exact pull request.",
+  });
+  assert.equal((await authorizeTrusted(update)).authorization.disposition, "authorized");
+
+  const create = mutationRequest("pull_request_create", {
+    repository,
+    expectedHeadSha: "a".repeat(40),
+    expectedBaseSha: "b".repeat(40),
+    headBranch: "codeops/trusted-link",
+    baseBranch: "main",
+    title: "Create from the trusted head",
+    body: "Create without a mutation pull-request number.",
+    draft: true,
+  });
+  assert.equal((await authorizeTrusted(create)).authorization.disposition, "authorized");
+
+  const check = mutationRequest("check_rerun", {
+    repository,
+    expectedHeadSha: "a".repeat(40),
+    checkRunId: 1234,
+  });
+  assert.equal((await authorizeTrusted(check)).authorization.disposition, "authorized");
+
+  const publish = mutationRequest("branch_publish", {
+    repository,
+    expectedHeadSha: "a".repeat(40),
+    baseBranch: "main",
+    branchName: "codeops/trusted-link",
+    commitMessage: "Publish the trusted branch",
+    changes: [{
+      path: "bounded.txt",
+      oldText: "before\n",
+      newText: "after\n",
+    }],
+  });
+  assert.equal((await authorizeTrusted(publish)).authorization.disposition, "authorized");
+});
+
+test("preserves an older producer payload without rewriting after permission", async () => {
+  const input = {
+    repository,
+    expectedHeadSha: "a".repeat(40),
+    expectedBaseSha: "a".repeat(40),
+    headBranch: "codeops/trusted-link",
+    baseBranch: "main",
+    title: "Link the trusted ticket",
+    body: "Fixes COAUTO-19 and `COAUTO-19`.",
+    draft: true,
+  };
+  const request = mutationRequest("pull_request_create", input);
+  const permissionValue = exactPermission(request);
+  const client = new Client({
+    permissionValue,
+    decisionValue: decision(permissionValue),
+    dispatchValue: trustedDispatch(),
+  });
+  const authorized = await authorizeSessionRuntimeGitHubMutation(client, {
+    dispatchId,
+    workerId,
+    request,
+    now: () => new Date("2026-08-14T15:07:00.000Z"),
+  });
+  assert.equal(authorized.disposition, "authorized");
+  assert.equal(
+    authorized.request.input.body,
+    "Fixes COAUTO-19 and `COAUTO-19`.",
+  );
+});
 
 test("consumes one exact durable permission before returning provider authority", async () => {
   const client = new Client();

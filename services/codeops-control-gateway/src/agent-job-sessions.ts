@@ -7,6 +7,7 @@ import {
   sessionEventSchema,
   sessionSnapshotSchema,
   temporalCodeOpsSessionIdentitySchema,
+  trustedTemporalCodeOpsSessionIdentitySchema,
   type AgentJobDispatchRequest,
 } from "@codeops/codeops-contracts";
 import { buildAgentPrompt } from "./core.js";
@@ -79,24 +80,31 @@ export function describeAgentJobSession(request: AgentJobDispatchRequest, runId:
       : agentRole === "revision"
         ? "Work Item Revision Session"
         : "Work Item Session";
+  const identity = {
+    repository: adopted.repository,
+    branch: adopted.headRef,
+    baseSha: request.baseSha,
+    workflowId: request.workflowId,
+    runId,
+    displayName: `PR #${adopted.pullRequestNumber} · ${displayRole} · round ${round}`,
+    workItemId: request.workItemId,
+    pullRequestNumber: adopted.pullRequestNumber,
+    pullRequestHeadSha: adopted.headSha,
+    agentRole,
+    round,
+    parentSessionId: null,
+    forkedAtCursor: null,
+  } as const;
   return {
     sessionId: agentJobSessionId(runId),
     ownerPrincipalId: adopted.sessionOwnerPrincipalId,
-    identity: temporalCodeOpsSessionIdentitySchema.parse({
-      repository: adopted.repository,
-      branch: adopted.headRef,
-      baseSha: request.baseSha,
-      workflowId: request.workflowId,
-      runId,
-      displayName: `PR #${adopted.pullRequestNumber} · ${displayRole} · round ${round}`,
-      workItemId: request.workItemId,
-      pullRequestNumber: adopted.pullRequestNumber,
-      pullRequestHeadSha: adopted.headSha,
-      agentRole,
-      round,
-      parentSessionId: null,
-      forkedAtCursor: null,
-    }),
+    identity: request.codingRequest.version !== "codeops.coding-request/v3"
+      ? temporalCodeOpsSessionIdentitySchema.parse(identity)
+      : trustedTemporalCodeOpsSessionIdentitySchema.parse({
+          version: "codeops.temporal-session-identity/v2",
+          ...identity,
+          planeWorkItem: request.codingRequest.planeWorkItem,
+        }),
   };
 }
 
@@ -115,7 +123,10 @@ export async function projectAgentJobSessionStarted(input: {
   const now = (input.now ?? (() => new Date()))();
   const initialized = await initializeSessionFromJob(input.client, {
     request: {
-      version: "codeops.session-job-initialization/v1",
+      version: "version" in projected.identity &&
+          projected.identity.version === "codeops.temporal-session-identity/v2"
+        ? "codeops.session-job-initialization/v2"
+        : "codeops.session-job-initialization/v1",
       sessionId: projected.sessionId,
       identity: projected.identity,
       leaseId: deterministicUuid(`lease:${input.runId}`),

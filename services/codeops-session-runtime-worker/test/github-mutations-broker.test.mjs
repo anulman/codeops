@@ -9,6 +9,77 @@ const dispatch = {
 const repository = "anulman/codeops";
 const expectedHeadSha = "a".repeat(40);
 
+test("links the trusted Plane reference before permission and provider identity", async () => {
+  const broker = new GitHubMutationsBroker();
+  const port = await broker.listen(0);
+  const trustedDispatch = {
+    ...dispatch,
+    snapshot: {
+      identity: {
+        version: "codeops.temporal-session-identity/v2",
+        planeWorkItem: {
+          version: "codeops.trusted-plane-work-item-reference/v1",
+          apiOrigin: "https://plane.example.com/",
+          workspaceSlug: "engineering",
+          workspaceId: "11111111-1111-4111-8111-111111111111",
+          projectId: "22222222-2222-4222-8222-222222222222",
+          projectIdentifier: "COAUTO",
+          workItemId: "33333333-3333-4333-8333-333333333333",
+          sequenceId: 19,
+          reference: "COAUTO-19",
+        },
+      },
+    },
+  };
+  const observed = [];
+  try {
+    await broker.run(trustedDispatch, {
+      async requestPermission(input) {
+        observed.push(JSON.parse(input.request.operation.payloadJson));
+        return { outcome: "selected", acpOptionId: "allow-once" };
+      },
+      async mutateGitHub(input) {
+        observed.push(input.input);
+        return {
+          version: "codeops.github-pull-request-create-result/v1",
+          repository,
+          operationId: input.operationId,
+          pullRequestNumber: 94,
+          headSha: input.input.expectedHeadSha,
+          baseSha: input.input.expectedBaseSha,
+          headBranch: input.input.headBranch,
+          baseBranch: input.input.baseBranch,
+          title: input.input.title,
+          body: input.input.body,
+          draft: input.input.draft,
+          url: "https://github.com/anulman/codeops/pull/94",
+        };
+      },
+    }, async () => {
+      const response = await fetch(`http://127.0.0.1:${port}/v1/github-mutations/pull-request/create`, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          repository,
+          expectedHeadSha,
+          expectedBaseSha: "b".repeat(40),
+          headBranch: "codeops/trusted-plane-link",
+          baseBranch: "main",
+          title: "Link COAUTO-19",
+          body: "Fixes COAUTO-19 and `COAUTO-19`.",
+          draft: true,
+        }),
+      });
+      assert.equal(response.status, 200);
+    });
+    const expected = "Fixes [COAUTO-19](https://plane.example.com/engineering/browse/COAUTO-19) and `COAUTO-19`.";
+    assert.equal(observed[0].body, expected);
+    assert.equal(observed[1].body, expected);
+  } finally {
+    await broker.close();
+  }
+});
+
 test("gates each bounded mutation on one exact allow-once decision", async () => {
   const broker = new GitHubMutationsBroker();
   const port = await broker.listen(0);

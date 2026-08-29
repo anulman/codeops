@@ -256,6 +256,7 @@ const workItemSnapshotSchema = z
     module: uuid.nullable().optional(),
     parent: uuid.nullable().optional(),
     updated_at: z.string().datetime({ offset: true }),
+    sequence_id: z.number().int().positive().max(2_147_483_647).optional(),
   })
   .passthrough();
 
@@ -266,6 +267,7 @@ const projectSnapshotSchema = z
     name: z.string(),
     description_html: z.string().nullable().optional(),
     updated_at: z.string().datetime({ offset: true }),
+    identifier: z.string().regex(/^[A-Z][A-Z0-9]{0,19}$/).optional(),
   })
   .passthrough();
 
@@ -656,10 +658,21 @@ async function admitPlaneComment(input: {
       canonicalSerialize({
         project: {
           id: project.id,
+          ...(project.identifier === undefined
+            ? {}
+            : { identifier: project.identifier }),
           name: project.name,
           descriptionHtml: project.description_html ?? null,
           updatedAt: project.updated_at,
         },
+        ...(workItem.sequence_id === undefined
+          ? {}
+          : {
+              workItemReference: {
+                id: workItem.id,
+                sequenceId: workItem.sequence_id,
+              },
+            }),
         ticketSnapshot,
         trigger: {
           commentId: event.commentId,
@@ -863,6 +876,12 @@ export async function admitPlaneReadyTransition(input: {
   allowedHumanActorIds: ReadonlySet<string>;
   aiPersonaUserIds?: ReadonlySet<string>;
   readyStateId: string;
+  planeAuthority: {
+    apiOrigin: string;
+    workspaceSlug: string;
+    workspaceId: string;
+    projectId: string;
+  };
   repository: { owner: string; name: string };
   controlPlaneSha: string;
   baseSha: string;
@@ -901,6 +920,14 @@ export async function admitPlaneReadyTransition(input: {
     .array(workItemSnapshotSchema)
     .max(200)
     .parse(source.projectWorkItems ?? []);
+  if (
+    input.planeAuthority.workspaceId !== payload.workspace_id ||
+    input.planeAuthority.projectId !== project.id
+  ) {
+    throw new Error(
+      "Plane work-item reference is not bound to the configured project authority",
+    );
+  }
   const snapshotDriftMs =
     Date.parse(workItem.updated_at) - Date.parse(payload.data.updated_at);
   const signedLabels = [...payload.data.labels].sort();
@@ -1023,15 +1050,28 @@ export async function admitPlaneReadyTransition(input: {
       .sort((left, right) => left.workItemId.localeCompare(right.workItemId)),
   };
   const eventId = identified.eventId;
+  const hasTrustedPlaneReference =
+    workItem.sequence_id !== undefined && project.identifier !== undefined;
   const planeRevisionDigest = `sha256:${createHash("sha256")
     .update(
       canonicalSerialize({
         project: {
           id: project.id,
+          ...(project.identifier === undefined
+            ? {}
+            : { identifier: project.identifier }),
           name: project.name,
           descriptionHtml: project.description_html ?? null,
           updatedAt: project.updated_at,
         },
+        ...(workItem.sequence_id === undefined
+          ? {}
+          : {
+              workItemReference: {
+                id: workItem.id,
+                sequenceId: workItem.sequence_id,
+              },
+            }),
         ticketSnapshot,
         transition,
       }),
@@ -1100,7 +1140,24 @@ export async function admitPlaneReadyTransition(input: {
   return {
     eventId,
     request: codingRequestSchema.parse({
-      version: contractVersions.codingRequest,
+      version: hasTrustedPlaneReference
+        ? contractVersions.codingRequest
+        : "codeops.coding-request/v2",
+      ...(hasTrustedPlaneReference
+        ? {
+            planeWorkItem: {
+              version: "codeops.trusted-plane-work-item-reference/v1",
+              apiOrigin: input.planeAuthority.apiOrigin,
+              workspaceSlug: input.planeAuthority.workspaceSlug,
+              workspaceId: input.planeAuthority.workspaceId,
+              projectId: input.planeAuthority.projectId,
+              projectIdentifier: project.identifier,
+              workItemId: workItem.id,
+              sequenceId: workItem.sequence_id,
+              reference: `${project.identifier}-${workItem.sequence_id}`,
+            },
+          }
+        : {}),
       requestId,
       eventId,
       workspaceId: payload.workspace_id,

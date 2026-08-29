@@ -8,6 +8,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
+import { codingRequestSchema } from "@codeops/codeops-contracts";
 import { canonicalJsonText } from "@codeops/codeops-contracts/canonical-json";
 
 function required(name) {
@@ -52,11 +53,6 @@ const contextDirectory = required("CODEOPS_CONTEXT_DIR");
 if (!path.isAbsolute(contextDirectory)) {
   throw new Error("CODEOPS_CONTEXT_DIR must be absolute");
 }
-await mkdir(contextDirectory, { recursive: true, mode: 0o700 });
-const contextMetadata = await lstat(contextDirectory);
-if (!contextMetadata.isDirectory() || contextMetadata.isSymbolicLink()) {
-  throw new Error("project context output must be a real directory");
-}
 
 const projectContext = await loadJson(
   "CODEOPS_PROJECT_CONTEXT_B64",
@@ -78,6 +74,33 @@ const computedContextDigest = `sha256:${createHash("sha256")
   .digest("hex")}`;
 if (digest !== computedContextDigest) {
   throw new Error("project context digest mismatch");
+}
+
+const codingRequest =
+  process.env.CODEOPS_CODING_REQUEST_B64 ||
+    process.env.CODEOPS_CODING_REQUEST_FILE
+    ? codingRequestSchema.parse(await loadJson(
+        "CODEOPS_CODING_REQUEST_B64",
+        "CODEOPS_CODING_REQUEST_FILE",
+        "/input/coding-request.json",
+      ))
+    : undefined;
+if (
+  codingRequest !== undefined &&
+  (
+    codingRequest.workItem.baseSha !== projectContext.baseSha ||
+    codingRequest.controlPlaneSha !== projectContext.controlPlaneSha ||
+    codingRequest.projectId !== projectContext.project.projectId ||
+    codingRequest.projectContext.digest !== projectContext.digest
+  )
+) {
+  throw new Error("coding request does not match the project context");
+}
+
+await mkdir(contextDirectory, { recursive: true, mode: 0o700 });
+const contextMetadata = await lstat(contextDirectory);
+if (!contextMetadata.isDirectory() || contextMetadata.isSymbolicLink()) {
+  throw new Error("project context output must be a real directory");
 }
 
 let previousPath = "";
@@ -121,26 +144,7 @@ await writeFile(projectContextPath, `${JSON.stringify(projectContext)}\n`, {
 });
 await chmod(projectContextPath, 0o400);
 
-if (
-  process.env.CODEOPS_CODING_REQUEST_B64 ||
-  process.env.CODEOPS_CODING_REQUEST_FILE
-) {
-  const codingRequest = await loadJson(
-    "CODEOPS_CODING_REQUEST_B64",
-    "CODEOPS_CODING_REQUEST_FILE",
-    "/input/coding-request.json",
-  );
-  if (
-    codingRequest?.version !== "codeops.coding-request/v2" ||
-    codingRequest.workItem?.baseSha !== projectContext.baseSha ||
-    codingRequest.controlPlaneSha !== projectContext.controlPlaneSha ||
-    codingRequest.projectId !== projectContext.project?.projectId ||
-    codingRequest.projectContext?.digest !== projectContext.digest ||
-    codingRequest.ticketSnapshot?.workItemId !==
-      codingRequest.workItem?.workItemId
-  ) {
-    throw new Error("coding request does not match the project context");
-  }
+if (codingRequest !== undefined) {
   const codingRequestPath = path.join(contextDirectory, "coding-request.json");
   await writeFile(codingRequestPath, `${JSON.stringify(codingRequest)}\n`, {
     mode: 0o400,

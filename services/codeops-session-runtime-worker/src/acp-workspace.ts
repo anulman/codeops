@@ -21,6 +21,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
   canonicalJsonText,
+  isWorkspaceSessionIdentity,
   sessionPermissionOperationSchema,
   sessionTimelineUpdateSchema,
   workspaceManifestSchema,
@@ -1185,7 +1186,10 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     if (acpSessionId === null) {
       throw new Error("checkpoint requires one established ACP session");
     }
-    if ("version" in dispatch.snapshot.identity) {
+    if (
+      "version" in dispatch.snapshot.identity &&
+      dispatch.snapshot.identity.version === "codeops.session-workspace-identity/v1"
+    ) {
       if (this.#artifacts === undefined) {
         throw new Error("workspace checkpoint requires durable artifact storage");
       }
@@ -1293,7 +1297,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
       type: "fork",
       material: {
         sessionId: childBrokerSessionId,
-        ...("version" in dispatch.snapshot.identity
+        ...(isWorkspaceSessionIdentity(dispatch.snapshot.identity)
           ? { workspace: true as const }
           : { branch: `${dispatch.snapshot.identity.branch}-fork-${suffix}` }),
         workflowId: `fork-${suffix}`,

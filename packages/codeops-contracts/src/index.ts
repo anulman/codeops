@@ -5,6 +5,7 @@ import {
 } from "node:crypto";
 import { z } from "zod";
 import { canonicalJsonText } from "./canonical-json.js";
+import { trustedPlaneWorkItemReferenceSchema } from "./session-broker.js";
 export {
   canonicalJsonBytes,
   canonicalJsonText,
@@ -59,6 +60,8 @@ export {
   legacySessionIdentitySchema,
   workspaceSessionIdentitySchema,
   temporalCodeOpsSessionIdentitySchema,
+  trustedTemporalCodeOpsSessionIdentitySchema,
+  trustedPlaneWorkItemReferenceSchema,
   sessionJobInitializationRequestSchema,
   sessionJobInitializationResponseSchema,
   sessionLeaseSchema,
@@ -87,6 +90,7 @@ export {
   type LegacySessionIdentity,
   type WorkspaceSessionIdentity,
   type TemporalCodeOpsSessionIdentity,
+  type TrustedPlaneWorkItemReference,
   type SessionPermissionRequest,
   type SessionPermissionOperation,
   type SessionSnapshot,
@@ -332,8 +336,8 @@ const VERSION = {
   researchMutationBatch: "codeops.research-mutation-batch/v2",
   readinessGate: "codeops.readiness-gate/v1",
   projectContext: "codeops.project-context/v1",
-  codingRequest: "codeops.coding-request/v2",
-  agentJobDispatch: "codeops.agent-job-dispatch/v1",
+  codingRequest: "codeops.coding-request/v3",
+  agentJobDispatch: "codeops.agent-job-dispatch/v2",
   agentJobDispatchResult: "codeops.agent-job-dispatch-result/v1",
   adversarialReview: "codeops.adversarial-review/v1",
   workflowTransitionNotice: "codeops.workflow-transition-notice/v1",
@@ -1591,7 +1595,7 @@ export const agentJobDispatchRequestSchema = z
   .discriminatedUnion("role", [
     agentJobBaseSchema
       .extend({
-        version: z.literal(VERSION.agentJobDispatch),
+        version: z.enum(["codeops.agent-job-dispatch/v1", VERSION.agentJobDispatch]),
         role: z.literal("coding-agent"),
         codingRequest: z.lazy(() => codingRequestSchema),
         codingRound: z.number().int().min(1).max(4).optional(),
@@ -1606,7 +1610,7 @@ export const agentJobDispatchRequestSchema = z
       .strict(),
     agentJobBaseSchema
       .extend({
-        version: z.literal(VERSION.agentJobDispatch),
+        version: z.enum(["codeops.agent-job-dispatch/v1", VERSION.agentJobDispatch]),
         role: z.literal("critic-agent"),
         codingRequest: z.lazy(() => codingRequestSchema),
         codingRound: z.number().int().min(1).max(4),
@@ -1615,7 +1619,7 @@ export const agentJobDispatchRequestSchema = z
       .strict(),
     agentJobBaseSchema
       .extend({
-        version: z.literal(VERSION.agentJobDispatch),
+        version: z.enum(["codeops.agent-job-dispatch/v1", VERSION.agentJobDispatch]),
         role: z.literal("qa-contract-researcher"),
         researchRequest: researchRequestSchema,
         researchStage: z.discriminatedUnion("kind", [
@@ -1637,6 +1641,16 @@ export const agentJobDispatchRequestSchema = z
   ])
   .superRefine((value, context) => {
     if (value.role === "coding-agent" || value.role === "critic-agent") {
+      const expectedCodingVersion = value.version === "codeops.agent-job-dispatch/v1"
+        ? "codeops.coding-request/v2"
+        : VERSION.codingRequest;
+      if (value.codingRequest.version !== expectedCodingVersion) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["version"],
+          message: "coding dispatch and coding request contract versions must advance together",
+        });
+      }
       if (
         value.workItemId !== value.codingRequest.workItem.workItemId ||
         value.workflowId !== value.codingRequest.requestId ||
@@ -1984,9 +1998,7 @@ export const researchPacketSchema = z
     }
   });
 
-export const codingRequestSchema = z
-  .object({
-    version: z.literal(VERSION.codingRequest),
+const codingRequestShape = {
     requestId: identifier,
     eventId: identifier,
     ...requestProjectIdentity,
@@ -2007,9 +2019,12 @@ export const codingRequestSchema = z
     humanReview: humanReviewRequestSchema.optional(),
     adoptedPullRequest: adoptedPullRequestSchema.optional(),
     workItem: workItemRequestSchema,
-  })
-  .strict()
-  .superRefine((request, context) => {
+} as const;
+
+function validateCodingRequest(
+  request: z.infer<z.ZodObject<typeof codingRequestShape>>,
+  context: z.RefinementCtx,
+): void {
     if (
       request.requestId !== request.workItem.workflowId ||
       request.workItem.runId !== request.workItem.workflowId
@@ -2100,7 +2115,42 @@ export const codingRequestSchema = z
         });
       }
     }
+}
+
+const legacyCodingRequestSchema = z
+  .object({
+    version: z.literal("codeops.coding-request/v2"),
+    ...codingRequestShape,
+  })
+  .strict()
+  .superRefine(validateCodingRequest);
+
+const currentCodingRequestSchema = z
+  .object({
+    version: z.literal(VERSION.codingRequest),
+    planeWorkItem: trustedPlaneWorkItemReferenceSchema,
+    ...codingRequestShape,
+  })
+  .strict()
+  .superRefine((request, context) => {
+    validateCodingRequest(request, context);
+    if (
+      request.planeWorkItem.workspaceId !== request.workspaceId ||
+      request.planeWorkItem.projectId !== request.projectId ||
+      request.planeWorkItem.workItemId !== request.workItem.workItemId
+    ) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["planeWorkItem"],
+        message: "trusted Plane reference must match the coding request identity",
+      });
+    }
   });
+
+export const codingRequestSchema = z.union([
+  legacyCodingRequestSchema,
+  currentCodingRequestSchema,
+]);
 
 export const existingPullRequestAdoptionRequestSchema = z
   .object({
