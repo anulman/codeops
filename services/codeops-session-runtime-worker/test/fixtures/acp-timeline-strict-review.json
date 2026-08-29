@@ -1,0 +1,115 @@
+[
+  {
+    "sessionUpdate": "agent_thought_chunk",
+    "messageId": "review-thought-1",
+    "content": {
+      "type": "text",
+      "text": "Inspect "
+    }
+  },
+  {
+    "sessionUpdate": "agent_thought_chunk",
+    "messageId": "review-thought-1",
+    "content": {
+      "type": "text",
+      "text": "the candidate."
+    }
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "review-tool",
+    "title": "Run strict review",
+    "name": "strict-review",
+    "kind": "execute",
+    "status": "pending"
+  },
+  {
+    "sessionUpdate": "plan_update",
+    "plan": {
+      "type": "markdown",
+      "planId": "review-plan",
+      "content": "Review the candidate."
+    }
+  },
+  {
+    "sessionUpdate": "current_mode_update",
+    "currentModeId": "review"
+  },
+  {
+    "sessionUpdate": "agent_thought_chunk",
+    "messageId": "review-thought-2",
+    "content": {
+      "type": "text",
+      "text": "Apply accepted findings."
+    }
+  },
+  {
+    "sessionUpdate": "available_commands_update",
+    "availableCommands": [
+      {
+        "name": "review",
+        "description": "Review the candidate."
+      }
+    ]
+  },
+  {
+    "sessionUpdate": "usage_update",
+    "used": 900,
+    "size": 8000
+  },
+  {
+    "sessionUpdate": "plan_update",
+    "plan": {
+      "type": "items",
+      "planId": "fix-plan",
+      "entries": [
+        {
+          "content": "Apply the fix.",
+          "priority": "high",
+          "status": "pending"
+        }
+      ]
+    }
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "review-tool",
+    "status": "in_progress"
+  },
+  {
+    "sessionUpdate": "plan_removed",
+    "planId": "review-plan"
+  },
+  {
+    "sessionUpdate": "current_mode_update",
+    "currentModeId": "code"
+  },
+  {
+    "sessionUpdate": "available_commands_update",
+    "availableCommands": [
+      {
+        "name": "fix",
+        "description": "Apply accepted findings."
+      }
+    ]
+  },
+  {
+    "sessionUpdate": "usage_update",
+    "used": 1800,
+    "size": 8000
+  },
+  {
+    "sessionUpdate": "plan_update",
+    "plan": {
+      "type": "items",
+      "planId": "fix-plan",
+      "entries": [
+        {
+          "content": "Apply the fix.",
+          "priority": "high",
+          "status": "completed"
+        }
+      ]
+    }
+  }
+]

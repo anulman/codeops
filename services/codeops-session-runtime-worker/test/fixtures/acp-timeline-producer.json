@@ -1,0 +1,40 @@
+[
+  {
+    "sessionUpdate": "tool_call",
+    "toolCallId": "producer-tool-1",
+    "title": "Inspect source tree",
+    "kind": "read",
+    "status": "pending",
+    "locations": [
+      {
+        "path": "/workspace"
+      }
+    ],
+    "rawInput": {
+      "path": "/workspace",
+      "credential": "must-not-be-retained"
+    }
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "producer-tool-1",
+    "status": "in_progress",
+    "rawInput": {
+      "cursor": "must-not-be-retained"
+    }
+  },
+  {
+    "sessionUpdate": "tool_call_update",
+    "toolCallId": "producer-tool-1",
+    "status": "completed",
+    "content": [
+      {
+        "type": "content",
+        "content": {
+          "type": "text",
+          "text": "Inspection complete."
+        }
+      }
+    ]
+  }
+]
