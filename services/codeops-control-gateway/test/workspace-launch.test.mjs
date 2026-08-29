@@ -83,6 +83,8 @@ test("admits one exact catalog-bound workspace launch", async () => {
   assert.equal(launch.workspace.sources[0].resolvedSha, "a".repeat(40));
   assert.deepEqual(launch.policy, implementPolicy);
   assert.equal(target.created.request.prompt, request.prompt);
+  assert.equal(target.created.maximumActivePerPrincipal, 5);
+  assert.equal(target.created.maximumActiveGlobal, 8);
   assert.equal("prompt" in launch, false);
 });
 
@@ -177,7 +179,7 @@ test("enforces principal and global active launch quotas", async () => {
       request,
       principalId: "anulman@gmail.com",
       resolver,
-      store: store({ principalActive: 2 }),
+      store: store({ principalActive: 5 }),
     }),
     WorkspaceLaunchQuotaError,
   );

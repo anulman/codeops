@@ -12,7 +12,7 @@ import {
 } from "@codeops/codeops-contracts";
 import { workspaceContextAttachmentDescriptors } from "@codeops/codeops-contracts/workspace-context-node";
 
-const MAX_ACTIVE_PER_PRINCIPAL = 2;
+const MAX_ACTIVE_PER_PRINCIPAL = 5;
 const MAX_ACTIVE_GLOBAL = 8;
 
 function digest(value: unknown): string {
