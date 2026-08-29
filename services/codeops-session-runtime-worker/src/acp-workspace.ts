@@ -57,7 +57,10 @@ const MAX_SCRATCH_ARTIFACT_BYTES = 16_000_000;
 const MAX_ASSISTANT_RESPONSE_CHARS = 200_000;
 const MAX_TIMELINE_UPDATES = 2_000;
 const MAX_TIMELINE_UPDATE_BYTES = 800_000;
+const MAX_TIMELINE_PROCESSED_UPDATES = 2_500;
 const GIT_SHA = /^[0-9a-f]{40}$/;
+
+const acpTimelineProcessedUpdates = Symbol("acpTimelineProcessedUpdates");
 
 function codeopsMcpServers(): acp.McpServer[] {
   return [
@@ -178,6 +181,19 @@ export function appendAcpAssistantText(
 export interface AcpPromptCapture {
   readonly response: string;
   readonly updates: SessionTimelineUpdate[];
+  readonly [acpTimelineProcessedUpdates]?: number;
+}
+
+function capturedAcpTimeline(
+  response: string,
+  updates: SessionTimelineUpdate[],
+  processedUpdates: number,
+): AcpPromptCapture {
+  const capture: AcpPromptCapture = { response, updates };
+  Object.defineProperty(capture, acpTimelineProcessedUpdates, {
+    value: processedUpdates,
+  });
+  return capture;
 }
 
 function optionalValue<Value>(value: Value | null | undefined): Value | undefined {
@@ -384,12 +400,19 @@ export function captureAcpTimelineUpdate(
   current: AcpPromptCapture,
   update: acp.SessionUpdate,
 ): AcpPromptCapture {
+  const processedUpdates =
+    (current[acpTimelineProcessedUpdates] ?? current.updates.length) + 1;
+  if (processedUpdates > MAX_TIMELINE_PROCESSED_UPDATES) {
+    throw new Error("ACP timeline exceeds 2500 processed updates");
+  }
   const normalized = normalizeAcpTimelineUpdate(update);
   const response =
     update.sessionUpdate === "agent_message_chunk" && update.content.type === "text"
       ? appendAcpAssistantText(current.response, update.content.text)
       : current.response;
-  if (normalized === null) return { response, updates: current.updates };
+  if (normalized === null) {
+    return capturedAcpTimeline(response, current.updates, processedUpdates);
+  }
   const updates = [...current.updates];
   const previous = updates.at(-1);
   if (
@@ -408,6 +431,44 @@ export function captureAcpTimelineUpdate(
         text: appendAcpAssistantText(previous.content.text, normalized.content.text),
       },
     });
+  } else if (normalized.kind === "tool_call" || normalized.kind === "tool_call_update") {
+    const retainedIndex = updates.findIndex((candidate) =>
+      (candidate.kind === "tool_call" || candidate.kind === "tool_call_update") &&
+      candidate.toolCallId === normalized.toolCallId
+    );
+    if (retainedIndex === -1) {
+      updates.push(normalized);
+    } else {
+      const retained = updates[retainedIndex]!;
+      updates[retainedIndex] = sessionTimelineUpdateSchema.parse({
+        ...retained,
+        ...normalized,
+        kind: retained.kind,
+      });
+    }
+  } else if (
+    normalized.kind === "available_commands" ||
+    normalized.kind === "current_mode" ||
+    normalized.kind === "configuration" ||
+    normalized.kind === "usage" ||
+    normalized.kind === "plan"
+  ) {
+    const retainedIndex = updates.findIndex((candidate) => candidate.kind === normalized.kind);
+    if (retainedIndex === -1) {
+      updates.push(normalized);
+    } else {
+      updates[retainedIndex] = normalized;
+    }
+  } else if (normalized.kind === "plan_update" || normalized.kind === "plan_removed") {
+    const retainedIndex = updates.findIndex((candidate) =>
+      (candidate.kind === "plan_update" || candidate.kind === "plan_removed") &&
+      candidate.planId === normalized.planId
+    );
+    if (retainedIndex === -1) {
+      updates.push(normalized);
+    } else {
+      updates[retainedIndex] = normalized;
+    }
   } else {
     updates.push(normalized);
   }
@@ -417,7 +478,7 @@ export function captureAcpTimelineUpdate(
   if (Buffer.byteLength(JSON.stringify(updates)) > MAX_TIMELINE_UPDATE_BYTES) {
     throw new Error("ACP timeline exceeds 800000 retained bytes");
   }
-  return { response, updates };
+  return capturedAcpTimeline(response, updates, processedUpdates);
 }
 
 type PromptDispatch = SessionRuntimeDispatch & {

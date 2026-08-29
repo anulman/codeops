@@ -101,7 +101,7 @@ test("normalizes ACP plans, tools, reasoning, message boundaries, and media", ()
     { response: "", updates: [] },
   );
   assert.equal(capture.response, "First message.Second message.");
-  assert.equal(capture.updates.length, 8);
+  assert.equal(capture.updates.length, 7);
   assert.deepEqual(capture.updates[0], {
     kind: "user_content",
     messageId: "user-1",
@@ -111,6 +111,15 @@ test("normalizes ACP plans, tools, reasoning, message boundaries, and media", ()
     kind: "thought",
     messageId: "thought-1",
     content: { type: "text", text: "Check the contract." },
+  });
+  assert.deepEqual(capture.updates[3], {
+    kind: "tool_call",
+    toolCallId: "tool-1",
+    title: "Read contract",
+    toolKind: "read",
+    status: "completed",
+    content: [{ type: "content", content: { type: "text", text: "Done." } }],
+    locations: [{ path: "/workspace/contract.ts", line: 9 }],
   });
   assert.deepEqual(capture.updates.slice(-3).map(({ kind, messageId }) => [kind, messageId]), [
     ["assistant_content", "message-1"],
@@ -192,23 +201,238 @@ test("retains bounded ACP mode, configuration, command, and usage updates", () =
   );
 });
 
-test("retains at most 2000 ACP timeline updates without changing the byte ceiling", () => {
+test("compacts more than 2000 updates for one ACP tool within the work bound", () => {
+  let capture = captureAcpTimelineUpdate(
+    { response: "", updates: [] },
+    {
+      sessionUpdate: "tool_call",
+      toolCallId: "tool-1",
+      title: "Run checks",
+      kind: "execute",
+      status: "pending",
+      locations: [{ path: "/workspace" }],
+    },
+  );
+  for (let index = 0; index < 2_100; index += 1) {
+    capture = captureAcpTimelineUpdate(capture, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tool-1",
+      status: index === 2_099 ? "completed" : "in_progress",
+    });
+  }
+  assert.deepEqual(capture.updates, [{
+    kind: "tool_call",
+    toolCallId: "tool-1",
+    title: "Run checks",
+    toolKind: "execute",
+    status: "completed",
+    locations: [{ path: "/workspace" }],
+  }]);
+});
+
+test("rejects compactable updates beyond the finite processed-work bound", () => {
+  let capture = { response: "", updates: [] };
+  for (let index = 0; index < 2_500; index += 1) {
+    capture = captureAcpTimelineUpdate(capture, {
+      sessionUpdate: "current_mode_update",
+      currentModeId: index % 2 === 0 ? "code" : "review",
+    });
+  }
+  assert.equal(capture.updates.length, 1);
+  assert.deepEqual(Object.keys(capture), ["response", "updates"]);
+  assert.throws(
+    () => captureAcpTimelineUpdate(capture, {
+      sessionUpdate: "current_mode_update",
+      currentModeId: "code",
+    }),
+    /ACP timeline exceeds 2500 processed updates/,
+  );
+});
+
+test("preserves 2000 distinct ACP updates and rejects the 2001st", () => {
   let capture = { response: "", updates: [] };
   for (let index = 0; index < 2_000; index += 1) {
     capture = captureAcpTimelineUpdate(capture, {
-      sessionUpdate: "current_mode_update",
-      currentModeId: "code",
+      sessionUpdate: "user_message_chunk",
+      messageId: `user-${index}`,
+      content: { type: "text", text: "x" },
     });
   }
   assert.equal(capture.updates.length, 2_000);
   assert.ok(Buffer.byteLength(JSON.stringify(capture.updates)) < 800_000);
   assert.throws(
     () => captureAcpTimelineUpdate(capture, {
-      sessionUpdate: "current_mode_update",
-      currentModeId: "code",
+      sessionUpdate: "user_message_chunk",
+      messageId: "user-2000",
+      content: { type: "text", text: "x" },
     }),
     /ACP timeline exceeds 2000 retained updates/,
   );
+});
+
+test("rejects high-cardinality tool and plan identities at the retained bound", () => {
+  for (const identity of ["tool", "plan"]) {
+    let capture = { response: "", updates: [] };
+    for (let index = 0; index < 2_000; index += 1) {
+      capture = captureAcpTimelineUpdate(capture, identity === "tool"
+        ? {
+            sessionUpdate: "tool_call_update",
+            toolCallId: `tool-${index}`,
+            status: "pending",
+          }
+        : {
+            sessionUpdate: "plan_removed",
+            planId: `plan-${index}`,
+          });
+    }
+    assert.equal(capture.updates.length, 2_000);
+    assert.throws(
+      () => captureAcpTimelineUpdate(capture, identity === "tool"
+        ? {
+            sessionUpdate: "tool_call_update",
+            toolCallId: "tool-2000",
+            status: "pending",
+          }
+        : {
+            sessionUpdate: "plan_removed",
+            planId: "plan-2000",
+          }),
+      /ACP timeline exceeds 2000 retained updates/,
+    );
+  }
+});
+
+test("applies the byte ceiling after compacting a near-limit ACP tool update", () => {
+  let capture = captureAcpTimelineUpdate(
+    { response: "", updates: [] },
+    { sessionUpdate: "tool_call", toolCallId: "tool-1", title: "Inspect" },
+  );
+  for (let index = 0; index < 8; index += 1) {
+    capture = captureAcpTimelineUpdate(capture, {
+      sessionUpdate: "user_message_chunk",
+      messageId: `large-${index}`,
+      content: { type: "text", text: "x".repeat(99_000) },
+    });
+  }
+  const retainedBytes = Buffer.byteLength(JSON.stringify(capture.updates));
+  assert.ok(retainedBytes > 790_000 && retainedBytes < 800_000);
+  assert.throws(
+    () => captureAcpTimelineUpdate(capture, {
+      sessionUpdate: "tool_call_update",
+      toolCallId: "tool-1",
+      content: [{
+        type: "content",
+        content: { type: "text", text: "y".repeat(10_000) },
+      }],
+    }),
+    /ACP timeline exceeds 800000 retained bytes/,
+  );
+});
+
+test("replays representative producer and strict-review fixtures deterministically", async () => {
+  const fixture = async (name) => JSON.parse(await readFile(
+    new URL(`./fixtures/${name}`, import.meta.url),
+    "utf8",
+  ));
+  const replay = (input) => input.reduce(
+    (current, update) => captureAcpTimelineUpdate(current, update),
+    { response: "", updates: [] },
+  );
+  const producer = await fixture("acp-timeline-producer.json");
+  const producerCapture = replay(producer);
+  assert.deepEqual(producerCapture.updates, [{
+    kind: "tool_call",
+    toolCallId: "producer-tool-1",
+    title: "Inspect source tree",
+    toolKind: "read",
+    status: "completed",
+    content: [{
+      type: "content",
+      content: { type: "text", text: "Inspection complete." },
+    }],
+    locations: [{ path: "/workspace" }],
+  }]);
+  assert.equal("rawInput" in producerCapture.updates[0], false);
+
+  const strictReview = await fixture("acp-timeline-strict-review.json");
+  const firstReplay = replay(strictReview);
+  const secondReplay = replay(strictReview);
+  assert.deepEqual(secondReplay, firstReplay);
+  assert.deepEqual(firstReplay.updates.map(({ kind }) => kind), [
+    "thought",
+    "tool_call_update",
+    "plan_removed",
+    "current_mode",
+    "thought",
+    "available_commands",
+    "usage",
+    "plan_update",
+  ]);
+  assert.deepEqual(firstReplay.updates[1], {
+    kind: "tool_call_update",
+    toolCallId: "review-tool",
+    title: "Run strict review",
+    name: "strict-review",
+    toolKind: "execute",
+    status: "in_progress",
+  });
+  assert.deepEqual(firstReplay.updates[2], {
+    kind: "plan_removed",
+    planId: "review-plan",
+  });
+  assert.equal(firstReplay.updates[3].modeId, "code");
+  assert.equal(firstReplay.updates[5].commands[0].name, "fix");
+  assert.equal(firstReplay.updates[6].usedTokens, 1_800);
+  assert.equal(firstReplay.updates[7].content.entries[0].status, "completed");
+});
+
+test("keeps singleton and plan identities in their first mixed-order slots", () => {
+  const configuration = (currentValue) => ({
+    sessionUpdate: "config_option_update",
+    configOptions: [{
+      type: "boolean",
+      id: "strict",
+      name: "Strict review",
+      currentValue,
+    }],
+  });
+  const input = [
+    { sessionUpdate: "plan", entries: [{ content: "Initial", priority: "high", status: "pending" }] },
+    configuration(false),
+    { sessionUpdate: "agent_message_chunk", content: { type: "text", text: "Keep me." } },
+    { sessionUpdate: "plan_update", plan: { type: "markdown", planId: "plan-a", content: "First" } },
+    { sessionUpdate: "current_mode_update", currentModeId: "review" },
+    { sessionUpdate: "available_commands_update", availableCommands: [{ name: "review", description: "Review." }] },
+    { sessionUpdate: "usage_update", used: 10, size: 100 },
+    { sessionUpdate: "plan_update", plan: { type: "markdown", planId: "plan-b", content: "Other" } },
+    { sessionUpdate: "usage_update", used: 20, size: 100 },
+    { sessionUpdate: "plan_removed", planId: "plan-a" },
+    { sessionUpdate: "plan", entries: [{ content: "Latest", priority: "low", status: "completed" }] },
+    configuration(true),
+    { sessionUpdate: "available_commands_update", availableCommands: [{ name: "fix", description: "Fix." }] },
+    { sessionUpdate: "current_mode_update", currentModeId: "code" },
+  ];
+  const capture = input.reduce(
+    (current, update) => captureAcpTimelineUpdate(current, update),
+    { response: "", updates: [] },
+  );
+  assert.deepEqual(capture.updates.map(({ kind }) => kind), [
+    "plan",
+    "configuration",
+    "assistant_content",
+    "plan_removed",
+    "current_mode",
+    "available_commands",
+    "usage",
+    "plan_update",
+  ]);
+  assert.equal(capture.updates[0].entries[0].content, "Latest");
+  assert.equal(capture.updates[1].options[0].currentValue, true);
+  assert.equal(capture.updates[3].planId, "plan-a");
+  assert.equal(capture.updates[4].modeId, "code");
+  assert.equal(capture.updates[5].commands[0].name, "fix");
+  assert.equal(capture.updates[6].usedTokens, 20);
+  assert.equal(capture.updates[7].planId, "plan-b");
 });
 
 test("falls back to a new ACP session only when session/fork is unsupported", async () => {
