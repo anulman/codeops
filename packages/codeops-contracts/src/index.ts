@@ -133,6 +133,12 @@ export {
   type SessionSupervisionReconciliationResult,
 } from "./session-supervision.js";
 export {
+  workItemAdmissionRequestSchema,
+  workItemAdmissionResultSchema,
+  type WorkItemAdmissionRequest,
+  type WorkItemAdmissionResult,
+} from "./work-item-admission.js";
+export {
   DEFAULT_SESSION_BUDGET_LIMITS,
   projectSessionBudget,
   sessionBudgetLimitsSchema,
