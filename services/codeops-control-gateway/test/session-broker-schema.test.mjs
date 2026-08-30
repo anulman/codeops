@@ -60,6 +60,40 @@ const runtimeTerminalReconciliationRevertUrl = new URL(
   "../sql/session-runtime-terminal-reconciliation-v1-revert.sql",
   import.meta.url,
 );
+const workItemAdmissionUrl = new URL("../sql/work-item-admission-v1.sql", import.meta.url);
+const workItemAdmissionRevertUrl = new URL("../sql/work-item-admission-v1-revert.sql", import.meta.url);
+const workItemAdmissionSourceUrl = new URL("../src/work-item-admission.ts", import.meta.url);
+
+test("defines exact immutable admission authority and a fail-closed revert", async () => {
+  const sql = await readFile(workItemAdmissionUrl, "utf8");
+  const revert = await readFile(workItemAdmissionRevertUrl, "utf8");
+  const source = await readFile(workItemAdmissionSourceUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.project_plan_approvals/);
+  assert.match(sql, /jsonb_typeof\(authority_json->'workItems'\) = 'array'/);
+  assert.match(sql, /CREATE TABLE codeops\.work_item_admissions/);
+  assert.match(sql, /FOREIGN KEY \(admission_id, dispatch_id, session_id\)/);
+  assert.doesNotMatch(sql, /reviewer_requirement|parent_projection|workflow_engine/);
+  assert.match(revert, /cannot revert work-item admission while admitted work exists/);
+  assert.match(revert, /cannot revert work-item admission while project-plan approval authority exists/);
+  assert.match(revert, /DELETE FROM codeops\.schema_migrations WHERE migration_name = 'work-item-admission-v1'/);
+  for (const key of ["session_runtime_outbox_admission_authority_key",
+    "session_runtime_permission_requests_admission_authority_key", "session_events_admission_authority_key",
+    "session_commands_admission_authority_key", "project_plan_approvals_admission_owner_key",
+    "work_item_lifecycle_events_admission_owner_key", "work_item_admissions_child_outbox_key",
+    "work_item_admissions_approval_parent_fk", "work_item_admissions_child_event_fk",
+    "work_item_admissions_supervision_event_fk", "work_item_admissions_lifecycle_event_fk",
+    "session_runtime_outbox_admission_child_fk"]) assert.match(sql, new RegExp(key));
+  assert.match(sql, /decisionResult,eventCursor.*decisionResult,snapshot,eventCursor/);
+  assert.match(sql, /request,workItem,provider,projectId/);
+  for (const owner of ["session_runtime_outbox parent_dispatch", "session_runtime_permission_requests permission",
+    "session_events plan_event", "session_commands decision", "sessions child", "session_events child_event",
+    "session_model_budgets budget", "work_item_lifecycle_events lifecycle",
+    "work_item_lifecycle_publications publication", "session_events supervision"]) {
+    assert.match(source, new RegExp(owner.replaceAll(" ", "\\s+")));
+  }
+  assert.ok(source.indexOf("const replayed = await replayResult") < source.indexOf("SELECT session_id FROM codeops.session_runtime_outbox"));
+  assert.doesNotMatch(source, /code === "23505"|code === "40001"|code === "40P01"/);
+});
 
 test("defines the durable session, command, and ordered event identities", async () => {
   const sql = await readFile(schemaUrl, "utf8");

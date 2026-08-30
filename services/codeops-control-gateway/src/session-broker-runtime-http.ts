@@ -15,6 +15,7 @@ import {
   sessionRuntimeWorkItemRelateRequestSchema,
   sessionRuntimeWorkItemSearchRequestSchema,
   sessionRuntimeWorkItemUpdateRequestSchema,
+  workItemAdmissionRequestSchema,
   type SessionCommandResult,
   type GitHubMutationResult,
   type GitHubReadResult,
@@ -25,9 +26,11 @@ import {
   type WorkItemSearchResult,
   type WorkItemUpdateResult,
   type SessionRuntimePermissionResult,
+  type WorkItemAdmissionResult,
 } from "@codeops/codeops-contracts";
 import { authenticateBearer } from "./bearer-auth.js";
 import type { SessionRuntimeDispatchClaim } from "./session-broker-runtime-outbox.js";
+import { WorkItemAdmissionDuplicateError, WorkItemAdmissionNotFoundError } from "./work-item-admission.js";
 
 const dispatchId = z.string().uuid();
 const claimPath = "/v1/session-runtime/claims";
@@ -39,6 +42,8 @@ const permissionPollPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/permissions\/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})\/poll$/;
 const workItemPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/work-items(?:\/(get|search|comment|update|relate))?$/i;
+const workItemAdmissionPath =
+  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/work-item-admissions$/i;
 const githubReadPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/github-reads$/i;
 const githubMutationPath =
@@ -144,6 +149,11 @@ export async function serveSessionRuntime(input: {
     readonly workerId: string;
     readonly request: unknown;
   }) => Promise<WorkItemRelateResult>;
+  readonly admitWorkItem?: (input: {
+    readonly dispatchId: string;
+    readonly workerId: string;
+    readonly request: unknown;
+  }) => Promise<WorkItemAdmissionResult>;
   readonly readGitHub?: (input: {
     readonly dispatchId: string;
     readonly workerId: string;
@@ -162,6 +172,7 @@ export async function serveSessionRuntime(input: {
   const permissionSubmissionMatch = url.pathname.match(permissionSubmissionPath);
   const permissionPollMatch = url.pathname.match(permissionPollPath);
   const workItemMatch = url.pathname.match(workItemPath);
+  const workItemAdmissionMatch = url.pathname.match(workItemAdmissionPath);
   const githubReadMatch = url.pathname.match(githubReadPath);
   const githubMutationMatch = url.pathname.match(githubMutationPath);
   if (
@@ -170,6 +181,7 @@ export async function serveSessionRuntime(input: {
     permissionSubmissionMatch === null &&
     permissionPollMatch === null
     && workItemMatch === null
+    && workItemAdmissionMatch === null
     && githubReadMatch === null
     && githubMutationMatch === null
   ) return null;
@@ -239,6 +251,20 @@ export async function serveSessionRuntime(input: {
         request: workItemRequest.data,
       } as never),
     };
+  }
+
+  if (workItemAdmissionMatch !== null) {
+    if (input.admitWorkItem === undefined) return { status: 404, body: { status: "not-found" } };
+    const admission = workItemAdmissionRequestSchema.safeParse(await readRequestBody(input.readBody));
+    if (!admission.success) throw new InvalidSessionRuntimeRequestError("session runtime work-item admission body is invalid");
+    try {
+      return { status: 200, body: await input.admitWorkItem({
+        dispatchId: dispatchId.parse(workItemAdmissionMatch[1]), workerId: input.workerId, request: admission.data }) };
+    } catch (error) {
+      if (error instanceof WorkItemAdmissionDuplicateError) return { status: 409, body: { status: "conflict" } };
+      if (error instanceof WorkItemAdmissionNotFoundError) return { status: 404, body: { status: "not-found" } };
+      throw error;
+    }
   }
 
   if (githubReadMatch !== null) {

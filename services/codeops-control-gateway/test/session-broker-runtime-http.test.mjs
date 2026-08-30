@@ -4,11 +4,64 @@ import {
   InvalidSessionRuntimeRequestError,
   serveSessionRuntime,
 } from "../dist/session-broker-runtime-http.js";
+import { WorkItemAdmissionConflictError, WorkItemAdmissionDuplicateError } from "../dist/work-item-admission.js";
 
 const token = "r".repeat(32);
 const dispatchId = "44444444-4444-4444-8444-444444444444";
 const claimToken = "55555555-5555-4555-8555-555555555555";
 const requestId = "permission-1";
+
+function admissionBody() {
+  return { version: "codeops.work-item-admission/v1",
+    admissionId: "11111111-1111-4111-8111-111111111111", claimToken,
+    plan: { planId: "approved-plan", planDigest: `sha256:${"a".repeat(64)}`, permissionRequestId: "approve-plan" },
+    workItem: { repository: "example-org/example-repository", provider: { kind: "plane",
+      workspaceId: "22222222-2222-4222-8222-222222222222", projectId: "33333333-3333-4333-8333-333333333333" },
+      workItemId: "66666666-6666-4666-8666-666666666666", workflowId: "workflow", runId: "run",
+      sourceSha: "b".repeat(40), title: "Admit work", prompt: "Implement only this work item." },
+    child: { sessionId: "session-child", leaseId: "77777777-7777-4777-8777-777777777777",
+      holderId: "runtime-worker:child", dispatchId: "88888888-8888-4888-8888-888888888888",
+      idempotencyKey: "99999999-9999-4999-8999-999999999999" } };
+}
+
+function admissionRoute(body, admitWorkItem) {
+  return serveSessionRuntime({ method: "POST",
+    url: `/v1/session-runtime/dispatches/${dispatchId}/work-item-admissions`,
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, token,
+    workerId: "runtime-worker:parent", readBody: async () => body,
+    claim: async () => null, complete: async () => ({}), submitPermission: async () => ({}), pollPermission: async () => ({}),
+    admitWorkItem,
+  });
+}
+
+test("routes one bounded work-item admission without a provider effect", async () => {
+  const admissions = [];
+  const body = admissionBody();
+  const result = await admissionRoute(body, async (input) => {
+    admissions.push(input);
+    return { version: "codeops.work-item-admission-result/v1", admissionId: body.admissionId,
+      disposition: "created", parentSessionId: "session-parent", childSessionId: body.child.sessionId,
+      dispatchId: body.child.dispatchId, lifecycleEventId: `event:${"c".repeat(64)}`,
+      supervisionEventId: `sha256:${"d".repeat(64)}` };
+  });
+  assert.equal(result.status, 200);
+  assert.deepEqual(admissions, [{ dispatchId, workerId: "runtime-worker:parent", request: body }]);
+});
+
+test("maps only the duplicate admission error to public HTTP 409", async () => {
+  const body = admissionBody();
+  assert.deepEqual(await admissionRoute(body, async () => {
+    throw new WorkItemAdmissionDuplicateError("duplicate admission");
+  }), { status: 409, body: { status: "conflict" } });
+  const authorityDrift = new WorkItemAdmissionConflictError("authority drift");
+  await assert.rejects(admissionRoute(body, async () => { throw authorityDrift; }),
+    (error) => error === authorityDrift);
+  for (const code of ["40001", "40P01", "08006"]) {
+    const failure = Object.assign(new Error("database failure"), { code });
+    await assert.rejects(admissionRoute(body, async () => { throw failure; }),
+      (error) => error === failure && !(error instanceof WorkItemAdmissionConflictError));
+  }
+});
 const authority = {
   sessionId: "ses_91a4",
   generation: 3,

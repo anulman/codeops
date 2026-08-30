@@ -348,6 +348,12 @@ test("permission cards render the digest-bound operation before approval", async
     "operation\.changes",
     "operation\.targetWorkItemId",
     "operation\.payloadJson",
+    "operation\.workItems",
+    "item\.repository",
+    "item\.provider\.kind",
+    "item\.provider\.workspaceId",
+    "item\.provider\.projectId",
+    "item\.workItemId",
     "operationDigest",
   ]) {
     assert.match(routeSource, new RegExp(field));
