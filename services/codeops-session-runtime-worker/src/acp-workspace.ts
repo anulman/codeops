@@ -60,6 +60,14 @@ const MAX_TIMELINE_UPDATE_BYTES = 800_000;
 const MAX_TIMELINE_PROCESSED_UPDATES = 2_500;
 const GIT_SHA = /^[0-9a-f]{40}$/;
 
+const PLAN_ARCHITECTURE_GUIDANCE = `Architecture planning default:
+For each new non-critical architectural unit:
+1. First assess reusable shared libraries, existing services, and cluster resources.
+2. If none fit, assess relevant well-architected, actively maintained open-source projects or tools under a permissive license and compatible operational requirements.
+3. Record an explicit reuse/adopt/build decision.
+4. Compare fit, integration cost, security, operations, maintenance, and reversibility.
+Do not recommend custom implementation until suitable internal and OSS alternatives are addressed.`;
+
 const acpTimelineProcessedUpdates = Symbol("acpTimelineProcessedUpdates");
 
 function codeopsMcpServers(): acp.McpServer[] {
@@ -580,10 +588,17 @@ export interface AcpAgentSessionConnection {
 export function workspacePromptContentBlocks(
   prompt: string,
   value: unknown,
+  identity?: SessionRuntimeDispatch["snapshot"]["identity"],
 ): readonly acp.ContentBlock[] {
   const attachments = verifyWorkspaceContextAttachments(value);
+  const includePlanArchitectureGuidance = identity !== undefined &&
+    isWorkspaceSessionIdentity(identity) &&
+    identity.policy?.mode === "plan";
   return [
     { type: "text", text: prompt },
+    ...(includePlanArchitectureGuidance
+      ? [{ type: "text" as const, text: PLAN_ARCHITECTURE_GUIDANCE }]
+      : []),
     ...attachments.map((attachment: WorkspaceContextAttachment): acp.ContentBlock => {
       const content = decodeWorkspaceContextAttachment(attachment);
       const uri = `codeops-context://sha256/${attachment.digest.slice(7)}/${encodeURIComponent(attachment.name)}`;
@@ -1230,6 +1245,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
         workspacePromptContentBlocks(
           dispatch.command.prompt,
           dispatch.command.contextAttachments ?? [],
+          dispatch.snapshot.identity,
         ),
       );
     });

@@ -83,6 +83,73 @@ test("reverifies context attachments and emits exact ACP embedded resources", ()
   );
 });
 
+const workspaceIdentity = (mode) => ({
+  version: "codeops.session-workspace-identity/v1",
+  policy: { mode },
+});
+
+test("injects exact architecture guidance after a Plan prompt and before ordered attachments", () => {
+  const first = Buffer.from("First attachment.\n");
+  const second = Buffer.from("Second attachment.\n");
+  const attachment = (attachmentId, name, content) => ({
+    attachmentId,
+    name,
+    mimeType: "text/plain",
+    sizeBytes: content.byteLength,
+    digest: `sha256:${createHash("sha256").update(content).digest("hex")}`,
+    content: content.toString("base64"),
+  });
+
+  const blocks = workspacePromptContentBlocks(
+    "Keep this original prompt exact.",
+    [
+      attachment("context-first", "first.txt", first),
+      attachment("context-second", "second.txt", second),
+    ],
+    workspaceIdentity("plan"),
+  );
+  const exactGuidance = `Architecture planning default:
+For each new non-critical architectural unit:
+1. First assess reusable shared libraries, existing services, and cluster resources.
+2. If none fit, assess relevant well-architected, actively maintained open-source projects or tools under a permissive license and compatible operational requirements.
+3. Record an explicit reuse/adopt/build decision.
+4. Compare fit, integration cost, security, operations, maintenance, and reversibility.
+Do not recommend custom implementation until suitable internal and OSS alternatives are addressed.`;
+
+  assert.deepEqual(blocks.map((block) => block.type), ["text", "text", "resource", "resource"]);
+  assert.deepEqual(blocks[0], { type: "text", text: "Keep this original prompt exact." });
+  assert.deepEqual(blocks[1], { type: "text", text: exactGuidance });
+  assert.equal(blocks[2].resource.text, "First attachment.\n");
+  assert.equal(blocks[3].resource.text, "Second attachment.\n");
+});
+
+test("leaves non-Plan workspace modes and non-workspace identities unchanged", () => {
+  for (const mode of ["explore", "implement", "review"]) {
+    assert.deepEqual(
+      workspacePromptContentBlocks("Original prompt.", [], workspaceIdentity(mode)),
+      [{ type: "text", text: "Original prompt." }],
+    );
+  }
+  assert.deepEqual(
+    workspacePromptContentBlocks("Original prompt.", [], {
+      repository: "example-org/example-repository",
+      branch: "main",
+      baseSha: "a".repeat(40),
+      workflowId: "legacy-workflow",
+      runId: "legacy-run",
+      parentSessionId: null,
+      forkedAtCursor: null,
+    }),
+    [{ type: "text", text: "Original prompt." }],
+  );
+  assert.deepEqual(
+    workspacePromptContentBlocks("Original prompt.", [], {
+      version: "codeops.temporal-session-identity/v2",
+    }),
+    [{ type: "text", text: "Original prompt." }],
+  );
+});
+
 test("normalizes ACP plans, tools, reasoning, message boundaries, and media", () => {
   const input = [
     { sessionUpdate: "user_message_chunk", messageId: "user-1", content: { type: "text", text: "External " } },
@@ -531,6 +598,74 @@ async function workspace() {
   await execFileAsync("git", ["-C", root, "commit", "-qm", "base"]);
   return root;
 }
+
+test("forwards the workspace Plan identity at the lifecycle prompt call site", async () => {
+  const root = await workspace();
+  const content = Buffer.from("Lifecycle attachment.\n");
+  const contextAttachments = [{
+    attachmentId: "context-lifecycle",
+    name: "lifecycle.txt",
+    mimeType: "text/plain",
+    sizeBytes: content.byteLength,
+    digest: `sha256:${createHash("sha256").update(content).digest("hex")}`,
+    content: content.toString("base64"),
+  }];
+  const identity = {
+    version: "codeops.session-workspace-identity/v1",
+    policy: {
+      version: "codeops.session-policy/v1",
+      mode: "plan",
+      workspaceAccess: "read-only",
+      modelCalls: "allowed",
+      modelPolicy: {
+        provider: "openai",
+        model: "gpt-5.6-sol",
+        reasoningEffort: "high",
+      },
+    },
+    contextAttachments: contextAttachments.map(({ content: _content, ...descriptor }) => descriptor),
+    workspace: {
+      version: "codeops.workspace/v1",
+      sources: [],
+      scratchPath: "scratch",
+    },
+    workflowId: "workspace-plan",
+    runId: "workspace-plan-run",
+    parentSessionId: null,
+    forkedAtCursor: null,
+  };
+  let receivedPrompt;
+  const lifecycle = new SocketAcpWorkspaceLifecycle({
+    socketPath: "/run/codeops/agent.sock",
+    workspace: root,
+    statePath: path.join(root, ".runtime", "sessions.json"),
+    permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
+    connect: async (_runtimeDispatch, operation) => operation({
+      newSession: async () => "acp-plan-session",
+      loadSession: async () => {},
+      prompt: async (_sessionId, prompt) => {
+        receivedPrompt = prompt;
+        return { response: "Plan ready.", stopReason: "end_turn" };
+      },
+      forkSession: async () => "unused",
+    }),
+  });
+
+  await lifecycle.prompt(dispatch(
+    "prompt",
+    { prompt: "Plan the architecture.", contextAttachments },
+    { identity },
+  ));
+
+  assert.deepEqual(
+    receivedPrompt,
+    workspacePromptContentBlocks(
+      "Plan the architecture.",
+      contextAttachments,
+      identity,
+    ),
+  );
+});
 
 test("persists bounded broker-to-ACP session identity atomically", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-acp-state-"));
