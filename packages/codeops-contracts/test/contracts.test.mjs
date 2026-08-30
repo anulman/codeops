@@ -37,13 +37,43 @@ import {
   secretReferenceSchema,
   sessionSupervisionReconciliationRequestSchema,
   sessionSupervisionReconciliationResultSchema,
+  sessionPermissionOperationSchema,
   trustedPlaneWorkItemReferenceSchema,
   verifyPlaneWebhookSignature,
   workflowEventSchema,
   workflowStateSchema,
   workItemLifecycleEventSchema,
+  workItemAdmissionRequestSchema,
+  workItemAdmissionResultSchema,
   workItemRequestSchema,
 } from "../dist/index.js";
+
+test("binds plan authority to the complete lifecycle work-item identity", () => {
+  const identity = { repository: "example-org/example-repository", provider: { kind: "plane",
+    workspaceId: "11111111-1111-4111-8111-111111111111", projectId: "22222222-2222-4222-8222-222222222222" },
+    workItemId: "33333333-3333-4333-8333-333333333333" };
+  const operation = { kind: "project_plan", planId: "approved-plan",
+    planDigest: `sha256:${"a".repeat(64)}`, workItems: [identity] };
+  assert.deepEqual(sessionPermissionOperationSchema.parse(operation), operation);
+  assert.throws(() => sessionPermissionOperationSchema.parse({ ...operation, workItems: [identity, identity] }));
+  const request = { version: "codeops.work-item-admission/v1",
+    admissionId: "44444444-4444-4444-8444-444444444444",
+    claimToken: "55555555-5555-4555-8555-555555555555",
+    plan: { planId: operation.planId, planDigest: operation.planDigest, permissionRequestId: "approve-plan" },
+    workItem: { ...identity, workflowId: "workflow", runId: "run", sourceSha: "b".repeat(40),
+      title: "Implement boundary", prompt: "Implement only the approved work item." },
+    child: { sessionId: "session-child", leaseId: "66666666-6666-4666-8666-666666666666",
+      holderId: "runtime-worker:child", dispatchId: "77777777-7777-4777-8777-777777777777",
+      idempotencyKey: "88888888-8888-4888-8888-888888888888" } };
+  assert.deepEqual(workItemAdmissionRequestSchema.parse(request), request);
+  const result = { version: "codeops.work-item-admission-result/v1",
+    admissionId: request.admissionId, disposition: "created", parentSessionId: "session-parent",
+    childSessionId: request.child.sessionId, dispatchId: request.child.dispatchId,
+    lifecycleEventId: `event:${"c".repeat(64)}`, supervisionEventId: `sha256:${"d".repeat(64)}` };
+  assert.deepEqual(workItemAdmissionResultSchema.parse(result), result);
+  assert.throws(() => workItemAdmissionResultSchema.parse({ ...result,
+    lifecycleEventId: `sha256:${"c".repeat(64)}` }));
+});
 
 function trustedPlaneBinding(apiOrigin = "https://plane.example.com/") {
   return {

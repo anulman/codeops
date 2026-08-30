@@ -355,6 +355,16 @@ export const sessionPermissionOperationSchema = z.discriminatedUnion("kind", [
       detailsJson: safeText(50_000),
     })
     .strict(),
+  z.object({
+    kind: z.literal("project_plan"),
+    planId: safeText(500),
+    planDigest: sha256Digest,
+    workItems: z.array(z.object({
+      repository: z.string().regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/),
+      provider: z.object({ kind: z.literal("plane"), workspaceId: uuid, projectId: uuid }).strict(),
+      workItemId: uuid,
+    }).strict()).min(1).max(100),
+  }).strict(),
 ]).superRefine((operation, context) => {
   if (
     operation.kind === "file_change" &&
@@ -366,6 +376,13 @@ export const sessionPermissionOperationSchema = z.discriminatedUnion("kind", [
       message: "permission file-change representation exceeds 200000 bytes",
       path: ["changes"],
     });
+  }
+  if (operation.kind === "project_plan") {
+    const identities = operation.workItems.map((item) => JSON.stringify(item));
+    if (new Set(identities).size !== identities.length) {
+      context.addIssue({ code: z.ZodIssueCode.custom,
+        message: "project-plan work-item identities must be unique", path: ["workItems"] });
+    }
   }
 });
 
@@ -1168,8 +1185,9 @@ const sessionTimelineUpdateBaseSchema = z.discriminatedUnion("kind", [
         .number()
         .int()
         .positive()
-        .max(Number.MAX_SAFE_INTEGER),
-      pullRequestHeadSha: gitSha,
+        .max(Number.MAX_SAFE_INTEGER)
+        .optional(),
+      pullRequestHeadSha: gitSha.optional(),
       agentRole: z.enum(["coding", "critic", "revision"]),
       round: z.number().int().positive().max(100),
       resultUri: resourceUri.optional(),
@@ -1187,6 +1205,11 @@ export const sessionTimelineUpdateSchema =
         code: z.ZodIssueCode.custom,
         message: "usage cannot exceed the context window",
       });
+    }
+    if (update.kind === "supervision" &&
+      (update.pullRequestNumber === undefined) !== (update.pullRequestHeadSha === undefined)) {
+      context.addIssue({ code: z.ZodIssueCode.custom,
+        message: "supervision pull-request identity requires both number and head SHA" });
     }
   });
 
