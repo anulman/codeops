@@ -74,6 +74,7 @@ import {
   SessionRuntimePermissionNotFoundError,
   submitSessionRuntimePermission,
 } from "./session-runtime-permissions.js";
+import { admitSessionRuntimeWorkItem, WorkItemAdmissionNotFoundError } from "./work-item-admission.js";
 import {
   ImmutableSessionCommandConflictError,
   SessionCompareAndSwapError,
@@ -485,6 +486,11 @@ const server = createServer((request, response) => {
             client.release();
           }
         },
+        admitWorkItem: async (input) => {
+          const client = await database.connect();
+          try { return await admitSessionRuntimeWorkItem(client, input); }
+          finally { client.release(); }
+        },
         ...(configuredWorkItemProvider === undefined
           ? {}
           : {
@@ -590,6 +596,7 @@ const server = createServer((request, response) => {
               error instanceof SessionRuntimePermissionNotFoundError ||
               error instanceof SessionRuntimeGitHubReadNotFoundError ||
               error instanceof SessionRuntimeGitHubMutationNotFoundError
+              || error instanceof WorkItemAdmissionNotFoundError
             ? 404
             : error instanceof SessionRuntimeWorkItemNotFoundError
               ? 404
