@@ -3,13 +3,15 @@ set -eu
 
 socket_path="${CODEOPS_ACP_SOCKET:-/run/codeops/agent.sock}"
 done_path="$(dirname "$socket_path")/done"
-codex_home="${CODEX_HOME:-/tmp/codex-home}"
-if [ "$codex_home" != "/tmp/codex-home" ]; then
-  echo "CODEX_HOME must use the isolated temporary agent home" >&2
+codex_home="${CODEX_HOME:-/var/lib/codeops-agent/codex-home}"
+if [ "$codex_home" != "/var/lib/codeops-agent/codex-home" ]; then
+  echo "CODEX_HOME must use the isolated per-Session agent home" >&2
   exit 1
 fi
 mkdir -p "$codex_home"
 chmod 700 "$codex_home"
+test -d "$codex_home"
+test -w "$codex_home"
 export CODEX_HOME="$codex_home"
 rm -f "$socket_path" "$done_path"
 

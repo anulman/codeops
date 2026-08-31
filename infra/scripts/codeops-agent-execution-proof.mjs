@@ -12,19 +12,31 @@ const PROOF_VERSION = "codeops.agent-execution-proof/v1";
 
 export const AGENT_EXECUTION_POD_SCRIPT = String.raw`#!/usr/bin/env node
 import { spawn, spawnSync } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { Readable, Writable } from "node:stream";
 
 const acp = await import("file:///opt/codeops-agent/node_modules/@agentclientprotocol/sdk/dist/acp.js");
 await mkdir("/tmp/home", { recursive: true });
-await mkdir("/tmp/codex", { recursive: true });
+await mkdir("/var/lib/codeops-agent/codex-home", { recursive: true });
 
 const child = spawn("/opt/codeops-agent/node_modules/.bin/codex-acp", [], {
   cwd: "/workspace",
   env: {
     ...process.env,
-    CODEX_HOME: "/tmp/codex",
+    CODEX_HOME: "/var/lib/codeops-agent/codex-home",
     CODEX_API_KEY: "provider-free-proof-key",
+    CODEX_CONFIG: JSON.stringify({
+      model: "gpt-5.6-sol",
+      model_provider: "codeops_proxy",
+      model_providers: {
+        codeops_proxy: {
+          name: "CodeOps model proxy",
+          base_url: "http://127.0.0.1:9/v1",
+          env_key: "CODEX_API_KEY",
+          wire_api: "responses",
+        },
+      },
+    }),
     DEFAULT_AUTH_REQUEST: '{"methodId":"api-key"}',
     HOME: "/tmp/home",
     INITIAL_AGENT_MODE: "agent-full-access",
@@ -58,6 +70,10 @@ try {
   if (session?.modes?.currentModeId !== "agent-full-access") {
     throw new Error("ACP session did not select agent-full-access mode");
   }
+  const codexState = await readdir("/var/lib/codeops-agent/codex-home");
+  if (!codexState.some((name) => /\.sqlite(?:3)?$/.test(name))) {
+    throw new Error("Codex did not initialize durable SQLite state");
+  }
 
   const shell = spawnSync(
     "/bin/sh",
@@ -71,6 +87,7 @@ try {
   process.stdout.write(JSON.stringify({
     version: "${PROOF_VERSION}",
     mode: session.modes.currentModeId,
+    sqliteState: "initialized",
     shellStatus: "passed",
     providerDelivery: false,
   }) + "\n");
@@ -161,12 +178,14 @@ export function buildAgentExecutionProofResources({ namespace, name, agentImage 
                 volumeMounts: [
                   { name: "proof", mountPath: "/proof", readOnly: true },
                   { name: "workspace", mountPath: "/workspace" },
+                  { name: "codex-home", mountPath: "/var/lib/codeops-agent/codex-home" },
                   { name: "tmp", mountPath: "/tmp" },
                 ],
               }],
               volumes: [
                 { name: "proof", configMap: { name, defaultMode: 0o444 } },
                 { name: "workspace", emptyDir: {} },
+                { name: "codex-home", emptyDir: {} },
                 { name: "tmp", emptyDir: {} },
               ],
             },
@@ -200,6 +219,7 @@ export function validateAgentExecutionProof({ pod, output, namespace, name, agen
   if (
     output?.version !== PROOF_VERSION ||
     output.mode !== "agent-full-access" ||
+    output.sqliteState !== "initialized" ||
     output.shellStatus !== "passed" ||
     output.providerDelivery !== false
   ) {
@@ -212,6 +232,7 @@ export function validateAgentExecutionProof({ pod, output, namespace, name, agen
     runtimeImageId: containerStatus.imageID,
     namespace,
     mode: output.mode,
+    sqliteState: output.sqliteState,
     shellStatus: output.shellStatus,
     providerDelivery: false,
     networkPolicy: "deny-all",

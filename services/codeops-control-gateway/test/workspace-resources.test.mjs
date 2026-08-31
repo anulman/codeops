@@ -93,6 +93,24 @@ test("builds isolated materializer and runtime Jobs on bounded persistent storag
     runtime.spec.template.spec.volumes.find(({ name }) => name === "temp")?.emptyDir,
     { sizeLimit: "2Gi" },
   );
+  assert.match(
+    materializer.spec.template.spec.containers[0].command.at(-1),
+    /mkdirSync\("\/workspace\/\.codeops\/codex-home"/,
+  );
+  const agent = runtime.spec.template.spec.containers.find(({ name }) => name === "coding-agent");
+  assert.equal(
+    agent.env.find(({ name }) => name === "CODEX_HOME")?.value,
+    "/var/lib/codeops-agent/codex-home",
+  );
+  assert.deepEqual(
+    agent.volumeMounts.find(({ mountPath }) => mountPath === "/var/lib/codeops-agent/codex-home"),
+    {
+      name: "workspace",
+      mountPath: "/var/lib/codeops-agent/codex-home",
+      subPath: ".codeops/codex-home",
+      readOnly: false,
+    },
+  );
   const runtimeEnvironment = runtime.spec.template.spec.containers[0].env;
   assert.equal(
     runtimeEnvironment.find((entry) => entry.name === "CODEOPS_SESSION_DISPLAY_NAME")?.value,
@@ -144,6 +162,14 @@ test("binds workspace mounts and Codex configuration to the immutable session po
     );
   }
   const reviewAgent = reviewRuntime.spec.template.spec.containers[1];
+  assert.equal(
+    reviewAgent.volumeMounts.find(({ mountPath }) => mountPath === "/workspace")?.readOnly,
+    true,
+  );
+  assert.equal(
+    reviewAgent.volumeMounts.find(({ mountPath }) => mountPath === "/var/lib/codeops-agent/codex-home")?.readOnly,
+    false,
+  );
   assert.equal(
     reviewAgent.env.find((entry) => entry.name === "INITIAL_AGENT_MODE")?.value,
     "agent-full-access",
@@ -208,6 +234,12 @@ test("rejects authority drift and mutable runtime images", () => {
   assert.throws(() => buildWorkspaceResources({ ...config([{ catalogKey: "codeops", repository: "anulman/CodeOps" }]), sources: [] }), /match the manifest/);
   assert.throws(() => buildWorkspaceResources({ ...config(), agentImage: "ghcr.io/anulman/codeops/agent:latest" }), /immutable digests/);
   assert.throws(() => buildWorkspaceResources({ ...config(), displayName: " padded " }), /display name/);
+
+  const drifted = structuredClone(buildWorkspaceResources(config()));
+  drifted[3].spec.template.spec.containers[1].volumeMounts.find(
+    ({ mountPath }) => mountPath === "/var/lib/codeops-agent/codex-home",
+  ).subPath = "sources/codeops";
+  assert.throws(() => assertWorkspaceResources(drifted), /Codex home boundary drifted/);
 });
 
 test("binds the immutable Secret name to principal, request, workspace, and authority", () => {

@@ -1252,7 +1252,16 @@ test("builds only the fixed tokenless run resources", () => {
   );
   assert.equal(
     codingAgent.env.find((entry) => entry.name === "CODEX_HOME").value,
-    "/tmp/codex-home",
+    "/var/lib/codeops-agent/codex-home",
+  );
+  assert.deepEqual(
+    codingAgent.volumeMounts.find((entry) => entry.mountPath === "/var/lib/codeops-agent/codex-home"),
+    {
+      name: "workspace",
+      mountPath: "/var/lib/codeops-agent/codex-home",
+      subPath: ".codeops/codex-home",
+      readOnly: false,
+    },
   );
   assert.equal(
     codingAgent.env.find((entry) => entry.name === "INITIAL_AGENT_MODE").value,
