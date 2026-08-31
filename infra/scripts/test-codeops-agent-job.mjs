@@ -193,7 +193,16 @@ test("scopes repository-read and model secrets to separate containers", () => {
   );
   assert.equal(
     agent.env.find((entry) => entry.name === "CODEX_HOME").value,
-    "/tmp/codex-home",
+    "/var/lib/codeops-agent/codex-home",
+  );
+  assert.deepEqual(
+    agent.volumeMounts.find((entry) => entry.mountPath === "/var/lib/codeops-agent/codex-home"),
+    {
+      name: "workspace",
+      mountPath: "/var/lib/codeops-agent/codex-home",
+      subPath: ".codeops/codex-home",
+      readOnly: false,
+    },
   );
   assert.equal(JSON.stringify(job).includes("value: sk-"), false);
 });

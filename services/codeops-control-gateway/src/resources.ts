@@ -246,6 +246,8 @@ export function buildRunResources(
                   [
                     "auth=\"$(printf 'x-access-token:%s' \"$CODEOPS_REPOSITORY_READ_TOKEN\" | base64 | tr -d '\\n')\"",
                     "git init /workspace",
+                    "mkdir -p /workspace/.codeops/codex-home",
+                    "chmod 700 /workspace/.codeops/codex-home",
                     "git -c safe.directory=/workspace -C /workspace remote add origin \"$CODEOPS_REPOSITORY\"",
                     "git -c safe.directory=/workspace -C /workspace -c \"http.extraHeader=Authorization: Basic $auth\" fetch --depth=1 origin \"$CODEOPS_BASE_SHA\"",
                     "unset auth CODEOPS_REPOSITORY_READ_TOKEN",
@@ -393,7 +395,7 @@ export function buildRunResources(
                   },
                   {
                     name: "CODEX_HOME",
-                    value: "/tmp/codex-home",
+                    value: "/var/lib/codeops-agent/codex-home",
                   },
                   {
                     name: "INITIAL_AGENT_MODE",
@@ -433,6 +435,12 @@ export function buildRunResources(
                     name: "workspace",
                     mountPath: "/workspace",
                     readOnly: workspaceReadOnly,
+                  },
+                  {
+                    name: "workspace",
+                    mountPath: "/var/lib/codeops-agent/codex-home",
+                    subPath: ".codeops/codex-home",
+                    readOnly: false,
                   },
                   { name: "session", mountPath: "/run/codeops" },
                   { name: "checkpoint", mountPath: "/checkpoint" },
@@ -615,7 +623,12 @@ export function assertRunResources(
     containers?: {
       name?: string;
       env?: { name?: string; value?: string }[];
-      volumeMounts?: { name?: string; mountPath?: string }[];
+      volumeMounts?: {
+        name?: string;
+        mountPath?: string;
+        subPath?: string;
+        readOnly?: boolean;
+      }[];
     }[];
     initContainers?: {
       name?: string;
@@ -640,14 +653,20 @@ export function assertRunResources(
   const candidateVolume = pod.volumes?.find(
     (volume) => volume.name === "candidate",
   );
+  const codexHomeMount = agent?.volumeMounts?.find(
+    (mount) => mount.mountPath === "/var/lib/codeops-agent/codex-home",
+  );
   if (
     agent?.env?.find((entry) => entry.name === "CODEX_HOME")?.value !==
-      "/tmp/codex-home" ||
+      "/var/lib/codeops-agent/codex-home" ||
     agent.env?.find((entry) => entry.name === "INITIAL_AGENT_MODE")?.value !==
       "agent-full-access" ||
     agent.env?.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST")?.value !==
       '{"methodId":"api-key"}' ||
     !agent.env?.some((entry) => entry.name === "CODEX_API_KEY") ||
+    codexHomeMount?.name !== "workspace" ||
+    codexHomeMount.subPath !== ".codeops/codex-home" ||
+    codexHomeMount.readOnly !== false ||
     serialized.includes("model-api-key") ||
     serialized.includes("codex-auth")
   ) {

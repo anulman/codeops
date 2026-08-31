@@ -106,8 +106,11 @@ function runtimeEgressProxyEnvironment(raw: WorkspaceResourceConfig) {
   ];
 }
 
+const codexHomeMountPath = "/var/lib/codeops-agent/codex-home";
+const codexHomeWorkspaceSubPath = ".codeops/codex-home";
+
 const materializeScript = String.raw`
-const { readFileSync, mkdirSync } = require("node:fs");
+const { chmodSync, readFileSync, mkdirSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
 const path = require("node:path");
 const input = JSON.parse(readFileSync("/var/run/codeops-source/sources.json", "utf8"));
@@ -117,6 +120,8 @@ const run = (args, env = process.env) => {
 };
 mkdirSync("/workspace/sources", { recursive: true });
 mkdirSync("/workspace/scratch", { recursive: true });
+mkdirSync("/workspace/${codexHomeWorkspaceSubPath}", { recursive: true });
+chmodSync("/workspace/${codexHomeWorkspaceSubPath}", 0o700);
 for (const source of input.sources) {
   const target = path.join("/workspace", source.checkoutPath);
   mkdirSync(target, { recursive: true });
@@ -429,7 +434,7 @@ export function buildWorkspaceResources(
               imagePullPolicy: "IfNotPresent",
               env: [
                 ...proxyEnvironment,
-                { name: "CODEX_HOME", value: "/tmp/codex-home" },
+                { name: "CODEX_HOME", value: codexHomeMountPath },
                 { name: "INITIAL_AGENT_MODE", value: "agent-full-access" },
                 { name: "CODEOPS_MODEL_PROXY_TOKEN_FILE", value: "/run/codeops/model-proxy-token" },
                 { name: "DEFAULT_AUTH_REQUEST", value: '{"methodId":"api-key"}' },
@@ -457,6 +462,12 @@ export function buildWorkspaceResources(
               securityContext,
               volumeMounts: [
                 { name: "workspace", mountPath: "/workspace", readOnly: workspaceReadOnly },
+                {
+                  name: "workspace",
+                  mountPath: codexHomeMountPath,
+                  subPath: codexHomeWorkspaceSubPath,
+                  readOnly: false,
+                },
                 { name: "session", mountPath: "/run/codeops" },
                 { name: "temp", mountPath: "/tmp" },
               ],
@@ -498,6 +509,30 @@ export function assertWorkspaceResources(resources: readonly Record<string, unkn
   const serializedMaterializer = JSON.stringify(resources[2]);
   const serializedRuntime = JSON.stringify(resources[3]);
   const serializedSecret = JSON.stringify(resources[0]);
+  const runtime = resources[3] as {
+    spec?: {
+      template?: {
+        spec?: {
+          containers?: {
+            name?: string;
+            env?: { name?: string; value?: string }[];
+            volumeMounts?: {
+              name?: string;
+              mountPath?: string;
+              subPath?: string;
+              readOnly?: boolean;
+            }[];
+          }[];
+        };
+      };
+    };
+  };
+  const agent = runtime.spec?.template?.spec?.containers?.find(
+    (container) => container.name === "coding-agent",
+  );
+  const codexHomeMount = agent?.volumeMounts?.find(
+    (mount) => mount.mountPath === codexHomeMountPath,
+  );
   if (!serializedSecret.includes('"immutable":true')) {
     throw new Error("workspace source Secret must be immutable");
   }
@@ -509,5 +544,13 @@ export function assertWorkspaceResources(resources: readonly Record<string, unkn
   }
   if (!serializedRuntime.includes('"ephemeral-storage"')) {
     throw new Error("workspace runtime must bound ephemeral storage");
+  }
+  if (
+    agent?.env?.find((entry) => entry.name === "CODEX_HOME")?.value !== codexHomeMountPath ||
+    codexHomeMount?.name !== "workspace" ||
+    codexHomeMount.subPath !== codexHomeWorkspaceSubPath ||
+    codexHomeMount.readOnly !== false
+  ) {
+    throw new Error("workspace runtime Codex home boundary drifted");
   }
 }

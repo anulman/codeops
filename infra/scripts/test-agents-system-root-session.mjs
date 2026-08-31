@@ -37,6 +37,23 @@ test("renders one trusted idempotent root-session runtime Job", () => {
       `ghcr.io/anulman/codeops/agent@${input.agentDigest}`,
     ],
   );
+  const pod = job.spec.template.spec;
+  const builder = pod.initContainers.find(({ name }) => name === "workspace-builder");
+  const agent = pod.containers.find(({ name }) => name === "coding-agent");
+  assert.match(builder.args[0], /mkdir -p \/workspace\/\.codeops\/codex-home/);
+  assert.equal(
+    agent.env.find(({ name }) => name === "CODEX_HOME")?.value,
+    "/var/lib/codeops-agent/codex-home",
+  );
+  assert.deepEqual(
+    agent.volumeMounts.find(({ mountPath }) => mountPath === "/var/lib/codeops-agent/codex-home"),
+    {
+      name: "workspace",
+      mountPath: "/var/lib/codeops-agent/codex-home",
+      subPath: ".codeops/codex-home",
+      readOnly: false,
+    },
+  );
 });
 
 test("gives the root Job only source, initialization, worker, and receipt authority", () => {

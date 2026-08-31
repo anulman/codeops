@@ -61,6 +61,8 @@ spec:
               git -c safe.directory=/workspace -C /workspace checkout --detach FETCH_HEAD
               git -c safe.directory=/workspace -C /workspace remote remove origin
               test "$(git -c safe.directory=/workspace -C /workspace rev-parse HEAD)" = "$CODEOPS_BASE_SHA"
+              mkdir -p /workspace/.codeops/codex-home
+              chmod 700 /workspace/.codeops/codex-home
           env:
             - name: CODEOPS_BASE_SHA
               value: __CODEOPS_BASE_SHA__
@@ -148,7 +150,7 @@ spec:
             - name: CODEOPS_REPOSITORY
               value: __CODEOPS_REPOSITORY_URL__
             - name: CODEX_HOME
-              value: /tmp/codex-home
+              value: /var/lib/codeops-agent/codex-home
             - name: CODEX_API_KEY
               valueFrom:
                 secretKeyRef:
@@ -176,6 +178,10 @@ spec:
             - name: workspace
               mountPath: /workspace
               readOnly: __CODEOPS_WORKSPACE_READ_ONLY__
+            - name: workspace
+              mountPath: /var/lib/codeops-agent/codex-home
+              subPath: .codeops/codex-home
+              readOnly: false
             - name: session
               mountPath: /run/codeops
             - name: checkpoint

@@ -143,7 +143,13 @@ export function renderAgentJobManifest(template, input) {
     agent.env?.find((entry) => entry.name === "CODEX_API_KEY")?.valueFrom
       ?.secretKeyRef?.key !== "model-proxy-token" ||
     agent.env?.find((entry) => entry.name === "CODEX_HOME")?.value !==
-      "/tmp/codex-home"
+      "/var/lib/codeops-agent/codex-home" ||
+    !agent.volumeMounts?.some((mount) =>
+      mount.name === "workspace" &&
+      mount.mountPath === "/var/lib/codeops-agent/codex-home" &&
+      mount.subPath === ".codeops/codex-home" &&
+      mount.readOnly === false
+    )
   ) {
     throw new Error("agent run model proxy binding drifted");
   }

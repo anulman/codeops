@@ -73,6 +73,17 @@ test("renders a provider-free Agent proof with the production security boundary"
   assert.equal(container.securityContext.allowPrivilegeEscalation, false);
   assert.equal(container.securityContext.readOnlyRootFilesystem, true);
   assert.deepEqual(container.securityContext.capabilities.drop, ["ALL"]);
+  assert.deepEqual(
+    container.volumeMounts.find(({ name }) => name === "codex-home"),
+    { name: "codex-home", mountPath: "/var/lib/codeops-agent/codex-home" },
+  );
+  assert.deepEqual(
+    pod.volumes.find(({ name }) => name === "codex-home"),
+    { name: "codex-home", emptyDir: {} },
+  );
+  assert.match(AGENT_EXECUTION_POD_SCRIPT, /CODEX_HOME: "\/var\/lib\/codeops-agent\/codex-home"/);
+  assert.doesNotMatch(AGENT_EXECUTION_POD_SCRIPT, /CODEX_HOME: "\/tmp/);
+  assert.match(AGENT_EXECUTION_POD_SCRIPT, /durable SQLite state/);
   assert.match(AGENT_EXECUTION_POD_SCRIPT, /INITIAL_AGENT_MODE: "agent-full-access"/);
   assert.match(AGENT_EXECUTION_POD_SCRIPT, /DEFAULT_AUTH_REQUEST: '\{"methodId":"api-key"\}'/);
   assert.match(AGENT_EXECUTION_POD_SCRIPT, /CODEX_API_KEY: "provider-free-proof-key"/);
@@ -87,6 +98,7 @@ test("binds successful proof output to the exact released Agent image", () => {
     output: {
       version: "codeops.agent-execution-proof/v1",
       mode: "agent-full-access",
+      sqliteState: "initialized",
       shellStatus: "passed",
       providerDelivery: false,
     },
@@ -98,6 +110,7 @@ test("binds successful proof output to the exact released Agent image", () => {
   assert.equal(evidence.sourceSha, sourceSha);
   assert.equal(evidence.agentImage, agentImage);
   assert.equal(evidence.mode, "agent-full-access");
+  assert.equal(evidence.sqliteState, "initialized");
   assert.equal(evidence.shellStatus, "passed");
   assert.equal(evidence.providerDelivery, false);
   assert.equal(evidence.networkPolicy, "deny-all");
@@ -120,6 +133,7 @@ test("rejects release identity, security, mode, shell, and provider-delivery dri
     const output = {
       version: "codeops.agent-execution-proof/v1",
       mode: "agent-full-access",
+      sqliteState: "initialized",
       shellStatus: "passed",
       providerDelivery: false,
     };

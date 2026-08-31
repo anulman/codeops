@@ -57,6 +57,22 @@ test("packages one immutable non-retrying disposable session Job", () => {
       `ghcr.io/anulman/codeops/agent@${input.agentDigest}`,
     ],
   );
+  const builder = pod.initContainers.find((container) => container.name === "workspace-builder");
+  const agent = pod.containers.find((container) => container.name === "coding-agent");
+  assert.match(builder.command.at(-1), /mkdir -p \/workspace\/\.codeops\/codex-home/);
+  assert.equal(
+    agent.env.find((entry) => entry.name === "CODEX_HOME").value,
+    "/var/lib/codeops-agent/codex-home",
+  );
+  assert.deepEqual(
+    agent.volumeMounts.find((entry) => entry.mountPath === "/var/lib/codeops-agent/codex-home"),
+    {
+      name: "workspace",
+      mountPath: "/var/lib/codeops-agent/codex-home",
+      subPath: ".codeops/codex-home",
+      readOnly: false,
+    },
+  );
 });
 
 test("mounts separate initialization, worker, and database authorities", () => {
