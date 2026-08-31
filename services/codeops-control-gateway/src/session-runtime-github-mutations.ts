@@ -27,6 +27,12 @@ import {
   decodeProviderResponseText,
   readProviderResponse,
 } from "./provider-response.js";
+import {
+  loadGitHubBranchCandidate,
+  lockGitHubBranchCandidateManifest,
+  cleanupDefinitiveGitHubBranchCandidateChunks,
+  stageLegacyGitHubBranchCandidate,
+} from "./github-branch-publish-candidates.js";
 
 export class SessionRuntimeGitHubMutationNotFoundError extends Error {}
 export class SessionRuntimeGitHubMutationConflictError extends Error {}
@@ -43,6 +49,46 @@ interface StoredMutationRow extends Record<string, unknown> {
   readonly permission_digest: unknown;
   readonly state: unknown;
   readonly evidence_json: unknown;
+}
+
+function assertStoredMutationIdentity(
+  stored: StoredMutationRow,
+  input: {
+    readonly dispatchId: string;
+    readonly payloadDigest: string;
+    readonly permissionDigest: string;
+  },
+): void {
+  if (
+    stored.dispatch_id !== input.dispatchId ||
+    stored.payload_digest !== input.payloadDigest ||
+    stored.permission_digest !== input.permissionDigest
+  ) {
+    throw new SessionRuntimeGitHubMutationConflictError(
+      "GitHub mutation operation conflicts with its immutable stored identity",
+    );
+  }
+}
+
+function replayStoredMutation(
+  stored: StoredMutationRow,
+  request: SessionRuntimeGitHubMutationRequest,
+): GitHubMutationResult {
+  const parsed = githubMutationResultSchema.safeParse(stored.evidence_json);
+  if (!parsed.success) {
+    throw new SessionRuntimeGitHubMutationConflictError(
+      "stored GitHub mutation result is invalid",
+    );
+  }
+  if (
+    parsed.data.operationId !== request.operationId ||
+    parsed.data.repository !== request.input.repository
+  ) {
+    throw new SessionRuntimeGitHubMutationConflictError(
+      "stored GitHub mutation result conflicts with its operation identity",
+    );
+  }
+  return parsed.data;
 }
 
 export class GitHubMutationProviderNoEffectError extends Error {}
@@ -167,7 +213,7 @@ function expectedPermissionOperation(request: SessionRuntimeGitHubMutationReques
   });
 }
 
-export async function authorizeSessionRuntimeGitHubMutation(
+async function authorizeSessionRuntimeGitHubMutationTransaction(
   client: TransactionClient,
   input: {
     readonly dispatchId: string;
@@ -188,13 +234,17 @@ export async function authorizeSessionRuntimeGitHubMutation(
     now: (input.now ?? (() => new Date()))(),
   });
   const dispatch = authority.dispatch;
-  const expectedOperationId = `githubmutation-${createHash("sha256")
-    .update(canonicalJsonText({
-      dispatchId: dispatch.dispatchId,
-      operation: request.operation,
-      input: request.input,
-    }))
-    .digest("hex")}`;
+  const legacyInline = request.operation === "branch_publish" &&
+    "changes" in request.input;
+  const expectedOperationId = request.operation === "branch_publish" && !legacyInline
+    ? request.operationId
+    : `githubmutation-${createHash("sha256")
+      .update(canonicalJsonText({
+        dispatchId: dispatch.dispatchId,
+        operation: request.operation,
+        input: request.input,
+      }))
+      .digest("hex")}`;
   if (request.operationId !== expectedOperationId) {
     throw new SessionRuntimeGitHubMutationConflictError(
       "GitHub mutation operation identity is invalid",
@@ -271,6 +321,97 @@ export async function authorizeSessionRuntimeGitHubMutation(
     );
   }
 
+  const payloadDigest = digest(canonicalJsonText(request.input));
+  let existingBranchReceipt: StoredMutationRow | undefined;
+  if (request.operation === "branch_publish") {
+    const existing = await client.query<StoredMutationRow>(
+      `SELECT dispatch_id, payload_digest, permission_digest, state, evidence_json
+         FROM codeops.provider_effect_receipts
+        WHERE effect_id = $1
+        FOR UPDATE`,
+      [request.operationId],
+    );
+    existingBranchReceipt = existing.rows[0];
+    if (existingBranchReceipt !== undefined) {
+      assertStoredMutationIdentity(existingBranchReceipt, {
+        dispatchId: dispatch.dispatchId,
+        payloadDigest,
+        permissionDigest: operationDigest,
+      });
+      if (["succeeded", "reconciled_satisfied"].includes(
+        String(existingBranchReceipt.state),
+      )) {
+        return {
+          disposition: "replayed",
+          result: replayStoredMutation(existingBranchReceipt, request),
+        };
+      }
+      if (["failed", "reconciled_not_observed", "operator_resolved"].includes(
+        String(existingBranchReceipt.state),
+      )) {
+        throw new SessionRuntimeGitHubMutationConflictError(
+          "GitHub mutation has a definitive non-success outcome and cannot be retried",
+        );
+      }
+    }
+  }
+
+  let providerInput = request.input;
+  if (request.operation === "branch_publish") {
+    const inlineInput = "changes" in request.input ? request.input : undefined;
+    const referenceInput = "candidate" in request.input ? request.input : undefined;
+    const candidateReference = inlineInput !== undefined
+      ? await stageLegacyGitHubBranchCandidate(client, {
+          dispatchId: dispatch.dispatchId,
+          sessionId: dispatch.command.sessionId,
+          ownerPrincipalId: dispatch.principalId,
+          repository: request.input.repository,
+          operationId: request.operationId,
+          logicalInput: inlineInput,
+        })
+      : referenceInput!.candidate;
+    if (inlineInput !== undefined) {
+      const { changes: _changes, ...metadata } = inlineInput;
+      providerInput = { ...metadata, candidate: candidateReference };
+    }
+    const manifest = inlineInput !== undefined
+      ? { effectDigest: digest(canonicalJsonText(inlineInput)) }
+      : await lockGitHubBranchCandidateManifest(client, {
+          manifestId: candidateReference.manifestId,
+          dispatchId: dispatch.dispatchId,
+          operationId: request.operationId,
+          repository: request.input.repository,
+          sessionId: dispatch.command.sessionId,
+          ownerPrincipalId: dispatch.principalId,
+          digest: candidateReference.digest,
+          sizeBytes: candidateReference.sizeBytes,
+          chunkCount: candidateReference.chunkCount,
+        });
+    const candidate = await loadGitHubBranchCandidate(client, {
+      manifestId: candidateReference.manifestId,
+      dispatchId: dispatch.dispatchId,
+      operationId: request.operationId,
+      effectDigest: manifest.effectDigest,
+    });
+    const logicalInput = inlineInput !== undefined
+      ? inlineInput
+      : (() => {
+          const { candidate: _candidate, ...metadata } = referenceInput!;
+          return { ...metadata, changes: candidate.changes };
+        })();
+    if (digest(canonicalJsonText(logicalInput)) !== manifest.effectDigest ||
+        request.operationId !== `githubmutation-${createHash("sha256")
+          .update(canonicalJsonText({
+            dispatchId: dispatch.dispatchId,
+            operation: request.operation,
+            input: logicalInput,
+          })).digest("hex")}`) {
+      throw new SessionRuntimeGitHubMutationConflictError(
+        "GitHub branch candidate effect identity is invalid",
+      );
+    }
+  }
+
   if (request.operation === "branch_publish" && request.input.mode === "fast_forward") {
     const prior = await client.query<Record<string, unknown>>(
       `SELECT effect.effect_id, effect.repository, effect.target_id,
@@ -321,12 +462,11 @@ export async function authorizeSessionRuntimeGitHubMutation(
     }
   }
 
-  const payloadDigest = digest(canonicalJsonText(request.input));
   const providerRequest = githubMutationProviderRequestSchema.parse({
     version: "codeops.github-mutation-provider-request/v1",
     operation: request.operation,
     operationId: request.operationId,
-    input: request.input,
+    input: providerInput,
     payloadDigest,
     permissionDigest: operationDigest,
     provenance: {
@@ -365,16 +505,16 @@ export async function authorizeSessionRuntimeGitHubMutation(
       [request.operationId],
     );
     const replay = stored.rows[0];
-    if (
-      replay === undefined ||
-      replay.dispatch_id !== dispatch.dispatchId ||
-      replay.payload_digest !== payloadDigest ||
-      replay.permission_digest !== operationDigest
-    ) {
+    if (replay === undefined) {
       throw new SessionRuntimeGitHubMutationConflictError(
         "GitHub mutation operation conflicts with its immutable stored identity",
       );
     }
+    assertStoredMutationIdentity(replay, {
+      dispatchId: dispatch.dispatchId,
+      payloadDigest,
+      permissionDigest: operationDigest,
+    });
     if (replay.state === "authorized" && replay.evidence_json === null) {
       return { disposition: "authorized", request: providerRequest };
     }
@@ -400,24 +540,28 @@ export async function authorizeSessionRuntimeGitHubMutation(
         "GitHub mutation outcome is not known and cannot be retried",
       );
     }
-    const parsedReplay = githubMutationResultSchema.safeParse(replay.evidence_json);
-    if (!parsedReplay.success) {
-      throw new SessionRuntimeGitHubMutationConflictError(
-        "stored GitHub mutation result is invalid",
-      );
-    }
-    const replayed = parsedReplay.data;
-    if (
-      replayed.operationId !== request.operationId ||
-      replayed.repository !== request.input.repository
-    ) {
-      throw new SessionRuntimeGitHubMutationConflictError(
-        "stored GitHub mutation result conflicts with its operation identity",
-      );
-    }
-    return { disposition: "replayed", result: replayed };
+    return { disposition: "replayed", result: replayStoredMutation(replay, request) };
   }
   return { disposition: "authorized", request: providerRequest };
+}
+
+export async function authorizeSessionRuntimeGitHubMutation(
+  client: TransactionClient,
+  input: Parameters<typeof authorizeSessionRuntimeGitHubMutationTransaction>[1],
+): Promise<SessionRuntimeGitHubMutationAuthorization> {
+  const request = sessionRuntimeGitHubMutationRequestSchema.parse(input.request);
+  if (request.operation !== "branch_publish") {
+    return authorizeSessionRuntimeGitHubMutationTransaction(client, input);
+  }
+  await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
+    const result = await authorizeSessionRuntimeGitHubMutationTransaction(client, input);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
 }
 
 export async function beginSessionRuntimeGitHubMutationAttempt(
@@ -462,6 +606,9 @@ export async function recordSessionRuntimeGitHubMutationFailure(
   const request = githubMutationProviderRequestSchema.parse(input.request);
   const observedAt = (input.now ?? (() => new Date()))().toISOString();
   const failed = input.outcome === "failed";
+  const transactional = request.operation === "branch_publish";
+  if (transactional) await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
   const updated = await client.query(
     `UPDATE codeops.provider_effect_receipts
         SET state = $1,
@@ -487,6 +634,14 @@ export async function recordSessionRuntimeGitHubMutationFailure(
     throw new SessionRuntimeGitHubMutationConflictError(
       "GitHub mutation failure does not match one attempting effect",
     );
+  }
+  if (failed && request.operation === "branch_publish") {
+    await cleanupDefinitiveGitHubBranchCandidateChunks(client, request.operationId);
+  }
+  if (transactional) await client.query("COMMIT");
+  } catch (error) {
+    if (transactional) await client.query("ROLLBACK");
+    throw error;
   }
 }
 
@@ -543,6 +698,9 @@ export async function completeSessionRuntimeGitHubMutation(
       "GitHub mutation result identity does not match its consumed permission",
     );
   }
+  const transactional = request.operation === "branch_publish";
+  if (transactional) await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
   const updated = await client.query(
     `UPDATE codeops.provider_effect_receipts
         SET state = 'succeeded', evidence_json = $1::jsonb,
@@ -567,7 +725,15 @@ export async function completeSessionRuntimeGitHubMutation(
       "GitHub mutation completion does not match one attempting effect",
     );
   }
+  if (request.operation === "branch_publish") {
+    await cleanupDefinitiveGitHubBranchCandidateChunks(client, request.operationId);
+  }
+  if (transactional) await client.query("COMMIT");
   return result;
+  } catch (error) {
+    if (transactional) await client.query("ROLLBACK");
+    throw error;
+  }
 }
 
 export function createGitHubMutationProviderClient(input: {

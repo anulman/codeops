@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   githubCheckRerunResultSchema,
+  githubBranchPublishCandidateSchema,
+  githubBranchPublishCandidateManifestRequestSchema,
+  githubBranchPublishCandidateChunkRequestSchema,
   githubMutationProviderRequestSchema,
   githubMutationResultSchema,
   githubPullRequestUpdateBranchResultSchema,
@@ -14,6 +17,12 @@ const repository = "anulman/codeops";
 const expectedHeadSha = "a".repeat(40);
 const operationId = `githubmutation-${"b".repeat(64)}`;
 const claimToken = "11111111-1111-4111-8111-111111111111";
+const candidate = {
+  manifestId: `githubcandidate-${"c".repeat(64)}`,
+  digest: `sha256:${"d".repeat(64)}`,
+  sizeBytes: 128,
+  chunkCount: 1,
+};
 
 const operations = [
   {
@@ -24,7 +33,7 @@ const operations = [
       baseBranch: "main",
       branchName: "codeops/alpha34-consumer",
       commitMessage: "Repin CodeOps alpha.34",
-      changes: [{ path: "package.json", oldText: "alpha.33", newText: "alpha.34" }],
+      candidate,
     },
   },
   {
@@ -98,79 +107,109 @@ test("accepts only the six bounded exact-head GitHub mutations", () => {
   }));
 });
 
-test("accepts bounded non-empty new files for branch publication", () => {
-  const branch = operations[0];
-  const parsed = sessionRuntimeGitHubMutationRequestSchema.parse({
-    version: "codeops.session-runtime-github-mutation-request/v1",
-    claimToken,
-    operationId,
-    ...branch,
-    input: {
-      ...branch.input,
-      changes: [{ path: "docs/evidence.md", oldText: "", newText: "proof\n" }],
-    },
+test("accepts bounded non-empty candidate changes", () => {
+  const parsed = githubBranchPublishCandidateSchema.parse({
+    version: "codeops.github-branch-publish-candidate/v1",
+    changes: [{ path: "docs/evidence.md", oldText: "", newText: "proof\n" }],
   });
-  assert.equal(parsed.input.changes[0].oldText, "");
-  assert.throws(() => sessionRuntimeGitHubMutationRequestSchema.parse({
+  assert.equal(parsed.changes[0].oldText, "");
+  assert.throws(() => githubBranchPublishCandidateSchema.parse({
     ...parsed,
-    input: {
-      ...parsed.input,
-      changes: [{ path: "docs/evidence.md", oldText: "", newText: "" }],
-    },
+    changes: [{ path: "docs/evidence.md", oldText: "", newText: "" }],
   }));
 });
 
-test("bounds the complete serialized branch publication input at 256 KiB", () => {
-  const branchPublicationInputAtBytes = (targetBytes) => {
-    const input = {
-      repository,
-      expectedHeadSha,
-      baseBranch: "main",
-      branchName: "codeops/capacity-boundary",
-      commitMessage: "Exercise branch publication capacity",
-      changes: Array.from({ length: 3 }, (_, index) => ({
-        path: `capacity-${index}.txt`,
-        oldText: "",
-        newText: "x",
-      })),
-    };
-    let remaining = targetBytes - Buffer.byteLength(JSON.stringify(input));
-    for (const change of input.changes) {
-      const added = Math.min(remaining, 100_000 - change.newText.length);
-      change.newText += "x".repeat(added);
-      remaining -= added;
-    }
-    assert.equal(remaining, 0);
-    assert.equal(Buffer.byteLength(JSON.stringify(input)), targetBytes);
-    return input;
-  };
-  const atLimit = branchPublicationInputAtBytes(262_144);
+test("keeps the control-plane publication input bounded to a candidate reference", () => {
+  const input = operations[0].input;
   assert.equal(sessionRuntimeGitHubMutationRequestSchema.parse({
-    version: "codeops.session-runtime-github-mutation-request/v1",
-    claimToken,
-    operationId,
-    operation: "branch_publish",
-    input: atLimit,
-  }).input.changes.length, 3);
+    version: "codeops.session-runtime-github-mutation-request/v1", claimToken,
+    operationId, operation: "branch_publish", input,
+  }).input.candidate.chunkCount, 1);
   assert.equal(sessionPermissionOperationSchema.parse({
     kind: "github_mutation",
     repository,
     operation: "branch_publish",
     pullRequestNumber: null,
     expectedHeadSha,
-    targetId: atLimit.branchName,
-    payloadJson: JSON.stringify(atLimit),
-  }).payloadJson.length, 262_144);
-  assert.throws(
-    () => sessionRuntimeGitHubMutationRequestSchema.parse({
-      version: "codeops.session-runtime-github-mutation-request/v1",
-      claimToken,
-      operationId,
-      operation: "branch_publish",
-      input: branchPublicationInputAtBytes(262_145),
-    }),
-    /Published branch input exceeds 262144 bytes/,
-  );
+    targetId: input.branchName,
+    payloadJson: JSON.stringify(input),
+  }).payloadJson.length < 2_000, true);
+  assert.throws(() => sessionRuntimeGitHubMutationRequestSchema.parse({
+    version: "codeops.session-runtime-github-mutation-request/v1", claimToken,
+    operationId, operation: "branch_publish",
+    input: { ...input, candidate: { ...candidate, chunkCount: 65 } },
+  }));
+});
+
+test("keeps the bounded v1 inline publication compatible only at the runtime boundary", () => {
+  const inlineInput = {
+    repository, expectedHeadSha, baseBranch: "main",
+    branchName: "codeops/legacy-inline", commitMessage: "Legacy publication",
+    changes: [{ path: "proof.txt", oldText: "before\n", newText: "after\n" }],
+  };
+  const runtime = sessionRuntimeGitHubMutationRequestSchema.parse({
+    version: "codeops.session-runtime-github-mutation-request/v1",
+    claimToken, operationId, operation: "branch_publish", input: inlineInput,
+  });
+  assert.deepEqual(runtime.input, inlineInput);
+  assert.equal(sessionPermissionOperationSchema.parse({
+    kind: "github_mutation", repository, operation: "branch_publish",
+    pullRequestNumber: null, targetId: inlineInput.branchName,
+    expectedHeadSha, payloadJson: JSON.stringify(inlineInput),
+  }).payloadJson, JSON.stringify(inlineInput));
+  assert.throws(() => githubMutationProviderRequestSchema.parse({
+    version: "codeops.github-mutation-provider-request/v1",
+    operationId, operation: "branch_publish", input: inlineInput,
+    payloadDigest: `sha256:${"e".repeat(64)}`,
+    permissionDigest: `sha256:${"f".repeat(64)}`,
+    provenance: { sessionId: "session-legacy", dispatchId: claimToken,
+      principalDigest: `sha256:${"1".repeat(64)}` },
+  }));
+});
+
+test("normalizes only surrounding inline publication commit-message whitespace", () => {
+  const input = {
+    repository, expectedHeadSha, baseBranch: "main",
+    branchName: "codeops/normalized-inline",
+    commitMessage: "Publish  adjacent words",
+    changes: [{ path: "proof.txt", oldText: "before\n", newText: "after\n" }],
+  };
+  const parse = (commitMessage) => sessionRuntimeGitHubMutationRequestSchema.parse({
+    version: "codeops.session-runtime-github-mutation-request/v1",
+    claimToken, operationId, operation: "branch_publish",
+    input: { ...input, commitMessage },
+  }).input;
+  assert.deepEqual(parse(` \t${input.commitMessage}\n`), input);
+  assert.deepEqual(parse(input.commitMessage), input);
+});
+
+test("bounds one immutable candidate manifest to 4 MiB in at most 64 chunks", () => {
+  const chunks = Array.from({ length: 64 }, (_, ordinal) => ({
+    ordinal, digest: `sha256:${ordinal.toString(16).padStart(64, "0")}`,
+    sizeBytes: 65_536,
+  }));
+  const manifest = githubBranchPublishCandidateManifestRequestSchema.parse({
+    version: "codeops.github-branch-publish-candidate-manifest-request/v1",
+    claimToken, operationId, effectDigest: `sha256:${"e".repeat(64)}`,
+    repository,
+    candidate: { manifestId: `githubcandidate-${"f".repeat(64)}`,
+      digest: `sha256:${"d".repeat(64)}`, sizeBytes: 4_194_304,
+      chunkCount: 64 },
+    chunks,
+  });
+  assert.equal(manifest.chunks.at(-1).ordinal, 63);
+  assert.throws(() => githubBranchPublishCandidateManifestRequestSchema.parse({
+    ...manifest, candidate: { ...manifest.candidate, sizeBytes: 4_194_305 },
+  }));
+  assert.throws(() => githubBranchPublishCandidateManifestRequestSchema.parse({
+    ...manifest, chunks: [...chunks, { ...chunks[0], ordinal: 64 }],
+  }));
+  assert.equal(githubBranchPublishCandidateChunkRequestSchema.parse({
+    version: "codeops.github-branch-publish-candidate-chunk-request/v1",
+    claimToken, operationId, manifestId: manifest.candidate.manifestId,
+    ordinal: 0, digest: chunks[0].digest,
+    bytesBase64: Buffer.alloc(65_536).toString("base64"),
+  }).ordinal, 0);
 });
 
 test("separates strict create and fast-forward branch publication modes", () => {

@@ -13,6 +13,7 @@ import {
   recordSessionRuntimeGitHubMutationFailure,
   SessionRuntimeGitHubMutationConflictError,
 } from "../dist/session-runtime-github-mutations.js";
+import { loadUnknownProviderEffectReconciliation } from "../dist/provider-effect-receipts.js";
 
 test("allows bounded publication requests to outlive the legacy timeout", () => {
   assert.equal(GITHUB_MUTATION_PROVIDER_TIMEOUT_MS, 240_000);
@@ -459,19 +460,6 @@ test("accepts matching and unnumbered trusted Temporal GitHub mutations", async 
   });
   assert.equal((await authorizeTrusted(check)).authorization.disposition, "authorized");
 
-  const publish = mutationRequest("branch_publish", {
-    repository,
-    expectedHeadSha: "a".repeat(40),
-    baseBranch: "main",
-    branchName: "codeops/trusted-link",
-    commitMessage: "Publish the trusted branch",
-    changes: [{
-      path: "bounded.txt",
-      oldText: "before\n",
-      newText: "after\n",
-    }],
-  });
-  assert.equal((await authorizeTrusted(publish)).authorization.disposition, "authorized");
 });
 
 test("preserves an older producer payload without rewriting after permission", async () => {
@@ -503,6 +491,160 @@ test("preserves an older producer payload without rewriting after permission", a
     authorized.request.input.body,
     "Fixes COAUTO-19 and `COAUTO-19`.",
   );
+});
+
+test("normalizes inline publication identity before staging and replays it once", async () => {
+  const input = {
+    repository, expectedHeadSha: "a".repeat(40), baseBranch: "main",
+    branchName: "codeops/legacy-publication", commitMessage: "Publish  legacy bytes",
+    changes: [{ path: "proof.txt", oldText: "before\n", newText: "after\n" }],
+  };
+  const normalizedRequest = mutationRequest("branch_publish", input);
+  const request = {
+    ...normalizedRequest,
+    input: { ...input, commitMessage: ` \t${input.commitMessage}\n` },
+  };
+  const permissionValue = exactPermission(normalizedRequest);
+  class LegacyClient extends Client {
+    constructor() {
+      super({ permissionValue, decisionValue: decision(permissionValue) });
+      this.manifest = null;
+      this.chunks = [];
+      this.receipt = null;
+      this.receiptInsertions = 0;
+      this.reconciliationPayloadDigest = digest(canonical(input));
+    }
+    async query(text, values = []) {
+      if (text.includes("SELECT effect.effect_id") &&
+          text.includes("permission.request_json")) {
+        this.calls.push({ text, values });
+        return { rowCount: 1, rows: [{
+          effect_id: request.operationId,
+          session_id: "session-github-mutation",
+          dispatch_id: dispatchId,
+          payload_digest: this.reconciliationPayloadDigest,
+          permission_digest: permissionValue.request.operationDigest,
+          operation: "branch_publish",
+          attempted_at: new Date("2026-08-14T15:08:00.000Z"),
+          state: "unknown",
+          request_json: permissionValue,
+          dispatch_json: dispatch(),
+        }] };
+      }
+      if (text.startsWith("BEGIN") || text === "COMMIT" || text === "ROLLBACK") {
+        this.calls.push({ text, values });
+        return { rowCount: null, rows: [] };
+      }
+      if (text.includes("FROM codeops.session_runtime_outbox\n") &&
+          text.includes("FOR UPDATE")) {
+        this.calls.push({ text, values });
+        return { rowCount: 1, rows: [{ dispatch_id: dispatchId }] };
+      }
+      if (text.includes("INSERT INTO codeops.github_branch_publish_candidate_manifests")) {
+        this.calls.push({ text, values });
+        this.manifest = {
+          manifest_id: values[0], candidate_digest: values[1], candidate_bytes: values[2],
+          chunk_count: values[3], dispatch_id: values[4], session_id: values[5],
+          owner_principal_id: values[6], repository: values[7], operation: "branch_publish",
+          operation_id: values[8], effect_digest: values[9],
+          chunk_identities_json: JSON.parse(values[10]),
+        };
+        return { rowCount: 1, rows: [] };
+      }
+      if (text.includes("FROM codeops.github_branch_publish_candidate_manifests")) {
+        this.calls.push({ text, values });
+        return { rowCount: 1, rows: [this.manifest] };
+      }
+      if (text.includes("COALESCE(SUM(chunk_bytes)")) {
+        this.calls.push({ text, values });
+        return { rowCount: 1, rows: [{ staged_bytes: 0 }] };
+      }
+      if (text.includes("SELECT ordinal FROM codeops.github_branch_publish_candidate_chunks")) {
+        this.calls.push({ text, values });
+        return { rowCount: 0, rows: [] };
+      }
+      if (text.includes("INSERT INTO codeops.github_branch_publish_candidate_chunks")) {
+        this.calls.push({ text, values });
+        this.chunks.push({ ordinal: values[3], chunk_digest: values[4],
+          chunk_bytes: values[5], content: values[6] });
+        return { rowCount: 1, rows: [] };
+      }
+      if (text.includes("SELECT ordinal, chunk_digest, chunk_bytes, content")) {
+        this.calls.push({ text, values });
+        return { rowCount: this.chunks.length, rows: this.chunks };
+      }
+      if (text.includes("SELECT dispatch_id, payload_digest, permission_digest")) {
+        this.calls.push({ text, values });
+        return { rowCount: this.receipt === null ? 0 : 1,
+          rows: this.receipt === null ? [] : [this.receipt] };
+      }
+      if (text.includes("INSERT INTO codeops.provider_effect_receipts")) {
+        this.calls.push({ text, values });
+        if (this.receipt !== null) return { rowCount: 0, rows: [] };
+        this.receiptInsertions += 1;
+        this.receipt = {
+          dispatch_id: values[7], payload_digest: values[8],
+          permission_digest: values[9], state: "authorized", evidence_json: null,
+        };
+        return { rowCount: 1, rows: [] };
+      }
+      return super.query(text, values);
+    }
+  }
+  const client = new LegacyClient();
+  const authorization = await authorizeSessionRuntimeGitHubMutation(client, {
+    dispatchId, workerId, request,
+    now: () => new Date("2026-08-14T15:07:00.000Z"),
+  });
+  assert.equal(authorization.disposition, "authorized");
+  assert.equal("changes" in authorization.request.input, false);
+  assert.equal("candidate" in authorization.request.input, true);
+  assert.equal(authorization.request.input.commitMessage, input.commitMessage);
+  assert.equal(authorization.request.payloadDigest, digest(canonical(input)));
+  assert.equal(authorization.request.permissionDigest,
+    permissionValue.request.operationDigest);
+  assert.equal(client.chunks.length, 1);
+  assert.match(client.calls.find(({ text }) => text.includes("candidate_manifests") &&
+    text.includes("FOR UPDATE")).text, /FOR UPDATE/);
+
+  const replayResult = {
+    version: "codeops.github-branch-publish-result/v1",
+    repository,
+    operationId: normalizedRequest.operationId,
+    baseBranch: input.baseBranch,
+    branchName: input.branchName,
+    baseSha: input.expectedHeadSha,
+    headSha: "b".repeat(40),
+    url: "https://github.com/anulman/codeops/tree/codeops%2Flegacy-publication",
+  };
+  client.receipt = { ...client.receipt, state: "succeeded",
+    evidence_json: replayResult };
+  assert.deepEqual(await authorizeSessionRuntimeGitHubMutation(client, {
+    dispatchId, workerId, request: normalizedRequest,
+    now: () => new Date("2026-08-14T15:09:00.000Z"),
+  }), { disposition: "replayed", result: replayResult });
+  assert.equal(client.receiptInsertions, 1);
+  assert.equal(client.chunks.length, 1);
+
+  const inFlight = await loadUnknownProviderEffectReconciliation(
+    client, request.operationId, "access:aidan@example.com",
+  );
+  assert.deepEqual(inFlight.request, authorization.request);
+  assert.equal(client.chunks.length, 1);
+
+  const preUpgradeClient = new LegacyClient();
+  const preUpgrade = await loadUnknownProviderEffectReconciliation(
+    preUpgradeClient, request.operationId, "access:aidan@example.com",
+  );
+  assert.deepEqual(preUpgrade.request, authorization.request);
+  assert.equal(preUpgradeClient.chunks.length, 1);
+
+  const tampered = new LegacyClient();
+  tampered.reconciliationPayloadDigest = `sha256:${"f".repeat(64)}`;
+  await assert.rejects(loadUnknownProviderEffectReconciliation(
+    tampered, request.operationId, "access:aidan@example.com",
+  ), /digests are inconsistent/);
+  assert.equal(tampered.manifest, null);
 });
 
 test("consumes one exact durable permission before returning provider authority", async () => {
@@ -906,58 +1048,81 @@ test("records unknown when the provider outcome or completion commit is ambiguou
   );
 });
 
-test("requires exact principal-owned successful durable evidence for fast-forward", async () => {
-  const operation = "branch_publish";
+function cleanedBranchPublication(state) {
+  const operationId = `githubmutation-${"7".repeat(64)}`;
   const input = {
     repository,
-    mode: "fast_forward",
     expectedHeadSha: "a".repeat(40),
-    expectedBranchHeadSha: "b".repeat(40),
-    expectedBranchHeadEffectId: `githubmutation-${"1".repeat(64)}`,
     baseBranch: "main",
-    branchName: "codeops/bootstrap",
-    commitMessage: "Continue bootstrap",
-    changes: [{ path: "proof.txt", oldText: "", newText: "proved\n" }],
+    branchName: "codeops/replayed-candidate",
+    commitMessage: "Publish once",
+    candidate: {
+      manifestId: `githubcandidate-${"8".repeat(64)}`,
+      digest: `sha256:${"9".repeat(64)}`,
+      sizeBytes: 128,
+      chunkCount: 1,
+    },
   };
   const request = {
     version: "codeops.session-runtime-github-mutation-request/v1",
-    claimToken,
-    operation,
-    operationId: `githubmutation-${createHash("sha256").update(canonical({ dispatchId, operation, input })).digest("hex")}`,
-    input,
+    claimToken, operation: "branch_publish", operationId, input,
   };
-  const permissionOperation = { kind: "github_mutation", repository, operation, pullRequestNumber: null, targetId: input.branchName, expectedHeadSha: input.expectedHeadSha, payloadJson: canonical(input) };
-  const requestId = `permission-${createHash("sha256").update(canonical(permissionOperation)).update("\0").update(dispatchId).update("\0").update(request.operationId).digest("hex")}`;
-  const permissionValue = {
-    ...permission(),
-    toolCallId: request.operationId,
-    request: { ...permission().request, requestId, operation: permissionOperation, operationDigest: digest(canonical(permissionOperation)) },
+  const permissionValue = exactPermission(request);
+  const payloadDigest = digest(canonical(input));
+  const permissionDigest = permissionValue.request.operationDigest;
+  const result = {
+    version: "codeops.github-branch-publish-result/v1",
+    repository, operationId, baseBranch: input.baseBranch,
+    branchName: input.branchName, baseSha: input.expectedHeadSha,
+    headSha: "b".repeat(40),
+    url: `https://github.com/${repository}/tree/codeops/replayed-candidate`,
   };
-  const evidence = {
-    effect_id: input.expectedBranchHeadEffectId,
-    repository,
-    target_id: input.branchName,
-    expected_head_sha: "9".repeat(40),
-    state: "succeeded",
-    attempted_at: "2026-08-14T15:00:00.000Z",
-    resolved_at: "2026-08-14T15:01:00.000Z",
-    evidence_json: { version: "codeops.github-branch-publish-result/v1", repository, operationId: input.expectedBranchHeadEffectId, baseBranch: input.baseBranch, branchName: input.branchName, baseSha: "9".repeat(40), headSha: input.expectedBranchHeadSha, url: `https://github.com/${repository}/tree/codeops/bootstrap` },
+  const stored = {
+    dispatch_id: dispatchId, payload_digest: payloadDigest,
+    permission_digest: permissionDigest, state, evidence_json: result,
   };
-  class EvidenceClient extends Client {
-    constructor(prior) { super({ permissionValue }); this.prior = prior; }
+  class PostCleanupClient extends Client {
+    constructor() {
+      super({ insertCount: 0, permissionValue,
+        decisionValue: decision(permissionValue), storedMutation: stored });
+    }
     async query(text, values = []) {
-      if (text.includes("session.owner_principal_id") && text.includes("effect.effect_id")) {
+      if (text === "BEGIN ISOLATION LEVEL SERIALIZABLE" || text === "COMMIT" || text === "ROLLBACK") {
         this.calls.push({ text, values });
-        return { rowCount: this.prior === null ? 0 : 1, rows: this.prior === null ? [] : [this.prior] };
+        return { rowCount: null, rows: [] };
       }
       return super.query(text, values);
     }
   }
-  const client = new EvidenceClient(evidence);
-  const authorization = { dispatchId, workerId, request, now: () => new Date("2026-08-14T15:07:00.000Z") };
-  assert.equal((await authorizeSessionRuntimeGitHubMutation(client, authorization)).disposition, "authorized");
-  const query = client.calls.find(({ text }) => text.includes("effect.effect_id"));
-  assert.match(query.text, /effect\.state = 'succeeded'/);
-  assert.deepEqual(query.values, [input.expectedBranchHeadEffectId, repository, input.branchName, "access:aidan@example.com"]);
-  await assert.rejects(authorizeSessionRuntimeGitHubMutation(new EvidenceClient({ ...evidence, state: "reconciled_satisfied" }), authorization), /lacks matching durable branch evidence/);
+  return { PostCleanupClient, request, result };
+}
+
+test("replays successful branch states after candidate chunks are gone", async () => {
+  for (const state of ["succeeded", "reconciled_satisfied"]) {
+    const { PostCleanupClient, request, result } = cleanedBranchPublication(state);
+    const client = new PostCleanupClient();
+    const replay = await authorizeSessionRuntimeGitHubMutation(client, {
+      dispatchId, workerId, request,
+      now: () => new Date("2026-08-14T15:07:00.000Z"),
+    });
+    assert.deepEqual(replay, { disposition: "replayed", result });
+    assert.equal(client.calls.some(({ text }) =>
+      text.includes("github_branch_publish_candidate_")), false);
+    assert.match(client.calls.find(({ text }) =>
+      text.includes("FROM codeops.provider_effect_receipts")).text, /FOR UPDATE/);
+  }
+});
+
+test("rejects definitive non-success branch states after cleanup without reading chunks", async () => {
+  for (const state of ["failed", "reconciled_not_observed", "operator_resolved"]) {
+    const { PostCleanupClient, request } = cleanedBranchPublication(state);
+    const client = new PostCleanupClient();
+    await assert.rejects(authorizeSessionRuntimeGitHubMutation(client, {
+      dispatchId, workerId, request,
+      now: () => new Date("2026-08-14T15:07:00.000Z"),
+    }), (error) => error instanceof SessionRuntimeGitHubMutationConflictError &&
+      /definitive non-success/.test(error.message));
+    assert.equal(client.calls.some(({ text }) =>
+      text.includes("github_branch_publish_candidate_")), false);
+  }
 });

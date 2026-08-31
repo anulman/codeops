@@ -18,6 +18,7 @@ import {
   type SessionRuntimeDispatch,
 } from "./session-broker-runtime.js";
 import { resolveSessionRuntimeCompletionSnapshot } from "./session-runtime-permissions.js";
+import { cleanupNoReceiptGitHubBranchCandidatesForDispatch } from "./github-branch-publish-candidates.js";
 
 const workerPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 
@@ -204,6 +205,8 @@ export async function claimSessionRuntimeDispatch(
   const claimedAt = now.toISOString();
   const claimExpiresAt = new Date(now.getTime() + input.leaseMs).toISOString();
   const claimToken = (input.claimToken ?? randomUUID)();
+  await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
   const result = await client.query<ClaimedDispatchRow>(
     `WITH candidate AS (
        SELECT outbox.dispatch_id
@@ -248,7 +251,10 @@ export async function claimSessionRuntimeDispatch(
       canonicalJsonText(authority.identity),
     ],
   );
-  if (!result.rows[0]) return null;
+  if (!result.rows[0]) {
+    await client.query("COMMIT");
+    return null;
+  }
   const row = result.rows[0];
   if (
     row.claim_token !== claimToken ||
@@ -267,12 +273,23 @@ export async function claimSessionRuntimeDispatch(
   ) {
     throw new Error("runtime claim returned a different session authority");
   }
+  if (Number(row.claim_count) > 1) {
+    await cleanupNoReceiptGitHubBranchCandidatesForDispatch(
+      client,
+      dispatch.dispatchId,
+    );
+  }
+  await client.query("COMMIT");
   return {
     dispatch,
     claimToken,
     claimExpiresAt,
     claimCount: Number(row.claim_count),
   };
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
 }
 
 function duplicateRuntimeResult(

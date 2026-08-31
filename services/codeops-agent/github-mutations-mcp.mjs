@@ -27,10 +27,10 @@ const tools = [
   {
     name: "github.branch_publish",
     path: "/v1/github-mutations/branch/publish",
-    description: "Publish one branch from bounded text replacements after explicit allow-once permission. The complete serialized input must not exceed 262144 bytes (256 KiB). expectedHeadSha binds the admitted base snapshot. Fast-forward atomically compares expectedBranchHeadSha on the existing target branch.",
+    description: "Publish one branch from bounded text replacements after explicit allow-once permission. The canonical candidate must not exceed 4194304 bytes (4 MiB), and the complete serialized transport input must not exceed 4456448 bytes. expectedHeadSha binds the admitted base snapshot. Fast-forward atomically compares expectedBranchHeadSha on the existing target branch.",
     inputSchema: {
       type: "object", additionalProperties: false,
-      description: "Complete serialized input must not exceed 262144 bytes (256 KiB).",
+      description: "The canonical candidate must not exceed 4194304 bytes (4 MiB). The complete serialized transport input must not exceed 4456448 bytes.",
       required: ["repository", "expectedHeadSha", "baseBranch", "branchName", "commitMessage", "changes"],
       allOf: [{
         if: { properties: { mode: { const: "fast_forward" } }, required: ["mode"] },

@@ -20,6 +20,8 @@ const providerEffectReceiptsUrl = new URL("../sql/provider-effect-receipts-v1.sq
 const providerEffectReceiptsRevertUrl = new URL("../sql/provider-effect-receipts-v1-revert.sql", import.meta.url);
 const providerEffectPublicationUrl = new URL("../sql/provider-effect-publication-operations-v2.sql", import.meta.url);
 const providerEffectPublicationRevertUrl = new URL("../sql/provider-effect-publication-operations-v2-revert.sql", import.meta.url);
+const githubBranchCandidatesUrl = new URL("../sql/github-branch-publish-candidates-v1.sql", import.meta.url);
+const githubBranchCandidatesRevertUrl = new URL("../sql/github-branch-publish-candidates-v1-revert.sql", import.meta.url);
 const lifecycleJournalUrl = new URL("../sql/work-item-lifecycle-journal.sql", import.meta.url);
 const lifecycleJournalRevertUrl = new URL("../sql/work-item-lifecycle-journal-revert.sql", import.meta.url);
 const workspaceLaunchUrl = new URL("../sql/workspace-launch.sql", import.meta.url);
@@ -313,6 +315,23 @@ test("adds reversible publication operations to provider effect receipts", async
   assert.doesNotMatch(sql, /DELETE|TRUNCATE|DROP TABLE/);
   assert.match(revert, /cannot remove publication operations while their provider effects exist/);
   assert.doesNotMatch(revert, /DELETE|TRUNCATE|DROP TABLE/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
+});
+
+test("retains immutable candidate identity with one bounded cleanup index and guarded revert", async () => {
+  const sql = await readFile(githubBranchCandidatesUrl, "utf8");
+  const revert = await readFile(githubBranchCandidatesRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.github_branch_publish_candidate_manifests/);
+  assert.match(sql, /candidate_bytes integer NOT NULL CHECK \(candidate_bytes BETWEEN 1 AND 4194304\)/);
+  assert.match(sql, /chunk_count integer NOT NULL CHECK \(chunk_count BETWEEN 1 AND 64\)/);
+  assert.match(sql, /effect_digest text NOT NULL/);
+  assert.match(sql, /CREATE TABLE codeops\.github_branch_publish_candidate_chunks/);
+  assert.match(sql, /chunk_bytes integer NOT NULL CHECK \(chunk_bytes BETWEEN 1 AND 65536\)/);
+  assert.match(sql, /github_branch_publish_chunks_dispatch_operation_ordinal_idx/);
+  assert.match(sql, /\(dispatch_id, operation_id, ordinal\)/);
+  assert.doesNotMatch(sql, /expires|tenant|artifact|retention/);
+  assert.match(revert, /cannot remove GitHub branch candidates while immutable manifests exist/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });

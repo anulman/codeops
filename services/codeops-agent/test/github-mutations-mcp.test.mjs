@@ -102,8 +102,10 @@ test("advertises only six bounded mutation tools and relays one exact call", asy
     );
     assert.deepEqual(branchPublish.inputSchema.properties.mode.enum, ["create", "fast_forward"]);
     assert.match(branchPublish.description, /atomically compares expectedBranchHeadSha/);
-    assert.match(branchPublish.description, /262144 bytes \(256 KiB\)/);
-    assert.match(branchPublish.inputSchema.description, /262144 bytes \(256 KiB\)/);
+    assert.match(branchPublish.description, /canonical candidate must not exceed 4194304 bytes \(4 MiB\)/);
+    assert.match(branchPublish.description, /serialized transport input must not exceed 4456448 bytes/);
+    assert.match(branchPublish.inputSchema.description, /canonical candidate must not exceed 4194304 bytes \(4 MiB\)/);
+    assert.match(branchPublish.inputSchema.description, /serialized transport input must not exceed 4456448 bytes/);
     assert.match(branchPublish.inputSchema.properties.expectedBranchHeadEffectId.description, /durable successful CodeOps publication effect/);
     assert.match(branchPublish.inputSchema.properties.expectedHeadSha.description, /not the atomic target-ref fence/);
 
@@ -129,6 +131,34 @@ test("advertises only six bounded mutation tools and relays one exact call", asy
       expectedHeadSha: "b".repeat(40),
       checkRunId: 1234,
     });
+
+    const largePublication = {
+      repository: "anulman/codeops",
+      expectedHeadSha: "b".repeat(40),
+      baseBranch: "main",
+      branchName: "codeops/large-candidate-proof",
+      commitMessage: "Relay the bounded candidate",
+      changes: Array.from({ length: 3 }, (_, index) => ({
+        path: `proof-${index}.txt`,
+        oldText: "",
+        newText: "x".repeat(100_000),
+      })),
+    };
+    assert.ok(Buffer.byteLength(JSON.stringify(largePublication)) > 262_144);
+    child.stdin.write(`${JSON.stringify({
+      jsonrpc: "2.0",
+      id: 3,
+      method: "tools/call",
+      params: {
+        name: "github.branch_publish",
+        arguments: largePublication,
+      },
+    })}\n`);
+    const relayed = await nextMessage(lines);
+    assert.equal(relayed.result.isError, false);
+    assert.equal(requests.length, 2);
+    assert.equal(requests[1].url, "/v1/github-mutations/branch/publish");
+    assert.deepEqual(requests[1].body, largePublication);
   } finally {
     lines.close();
     child.kill("SIGTERM");

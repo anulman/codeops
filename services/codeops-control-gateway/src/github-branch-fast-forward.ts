@@ -8,6 +8,7 @@ import {
   sha256CanonicalJsonDigest,
   type GitHubMutationProviderRequest,
   type GitHubMutationReconciliationResult,
+  type GitHubBranchPublishCandidate,
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
 import { createGitHubMutationAdapter as createBaseAdapter, createGitHubMutationReconciler as createBaseReconciler, GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS, GITHUB_MUTATION_WRITE_TIMEOUT_MS, GitHubMutationPreflightNoEffectError } from "./github-mutations-adapter.js";
@@ -54,11 +55,11 @@ function provider(json: Json) {
   };
 }
 
-async function prepare(request: Request, prior: z.infer<typeof commit>, p: ReturnType<typeof provider>) {
+async function prepare(request: Request, changes: GitHubBranchPublishCandidate["changes"], prior: z.infer<typeof commit>, p: ReturnType<typeof provider>) {
   const root = await p.tree(prior.tree.sha);
   if (root.sha !== prior.tree.sha) throw new Error("GitHub publication tree identity changed");
   const entries = new Map(root.tree.map((entry) => [entry.path, entry]));
-  return mapGitHubPublicationBounded(request.input.changes, async (change) => {
+  return mapGitHubPublicationBounded(changes, async (change) => {
     const entry = entries.get(change.path);
     let mode = "100644", content = change.newText;
     if (change.oldText.length === 0) {
@@ -102,15 +103,15 @@ async function exactTree(p: ReturnType<typeof provider>, parentSha: string, cand
   return [...expected.values()].map(id).sort().join("\n") === candidate.tree.map(id).sort().join("\n");
 }
 
-async function replayMatches(request: Request, currentSha: string, p: ReturnType<typeof provider>) {
+async function replayMatches(request: Request, candidate: GitHubBranchPublishCandidate, currentSha: string, p: ReturnType<typeof provider>) {
   const priorSha = request.input.expectedBranchHeadSha!, priorEffect = request.input.expectedBranchHeadEffectId!;
   const [prior, current] = await mapGitHubPublicationBounded([priorSha, currentSha], (sha) => p.commit(sha));
   if (prior?.sha !== priorSha || !prior.message.split(/\r?\n/).includes(marker(priorEffect)) || current?.sha !== currentSha || current.parents.length !== 1 || current.parents[0]?.sha !== priorSha || current.message !== message(request).text) return false;
-  const changes = await prepare(request, prior, p);
+  const changes = await prepare(request, candidate.changes, prior, p);
   return exactTree(p, prior.tree.sha, current.tree.sha, changes);
 }
 
-export async function publishGitHubFastForward(input: { request: Request; json: Json; preflight: <T>(operation: () => Promise<T>) => Promise<T> }) {
+export async function publishGitHubFastForward(input: { request: Request; candidate: GitHubBranchPublishCandidate; json: Json; preflight: <T>(operation: () => Promise<T>) => Promise<T> }) {
   const { request } = input, priorSha = request.input.expectedBranchHeadSha!, priorEffect = request.input.expectedBranchHeadEffectId!, p = provider(input.json);
   const reads: readonly (() => Promise<unknown>)[] = [
     () => p.branch(request.input.baseBranch), () => p.branch(request.input.branchName),
@@ -119,10 +120,10 @@ export async function publishGitHubFastForward(input: { request: Request; json: 
   const [baseRef, targetRef, baseCommit, prior] = await input.preflight(() => mapGitHubPublicationBounded(reads, (read) => read())) as [z.infer<typeof ref>, z.infer<typeof ref>, z.infer<typeof commit>, z.infer<typeof commit>];
   if (baseRef.ref !== `refs/heads/${request.input.baseBranch}` || targetRef.ref !== `refs/heads/${request.input.branchName}` || baseRef.object.type !== "commit" || targetRef.object.type !== "commit" || baseRef.object.sha !== request.input.expectedHeadSha || baseCommit.sha !== request.input.expectedHeadSha || prior.sha !== priorSha || !prior.message.split(/\r?\n/).includes(marker(priorEffect))) throw new Error("GitHub publication base, target, or durable branch identity does not match");
   if (targetRef.object.sha !== priorSha) {
-    if (!(await input.preflight(() => replayMatches(request, targetRef.object.sha, p)))) throw new Error("GitHub publication branch does not match the exact replay");
+    if (!(await input.preflight(() => replayMatches(request, input.candidate, targetRef.object.sha, p)))) throw new Error("GitHub publication branch does not match the exact replay");
     return targetRef.object.sha;
   }
-  const changes = await input.preflight(() => prepare(request, prior, p));
+  const changes = await input.preflight(() => prepare(request, input.candidate.changes, prior, p));
   const commitMessage = message(request);
   const response = created.parse(await input.json("https://api.github.com/graphql", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ query: "mutation CodeOpsCreateCommit($input: CreateCommitOnBranchInput!) { createCommitOnBranch(input: $input) { commit { oid message tree { oid } parents(first: 2) { nodes { oid } } } } }", variables: { input: { branch: { repositoryNameWithOwner: request.input.repository, branchName: request.input.branchName }, expectedHeadOid: priorSha, message: { headline: commitMessage.headline, body: commitMessage.body }, fileChanges: { additions: changes.map(({ path, content }) => ({ path, contents: Buffer.from(content).toString("base64") })) } } } }) }));
   const value = response.data.createCommitOnBranch?.commit;
@@ -146,18 +147,23 @@ function remote(authority: RepositoryAuthority, requestFetch: typeof fetch): Jso
     return JSON.parse(decodeProviderResponseText(response.bytes));
   };
 }
-function requireDigests(request: Request) {
-  const permission = sessionPermissionOperationSchema.parse({ kind: "github_mutation", repository: request.input.repository, operation: request.operation, pullRequestNumber: null, targetId: request.input.branchName, expectedHeadSha: request.input.expectedHeadSha, payloadJson: canonicalJsonText(request.input) });
-  if (request.payloadDigest !== sha256CanonicalJsonDigest(request.input) || request.permissionDigest !== sha256CanonicalJsonDigest(permission)) throw new Error("GitHub mutation payload and durable permission digests do not match");
+function requireDigests(request: Request, candidate: GitHubBranchPublishCandidate) {
+  const { candidate: _candidate, ...metadata } = request.input;
+  const inputs = [request.input, { ...metadata, changes: candidate.changes }];
+  if (!inputs.some((value) => {
+    const permission = sessionPermissionOperationSchema.parse({ kind: "github_mutation", repository: request.input.repository, operation: request.operation, pullRequestNumber: null, targetId: request.input.branchName, expectedHeadSha: request.input.expectedHeadSha, payloadJson: canonicalJsonText(value) });
+    return request.payloadDigest === sha256CanonicalJsonDigest(value) && request.permissionDigest === sha256CanonicalJsonDigest(permission);
+  })) throw new Error("GitHub mutation payload and durable permission digests do not match");
 }
 
-export function createGitHubMutationReconciler(input: { resolve: (repository: string) => RepositoryAuthority; fetch?: typeof fetch; consistencyWindowMs?: number }): (request: GitHubMutationProviderRequest, attemptedAt: Date, observedAt?: Date) => Promise<GitHubMutationReconciliationResult> {
+export function createGitHubMutationReconciler(input: { resolve: (repository: string) => RepositoryAuthority; loadBranchCandidate: (request: Request) => Promise<GitHubBranchPublishCandidate>; fetch?: typeof fetch; consistencyWindowMs?: number }): (request: GitHubMutationProviderRequest, attemptedAt: Date, observedAt?: Date) => Promise<GitHubMutationReconciliationResult> {
   const base = createBaseReconciler(input), requestFetch = input.fetch ?? fetch, window = input.consistencyWindowMs ?? 60_000;
   return async (raw, attemptedAt, observedAt = new Date()) => {
     const request = githubMutationProviderRequestSchema.parse(raw);
     if (request.operation !== "branch_publish" || request.input.mode !== "fast_forward") return base(request, attemptedAt, observedAt);
-    requireDigests(request);
     if (!Number.isFinite(attemptedAt.getTime()) || !Number.isFinite(observedAt.getTime()) || observedAt < attemptedAt) throw new Error("GitHub reconciliation time identity is invalid");
+    const candidate = await input.loadBranchCandidate(request);
+    requireDigests(request, candidate);
     const authority = input.resolve(request.input.repository), p = provider(remote(authority, requestFetch));
     try {
       const current = await p.branch(request.input.branchName);
@@ -165,7 +171,7 @@ export function createGitHubMutationReconciler(input: { resolve: (repository: st
         const elapsed = observedAt.getTime() - attemptedAt.getTime() >= window;
         return githubMutationReconciliationResultSchema.parse({ version: "codeops.github-mutation-reconciliation-result/v1", state: elapsed ? "reconciled_not_observed" : "unknown", result: null, summary: elapsed ? "The exact prior branch head remains after the provider consistency window." : "The exact prior branch head remains within the provider consistency window." });
       }
-      const satisfied = current.ref === `refs/heads/${request.input.branchName}` && current.object.type === "commit" && await replayMatches(request, current.object.sha, p);
+      const satisfied = current.ref === `refs/heads/${request.input.branchName}` && current.object.type === "commit" && await replayMatches(request, candidate, current.object.sha, p);
       return githubMutationReconciliationResultSchema.parse({ version: "codeops.github-mutation-reconciliation-result/v1", state: satisfied ? "reconciled_satisfied" : "unknown", result: satisfied ? githubMutationResultSchema.parse({ version: "codeops.github-branch-publish-result/v1", repository: authority.repository, operationId: request.operationId, baseBranch: request.input.baseBranch, branchName: request.input.branchName, baseSha: request.input.expectedHeadSha, headSha: current.object.sha, url: `https://github.com/${authority.repository}/tree/${request.input.branchName.split("/").map(encodeURIComponent).join("/")}` }) : null, summary: satisfied ? "The exact atomic branch commit, prior parent, message, and complete tree match." : "The branch does not contain the exact requested atomic commit and tree." });
     } catch (error) {
       if (error instanceof GitHubMutationPreflightNoEffectError) throw error;
@@ -174,14 +180,15 @@ export function createGitHubMutationReconciler(input: { resolve: (repository: st
   };
 }
 
-export function createGitHubMutationAdapter(input: { resolve: (repository: string) => RepositoryAuthority; fetch?: typeof fetch; branchPublicationTimeoutMs?: number }) {
+export function createGitHubMutationAdapter(input: { resolve: (repository: string) => RepositoryAuthority; loadBranchCandidate: (request: Request) => Promise<GitHubBranchPublishCandidate>; fetch?: typeof fetch; branchPublicationTimeoutMs?: number }) {
   const base = createBaseAdapter(input), requestFetch = input.fetch ?? fetch;
   return async (raw: GitHubMutationProviderRequest) => {
     const request = githubMutationProviderRequestSchema.parse(raw);
     if (request.operation !== "branch_publish" || request.input.mode !== "fast_forward") return base(request);
-    requireDigests(request);
     const preflight = async <T>(operation: () => Promise<T>) => { try { return await operation(); } catch (error) { throw new GitHubMutationPreflightNoEffectError(`GitHub mutation preflight proved that no remote effect occurred: ${error instanceof Error ? error.message : "unknown preflight failure"}`, { cause: error }); } };
-    await preflight(async () => preflightGitHubBranchPublicationRequest(request.input));
+    const candidate = await preflight(() => input.loadBranchCandidate(request));
+    requireDigests(request, candidate);
+    await preflight(async () => preflightGitHubBranchPublicationRequest(request.input, candidate.changes));
     const authority = input.resolve(request.input.repository);
     if (authority.repository !== request.input.repository) throw new Error("GitHub mutation authority does not match the request");
     authorityParts(authority);
@@ -194,7 +201,7 @@ export function createGitHubMutationAdapter(input: { resolve: (repository: strin
       const response = await readProviderResponse({ fetch: requestFetch, url: path === "https://api.github.com/graphql" ? path : api(authority, path), init: { ...init, headers: { Accept: "application/vnd.github+json", Authorization: `Bearer ${authority.writeToken}`, "User-Agent": "codeops-control-gateway", "X-GitHub-Api-Version": "2022-11-28", ...(init.headers ?? {}) } }, maxBytes: 1_024 * 1_024, statuses: [200], mediaTypes: ["json"], timeoutMs: Math.min(init.method === undefined || init.method === "GET" ? GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS : GITHUB_MUTATION_WRITE_TIMEOUT_MS, remaining) });
       return JSON.parse(decodeProviderResponseText(response.bytes));
     };
-    const headSha = await publishGitHubFastForward({ request, json, preflight });
+    const headSha = await publishGitHubFastForward({ request, candidate, json, preflight });
     return githubMutationResultSchema.parse({ version: "codeops.github-branch-publish-result/v1", repository: authority.repository, operationId: request.operationId, baseBranch: request.input.baseBranch, branchName: request.input.branchName, baseSha: request.input.expectedHeadSha, headSha, url: `https://github.com/${authority.repository}/tree/${request.input.branchName.split("/").map(encodeURIComponent).join("/")}` });
   };
 }

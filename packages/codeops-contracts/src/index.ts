@@ -292,6 +292,11 @@ export {
 } from "./github-reads.js";
 export {
   githubBranchPublishInputSchema,
+  githubBranchPublishLegacyInlineInputSchema,
+  githubBranchPublishCandidateSchema,
+  githubBranchPublishCandidateReferenceSchema,
+  githubBranchPublishCandidateManifestRequestSchema,
+  githubBranchPublishCandidateChunkRequestSchema,
   githubBranchPublishResultSchema,
   githubCheckRerunInputSchema,
   githubCheckRerunResultSchema,
@@ -313,6 +318,9 @@ export {
   providerEffectStateSchema,
   sessionRuntimeGitHubMutationRequestSchema,
   type GitHubMutationOperation,
+  type GitHubBranchPublishCandidate,
+  type GitHubBranchPublishCandidateManifestRequest,
+  type GitHubBranchPublishCandidateChunkRequest,
   type GitHubMutationProviderRequest,
   type GitHubMutationReconciliationProviderRequest,
   type GitHubMutationReconciliationResult,

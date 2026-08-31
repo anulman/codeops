@@ -2,6 +2,8 @@ import type { IncomingHttpHeaders } from "node:http";
 import { z } from "zod";
 import {
   githubMutationResultSchema,
+  githubBranchPublishCandidateManifestRequestSchema,
+  githubBranchPublishCandidateChunkRequestSchema,
   githubReadResultSchema,
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeCompletionRequestSchema,
@@ -31,6 +33,16 @@ import {
 import { authenticateBearer } from "./bearer-auth.js";
 import type { SessionRuntimeDispatchClaim } from "./session-broker-runtime-outbox.js";
 import { WorkItemAdmissionDuplicateError, WorkItemAdmissionNotFoundError } from "./work-item-admission.js";
+import {
+  ClaimedDispatchAuthorityConflictError,
+  ClaimedDispatchAuthorityNotFoundError,
+} from "./claimed-dispatch-authority.js";
+import {
+  GitHubBranchCandidateConflictError,
+  GitHubBranchCandidateInvalidRequestError,
+  GitHubBranchCandidateNotFoundError,
+} from "./github-branch-publish-candidates.js";
+import { SessionRuntimeGitHubMutationConflictError } from "./session-runtime-github-mutations.js";
 
 const dispatchId = z.string().uuid();
 const claimPath = "/v1/session-runtime/claims";
@@ -48,6 +60,10 @@ const githubReadPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/github-reads$/i;
 const githubMutationPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/github-mutations$/i;
+const githubCandidateManifestPath =
+  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/github-branch-candidates\/manifests$/i;
+const githubCandidateChunkPath =
+  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/github-branch-candidates\/chunks\/(\d{1,2})$/i;
 
 function header(
   headers: IncomingHttpHeaders,
@@ -86,6 +102,23 @@ export class InvalidSessionRuntimeRequestError extends Error {}
 export interface SessionRuntimeHttpResult {
   readonly status: number;
   readonly body: Readonly<Record<string, unknown>>;
+}
+
+function githubBranchCandidateFailure(
+  error: unknown,
+): SessionRuntimeHttpResult | undefined {
+  if (error instanceof GitHubBranchCandidateInvalidRequestError) {
+    return { status: 400, body: { status: "invalid-request" } };
+  }
+  if (error instanceof GitHubBranchCandidateNotFoundError ||
+      error instanceof ClaimedDispatchAuthorityNotFoundError) {
+    return { status: 404, body: { status: "not-found" } };
+  }
+  if (error instanceof GitHubBranchCandidateConflictError ||
+      error instanceof ClaimedDispatchAuthorityConflictError) {
+    return { status: 409, body: { status: "conflict" } };
+  }
+  return undefined;
 }
 
 export async function serveSessionRuntime(input: {
@@ -164,6 +197,12 @@ export async function serveSessionRuntime(input: {
     readonly workerId: string;
     readonly request: unknown;
   }) => Promise<GitHubMutationResult>;
+  readonly createGitHubBranchCandidateManifest?: (input: {
+    readonly dispatchId: string; readonly workerId: string; readonly request: unknown;
+  }) => Promise<void>;
+  readonly storeGitHubBranchCandidateChunk?: (input: {
+    readonly dispatchId: string; readonly workerId: string; readonly request: unknown;
+  }) => Promise<void>;
 }): Promise<SessionRuntimeHttpResult | null> {
   if (input.method !== "POST" || input.url === undefined) return null;
   const url = new URL(input.url, "http://codeops.internal");
@@ -175,6 +214,8 @@ export async function serveSessionRuntime(input: {
   const workItemAdmissionMatch = url.pathname.match(workItemAdmissionPath);
   const githubReadMatch = url.pathname.match(githubReadPath);
   const githubMutationMatch = url.pathname.match(githubMutationPath);
+  const githubCandidateManifestMatch = url.pathname.match(githubCandidateManifestPath);
+  const githubCandidateChunkMatch = url.pathname.match(githubCandidateChunkPath);
   if (
     !isClaim &&
     completionMatch === null &&
@@ -184,6 +225,8 @@ export async function serveSessionRuntime(input: {
     && workItemAdmissionMatch === null
     && githubReadMatch === null
     && githubMutationMatch === null
+    && githubCandidateManifestMatch === null
+    && githubCandidateChunkMatch === null
   ) return null;
   if ([...url.searchParams].length !== 0) {
     throw new InvalidSessionRuntimeRequestError(
@@ -302,14 +345,69 @@ export async function serveSessionRuntime(input: {
         "session runtime GitHub mutation body is invalid",
       );
     }
-    return {
-      status: 200,
-      body: githubMutationResultSchema.parse(await input.mutateGitHub({
-        dispatchId: dispatchId.parse(githubMutationMatch[1]),
-        workerId: input.workerId,
-        request: githubMutationRequest.data,
-      })),
-    };
+    try {
+      return {
+        status: 200,
+        body: githubMutationResultSchema.parse(await input.mutateGitHub({
+          dispatchId: dispatchId.parse(githubMutationMatch[1]),
+          workerId: input.workerId,
+          request: githubMutationRequest.data,
+        })),
+      };
+    } catch (error) {
+      if (error instanceof SessionRuntimeGitHubMutationConflictError) {
+        return { status: 409, body: { status: "conflict" } };
+      }
+      throw error;
+    }
+  }
+
+  if (githubCandidateManifestMatch !== null) {
+    if (input.createGitHubBranchCandidateManifest === undefined) {
+      return { status: 404, body: { status: "not-found" } };
+    }
+    const candidate = githubBranchPublishCandidateManifestRequestSchema.safeParse(
+      await readRequestBody(input.readBody),
+    );
+    if (!candidate.success) throw new InvalidSessionRuntimeRequestError(
+      "session runtime GitHub candidate manifest body is invalid",
+    );
+    try {
+      await input.createGitHubBranchCandidateManifest({
+        dispatchId: dispatchId.parse(githubCandidateManifestMatch[1]),
+        workerId: input.workerId, request: candidate.data,
+      });
+    } catch (error) {
+      const failure = githubBranchCandidateFailure(error);
+      if (failure !== undefined) return failure;
+      throw error;
+    }
+    return { status: 200, body: { status: "stored" } };
+  }
+
+  if (githubCandidateChunkMatch !== null) {
+    if (input.storeGitHubBranchCandidateChunk === undefined) {
+      return { status: 404, body: { status: "not-found" } };
+    }
+    const candidate = githubBranchPublishCandidateChunkRequestSchema.safeParse(
+      await readRequestBody(input.readBody),
+    );
+    if (!candidate.success || candidate.data.ordinal !== Number(githubCandidateChunkMatch[2])) {
+      throw new InvalidSessionRuntimeRequestError(
+        "session runtime GitHub candidate chunk body is invalid",
+      );
+    }
+    try {
+      await input.storeGitHubBranchCandidateChunk({
+        dispatchId: dispatchId.parse(githubCandidateChunkMatch[1]),
+        workerId: input.workerId, request: candidate.data,
+      });
+    } catch (error) {
+      const failure = githubBranchCandidateFailure(error);
+      if (failure !== undefined) return failure;
+      throw error;
+    }
+    return { status: 200, body: { status: "stored" } };
   }
 
   if (permissionSubmissionMatch !== null) {

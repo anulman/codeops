@@ -2,8 +2,8 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import {
-  createGitHubMutationAdapter,
-  createGitHubMutationReconciler,
+  createGitHubMutationAdapter as createCandidateAdapter,
+  createGitHubMutationReconciler as createCandidateReconciler,
   GITHUB_MUTATION_WRITE_TIMEOUT_MS,
   githubEffectMarker,
 } from "../dist/github-mutations-adapter.js";
@@ -22,6 +22,10 @@ const authority = {
   readToken: "read-token-not-used-by-mutations",
   writeToken: "write-token-used-only-by-bounded-mutations",
 };
+const candidates = new Map();
+const loadBranchCandidate = async (candidateRequest) => candidates.get(candidateRequest.operationId);
+const createGitHubMutationAdapter = (input) => createCandidateAdapter({ ...input, loadBranchCandidate });
+const createGitHubMutationReconciler = (input) => createCandidateReconciler({ ...input, loadBranchCandidate });
 
 function canonical(value) {
   const normalize = (entry) => {
@@ -38,6 +42,10 @@ function canonical(value) {
 
 const digest = (value) =>
   `sha256:${createHash("sha256").update(value).digest("hex")}`;
+const gitBlob = (value) => {
+  const bytes = Buffer.from(value);
+  return createHash("sha1").update(`blob ${bytes.length}\0`).update(bytes).digest("hex");
+};
 
 function permissionOperation(operation, input) {
   const target = operation === "check_rerun"
@@ -60,6 +68,20 @@ function permissionOperation(operation, input) {
 }
 
 function request(operation, input) {
+  if (operation === "branch_publish" && "changes" in input) {
+    const { changes, ...metadata } = input;
+    const candidate = { version: "codeops.github-branch-publish-candidate/v1", changes };
+    const candidateText = canonical(candidate);
+    candidates.set(operationId, candidate);
+    input = {
+      ...metadata,
+      candidate: {
+        manifestId: `githubcandidate-${"e".repeat(64)}`,
+        digest: digest(candidateText), sizeBytes: Buffer.byteLength(candidateText),
+        chunkCount: Math.ceil(Buffer.byteLength(candidateText) / 65_536),
+      },
+    };
+  }
   return {
     version: "codeops.github-mutation-provider-request/v1",
     operation,
@@ -460,7 +482,7 @@ test("rejects stale heads and forged permission digests before a provider effect
   assert.equal(calls.length, 1);
 });
 
-test("reconciles each mutation only from operation-specific attributable evidence", async () => {
+test("rejects an arbitrary create-publication tree, accepts exact replay, and reconciles other attributable evidence", async () => {
   const attemptedAt = new Date("2026-08-16T00:00:00.000Z");
   const observedAt = new Date("2026-08-16T00:02:00.000Z");
 
@@ -472,23 +494,52 @@ test("reconciles each mutation only from operation-specific attributable evidenc
     commitMessage: "Repin CodeOps alpha.34",
     changes: [{ path: "package.json", oldText: "alpha.33", newText: "alpha.34" }],
   };
-  const branchResponses = [
+  const source = '{"version":"alpha.33"}\n';
+  const result = '{"version":"alpha.34"}\n';
+  const baseTreeSha = "1".repeat(40);
+  const observedTreeSha = "f".repeat(40);
+  const branchResponses = (observedBlobSha) => [
     json({ ref: `refs/heads/${branchInput.branchName}`, object: { sha: "e".repeat(40), type: "commit" } }),
     json({
       sha: "e".repeat(40),
       message: `${branchInput.commitMessage}\n\ncodeops-provider-effect:${operationId}`,
-      tree: { sha: "f".repeat(40) },
+      tree: { sha: observedTreeSha },
       parents: [{ sha: head }],
     }),
+    json({ sha: head, message: "base", tree: { sha: baseTreeSha }, parents: [] }),
+    json({
+      sha: baseTreeSha,
+      truncated: false,
+      tree: [{ path: "package.json", mode: "100644", type: "blob", sha: gitBlob(source) }],
+    }),
+    json({ sha: gitBlob(source), encoding: "base64", content: Buffer.from(source).toString("base64") }),
+    json({
+      sha: observedTreeSha,
+      truncated: false,
+      tree: [{ path: "package.json", mode: "100644", type: "blob", sha: observedBlobSha }],
+    }),
   ];
-  const reconcilePublishedBranch = createGitHubMutationReconciler({
-    resolve: () => authority,
-    fetch: async () => branchResponses.shift(),
-  });
-  assert.equal(
-    (await reconcilePublishedBranch(request("branch_publish", branchInput), attemptedAt, observedAt)).state,
-    "reconciled_satisfied",
-  );
+  for (const [observedBlobSha, expectedState] of [
+    ["0".repeat(40), "unknown"],
+    [gitBlob(result), "reconciled_satisfied"],
+  ]) {
+    const responses = branchResponses(observedBlobSha);
+    const calls = [];
+    const reconcilePublishedBranch = createGitHubMutationReconciler({
+      resolve: () => authority,
+      fetch: async (url) => {
+        calls.push(String(url));
+        return responses.shift();
+      },
+    });
+    assert.equal(
+      (await reconcilePublishedBranch(request("branch_publish", branchInput), attemptedAt, observedAt)).state,
+      expectedState,
+    );
+    assert.equal(responses.length, 0);
+    assert.equal(calls.length, 6);
+    assert.equal(calls.filter((url) => url.endsWith("?recursive=1")).length, 2);
+  }
 
   const createInput = {
     repository,

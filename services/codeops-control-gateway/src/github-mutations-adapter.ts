@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   canonicalJsonText,
   githubMutationProviderRequestSchema,
@@ -8,6 +9,7 @@ import {
   type GitHubMutationProviderRequest,
   type GitHubMutationResult,
   type GitHubMutationReconciliationResult,
+  type GitHubBranchPublishCandidate,
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
 import {
@@ -19,6 +21,7 @@ import {
   GITHUB_BRANCH_PUBLICATION_DEADLINE_MS,
   GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS,
   GITHUB_BRANCH_PUBLICATION_WRITE_TIMEOUT_MS,
+  mapGitHubPublicationBounded,
   preflightGitHubBranchPublicationRequest,
 } from "./github-branch-publication.js";
 
@@ -175,12 +178,124 @@ const gitTreeResponse = z.object({
     sha: z.string(),
   }).passthrough()).max(100_000),
 }).passthrough();
+const recursiveGitTreeResponse = gitTreeResponse.extend({
+  truncated: z.literal(false),
+});
 const gitBlobResponse = z.object({
   sha: z.string(),
   encoding: z.literal("base64"),
   content: z.string(),
 }).passthrough();
 const gitWriteResponse = z.object({ sha: z.string() }).passthrough();
+
+function gitBlobSha(content: string): string {
+  const bytes = Buffer.from(content);
+  return createHash("sha1")
+    .update(`blob ${bytes.byteLength}\0`)
+    .update(bytes)
+    .digest("hex");
+}
+
+async function exactCreatePublicationTree(input: {
+  readonly authority: RepositoryAuthority;
+  readonly request: Extract<GitHubMutationProviderRequest, { readonly operation: "branch_publish" }>;
+  readonly candidate: GitHubBranchPublishCandidate;
+  readonly observedTreeSha: string;
+  readonly requestFetch: typeof fetch;
+}): Promise<boolean> {
+  const readTree = async (sha: string) => recursiveGitTreeResponse.parse(
+    await githubJson(
+      input.authority,
+      apiUrl(input.authority, `/git/trees/${sha}?recursive=1`),
+      input.requestFetch,
+    ),
+  );
+  const baseCommit = gitCommitResponse.parse(await githubJson(
+    input.authority,
+    apiUrl(input.authority, `/git/commits/${input.request.input.expectedHeadSha}`),
+    input.requestFetch,
+  ));
+  if (baseCommit.sha !== input.request.input.expectedHeadSha) return false;
+  const baseTree = await readTree(baseCommit.tree.sha);
+  if (baseTree.sha !== baseCommit.tree.sha) return false;
+  const entries = new Map(baseTree.tree.map((entry) => [entry.path, entry]));
+  const prepared = await mapGitHubPublicationBounded(
+    input.candidate.changes,
+    async (change) => {
+      const entry = entries.get(change.path);
+      let mode = "100644";
+      let content = change.newText;
+      if (change.oldText.length === 0) {
+        if (entry !== undefined) return null;
+        const parts = change.path.split("/");
+        for (let index = 1; index < parts.length; index += 1) {
+          const parent = entries.get(parts.slice(0, index).join("/"));
+          if (parent !== undefined && parent.type !== "tree") return null;
+        }
+      } else {
+        if (entry?.type !== "blob" || !["100644", "100755"].includes(entry.mode)) {
+          return null;
+        }
+        const blob = gitBlobResponse.parse(await githubJson(
+          input.authority,
+          apiUrl(input.authority, `/git/blobs/${entry.sha}`),
+          input.requestFetch,
+        ));
+        if (blob.sha !== entry.sha) return null;
+        const encoded = blob.content.replace(/\s/g, "");
+        if (!/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(encoded)) {
+          return null;
+        }
+        let source: string;
+        try {
+          source = new TextDecoder("utf-8", { fatal: true }).decode(
+            Buffer.from(encoded, "base64"),
+          );
+        } catch {
+          return null;
+        }
+        const at = source.indexOf(change.oldText);
+        if (at < 0 || at !== source.lastIndexOf(change.oldText)) return null;
+        content = `${source.slice(0, at)}${change.newText}${source.slice(at + change.oldText.length)}`;
+        if (content === source) return null;
+        mode = entry.mode;
+      }
+      return { path: change.path, mode, content };
+    },
+  );
+  if (prepared.some((change) => change === null)) return false;
+  const expected = new Map(baseTree.tree.map((entry) => [entry.path, entry]));
+  for (const change of prepared) {
+    if (change === null) return false;
+    const parts = change.path.split("/");
+    for (let index = 1; index < parts.length; index += 1) {
+      const path = parts.slice(0, index).join("/");
+      const entry = expected.get(path);
+      if (entry !== undefined && entry.type !== "tree") return false;
+      if (entry === undefined) {
+        expected.set(path, {
+          path, mode: "040000", type: "tree", sha: "",
+        });
+      }
+    }
+    expected.set(change.path, {
+      path: change.path,
+      mode: change.mode,
+      type: "blob",
+      sha: gitBlobSha(change.content),
+    });
+  }
+  const observed = await readTree(input.observedTreeSha);
+  if (observed.sha !== input.observedTreeSha) return false;
+  const identity = (entry: {
+    readonly path: string; readonly mode: string;
+    readonly type: string; readonly sha: string;
+  }) => `${entry.path}\0${entry.mode}\0${entry.type}\0${
+    entry.type === "tree" ? "" : entry.sha
+  }`;
+  return [...expected.values()].map(identity).sort().join("\n") ===
+    observed.tree.map(identity).sort().join("\n");
+}
 
 async function gitReference(
   authority: RepositoryAuthority,
@@ -321,12 +436,22 @@ function expectedPermissionOperation(request: GitHubMutationProviderRequest) {
   });
 }
 
-function assertProviderDigests(request: GitHubMutationProviderRequest): void {
-  if (
-    request.payloadDigest !== sha256CanonicalJsonDigest(request.input) ||
-    request.permissionDigest !==
-      sha256CanonicalJsonDigest(expectedPermissionOperation(request))
-  ) {
+function assertProviderDigests(
+  request: GitHubMutationProviderRequest,
+  candidate?: GitHubBranchPublishCandidate,
+): void {
+  const inputs: unknown[] = [request.input];
+  if (request.operation === "branch_publish" && candidate !== undefined) {
+    const { candidate: _candidate, ...metadata } = request.input;
+    inputs.push({ ...metadata, changes: candidate.changes });
+  }
+  const matches = inputs.some((inputValue) => {
+    const candidateRequest = { ...request, input: inputValue } as GitHubMutationProviderRequest;
+    return request.payloadDigest === sha256CanonicalJsonDigest(inputValue) &&
+      request.permissionDigest ===
+        sha256CanonicalJsonDigest(expectedPermissionOperation(candidateRequest));
+  });
+  if (!matches) {
     throw new Error(
       "GitHub mutation payload and durable permission digests do not match",
     );
@@ -391,6 +516,9 @@ async function reviewThreadIdentity(
 
 export function createGitHubMutationReconciler(input: {
   readonly resolve: (repository: string) => RepositoryAuthority;
+  readonly loadBranchCandidate?: (
+    request: Extract<GitHubMutationProviderRequest, { readonly operation: "branch_publish" }>,
+  ) => Promise<GitHubBranchPublishCandidate>;
   readonly fetch?: typeof fetch;
   readonly consistencyWindowMs?: number;
 }): (
@@ -405,7 +533,11 @@ export function createGitHubMutationReconciler(input: {
   }
   return async (rawRequest, attemptedAt, observedAt = new Date()) => {
     const request = githubMutationProviderRequestSchema.parse(rawRequest);
-    assertProviderDigests(request);
+    const candidate = request.operation === "branch_publish" &&
+        input.loadBranchCandidate !== undefined
+      ? await input.loadBranchCandidate(request)
+      : undefined;
+    assertProviderDigests(request, candidate);
     if (!Number.isFinite(attemptedAt.getTime()) || !Number.isFinite(observedAt.getTime()) || observedAt < attemptedAt) {
       throw new Error("GitHub reconciliation time identity is invalid");
     }
@@ -414,6 +546,9 @@ export function createGitHubMutationReconciler(input: {
     const result = await (async () => {
     switch (request.operation) {
       case "branch_publish": {
+        if (candidate === undefined) {
+          throw new Error("GitHub branch publication candidate is unavailable for reconciliation");
+        }
         const current = await optionalGitReference(
           authority,
           request.input.branchName,
@@ -437,15 +572,22 @@ export function createGitHubMutationReconciler(input: {
           apiUrl(authority, `/git/commits/${current.object.sha}`),
           requestFetch,
         ));
-        const satisfied =
+        const identitySatisfied =
           current.ref === `refs/heads/${request.input.branchName}` &&
           current.object.type === "commit" &&
           commit.sha === current.object.sha &&
           commit.parents.length === 1 &&
           commit.parents[0]?.sha === request.input.expectedHeadSha &&
           commit.message.split(/\r?\n/).includes(providerEffectText(request.operationId));
-        if (!satisfied) {
+        if (!identitySatisfied) {
           return { state: "unknown", result: null, summary: "The branch commit does not contain the exact operation identity and base parent." };
+        }
+        const treeSatisfied = await exactCreatePublicationTree({
+          authority, request, candidate, observedTreeSha: commit.tree.sha,
+          requestFetch,
+        });
+        if (!treeSatisfied) {
+          return { state: "unknown", result: null, summary: "The branch commit tree does not match the exact staged candidate result." };
         }
         return {
           state: "reconciled_satisfied",
@@ -462,7 +604,7 @@ export function createGitHubMutationReconciler(input: {
               .map(encodeURIComponent)
               .join("/")}`,
           }),
-          summary: "The exact branch commit marker and base parent match.",
+          summary: "The exact branch commit marker, base parent, and staged candidate tree match.",
         };
       }
       case "pull_request_create": {
@@ -635,13 +777,19 @@ export const GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS =
 
 export function createGitHubMutationAdapter(input: {
   readonly resolve: (repository: string) => RepositoryAuthority;
+  readonly loadBranchCandidate: (
+    request: Extract<GitHubMutationProviderRequest, { readonly operation: "branch_publish" }>,
+  ) => Promise<GitHubBranchPublishCandidate>;
   readonly fetch?: typeof fetch;
   readonly branchPublicationTimeoutMs?: number;
 }): (request: GitHubMutationProviderRequest) => Promise<GitHubMutationResult> {
   const requestFetch = input.fetch ?? fetch;
   return async (rawRequest) => {
     const request = githubMutationProviderRequestSchema.parse(rawRequest);
-    assertProviderDigests(request);
+    const branchCandidate = request.operation === "branch_publish"
+      ? await preflight(() => input.loadBranchCandidate(request))
+      : undefined;
+    assertProviderDigests(request, branchCandidate);
     const authority = input.resolve(request.input.repository);
     if (authority.repository !== request.input.repository) {
       throw new Error("GitHub mutation authority does not match the request");
@@ -650,7 +798,9 @@ export function createGitHubMutationAdapter(input: {
 
     switch (request.operation) {
       case "branch_publish": {
-        await preflight(async () => preflightGitHubBranchPublicationRequest(request.input));
+        await preflight(async () => preflightGitHubBranchPublicationRequest(
+          request.input, branchCandidate!.changes,
+        ));
         const publicationTimeoutMs = input.branchPublicationTimeoutMs ??
           GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS;
         if (
@@ -709,6 +859,7 @@ export function createGitHubMutationAdapter(input: {
           request,
           preflight,
           effectText: providerEffectText,
+          changes: branchCandidate!.changes,
           provider: {
             readBranch: async (branchName, allowMissing = false) => {
               const response = await publicationJsonResponse(
