@@ -179,7 +179,10 @@ class ClaimClient {
   }
   async query(text, values = []) {
     this.calls.push({ text, values });
-    return { rowCount: this.row ? 1 : 0, rows: this.row ? [this.row] : [] };
+    if (text.includes("WITH candidate AS")) {
+      return { rowCount: this.row ? 1 : 0, rows: this.row ? [this.row] : [] };
+    }
+    return { rowCount: 0, rows: [] };
   }
 }
 
@@ -201,13 +204,14 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
   assert.equal(claim.dispatch.dispatchId, dispatchId);
   assert.equal(claim.claimToken, claimToken);
   assert.equal(claim.claimCount, 2);
-  assert.match(client.calls[0].text, /FOR UPDATE OF outbox SKIP LOCKED/);
-  assert.match(client.calls[0].text, /status = 'pending'/);
-  assert.match(client.calls[0].text, /claim_expires_at <= \$1/);
-  assert.match(client.calls[0].text, /claim_count = outbox\.claim_count \+ 1/);
-  assert.match(client.calls[0].text, /outbox\.session_id = \$5/);
-  assert.match(client.calls[0].text, /session\.snapshot_json->'identity' = \$8::jsonb/);
-  assert.deepEqual(client.calls[0].values, [
+  assert.equal(client.calls[0].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
+  assert.match(client.calls[1].text, /FOR UPDATE OF outbox SKIP LOCKED/);
+  assert.match(client.calls[1].text, /status = 'pending'/);
+  assert.match(client.calls[1].text, /claim_expires_at <= \$1/);
+  assert.match(client.calls[1].text, /claim_count = outbox\.claim_count \+ 1/);
+  assert.match(client.calls[1].text, /outbox\.session_id = \$5/);
+  assert.match(client.calls[1].text, /session\.snapshot_json->'identity' = \$8::jsonb/);
+  assert.deepEqual(client.calls[1].values, [
     "2026-08-04T18:00:00.000Z",
     claimToken,
     "acp-worker:7",
@@ -217,6 +221,8 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
     leaseId,
     JSON.stringify(Object.fromEntries(Object.entries(snapshot().identity).sort())),
   ]);
+  assert.match(client.calls[2].text, /FOR UPDATE OF manifest/);
+  assert.equal(client.calls.at(-1).text, "COMMIT");
 });
 
 test("preserves millisecond precision when pg returns a Date for the claim expiry", async () => {

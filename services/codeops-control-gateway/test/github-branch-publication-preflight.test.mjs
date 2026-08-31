@@ -17,7 +17,7 @@ import {
   GITHUB_BRANCH_PUBLICATION_WRITE_WAVE_MS,
   estimateGitHubBranchPublicationDeadline,
   publicationPlan,
-  preflightGitHubBranchPublicationRequest,
+  preflightGitHubBranchPublicationRequest as preflightCandidate,
 } from "../dist/github-branch-publication.js";
 import { createGitHubMutationAdapter as createFastForwardAdapter } from "../dist/github-branch-fast-forward.js";
 import {
@@ -48,6 +48,26 @@ function publication(changes, mode = "create") {
   };
 }
 
+function preflightGitHubBranchPublicationRequest(input, candidateSizeBytes) {
+  const { changes, ...metadata } = input;
+  const candidate = {
+    version: "codeops.github-branch-publish-candidate/v1",
+    changes,
+  };
+  const sizeBytes = candidateSizeBytes ?? Buffer.byteLength(
+    canonicalJsonText(candidate),
+  );
+  return preflightCandidate({
+    ...metadata,
+    candidate: {
+      manifestId: `githubcandidate-${"d".repeat(64)}`,
+      digest: `sha256:${"e".repeat(64)}`,
+      sizeBytes,
+      chunkCount: Math.ceil(sizeBytes / 65_536),
+    },
+  }, changes);
+}
+
 const newFiles = (count) => Array.from({ length: count }, (_, index) => ({
   path: `proof-${index}.txt`,
   oldText: "",
@@ -59,7 +79,7 @@ test("retains publication timing and capacity contract constants", () => {
   assert.equal(GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS, 30_000);
   assert.equal(GITHUB_BRANCH_PUBLICATION_WRITE_TIMEOUT_MS, 120_000);
   assert.equal(GITHUB_BRANCH_PUBLICATION_DEADLINE_MS, 230_000);
-  assert.equal(GITHUB_BRANCH_PUBLICATION_BODY_BYTES, 262_144);
+  assert.equal(GITHUB_BRANCH_PUBLICATION_BODY_BYTES, 4_194_304);
   assert.equal(GITHUB_BRANCH_PUBLICATION_CHANGED_PATHS, 20);
   assert.equal(GITHUB_BRANCH_PUBLICATION_READ_WAVE_MS, 10_000);
   assert.equal(GITHUB_BRANCH_PUBLICATION_WRITE_WAVE_MS, 30_000);
@@ -94,9 +114,10 @@ test("models exact create, fast-forward, and replay request phases", () => {
     preflightGitHubBranchPublicationRequest(publication(changes)),
     {
       changedPaths: 2,
-      serializedBytes: new TextEncoder().encode(
-        JSON.stringify(publication(changes)),
-      ).byteLength,
+      serializedBytes: Buffer.byteLength(canonicalJsonText({
+        version: "codeops.github-branch-publish-candidate/v1",
+        changes,
+      })),
       plans: [{
         path: "create",
         readRequests: 7,
@@ -161,21 +182,21 @@ test("counts unique changed paths and enforces the twenty-path limit", () => {
   );
 });
 
-test("accepts the serialized body limit and rejects the next byte", () => {
-  const body = publication(newFiles(1));
-  body.changes[0].newText = "";
-  const fixedBytes = new TextEncoder().encode(JSON.stringify(body)).byteLength;
-  body.changes[0].newText = "x".repeat(
-    GITHUB_BRANCH_PUBLICATION_BODY_BYTES - fixedBytes,
-  );
+test("accepts the candidate size limit and rejects the next byte", () => {
+  const request = publication(newFiles(1));
   assert.equal(
-    preflightGitHubBranchPublicationRequest(body).serializedBytes,
+    preflightGitHubBranchPublicationRequest(
+      request,
+      GITHUB_BRANCH_PUBLICATION_BODY_BYTES,
+    ).serializedBytes,
     GITHUB_BRANCH_PUBLICATION_BODY_BYTES,
   );
-  body.changes[0].newText += "x";
   assert.throws(
-    () => preflightGitHubBranchPublicationRequest(body),
-    /exceeds 262144 bytes/,
+    () => preflightGitHubBranchPublicationRequest(
+      request,
+      GITHUB_BRANCH_PUBLICATION_BODY_BYTES + 1,
+    ),
+    /exceeds 4194304 bytes/,
   );
 });
 
@@ -228,6 +249,18 @@ const authority = {
 };
 
 function providerRequest(input) {
+  const { changes, ...metadata } = input;
+  lastCandidate = { version: "codeops.github-branch-publish-candidate/v1", changes };
+  const candidateText = canonicalJsonText(lastCandidate);
+  input = {
+    ...metadata,
+    candidate: {
+      manifestId: `githubcandidate-${"f".repeat(64)}`,
+      digest: sha256CanonicalJsonDigest(lastCandidate),
+      sizeBytes: Buffer.byteLength(candidateText),
+      chunkCount: Math.ceil(Buffer.byteLength(candidateText) / 65_536),
+    },
+  };
   const operationId = `githubmutation-${"d".repeat(64)}`;
   const permission = sessionPermissionOperationSchema.parse({
     kind: "github_mutation",
@@ -253,10 +286,13 @@ function providerRequest(input) {
   };
 }
 
+let lastCandidate;
+
 test("proves over-deadline create admission has no provider effect", async () => {
   let providerCalls = 0;
   const mutate = createCreateAdapter({
     resolve: () => authority,
+    loadBranchCandidate: async () => lastCandidate,
     fetch: async () => {
       providerCalls += 1;
       throw new Error("provider must not be called");
@@ -274,6 +310,7 @@ test("validates fast-forward digests before deterministic admission", async () =
   let providerCalls = 0;
   let resolutions = 0;
   const mutate = createFastForwardAdapter({
+    loadBranchCandidate: async () => lastCandidate,
     resolve: () => {
       resolutions += 1;
       return authority;
@@ -289,6 +326,26 @@ test("validates fast-forward digests before deterministic admission", async () =
   await assert.rejects(mutate(forged), /digests do not match/);
   assert.equal(resolutions, 0);
   assert.equal(providerCalls, 0);
+});
+
+test("classifies create and fast-forward candidate loader failure as proven no-effect", async () => {
+  for (const create of [createCreateAdapter, createFastForwardAdapter]) {
+    let providerCalls = 0;
+    const mutate = create({
+      resolve: () => authority,
+      loadBranchCandidate: async () => { throw new Error("candidate unavailable"); },
+      fetch: async () => {
+        providerCalls += 1;
+        throw new Error("provider must not be called");
+      },
+    });
+    const input = publication(newFiles(1),
+      create === createFastForwardAdapter ? "fast_forward" : "create");
+    await assert.rejects(mutate(providerRequest(input)), (error) =>
+      error instanceof GitHubMutationPreflightNoEffectError &&
+      /candidate unavailable/.test(error.message));
+    assert.equal(providerCalls, 0);
+  }
 });
 
 test("maps a 409 no-effect response to a durable failed outcome", async () => {
@@ -321,4 +378,6 @@ test("maps a 409 no-effect response to a durable failed outcome", async () => {
   const failure = calls.find(({ text }) => text.includes("SET state = $1"));
   assert.equal(failure.values[0], "failed");
   assert.notEqual(failure.values[0], "unknown");
+  assert.ok(calls.some(({ text }) => text.includes("FOR UPDATE OF manifest SKIP LOCKED")));
+  assert.equal(calls.at(-1).text, "COMMIT");
 });

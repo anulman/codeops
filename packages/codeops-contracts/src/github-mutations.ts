@@ -11,6 +11,7 @@ const positiveId = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const uuid = z.string().uuid();
 const sha256Digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const operationId = z.string().regex(/^githubmutation-[0-9a-f]{64}$/);
+const candidateManifestId = z.string().regex(/^githubcandidate-[0-9a-f]{64}$/);
 const branch = z
   .string()
   .min(1)
@@ -102,6 +103,84 @@ export const githubCheckRerunInputSchema = z
   })
   .strict();
 
+const githubBranchPublishChangeSchema = z.object({
+  path: repositoryPath,
+  oldText: z.string().max(100_000),
+  newText: z.string().max(100_000),
+}).strict().superRefine((change, context) => {
+  if (change.oldText.length === 0 && change.newText.length === 0) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "A new published file must not be empty",
+      path: ["newText"],
+    });
+  }
+});
+
+export const githubBranchPublishCandidateSchema = z.object({
+  version: z.literal("codeops.github-branch-publish-candidate/v1"),
+  changes: z.array(githubBranchPublishChangeSchema).min(1).max(20),
+}).strict().superRefine((candidate, context) => {
+  if (new Set(candidate.changes.map(({ path }) => path)).size !== candidate.changes.length) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Published branch changes must use unique paths",
+      path: ["changes"],
+    });
+  }
+  if (new TextEncoder().encode(JSON.stringify(candidate)).byteLength > 4_194_304) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Published branch candidate exceeds 4194304 bytes",
+      path: ["changes"],
+    });
+  }
+});
+
+export const githubBranchPublishCandidateReferenceSchema = z.object({
+  manifestId: candidateManifestId,
+  digest: sha256Digest,
+  sizeBytes: z.number().int().positive().max(4_194_304),
+  chunkCount: z.number().int().positive().max(64),
+}).strict();
+
+export const githubBranchPublishCandidateManifestRequestSchema = z.object({
+  version: z.literal("codeops.github-branch-publish-candidate-manifest-request/v1"),
+  claimToken: uuid,
+  operationId,
+  effectDigest: sha256Digest,
+  repository,
+  candidate: githubBranchPublishCandidateReferenceSchema,
+  chunks: z.array(z.object({
+    ordinal: z.number().int().min(0).max(63),
+    digest: sha256Digest,
+    sizeBytes: z.number().int().positive().max(65_536),
+  }).strict()).min(1).max(64),
+}).strict().superRefine((manifest, context) => {
+  if (
+    manifest.chunks.length !== manifest.candidate.chunkCount ||
+    manifest.chunks.some((chunk, index) => chunk.ordinal !== index) ||
+    manifest.chunks.reduce((total, chunk) => total + chunk.sizeBytes, 0) !==
+      manifest.candidate.sizeBytes
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      message: "Candidate manifest chunk identities are inconsistent",
+      path: ["chunks"],
+    });
+  }
+});
+
+export const githubBranchPublishCandidateChunkRequestSchema = z.object({
+  version: z.literal("codeops.github-branch-publish-candidate-chunk-request/v1"),
+  claimToken: uuid,
+  operationId,
+  manifestId: candidateManifestId,
+  ordinal: z.number().int().min(0).max(63),
+  digest: sha256Digest,
+  bytesBase64: z.string().min(1).max(87_384),
+}).strict();
+
 export const githubBranchPublishInputSchema = z
   .object({
     repository,
@@ -112,19 +191,7 @@ export const githubBranchPublishInputSchema = z
     baseBranch: branch,
     branchName: branch,
     commitMessage: z.string().trim().min(1).max(500),
-    changes: z.array(z.object({
-      path: repositoryPath,
-      oldText: z.string().max(100_000),
-      newText: z.string().max(100_000),
-    }).strict().superRefine((change, context) => {
-      if (change.oldText.length === 0 && change.newText.length === 0) {
-        context.addIssue({
-          code: z.ZodIssueCode.custom,
-          message: "A new published file must not be empty",
-          path: ["newText"],
-        });
-      }
-    })).min(1).max(20),
+    candidate: githubBranchPublishCandidateReferenceSchema,
   })
   .strict()
   .superRefine((input, context) => {
@@ -147,22 +214,45 @@ export const githubBranchPublishInputSchema = z
         path: ["branchName"],
       });
     }
-    if (new Set(input.changes.map(({ path }) => path)).size !== input.changes.length) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Published branch changes must use unique paths",
-        path: ["changes"],
-      });
+  });
+
+// Keep the v1 inline request readable at the runtime trust boundary while an
+// older worker can still hold a claimed dispatch. Provider requests use only
+// githubBranchPublishInputSchema and therefore remain candidate-reference only.
+export const githubBranchPublishLegacyInlineInputSchema = z
+  .object({
+    repository,
+    mode: z.enum(["create", "fast_forward"]).optional(),
+    expectedHeadSha: gitSha,
+    expectedBranchHeadSha: gitSha.optional(),
+    expectedBranchHeadEffectId: operationId.optional(),
+    baseBranch: branch,
+    branchName: branch,
+    commitMessage: z.string().trim().min(1).max(500),
+    changes: z.array(githubBranchPublishChangeSchema).min(1).max(20),
+  })
+  .strict()
+  .superRefine((input, context) => {
+    if (input.mode === "fast_forward" && input.expectedBranchHeadSha === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Fast-forward publication requires the expected branch head", path: ["expectedBranchHeadSha"] });
     }
-    if (
-      new TextEncoder().encode(JSON.stringify(input)).byteLength >
-      262_144
-    ) {
-      context.addIssue({
-        code: z.ZodIssueCode.custom,
-        message: "Published branch input exceeds 262144 bytes",
-        path: ["changes"],
-      });
+    if (input.mode === "fast_forward" && input.expectedBranchHeadEffectId === undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Fast-forward publication requires prior provider-effect evidence", path: ["expectedBranchHeadEffectId"] });
+    }
+    if (input.mode !== "fast_forward" && input.expectedBranchHeadSha !== undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Create publication must not bind an existing branch head", path: ["expectedBranchHeadSha"] });
+    }
+    if (input.mode !== "fast_forward" && input.expectedBranchHeadEffectId !== undefined) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Create publication must not claim prior provider-effect evidence", path: ["expectedBranchHeadEffectId"] });
+    }
+    if (input.baseBranch === input.branchName) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Published branch must differ from its base branch", path: ["branchName"] });
+    }
+    if (new Set(input.changes.map(({ path }) => path)).size !== input.changes.length) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Published branch changes must use unique paths", path: ["changes"] });
+    }
+    if (new TextEncoder().encode(JSON.stringify(input)).byteLength > 4_456_448) {
+      context.addIssue({ code: z.ZodIssueCode.custom, message: "Published branch input exceeds 4456448 bytes", path: ["changes"] });
     }
   });
 
@@ -327,7 +417,16 @@ function mutationRequestBranches<T extends z.ZodRawShape>(base: z.ZodObject<T>) 
 
 export const sessionRuntimeGitHubMutationRequestSchema = z.discriminatedUnion(
   "operation",
-  mutationRequestBranches(runtimeMutationBase),
+  [
+    runtimeMutationBase.extend({
+      operation: z.literal("branch_publish"),
+      input: z.union([
+        githubBranchPublishInputSchema,
+        githubBranchPublishLegacyInlineInputSchema,
+      ]),
+    }).strict(),
+    ...mutationRequestBranches(runtimeMutationBase).slice(1),
+  ],
 );
 
 export const githubMutationProviderRequestSchema = z.discriminatedUnion(
@@ -477,6 +576,15 @@ export const githubMutationReconciliationResultSchema = z.discriminatedUnion(
 
 export type GitHubMutationOperation = z.infer<
   typeof githubMutationOperationSchema
+>;
+export type GitHubBranchPublishCandidate = z.infer<
+  typeof githubBranchPublishCandidateSchema
+>;
+export type GitHubBranchPublishCandidateManifestRequest = z.infer<
+  typeof githubBranchPublishCandidateManifestRequestSchema
+>;
+export type GitHubBranchPublishCandidateChunkRequest = z.infer<
+  typeof githubBranchPublishCandidateChunkRequestSchema
 >;
 export type ProviderEffectState = z.infer<typeof providerEffectStateSchema>;
 export type ProviderEffectReceipt = z.infer<typeof providerEffectReceiptSchema>;

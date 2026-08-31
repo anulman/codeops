@@ -1,4 +1,5 @@
 import { readFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
 import {
@@ -11,6 +12,7 @@ import {
 } from "./core.js";
 import {
   candidatePublicationSchema,
+  canonicalJsonText,
   proofPublicationRequestSchema,
   githubMutationProviderRequestSchema,
   githubMutationReconciliationProviderRequestSchema,
@@ -122,6 +124,10 @@ import {
   updateWorkspaceLaunch,
 } from "./workspace-launch-store.js";
 import { recordRuntimeEgressPodObservations } from "./runtime-egress-audit.js";
+import {
+  cleanupTerminalOrphanGitHubBranchCandidateChunks,
+  loadGitHubBranchCandidate,
+} from "./github-branch-publish-candidates.js";
 import {
   PermanentWorkspaceLaunchError,
   reconcileWorkspaceLaunch,
@@ -455,18 +461,40 @@ const repositoryRegistry = await loadConfiguredRepositoryRegistry({
     ]);
   },
 });
-const readGitHub = createGitHubReadAdapter({
-  resolve: (repository) => repositoryRegistry.resolve(repository),
-});
-const mutateGitHub = createGitHubMutationAdapter({
-  resolve: (repository) => repositoryRegistry.resolve(repository),
-});
-const reconcileGitHubMutation = createGitHubMutationReconciler({
-  resolve: (repository) => repositoryRegistry.resolve(repository),
-});
 const database = new Pool({
   connectionString: await secretFile("CODEOPS_DATABASE_URL_FILE"),
   max: 4,
+});
+const readGitHub = createGitHubReadAdapter({
+  resolve: (repository) => repositoryRegistry.resolve(repository),
+});
+const loadBranchCandidate = async (request: Extract<
+  import("@codeops/codeops-contracts").GitHubMutationProviderRequest,
+  { readonly operation: "branch_publish" }
+>) => {
+  const client = await database.connect();
+  try {
+    const candidate = await loadGitHubBranchCandidate(client, {
+      manifestId: request.input.candidate.manifestId,
+      dispatchId: request.provenance.dispatchId,
+      operationId: request.operationId,
+      lock: false,
+    });
+    if (request.input.candidate.digest !==
+        `sha256:${createHash("sha256").update(canonicalJsonText(candidate)).digest("hex")}` ||
+        request.input.candidate.sizeBytes !== Buffer.byteLength(canonicalJsonText(candidate))) {
+      throw new Error("GitHub branch candidate reference is inconsistent");
+    }
+    return candidate;
+  } finally { client.release(); }
+};
+const mutateGitHub = createGitHubMutationAdapter({
+  resolve: (repository) => repositoryRegistry.resolve(repository),
+  loadBranchCandidate,
+});
+const reconcileGitHubMutation = createGitHubMutationReconciler({
+  resolve: (repository) => repositoryRegistry.resolve(repository),
+  loadBranchCandidate,
 });
 const migrationClient = await database.connect();
 try {
@@ -756,6 +784,17 @@ function scheduleRuntimeTerminalReconciliation(): void {
           error: error instanceof Error ? error.message : String(error),
         })}\n`);
       }
+    }
+    const cleanupClient = await database.connect();
+    try {
+      await cleanupTerminalOrphanGitHubBranchCandidateChunks(cleanupClient);
+    } catch (error) {
+      process.stderr.write(`${JSON.stringify({
+        event: "github_branch_candidate_orphan_cleanup_failed",
+        error: error instanceof Error ? error.message : String(error),
+      })}\n`);
+    } finally {
+      cleanupClient.release();
     }
   }).catch(() => undefined);
 }

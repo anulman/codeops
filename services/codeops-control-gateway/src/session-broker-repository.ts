@@ -16,6 +16,7 @@ import {
   type SessionEvent,
   type SessionSnapshot,
 } from "@codeops/codeops-contracts";
+import { cleanupNoReceiptGitHubBranchCandidatesForDispatch } from "./github-branch-publish-candidates.js";
 
 export interface TransactionClient {
   query<Row extends Record<string, unknown> = Record<string, unknown>>(
@@ -712,6 +713,10 @@ async function completeRuntimeReservation(
       `runtime claim ${reservation.claimToken} expired before completion committed`,
     );
   }
+  await cleanupNoReceiptGitHubBranchCandidatesForDispatch(
+    client,
+    reservation.dispatchId,
+  );
 }
 
 export async function executeSessionCommandTransaction(

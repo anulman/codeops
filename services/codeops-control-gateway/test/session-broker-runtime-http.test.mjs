@@ -5,6 +5,16 @@ import {
   serveSessionRuntime,
 } from "../dist/session-broker-runtime-http.js";
 import { WorkItemAdmissionConflictError, WorkItemAdmissionDuplicateError } from "../dist/work-item-admission.js";
+import {
+  ClaimedDispatchAuthorityConflictError,
+  ClaimedDispatchAuthorityNotFoundError,
+} from "../dist/claimed-dispatch-authority.js";
+import {
+  GitHubBranchCandidateConflictError,
+  GitHubBranchCandidateInvalidRequestError,
+  GitHubBranchCandidateNotFoundError,
+} from "../dist/github-branch-publish-candidates.js";
+import { SessionRuntimeGitHubMutationConflictError } from "../dist/session-runtime-github-mutations.js";
 
 const token = "r".repeat(32);
 const dispatchId = "44444444-4444-4444-8444-444444444444";
@@ -61,6 +71,113 @@ test("maps only the duplicate admission error to public HTTP 409", async () => {
     await assert.rejects(admissionRoute(body, async () => { throw failure; }),
       (error) => error === failure && !(error instanceof WorkItemAdmissionConflictError));
   }
+});
+
+const candidateOperationId = `githubmutation-${"a".repeat(64)}`;
+const candidateManifestId = `githubcandidate-${"b".repeat(64)}`;
+const candidateDigest = `sha256:${"c".repeat(64)}`;
+const candidateChunkDigest = `sha256:${"d".repeat(64)}`;
+
+function candidateRoute(kind, failure) {
+  const manifest = {
+    version: "codeops.github-branch-publish-candidate-manifest-request/v1",
+    claimToken,
+    operationId: candidateOperationId,
+    effectDigest: `sha256:${"e".repeat(64)}`,
+    repository: "example-org/example-repository",
+    candidate: {
+      manifestId: candidateManifestId,
+      digest: candidateDigest,
+      sizeBytes: 1,
+      chunkCount: 1,
+    },
+    chunks: [{ ordinal: 0, digest: candidateChunkDigest, sizeBytes: 1 }],
+  };
+  const chunk = {
+    version: "codeops.github-branch-publish-candidate-chunk-request/v1",
+    claimToken,
+    operationId: candidateOperationId,
+    manifestId: candidateManifestId,
+    ordinal: 0,
+    digest: candidateChunkDigest,
+    bytesBase64: "eA==",
+  };
+  return serveSessionRuntime({
+    method: "POST",
+    url: `/v1/session-runtime/dispatches/${dispatchId}/github-branch-candidates/${kind === "manifest" ? "manifests" : "chunks/0"}`,
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    token,
+    workerId: "runtime-worker:candidate",
+    readBody: async () => kind === "manifest" ? manifest : chunk,
+    claim: async () => null,
+    complete: async () => ({}),
+    submitPermission: async () => ({}),
+    pollPermission: async () => ({}),
+    createGitHubBranchCandidateManifest: async () => { throw failure; },
+    storeGitHubBranchCandidateChunk: async () => { throw failure; },
+  });
+}
+
+test("maps deterministic candidate staging failures without retry classification", async () => {
+  const cases = [
+    ["manifest", new GitHubBranchCandidateInvalidRequestError("invalid manifest"), 400, "invalid-request"],
+    ["chunk", new GitHubBranchCandidateInvalidRequestError("invalid chunk"), 400, "invalid-request"],
+    ["manifest", new ClaimedDispatchAuthorityNotFoundError("missing dispatch"), 404, "not-found"],
+    ["chunk", new GitHubBranchCandidateNotFoundError("missing manifest"), 404, "not-found"],
+    ["manifest", new ClaimedDispatchAuthorityConflictError("stale claim"), 409, "conflict"],
+    ["chunk", new GitHubBranchCandidateConflictError("conflicting duplicate"), 409, "conflict"],
+  ];
+  for (const [kind, failure, status, bodyStatus] of cases) {
+    assert.deepEqual(await candidateRoute(kind, failure), {
+      status,
+      body: { status: bodyStatus },
+    });
+  }
+  const infrastructure = Object.assign(new Error("database unavailable"), {
+    code: "08006",
+  });
+  await assert.rejects(candidateRoute("manifest", infrastructure),
+    (error) => error === infrastructure);
+});
+
+test("maps a definitive GitHub mutation conflict to typed HTTP 409", async () => {
+  const githubMutation = {
+    version: "codeops.session-runtime-github-mutation-request/v1",
+    claimToken,
+    operation: "branch_publish",
+    operationId: candidateOperationId,
+    input: {
+      repository: "example-org/example-repository",
+      expectedHeadSha: "a".repeat(40),
+      baseBranch: "main",
+      branchName: "codeops/post-cleanup-conflict",
+      commitMessage: "Do not retry a definitive outcome",
+      candidate: {
+        manifestId: candidateManifestId,
+        digest: candidateDigest,
+        sizeBytes: 1,
+        chunkCount: 1,
+      },
+    },
+  };
+  const result = await serveSessionRuntime({
+    method: "POST",
+    url: `/v1/session-runtime/dispatches/${dispatchId}/github-mutations`,
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    token,
+    workerId: "runtime-worker:candidate",
+    readBody: async () => githubMutation,
+    claim: async () => null,
+    complete: async () => ({}),
+    submitPermission: async () => ({}),
+    pollPermission: async () => ({}),
+    mutateGitHub: async () => {
+      throw new SessionRuntimeGitHubMutationConflictError(
+        "GitHub mutation has a definitive non-success outcome",
+      );
+    },
+  });
+  assert.deepEqual(result, { status: 409, body: { status: "conflict" } });
 });
 const authority = {
   sessionId: "ses_91a4",

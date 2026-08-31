@@ -6,7 +6,7 @@ import {
   sha256CanonicalJsonDigest,
 } from "@codeops/codeops-contracts";
 import { GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS } from "../dist/github-mutations-adapter.js";
-import { createGitHubMutationAdapter } from "../dist/github-branch-fast-forward.js";
+import { createGitHubMutationAdapter as createCandidateAdapter } from "../dist/github-branch-fast-forward.js";
 
 const repository = "anulman/codeops";
 const head = "a".repeat(40);
@@ -17,8 +17,28 @@ const authority = {
   readToken: "read-token-not-used-by-mutations",
   writeToken: "write-token-used-only-by-bounded-mutations",
 };
+const candidates = new Map();
+function createGitHubMutationAdapter(input) {
+  return createCandidateAdapter({
+    ...input,
+    loadBranchCandidate: async (candidateRequest) => candidates.get(candidateRequest.operationId),
+  });
+}
 
 function request(input) {
+  const { changes, ...metadata } = input;
+  const candidate = { version: "codeops.github-branch-publish-candidate/v1", changes };
+  candidates.set(operationId, candidate);
+  const candidateText = canonicalJsonText(candidate);
+  input = {
+    ...metadata,
+    candidate: {
+      manifestId: `githubcandidate-${"f".repeat(64)}`,
+      digest: `sha256:${createHash("sha256").update(candidateText).digest("hex")}`,
+      sizeBytes: Buffer.byteLength(candidateText),
+      chunkCount: Math.ceil(Buffer.byteLength(candidateText) / 65_536),
+    },
+  };
   const permission = {
     kind: "github_mutation",
     repository,
@@ -229,12 +249,12 @@ test("uses one deadline across delayed blob writes", async () => {
   const started = [];
   const base = fixture({
     branchName: "codeops/deadline-publication",
-    publicationTimeoutMs: 40,
+    publicationTimeoutMs: 1_000,
     writeBlob: ({ index, signal }) => new Promise((resolve, reject) => {
       started.push(index);
       const timer = setTimeout(() => {
         resolve(json({ sha: createHash("sha1").update(`blob-${index}`).digest("hex") }, 201));
-      }, 50);
+      }, 1_200);
       signal.addEventListener("abort", () => {
         clearTimeout(timer);
         reject(signal.reason);
@@ -243,7 +263,7 @@ test("uses one deadline across delayed blob writes", async () => {
   });
   const startedAt = Date.now();
   await assert.rejects(base.mutate(base.request), /deadline exceeded/);
-  assert.ok(Date.now() - startedAt < 400);
+  assert.ok(Date.now() - startedAt < 2_500);
   assert.ok(started.length >= 4 && started.length < base.changes.length);
   assert.equal(base.calls.some(({ path }) => path.endsWith("/git/refs")), false);
 });

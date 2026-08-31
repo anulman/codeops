@@ -3,6 +3,8 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import {
   canonicalJsonText,
   githubBranchPublishInputSchema,
+  githubBranchPublishCandidateSchema,
+  githubBranchPublishLegacyInlineInputSchema,
   githubCheckRerunInputSchema,
   githubMutationResultSchema,
   githubPullRequestUpdateBranchInputSchema,
@@ -19,7 +21,7 @@ import type {
   RuntimeGitHubMutationRequest,
 } from "./transport.js";
 
-const MAX_BODY_BYTES = 256 * 1_024;
+const MAX_BODY_BYTES = 4_456_448;
 const routes = new Map<string, GitHubMutationOperation>([
   ["/v1/github-mutations/branch/publish", "branch_publish"],
   ["/v1/github-mutations/pull-request/create", "pull_request_create"],
@@ -33,12 +35,13 @@ function digest(value: unknown): string {
   return `sha256:${createHash("sha256").update(canonicalJsonText(value)).digest("hex")}`;
 }
 
-function mutationRequest(
+async function mutationRequest(
   dispatchId: string,
   operation: GitHubMutationOperation,
   rawInput: unknown,
   dispatch: SessionRuntimeDispatch,
-): RuntimeGitHubMutationRequest {
+  context: RuntimeExecutionContext,
+): Promise<RuntimeGitHubMutationRequest> {
   const schemas = {
     branch_publish: githubBranchPublishInputSchema,
     pull_request_create: githubPullRequestCreateInputSchema,
@@ -65,6 +68,66 @@ function mutationRequest(
       ...input,
       body: linkTrustedPlaneWorkItemReferences(input.body, [planeWorkItem]),
     };
+  }
+  if (operation === "branch_publish") {
+    const logicalInput = githubBranchPublishLegacyInlineInputSchema.parse(
+      preparedInput,
+    );
+    const candidate = githubBranchPublishCandidateSchema.parse({
+      version: "codeops.github-branch-publish-candidate/v1",
+      changes: logicalInput.changes,
+    });
+    const candidateBytes = Buffer.from(canonicalJsonText(candidate));
+    const chunks = Array.from(
+      { length: Math.ceil(candidateBytes.length / 65_536) },
+      (_, ordinal) => candidateBytes.subarray(ordinal * 65_536, (ordinal + 1) * 65_536),
+    );
+    const candidateDigest = digest(candidate);
+    const chunkIdentities = chunks.map((bytes, ordinal) => ({
+      ordinal,
+      digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+      sizeBytes: bytes.length,
+    }));
+    const effectDigest = digest(logicalInput);
+    const operationId = `githubmutation-${createHash("sha256")
+      .update(canonicalJsonText({ dispatchId, operation, input: logicalInput })).digest("hex")}`;
+    const manifestId = `githubcandidate-${createHash("sha256")
+      .update(canonicalJsonText({
+        version: "codeops.github-branch-publish-candidate-manifest/v1",
+        dispatchId,
+        sessionId: dispatch.command.sessionId,
+        ownerPrincipalId: dispatch.principalId,
+        repository: logicalInput.repository,
+        operationId,
+        effectDigest,
+        candidate: {
+          digest: candidateDigest,
+          sizeBytes: candidateBytes.length,
+          chunkCount: chunks.length,
+        },
+        chunks: chunkIdentities,
+        operation: "branch_publish",
+      })).digest("hex")}`;
+    const { changes: _changes, ...metadata } = logicalInput;
+    const candidateReference = {
+      manifestId, digest: candidateDigest,
+      sizeBytes: candidateBytes.length, chunkCount: chunks.length,
+    };
+    const finalInput = githubBranchPublishInputSchema.parse({
+      ...metadata, candidate: candidateReference,
+    });
+    await context.storeGitHubBranchCandidate({
+      manifest: {
+        operationId, effectDigest, repository: finalInput.repository,
+        candidate: candidateReference, chunks: chunkIdentities,
+      },
+      chunks: chunks.map((bytes, ordinal) => ({
+        operationId, manifestId, ordinal,
+        digest: chunkIdentities[ordinal]!.digest,
+        bytesBase64: bytes.toString("base64"),
+      })),
+    });
+    return { operation, operationId, input: finalInput } as RuntimeGitHubMutationRequest;
   }
   const input = schemas[operation].parse(preparedInput);
   return {
@@ -143,11 +206,12 @@ export class GitHubMutationsBroker {
       return;
     }
     try {
-      const mutation = mutationRequest(
+      const mutation = await mutationRequest(
         active.dispatch.dispatchId,
         operation,
         await readJson(request),
         active.dispatch,
+        active.context,
       );
       const target = permissionTarget(mutation);
       const permissionOperation = sessionPermissionOperationSchema.parse({

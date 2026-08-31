@@ -2,7 +2,7 @@ export const GITHUB_BRANCH_PUBLICATION_CONCURRENCY = 4;
 export const GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS = 30_000;
 export const GITHUB_BRANCH_PUBLICATION_WRITE_TIMEOUT_MS = 120_000;
 export const GITHUB_BRANCH_PUBLICATION_DEADLINE_MS = 230_000;
-export const GITHUB_BRANCH_PUBLICATION_BODY_BYTES = 262_144;
+export const GITHUB_BRANCH_PUBLICATION_BODY_BYTES = 4_194_304;
 export const GITHUB_BRANCH_PUBLICATION_CHANGED_PATHS = 20;
 export const GITHUB_BRANCH_PUBLICATION_READ_WAVE_MS = 10_000;
 export const GITHUB_BRANCH_PUBLICATION_WRITE_WAVE_MS = 30_000;
@@ -17,16 +17,16 @@ export type GitHubBranchPublicationRequest = {
     readonly baseBranch: string;
     readonly branchName: string;
     readonly commitMessage: string;
-    readonly changes: readonly {
-      readonly path: string;
-      readonly oldText: string;
-      readonly newText: string;
-    }[];
+    readonly candidate: {
+      readonly manifestId: string; readonly digest: string;
+      readonly sizeBytes: number; readonly chunkCount: number;
+    };
   };
 };
 
-type GitHubBranchPublicationChange =
-  GitHubBranchPublicationRequest["input"]["changes"][number];
+type GitHubBranchPublicationChange = {
+  readonly path: string; readonly oldText: string; readonly newText: string;
+};
 
 function invalidRequestCounts(): Error {
   return new Error("GitHub branch publication request counts are invalid");
@@ -108,15 +108,16 @@ export function publicationPlan(input: Omit<GitHubBranchPublicationPlan,
 
 export function preflightGitHubBranchPublicationRequest(
   input: GitHubBranchPublicationRequest["input"],
+  changes: readonly GitHubBranchPublicationChange[],
 ): {
   readonly changedPaths: number;
   readonly serializedBytes: number;
   readonly plans: readonly GitHubBranchPublicationPlan[];
   readonly estimatedDurationMs: number;
 } {
-  const paths = new Set(input.changes.map(({ path }) => path));
+  const paths = new Set(changes.map(({ path }) => path));
   if (
-    paths.size !== input.changes.length ||
+    paths.size !== changes.length ||
     paths.size < 1 ||
     paths.size > GITHUB_BRANCH_PUBLICATION_CHANGED_PATHS
   ) {
@@ -124,14 +125,12 @@ export function preflightGitHubBranchPublicationRequest(
       "GitHub branch publication requires 1 to 20 unique changed paths",
     );
   }
-  const serializedBytes = new TextEncoder().encode(
-    JSON.stringify(input),
-  ).byteLength;
-  if (serializedBytes > GITHUB_BRANCH_PUBLICATION_BODY_BYTES) {
-    throw new Error("GitHub branch publication input exceeds 262144 bytes");
-  }
+  const serializedBytes = input.candidate.sizeBytes;
+  if (serializedBytes > 4_194_304) throw new Error(
+    "GitHub branch publication candidate exceeds 4194304 bytes",
+  );
 
-  const existingFiles = input.changes.filter(
+  const existingFiles = changes.filter(
     ({ oldText }) => oldText.length > 0,
   ).length;
   const fastForward = input.mode === "fast_forward";
@@ -153,9 +152,9 @@ export function preflightGitHubBranchPublicationRequest(
     : [publicationPlan({
       path: "create",
       // Initial identities; cached directory levels; blobs; final ref.
-      readPhases: [3, ...createTreeReadPhases(input.changes), existingFiles, 1],
+      readPhases: [3, ...createTreeReadPhases(changes), existingFiles, 1],
       // Parallel blobs, followed by sequential tree, commit, and branch writes.
-      writePhases: [input.changes.length, 1, 1, 1],
+      writePhases: [changes.length, 1, 1, 1],
     })];
   const rejected = plans.find(({ estimatedDurationMs }) =>
     estimatedDurationMs > GITHUB_BRANCH_PUBLICATION_DEADLINE_MS
@@ -284,6 +283,7 @@ export async function publishGitHubBranch(input: {
   readonly provider: GitHubBranchPublicationProvider;
   readonly preflight: <T>(operation: () => Promise<T>) => Promise<T>;
   readonly effectText: (operationId: string) => string;
+  readonly changes: readonly GitHubBranchPublicationChange[];
 }): Promise<string> {
   const { provider, request } = input;
   const baseCommit = await input.preflight(async () => {
@@ -332,7 +332,7 @@ export async function publishGitHubBranch(input: {
   };
 
   const prepared = await input.preflight(() => mapGitHubPublicationBounded(
-    request.input.changes,
+    input.changes,
     async (change): Promise<{
       readonly path: string;
       readonly mode: string;

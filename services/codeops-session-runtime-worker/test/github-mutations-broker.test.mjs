@@ -4,7 +4,8 @@ import { GitHubMutationsBroker } from "../dist/github-mutations-broker.js";
 
 const dispatch = {
   dispatchId: "11111111-1111-4111-8111-111111111111",
-  command: { type: "prompt" },
+  principalId: "operator@example.com",
+  command: { type: "prompt", sessionId: "session-github" },
 };
 const repository = "anulman/codeops";
 const expectedHeadSha = "a".repeat(40);
@@ -123,13 +124,15 @@ test("gates each bounded mutation on one exact allow-once decision", async () =>
   }
 });
 
-test("binds branch publication permission to the exact target and replacements", async () => {
+test("binds branch publication permission to the target and stores the immutable candidate", async () => {
   const broker = new GitHubMutationsBroker();
   const port = await broker.listen(0);
   const permissions = [];
+  const candidates = [];
   const publishedHead = "b".repeat(40);
   try {
     await broker.run(dispatch, {
+      async storeGitHubBranchCandidate(input) { candidates.push(input); },
       async requestPermission(input) {
         permissions.push(input.request);
         return { outcome: "selected", acpOptionId: "allow-once" };
@@ -164,13 +167,88 @@ test("binds branch publication permission to the exact target and replacements",
     });
     assert.equal(permissions[0].operation.operation, "branch_publish");
     assert.equal(permissions[0].operation.targetId, "codeops/alpha34-consumer");
-    assert.match(permissions[0].operation.payloadJson, /alpha\.33/);
+    assert.doesNotMatch(permissions[0].operation.payloadJson, /alpha\.33/);
+    assert.equal(candidates.length, 1);
+    assert.equal(candidates[0].chunks.length, 1);
+    assert.equal(
+      JSON.parse(permissions[0].operation.payloadJson).candidate.manifestId,
+      candidates[0].manifest.candidate.manifestId,
+    );
+    assert.match(Buffer.from(candidates[0].chunks[0].bytesBase64, "base64").toString(), /alpha\.33/);
   } finally {
     await broker.close();
   }
 });
 
-test("relays branch publication input through the exact 256 KiB boundary", async () => {
+test("normalizes inline publication before every candidate and effect identity", async () => {
+  const broker = new GitHubMutationsBroker();
+  const port = await broker.listen(0);
+  const candidates = [];
+  const permissions = [];
+  const mutations = [];
+  const normalizedMessage = "Publish  the exact candidate";
+  const publication = (commitMessage) => ({
+    repository,
+    expectedHeadSha,
+    baseBranch: "main",
+    branchName: "codeops/normalized-candidate",
+    commitMessage,
+    changes: [{ path: "proof.txt", oldText: "before\n", newText: "after\n" }],
+  });
+  try {
+    await broker.run(dispatch, {
+      async storeGitHubBranchCandidate(input) { candidates.push(input); },
+      async requestPermission(input) {
+        permissions.push(input.request);
+        return { outcome: "selected", acpOptionId: "allow-once" };
+      },
+      async mutateGitHub(input) {
+        mutations.push(input);
+        return {
+          version: "codeops.github-branch-publish-result/v1",
+          repository,
+          operationId: input.operationId,
+          baseBranch: input.input.baseBranch,
+          branchName: input.input.branchName,
+          baseSha: input.input.expectedHeadSha,
+          headSha: "b".repeat(40),
+          url: "https://github.com/anulman/codeops/tree/codeops%2Fnormalized-candidate",
+        };
+      },
+    }, async () => {
+      for (const commitMessage of [` \t${normalizedMessage}\n`, normalizedMessage]) {
+        const response = await fetch(
+          `http://127.0.0.1:${port}/v1/github-mutations/branch/publish`,
+          {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(publication(commitMessage)),
+          },
+        );
+        assert.equal(response.status, 200);
+      }
+    });
+    assert.equal(candidates.length, 2);
+    assert.equal(mutations.length, 2);
+    assert.equal(permissions.length, 2);
+    assert.equal(mutations[0].operationId, mutations[1].operationId);
+    assert.deepEqual(mutations[0].input, mutations[1].input);
+    assert.equal(mutations[0].input.commitMessage, normalizedMessage);
+    assert.deepEqual(candidates[0], candidates[1]);
+    assert.equal(candidates[0].manifest.effectDigest,
+      candidates[1].manifest.effectDigest);
+    assert.equal(candidates[0].manifest.candidate.manifestId,
+      candidates[1].manifest.candidate.manifestId);
+    assert.equal(permissions[0].operation.payloadJson,
+      permissions[1].operation.payloadJson);
+    assert.equal(JSON.parse(permissions[0].operation.payloadJson).commitMessage,
+      normalizedMessage);
+  } finally {
+    await broker.close();
+  }
+});
+
+test("relays a large branch candidate as bounded chunks", async () => {
   const branchPublicationInputAtBytes = (targetBytes) => {
     const input = {
       repository,
@@ -197,8 +275,10 @@ test("relays branch publication input through the exact 256 KiB boundary", async
   const broker = new GitHubMutationsBroker();
   const port = await broker.listen(0);
   const mutations = [];
+  const candidates = [];
   try {
     await broker.run(dispatch, {
+      async storeGitHubBranchCandidate(input) { candidates.push(input); },
       async requestPermission() {
         return { outcome: "selected", acpOptionId: "allow-once" };
       },
@@ -219,17 +299,15 @@ test("relays branch publication input through the exact 256 KiB boundary", async
       const atLimit = await fetch(`http://127.0.0.1:${port}/v1/github-mutations/branch/publish`, {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify(branchPublicationInputAtBytes(262_144)),
+        body: JSON.stringify(branchPublicationInputAtBytes(300_000)),
       });
       assert.equal(atLimit.status, 200);
-      const aboveLimit = await fetch(`http://127.0.0.1:${port}/v1/github-mutations/branch/publish`, {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify(branchPublicationInputAtBytes(262_145)),
-      });
-      assert.equal(aboveLimit.status, 503);
     });
     assert.equal(mutations.length, 1);
+    assert.equal(candidates.length, 1);
+    assert.ok(candidates[0].chunks.length > 1);
+    assert.ok(candidates[0].chunks.every((chunk) =>
+      Buffer.from(chunk.bytesBase64, "base64").length <= 65_536));
   } finally {
     await broker.close();
   }

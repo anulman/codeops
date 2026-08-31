@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import {
   canonicalJsonText,
+  githubBranchPublishLegacyInlineInputSchema,
   githubMutationProviderRequestSchema,
   githubMutationReconciliationResultSchema,
   providerEffectReceiptSchema,
@@ -12,6 +13,10 @@ import {
   type ProviderEffectReceipt,
 } from "@codeops/codeops-contracts";
 import type { TransactionClient } from "./session-broker-repository.js";
+import {
+  cleanupDefinitiveGitHubBranchCandidateChunks,
+  stageLegacyGitHubBranchCandidate,
+} from "./github-branch-publish-candidates.js";
 
 interface ProviderEffectRow extends Record<string, unknown> {
   readonly effect_id: unknown;
@@ -176,12 +181,52 @@ export async function loadUnknownProviderEffectReconciliation(
   ) {
     throw new Error("provider effect reconciliation authority is inconsistent");
   }
-  const input = JSON.parse(permission.request.operation.payloadJson) as unknown;
+  const durableInput = JSON.parse(permission.request.operation.payloadJson) as unknown;
+  if (
+    row.payload_digest !== sha256CanonicalJsonDigest(durableInput) ||
+    row.permission_digest !== sha256CanonicalJsonDigest(permission.request.operation) ||
+    permission.request.operationDigest !== row.permission_digest
+  ) {
+    throw new Error("provider effect reconciliation digests are inconsistent");
+  }
+  let providerInput = durableInput;
+  if (row.operation === "branch_publish") {
+    const legacy = githubBranchPublishLegacyInlineInputSchema.safeParse(durableInput);
+    if (legacy.success) {
+      const expectedEffectId = `githubmutation-${createHash("sha256")
+        .update(canonicalJsonText({
+          dispatchId: row.dispatch_id,
+          operation: "branch_publish",
+          input: legacy.data,
+        }))
+        .digest("hex")}`;
+      if (expectedEffectId !== effectId) {
+        throw new Error("provider effect reconciliation authority is inconsistent");
+      }
+      await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+      try {
+        const candidate = await stageLegacyGitHubBranchCandidate(client, {
+          dispatchId: String(row.dispatch_id),
+          sessionId: String(row.session_id),
+          ownerPrincipalId: dispatch.principalId,
+          repository: legacy.data.repository,
+          operationId: effectId,
+          logicalInput: legacy.data,
+        });
+        const { changes: _changes, ...metadata } = legacy.data;
+        providerInput = { ...metadata, candidate };
+        await client.query("COMMIT");
+      } catch (error) {
+        await client.query("ROLLBACK");
+        throw error;
+      }
+    }
+  }
   const request = githubMutationProviderRequestSchema.parse({
     version: "codeops.github-mutation-provider-request/v1",
     operation: row.operation,
     operationId: row.effect_id,
-    input,
+    input: providerInput,
     payloadDigest: row.payload_digest,
     permissionDigest: row.permission_digest,
     provenance: {
@@ -190,13 +235,6 @@ export async function loadUnknownProviderEffectReconciliation(
       principalDigest: `sha256:${createHash("sha256").update(dispatch.principalId).digest("hex")}`,
     },
   });
-  if (
-    request.payloadDigest !== sha256CanonicalJsonDigest(request.input) ||
-    request.permissionDigest !== sha256CanonicalJsonDigest(permission.request.operation) ||
-    permission.request.operationDigest !== request.permissionDigest
-  ) {
-    throw new Error("provider effect reconciliation digests are inconsistent");
-  }
   return { request, attemptedAt: new Date(String(row.attempted_at)) };
 }
 
@@ -225,6 +263,9 @@ export async function recordProviderEffectReconciliation(
     throw new Error("provider effect reconciliation result identity is invalid");
   }
   const resolvedAt = (input.now ?? (() => new Date()))().toISOString();
+  const transactional = request.operation === "branch_publish";
+  if (transactional) await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
   const updated = await client.query(
     `UPDATE codeops.provider_effect_receipts
         SET state = $1, evidence_json = $2::jsonb,
@@ -255,6 +296,14 @@ export async function recordProviderEffectReconciliation(
   );
   if (updated.rowCount !== 1) {
     throw new Error("provider effect reconciliation lost its unknown-state fence");
+  }
+  if (request.operation === "branch_publish") {
+    await cleanupDefinitiveGitHubBranchCandidateChunks(client, request.operationId);
+  }
+  if (transactional) await client.query("COMMIT");
+  } catch (error) {
+    if (transactional) await client.query("ROLLBACK");
+    throw error;
   }
 }
 

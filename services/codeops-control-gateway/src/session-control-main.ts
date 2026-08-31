@@ -94,6 +94,10 @@ import {
   SessionRuntimeWorkItemConflictError,
   SessionRuntimeWorkItemNotFoundError,
 } from "./session-runtime-work-items.js";
+import {
+  createGitHubBranchCandidateManifest,
+  storeGitHubBranchCandidateChunk,
+} from "./github-branch-publish-candidates.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
 
@@ -583,6 +587,16 @@ const server = createServer((request, response) => {
                 }
               },
             }),
+        createGitHubBranchCandidateManifest: async (input) => {
+          const client = await database.connect();
+          try { await createGitHubBranchCandidateManifest(client, input); }
+          finally { client.release(); }
+        },
+        storeGitHubBranchCandidateChunk: async (input) => {
+          const client = await database.connect();
+          try { await storeGitHubBranchCandidateChunk(client, input); }
+          finally { client.release(); }
+        },
       });
       if (result !== null) {
         json(response, result.status, result.body);

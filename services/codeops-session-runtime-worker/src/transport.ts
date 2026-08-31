@@ -1,5 +1,7 @@
 import {
   githubMutationResultSchema,
+  githubBranchPublishCandidateManifestRequestSchema,
+  githubBranchPublishCandidateChunkRequestSchema,
   githubReadResultSchema,
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeClaimResponseSchema,
@@ -29,6 +31,8 @@ import {
   workItemUpdateResultSchema,
   type SessionCommandResult,
   type GitHubMutationResult,
+  type GitHubBranchPublishCandidateManifestRequest,
+  type GitHubBranchPublishCandidateChunkRequest,
   type GitHubReadResult,
   type SessionIdentity,
   type SessionRuntimeCompletion,
@@ -164,6 +168,10 @@ export interface RuntimeExecutionContext {
   mutateGitHub(
     input: RuntimeGitHubMutationRequest,
   ): Promise<GitHubMutationResult>;
+  storeGitHubBranchCandidate(input: {
+    readonly manifest: Omit<GitHubBranchPublishCandidateManifestRequest, "version" | "claimToken">;
+    readonly chunks: readonly Omit<GitHubBranchPublishCandidateChunkRequest, "version" | "claimToken">[];
+  }): Promise<void>;
 }
 
 export type RuntimeExecutor = (
@@ -614,6 +622,34 @@ export class SessionRuntimeTransport {
     );
   }
 
+  async #storeGitHubBranchCandidate(
+    claim: SessionRuntimeDispatchClaim,
+    input: Parameters<RuntimeExecutionContext["storeGitHubBranchCandidate"]>[0],
+    now: () => Date,
+  ): Promise<void> {
+    if (claim.dispatch.command.type !== "prompt" ||
+        now().getTime() >= Date.parse(claim.claimExpiresAt)) {
+      throw new SessionRuntimeTransportError(
+        "only one live claimed prompt may store a GitHub branch candidate",
+      );
+    }
+    const manifest = githubBranchPublishCandidateManifestRequestSchema.parse({
+      version: "codeops.github-branch-publish-candidate-manifest-request/v1",
+      claimToken: claim.claimToken,
+      ...input.manifest,
+    });
+    const root = `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/github-branch-candidates`;
+    await this.#post(`${root}/manifests`, manifest);
+    for (const rawChunk of input.chunks) {
+      const chunk = githubBranchPublishCandidateChunkRequestSchema.parse({
+        version: "codeops.github-branch-publish-candidate-chunk-request/v1",
+        claimToken: claim.claimToken,
+        ...rawChunk,
+      });
+      await this.#post(`${root}/chunks/${chunk.ordinal}`, chunk);
+    }
+  }
+
   async runOne(input: {
     readonly leaseMs: number;
     readonly execute: RuntimeExecutor;
@@ -653,6 +689,8 @@ export class SessionRuntimeTransport {
       readGitHub: (githubRead) => this.#readGitHub(claim, githubRead, now),
       mutateGitHub: (githubMutation) =>
         this.#mutateGitHub(claim, githubMutation, now),
+      storeGitHubBranchCandidate: (candidate) =>
+        this.#storeGitHubBranchCandidate(claim, candidate, now),
     });
     const completedAt = now();
     if (completedAt.getTime() >= Date.parse(claim.claimExpiresAt)) {

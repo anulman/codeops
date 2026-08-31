@@ -2,17 +2,27 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 import { canonicalJsonText, sessionPermissionOperationSchema, sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
-import { createGitHubMutationAdapter, createGitHubMutationReconciler } from "../dist/github-branch-fast-forward.js";
+import { createGitHubMutationAdapter as createCandidateAdapter, createGitHubMutationReconciler as createCandidateReconciler } from "../dist/github-branch-fast-forward.js";
 
 const repository = "anulman/codeops", base = "a".repeat(40), prior = "b".repeat(40), priorTree = "c".repeat(40);
 const published = "d".repeat(40), publishedTree = "e".repeat(40), branchName = "codeops/bootstrap";
 const priorEffect = `githubmutation-${"1".repeat(64)}`, operationId = `githubmutation-${"2".repeat(64)}`;
 const authority = { repository, repositoryUrl: `https://github.com/${repository}.git`, readToken: "unused", writeToken: "safe-write-token!" };
+const changes = [{ path: "proof.txt", oldText: "", newText: "proved\n" }];
+const candidate = { version: "codeops.github-branch-publish-candidate/v1", changes };
+const candidateText = canonicalJsonText(candidate);
 const value = {
   repository, mode: "fast_forward", expectedHeadSha: base, expectedBranchHeadSha: prior, expectedBranchHeadEffectId: priorEffect,
   baseBranch: "main", branchName, commitMessage: "Continue bootstrap",
-  changes: [{ path: "proof.txt", oldText: "", newText: "proved\n" }],
+  candidate: {
+    manifestId: `githubcandidate-${"4".repeat(64)}`,
+    digest: `sha256:${createHash("sha256").update(candidateText).digest("hex")}`,
+    sizeBytes: Buffer.byteLength(candidateText), chunkCount: 1,
+  },
 };
+const loadBranchCandidate = async () => candidate;
+const createGitHubMutationAdapter = (input) => createCandidateAdapter({ ...input, loadBranchCandidate });
+const createGitHubMutationReconciler = (input) => createCandidateReconciler({ ...input, loadBranchCandidate });
 const exactMessage = `Continue bootstrap\n\ncodeops-provider-effect:${operationId}`;
 
 function request() {
