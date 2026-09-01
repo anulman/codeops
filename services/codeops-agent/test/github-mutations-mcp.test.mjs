@@ -49,7 +49,8 @@ test("advertises only six bounded mutation tools and relays one exact call", asy
     const chunks = [];
     request.on("data", (chunk) => chunks.push(chunk));
     request.on("end", () => {
-      requests.push({ url: request.url, body: JSON.parse(Buffer.concat(chunks)) });
+      const rawBody = Buffer.concat(chunks).toString("utf8");
+      requests.push({ url: request.url, rawBody, body: JSON.parse(rawBody) });
       response.writeHead(200, {
         "content-type": "application/json",
         "cache-control": "no-store",
@@ -100,6 +101,7 @@ test("advertises only six bounded mutation tools and relays one exact call", asy
       branchPublish.inputSchema.properties.changes.items.properties.oldText.minLength,
       undefined,
     );
+    assert.equal(branchPublish.inputSchema.properties.changes.maxItems, 100);
     assert.deepEqual(branchPublish.inputSchema.properties.mode.enum, ["create", "fast_forward"]);
     assert.match(branchPublish.description, /atomically compares expectedBranchHeadSha/);
     assert.match(branchPublish.description, /canonical candidate must not exceed 4194304 bytes \(4 MiB\)/);
@@ -138,13 +140,13 @@ test("advertises only six bounded mutation tools and relays one exact call", asy
       baseBranch: "main",
       branchName: "codeops/large-candidate-proof",
       commitMessage: "Relay the bounded candidate",
-      changes: Array.from({ length: 3 }, (_, index) => ({
+      changes: Array.from({ length: 88 }, (_, index) => ({
         path: `proof-${index}.txt`,
         oldText: "",
-        newText: "x".repeat(100_000),
+        newText: `qualified-${index}\n`,
       })),
     };
-    assert.ok(Buffer.byteLength(JSON.stringify(largePublication)) > 262_144);
+    const largePublicationBytes = JSON.stringify(largePublication);
     child.stdin.write(`${JSON.stringify({
       jsonrpc: "2.0",
       id: 3,
@@ -158,6 +160,7 @@ test("advertises only six bounded mutation tools and relays one exact call", asy
     assert.equal(relayed.result.isError, false);
     assert.equal(requests.length, 2);
     assert.equal(requests[1].url, "/v1/github-mutations/branch/publish");
+    assert.equal(requests[1].rawBody, largePublicationBytes);
     assert.deepEqual(requests[1].body, largePublication);
   } finally {
     lines.close();
