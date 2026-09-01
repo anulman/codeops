@@ -7,7 +7,12 @@ import {
   createModelProxyToken,
   createSessionModelProxyToken,
 } from "@codeops/codeops-contracts/model-proxy";
+import { posix } from "node:path";
 import { agentJobModelBudgetAuthority } from "./agent-job-identity.js";
+import {
+  assertAgentModelProxyRouting,
+  assertAgentModelProxySessionVolume,
+} from "./model-proxy-routing.js";
 
 interface ResourceConfig {
   readonly namespace: string;
@@ -29,6 +34,24 @@ interface ResourceConfig {
     readonly issuedAt?: Date;
   };
   readonly candidate?: CandidateCheckpoint;
+}
+
+function canonicalMountPath(value: string | undefined): string | undefined {
+  if (!value?.startsWith("/")) return undefined;
+  return posix.normalize(value).replace(/\/+$/, "") || "/";
+}
+
+function mountPathsOverlap(
+  mountPath: string | undefined,
+  targetPath: string | undefined,
+): boolean {
+  return (
+    mountPath !== undefined &&
+    targetPath !== undefined &&
+    (mountPath === targetPath ||
+      mountPath.startsWith(targetPath === "/" ? "/" : `${targetPath}/`) ||
+      targetPath.startsWith(mountPath === "/" ? "/" : `${mountPath}/`))
+  );
 }
 
 function labels(input: ResourceConfig, request: AgentJobDispatchRequest) {
@@ -340,6 +363,17 @@ export function buildRunResources(
                 name: "session-gateway",
                 image: input.sessionGatewayImage,
                 imagePullPolicy: "IfNotPresent",
+                lifecycle: {
+                  postStart: {
+                    exec: {
+                      command: [
+                        "node",
+                        "-e",
+                        "const f=require('node:fs'),s='/var/run/secrets/codeops-model-proxy/model-proxy-token',d='/run/codeops/model-proxy-token',t=d+'.tmp',v=f.readFileSync(s);if(!v.length)throw new Error('model proxy token is empty');const h=f.openSync(t,f.constants.O_WRONLY|f.constants.O_CREAT|f.constants.O_EXCL,0o600);try{f.fchmodSync(h,0o600);f.writeFileSync(h,v);f.fsyncSync(h)}finally{f.closeSync(h)}const w=f.readFileSync(t);if(!w.length||!w.equals(v))throw new Error('model proxy token copy is incomplete');f.renameSync(t,d);const q=f.openSync(d,f.constants.O_RDONLY|f.constants.O_NOFOLLOW);try{const a=f.fstatSync(q),x=f.readFileSync(q);if(!a.isFile()||(a.mode&0o777)!==0o600||!x.length||!x.equals(v))throw new Error('published model proxy token is invalid')}finally{f.closeSync(q)}",
+                      ],
+                    },
+                  },
+                },
                 env: [
                   ...commonIdentity,
                   { name: "CODEOPS_ACP_SOCKET", value: "/run/codeops/agent.sock" },
@@ -375,6 +409,12 @@ export function buildRunResources(
                     mountPath: "/input",
                     readOnly: true,
                   },
+                  {
+                    name: "model-proxy-token",
+                    mountPath: "/var/run/secrets/codeops-model-proxy/model-proxy-token",
+                    subPath: "model-proxy-token",
+                    readOnly: true,
+                  },
                 ],
               },
               {
@@ -385,13 +425,8 @@ export function buildRunResources(
                   ...commonIdentity,
                   { name: "CODEOPS_REPOSITORY", value: input.repositoryUrl },
                   {
-                    name: "CODEX_API_KEY",
-                    valueFrom: {
-                      secretKeyRef: {
-                        name: secretName,
-                        key: "model-proxy-token",
-                      },
-                    },
+                    name: "CODEOPS_MODEL_PROXY_TOKEN_FILE",
+                    value: "/run/codeops/model-proxy-token",
                   },
                   {
                     name: "CODEX_HOME",
@@ -404,6 +439,14 @@ export function buildRunResources(
                   {
                     name: "DEFAULT_AUTH_REQUEST",
                     value: '{"methodId":"api-key"}',
+                  },
+                  {
+                    name: "MODEL_PROVIDER",
+                    value: "codeops_proxy",
+                  },
+                  {
+                    name: "CODEOPS_MODEL_PROXY_ORIGIN",
+                    value: modelProxyOrigin.origin,
                   },
                   {
                     name: "CODEX_CONFIG",
@@ -498,6 +541,15 @@ export function buildRunResources(
                   ],
                 },
               },
+              {
+                name: "model-proxy-token",
+                secret: {
+                  secretName,
+                  items: [
+                    { key: "model-proxy-token", path: "model-proxy-token" },
+                  ],
+                },
+              },
               { name: "temp", emptyDir: { sizeLimit: "2Gi" } },
               ...(input.candidate
                 ? [
@@ -586,6 +638,10 @@ export function buildRunResources(
 
 export function assertRunResources(
   resources: readonly Record<string, unknown>[],
+  modelProxyIdentity: {
+    readonly serviceName?: string;
+    readonly podName?: string;
+  } = {},
 ): void {
   const serialized = JSON.stringify(resources);
   if (
@@ -607,6 +663,7 @@ export function assertRunResources(
     );
   }
   const job = resources.find((resource) => resource.kind === "Job") as {
+    metadata?: { labels?: Record<string, string> };
     spec: { template: { spec: Record<string, unknown> } };
   };
   const account = resources.find(
@@ -622,7 +679,13 @@ export function assertRunResources(
     affinity?: unknown;
     containers?: {
       name?: string;
-      env?: { name?: string; value?: string }[];
+      env?: {
+        name?: string;
+        value?: string;
+        valueFrom?: { secretKeyRef?: { name?: string; key?: string } };
+      }[];
+      envFrom?: { secretRef?: { name?: string } }[];
+      lifecycle?: unknown;
       volumeMounts?: {
         name?: string;
         mountPath?: string;
@@ -632,6 +695,12 @@ export function assertRunResources(
     }[];
     initContainers?: {
       name?: string;
+      env?: {
+        name?: string;
+        value?: string;
+        valueFrom?: { secretKeyRef?: { name?: string; key?: string } };
+      }[];
+      envFrom?: { secretRef?: { name?: string } }[];
       volumeMounts?: {
         name?: string;
         mountPath?: string;
@@ -641,6 +710,18 @@ export function assertRunResources(
     }[];
     volumes?: {
       name?: string;
+      secret?: {
+        secretName?: string;
+        items?: { key?: string; path?: string }[];
+      };
+      projected?: {
+        sources?: {
+          secret?: {
+            name?: string;
+            items?: { key?: string; path?: string }[];
+          };
+        }[];
+      };
       persistentVolumeClaim?: {
         claimName?: string;
         readOnly?: boolean;
@@ -650,6 +731,145 @@ export function assertRunResources(
   const agent = pod.containers?.find(
     (container) => container.name === "coding-agent",
   );
+  assertAgentModelProxySessionVolume(pod, "session-gateway");
+  const modelProxyServiceName =
+    modelProxyIdentity.serviceName ?? "codeops-model-proxy";
+  const expectedModelProxyPodName =
+    modelProxyIdentity.podName ?? modelProxyServiceName;
+  const modelProxyPodName = (resources.find(
+    (resource) => resource.kind === "NetworkPolicy",
+  ) as { spec?: { egress?: { to?: { podSelector?: { matchLabels?: Record<string, string> } }[] }[] } })
+    ?.spec?.egress?.[0]?.to?.[0]?.podSelector?.matchLabels?.["app.kubernetes.io/name"];
+  if (modelProxyPodName !== expectedModelProxyPodName) {
+    throw new Error("model proxy routing origin drifted");
+  }
+  assertAgentModelProxyRouting(
+    agent,
+    `http://${modelProxyServiceName}:8080`,
+  );
+  const runId = job.metadata?.labels?.["codeops.example/run-id"];
+  const runSecretName = `codeops-run-${runId}`;
+  const runSecret = resources.find(
+    (resource) =>
+      resource.kind === "Secret" &&
+      (resource.metadata as { name?: string } | undefined)?.name === runSecretName,
+  ) as { data?: Record<string, string> } | undefined;
+  const allowedRunInputItems = [
+    { key: "agent-prompt", path: "agent-prompt.txt" },
+    { key: "project-context", path: "project-context.json" },
+    { key: "coding-request", path: "coding-request.json" },
+    { key: "research-packet", path: "research-packet.json" },
+    { key: "research-dispatch", path: "research-dispatch.json" },
+  ];
+  const expectedRunInputItems = allowedRunInputItems.filter(
+    (item) => runSecret?.data?.[item.key] !== undefined,
+  );
+  const runInputVolumes = pod.volumes?.filter(
+    (volume) => volume.name === "run-input",
+  ) ?? [];
+  const expectedRunInputVolume = {
+    name: "run-input",
+    secret: { secretName: runSecretName, items: expectedRunInputItems },
+  };
+  const expectedTokenVolume = {
+    name: "model-proxy-token",
+    secret: {
+      secretName: runSecretName,
+      items: [{ key: "model-proxy-token", path: "model-proxy-token" }],
+    },
+  };
+  const expectedTokenMount = {
+    name: "model-proxy-token",
+    mountPath: "/var/run/secrets/codeops-model-proxy/model-proxy-token",
+    subPath: "model-proxy-token",
+    readOnly: true,
+  };
+  const expectedLifecycle = {
+    postStart: {
+      exec: {
+        command: [
+          "node",
+          "-e",
+          "const f=require('node:fs'),s='/var/run/secrets/codeops-model-proxy/model-proxy-token',d='/run/codeops/model-proxy-token',t=d+'.tmp',v=f.readFileSync(s);if(!v.length)throw new Error('model proxy token is empty');const h=f.openSync(t,f.constants.O_WRONLY|f.constants.O_CREAT|f.constants.O_EXCL,0o600);try{f.fchmodSync(h,0o600);f.writeFileSync(h,v);f.fsyncSync(h)}finally{f.closeSync(h)}const w=f.readFileSync(t);if(!w.length||!w.equals(v))throw new Error('model proxy token copy is incomplete');f.renameSync(t,d);const q=f.openSync(d,f.constants.O_RDONLY|f.constants.O_NOFOLLOW);try{const a=f.fstatSync(q),x=f.readFileSync(q);if(!a.isFile()||(a.mode&0o777)!==0o600||!x.length||!x.equals(v))throw new Error('published model proxy token is invalid')}finally{f.closeSync(q)}",
+        ],
+      },
+    },
+  };
+  const tokenVolumes = pod.volumes?.filter(
+    (volume) => volume.name === "model-proxy-token",
+  ) ?? [];
+  const secretProjections = (volume: NonNullable<typeof pod.volumes>[number]) => [
+    ...(volume.secret
+      ? [{ name: volume.secret.secretName, items: volume.secret.items }]
+      : []),
+    ...(volume.projected?.sources ?? []).flatMap((source) =>
+      source.secret
+        ? [{ name: source.secret.name, items: source.secret.items }]
+        : [],
+    ),
+  ];
+  const tokenProjections = pod.volumes?.filter((volume) =>
+    secretProjections(volume).some(
+      (projection) =>
+        (projection.name === runSecretName &&
+          (!Array.isArray(projection.items) || projection.items.length === 0)) ||
+        projection.items?.some(
+          (item) =>
+            item.key === "model-proxy-token" || item.path === "model-proxy-token",
+        ),
+    ),
+  ) ?? [];
+  const secretVolumeNames = new Set(
+    pod.volumes
+      ?.filter((volume) => secretProjections(volume).length > 0)
+      .map((volume) => volume.name),
+  );
+  const tokenVolumeNames = new Set(tokenProjections.map((volume) => volume.name));
+  const allContainers = [...(pod.initContainers ?? []), ...(pod.containers ?? [])];
+  const expectedTokenMountPath = canonicalMountPath(expectedTokenMount.mountPath);
+  const tokenMounts = allContainers.flatMap((container) =>
+    (container.volumeMounts ?? [])
+      .filter((mount) => {
+        const mountPath = canonicalMountPath(mount.mountPath);
+        return (
+          tokenVolumeNames.has(mount.name) ||
+          mountPath === expectedTokenMountPath ||
+          (secretVolumeNames.has(mount.name) &&
+            mountPathsOverlap(mountPath, expectedTokenMountPath))
+        );
+      })
+      .map((mount) => ({ container: container.name, mount })),
+  );
+  const tokenEnvironmentReferences = allContainers.flatMap((container) => [
+    ...(container.env ?? []).filter(
+      (entry) => entry.valueFrom?.secretKeyRef?.key === "model-proxy-token",
+    ),
+    ...(container.envFrom ?? []).filter(
+      (entry) => entry.secretRef?.name === runSecretName,
+    ),
+  ]);
+  const tokenProjectors = pod.containers?.filter(
+    (container) => container.name === "session-gateway",
+  ) ?? [];
+  if (
+    !runId ||
+    expectedRunInputItems.length === 0 ||
+    runInputVolumes.length !== 1 ||
+    JSON.stringify(runInputVolumes[0]) !== JSON.stringify(expectedRunInputVolume) ||
+    tokenVolumes.length !== 1 ||
+    JSON.stringify(tokenVolumes[0]) !== JSON.stringify(expectedTokenVolume) ||
+    tokenProjections.length !== 1 ||
+    tokenProjections[0] !== tokenVolumes[0] ||
+    tokenMounts.length !== 1 ||
+    tokenMounts[0]?.container !== "session-gateway" ||
+    JSON.stringify(tokenMounts[0].mount) !== JSON.stringify(expectedTokenMount) ||
+    tokenEnvironmentReferences.length !== 0 ||
+    tokenProjectors.length !== 1 ||
+    JSON.stringify(tokenProjectors[0]?.lifecycle) !==
+      JSON.stringify(expectedLifecycle)
+  ) {
+    throw new Error("model proxy credential selector drifted");
+  }
   const candidateVolume = pod.volumes?.find(
     (volume) => volume.name === "candidate",
   );
@@ -663,7 +883,8 @@ export function assertRunResources(
       "agent-full-access" ||
     agent.env?.find((entry) => entry.name === "DEFAULT_AUTH_REQUEST")?.value !==
       '{"methodId":"api-key"}' ||
-    !agent.env?.some((entry) => entry.name === "CODEX_API_KEY") ||
+    agent.env?.find((entry) => entry.name === "CODEOPS_MODEL_PROXY_TOKEN_FILE")
+      ?.value !== "/run/codeops/model-proxy-token" ||
     codexHomeMount?.name !== "workspace" ||
     codexHomeMount.subPath !== ".codeops/codex-home" ||
     codexHomeMount.readOnly !== false ||
