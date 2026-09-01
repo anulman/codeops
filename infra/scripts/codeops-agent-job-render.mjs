@@ -1,4 +1,9 @@
 import { parseAllDocuments } from "yaml";
+import { posix } from "node:path";
+import {
+  assertModelProxyRouting,
+  assertModelProxySessionVolume,
+} from "./model-proxy-routing.mjs";
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -20,6 +25,35 @@ const TOKENS = {
   __CODEOPS_SESSION_GATEWAY_DIGEST__: "sessionGatewayDigest",
   __CODEOPS_WORKSPACE_READ_ONLY__: "workspaceReadOnly",
 };
+
+function canonicalMountPath(value) {
+  if (typeof value !== "string" || !value.startsWith("/")) return undefined;
+  const normalized = posix.normalize(value).replace(/\/+$/, "");
+  return normalized || "/";
+}
+
+function mountPathsOverlap(mountPath, targetPath) {
+  return (
+    mountPath !== undefined &&
+    targetPath !== undefined &&
+    (mountPath === targetPath ||
+      mountPath.startsWith(targetPath === "/" ? "/" : `${targetPath}/`) ||
+      targetPath.startsWith(mountPath === "/" ? "/" : `${mountPath}/`))
+  );
+}
+
+function secretProjections(volume) {
+  return [
+    ...(volume.secret
+      ? [{ name: volume.secret.secretName, items: volume.secret.items }]
+      : []),
+    ...(volume.projected?.sources ?? []).flatMap((source) =>
+      source.secret
+        ? [{ name: source.secret.name, items: source.secret.items }]
+        : []
+    ),
+  ];
+}
 
 export function renderAgentJobManifest(template, input) {
   if (!RUN_ID.test(input.runId ?? "")) {
@@ -139,9 +173,101 @@ export function renderAgentJobManifest(template, input) {
     }
   }
   const agent = runtimeContainers.find((container) => container.name === "coding-agent");
+  assertModelProxyRouting(agent, "http://codeops-model-proxy:8080");
+  assertModelProxySessionVolume(pod, "session-gateway");
+  const modelProxyTokenVolumes = pod.volumes.filter(
+    (volume) => volume.name === "model-proxy-token",
+  );
+  const tokenProjectors = pod.containers.filter(
+    (container) => container.name === "session-gateway",
+  );
+  const expectedTokenVolume = {
+    name: "model-proxy-token",
+    secret: {
+      secretName: `codeops-run-${input.runId}`,
+      items: [{ key: "model-proxy-token", path: "model-proxy-token" }],
+    },
+  };
+  const expectedTokenMount = {
+    name: "model-proxy-token",
+    mountPath: "/var/run/secrets/codeops-model-proxy/model-proxy-token",
+    subPath: "model-proxy-token",
+    readOnly: true,
+  };
+  const expectedLifecycle = {
+    postStart: {
+      exec: {
+        command: [
+          "node",
+          "-e",
+          "const f=require('node:fs'),s='/var/run/secrets/codeops-model-proxy/model-proxy-token',d='/run/codeops/model-proxy-token',t=d+'.tmp',v=f.readFileSync(s);if(!v.length)throw new Error('model proxy token is empty');const h=f.openSync(t,f.constants.O_WRONLY|f.constants.O_CREAT|f.constants.O_EXCL,0o600);try{f.fchmodSync(h,0o600);f.writeFileSync(h,v);f.fsyncSync(h)}finally{f.closeSync(h)}const w=f.readFileSync(t);if(!w.length||!w.equals(v))throw new Error('model proxy token copy is incomplete');f.renameSync(t,d);const q=f.openSync(d,f.constants.O_RDONLY|f.constants.O_NOFOLLOW);try{const a=f.fstatSync(q),x=f.readFileSync(q);if(!a.isFile()||(a.mode&0o777)!==0o600||!x.length||!x.equals(v))throw new Error('published model proxy token is invalid')}finally{f.closeSync(q)}",
+        ],
+      },
+    },
+  };
+  const runSecretName = `codeops-run-${input.runId}`;
+  const runInputVolumes = pod.volumes.filter((volume) => volume.name === "run-input");
+  const expectedRunInputVolume = {
+    name: "run-input",
+    secret: {
+      secretName: runSecretName,
+      items: [{ key: "agent-prompt", path: "agent-prompt.txt" }],
+    },
+  };
+  const tokenProjections = pod.volumes.filter((volume) =>
+    secretProjections(volume).some(
+      (projection) =>
+        (projection.name === runSecretName &&
+          (!Array.isArray(projection.items) || projection.items.length === 0)) ||
+        projection.items?.some(
+          (item) =>
+            item.key === "model-proxy-token" || item.path === "model-proxy-token",
+        ),
+    ),
+  );
+  const secretVolumeNames = new Set(
+    pod.volumes
+      .filter((volume) => secretProjections(volume).length > 0)
+      .map((volume) => volume.name),
+  );
+  const tokenVolumeNames = new Set(tokenProjections.map((volume) => volume.name));
+  const allContainers = [...pod.initContainers, ...pod.containers];
+  const expectedTokenMountPath = canonicalMountPath(expectedTokenMount.mountPath);
+  const tokenMounts = allContainers.flatMap(
+    (container) =>
+      (container.volumeMounts ?? [])
+        .filter((mount) => {
+          const mountPath = canonicalMountPath(mount.mountPath);
+          return (
+            tokenVolumeNames.has(mount.name) ||
+            mountPath === expectedTokenMountPath ||
+            (secretVolumeNames.has(mount.name) &&
+              mountPathsOverlap(mountPath, expectedTokenMountPath))
+          );
+        })
+        .map((mount) => ({ container: container.name, mount })),
+  );
+  const tokenEnvironmentReferences = allContainers.flatMap((container) => [
+    ...(container.env ?? []).filter(
+      (entry) => entry.valueFrom?.secretKeyRef?.key === "model-proxy-token",
+    ),
+    ...(container.envFrom ?? []).filter(
+      (entry) => entry.secretRef?.name === runSecretName,
+    ),
+  ]);
   if (
-    agent.env?.find((entry) => entry.name === "CODEX_API_KEY")?.valueFrom
-      ?.secretKeyRef?.key !== "model-proxy-token" ||
+    runInputVolumes.length !== 1 ||
+    JSON.stringify(runInputVolumes[0]) !== JSON.stringify(expectedRunInputVolume) ||
+    modelProxyTokenVolumes.length !== 1 ||
+    JSON.stringify(modelProxyTokenVolumes[0]) !== JSON.stringify(expectedTokenVolume) ||
+    tokenProjections.length !== 1 ||
+    tokenProjections[0] !== modelProxyTokenVolumes[0] ||
+    tokenMounts.length !== 1 ||
+    tokenMounts[0]?.container !== "session-gateway" ||
+    JSON.stringify(tokenMounts[0].mount) !== JSON.stringify(expectedTokenMount) ||
+    tokenEnvironmentReferences.length !== 0 ||
+    tokenProjectors.length !== 1 ||
+    JSON.stringify(tokenProjectors[0]?.lifecycle) !== JSON.stringify(expectedLifecycle) ||
     agent.env?.find((entry) => entry.name === "CODEX_HOME")?.value !==
       "/var/lib/codeops-agent/codex-home" ||
     !agent.volumeMounts?.some((mount) =>
