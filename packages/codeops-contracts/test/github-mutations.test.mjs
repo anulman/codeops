@@ -119,6 +119,37 @@ test("accepts bounded non-empty candidate changes", () => {
   }));
 });
 
+test("accepts exactly 100 unique publication paths and rejects 101", () => {
+  const changes = Array.from({ length: 100 }, (_, index) => ({
+    path: `proof-${index}.txt`, oldText: "before\n", newText: "after\n",
+  }));
+  assert.equal(githubBranchPublishCandidateSchema.parse({
+    version: "codeops.github-branch-publish-candidate/v1", changes,
+  }).changes.length, 100);
+  const inlineInput = {
+    repository, expectedHeadSha, baseBranch: "main",
+    branchName: "codeops/path-cap-proof", commitMessage: "Prove path cap",
+    changes,
+  };
+  assert.equal(sessionRuntimeGitHubMutationRequestSchema.parse({
+    version: "codeops.session-runtime-github-mutation-request/v1",
+    claimToken, operationId, operation: "branch_publish", input: inlineInput,
+  }).input.changes.length, 100);
+  const changesOverLimit = [
+    ...changes,
+    { path: "proof-100.txt", oldText: "before\n", newText: "after\n" },
+  ];
+  assert.throws(() => githubBranchPublishCandidateSchema.parse({
+    version: "codeops.github-branch-publish-candidate/v1",
+    changes: changesOverLimit,
+  }));
+  assert.throws(() => sessionRuntimeGitHubMutationRequestSchema.parse({
+    version: "codeops.session-runtime-github-mutation-request/v1",
+    claimToken, operationId, operation: "branch_publish",
+    input: { ...inlineInput, changes: changesOverLimit },
+  }));
+});
+
 test("keeps the control-plane publication input bounded to a candidate reference", () => {
   const input = operations[0].input;
   assert.equal(sessionRuntimeGitHubMutationRequestSchema.parse({

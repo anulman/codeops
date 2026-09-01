@@ -46,7 +46,7 @@ const tools = [
         expectedBranchHeadEffectId: { type: "string", pattern: "^githubmutation-[0-9a-f]{64}$", description: "Fast-forward only: durable successful CodeOps publication effect that produced the expected target head." },
         commitMessage: { type: "string", minLength: 1, maxLength: 500 },
         changes: {
-          type: "array", minItems: 1, maxItems: 20,
+          type: "array", minItems: 1, maxItems: 100,
           items: {
             type: "object", additionalProperties: false,
             required: ["path", "oldText", "newText"],

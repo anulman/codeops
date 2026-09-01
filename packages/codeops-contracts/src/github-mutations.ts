@@ -119,7 +119,7 @@ const githubBranchPublishChangeSchema = z.object({
 
 export const githubBranchPublishCandidateSchema = z.object({
   version: z.literal("codeops.github-branch-publish-candidate/v1"),
-  changes: z.array(githubBranchPublishChangeSchema).min(1).max(20),
+  changes: z.array(githubBranchPublishChangeSchema).min(1).max(100),
 }).strict().superRefine((candidate, context) => {
   if (new Set(candidate.changes.map(({ path }) => path)).size !== candidate.changes.length) {
     context.addIssue({
@@ -229,7 +229,7 @@ export const githubBranchPublishLegacyInlineInputSchema = z
     baseBranch: branch,
     branchName: branch,
     commitMessage: z.string().trim().min(1).max(500),
-    changes: z.array(githubBranchPublishChangeSchema).min(1).max(20),
+    changes: z.array(githubBranchPublishChangeSchema).min(1).max(100),
   })
   .strict()
   .superRefine((input, context) => {

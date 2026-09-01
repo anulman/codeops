@@ -129,7 +129,13 @@ test("binds branch publication permission to the target and stores the immutable
   const port = await broker.listen(0);
   const permissions = [];
   const candidates = [];
+  const mutations = [];
   const publishedHead = "b".repeat(40);
+  const changes = Array.from({ length: 88 }, (_, index) => ({
+    path: `qualified-${index}.txt`,
+    oldText: `before-${index}\n`,
+    newText: `${"x".repeat(1_000)}after-${index}\n`,
+  }));
   try {
     await broker.run(dispatch, {
       async storeGitHubBranchCandidate(input) { candidates.push(input); },
@@ -138,6 +144,7 @@ test("binds branch publication permission to the target and stores the immutable
         return { outcome: "selected", acpOptionId: "allow-once" };
       },
       async mutateGitHub(input) {
+        mutations.push(input);
         return {
           version: "codeops.github-branch-publish-result/v1",
           repository,
@@ -159,7 +166,7 @@ test("binds branch publication permission to the target and stores the immutable
           baseBranch: "main",
           branchName: "codeops/alpha34-consumer",
           commitMessage: "Repin CodeOps alpha.34",
-          changes: [{ path: "package.json", oldText: "alpha.33", newText: "alpha.34" }],
+          changes,
         }),
       });
       assert.equal(response.status, 200);
@@ -167,14 +174,27 @@ test("binds branch publication permission to the target and stores the immutable
     });
     assert.equal(permissions[0].operation.operation, "branch_publish");
     assert.equal(permissions[0].operation.targetId, "codeops/alpha34-consumer");
-    assert.doesNotMatch(permissions[0].operation.payloadJson, /alpha\.33/);
+    assert.equal(permissions.length, 1);
     assert.equal(candidates.length, 1);
-    assert.equal(candidates[0].chunks.length, 1);
+    assert.equal(mutations.length, 1);
+    assert.ok(candidates[0].chunks.length > 1);
+    assert.ok(candidates[0].chunks.every((chunk) =>
+      Buffer.from(chunk.bytesBase64, "base64").length <= 65_536));
+    const permissionInput = JSON.parse(permissions[0].operation.payloadJson);
+    assert.deepEqual(permissionInput.candidate, candidates[0].manifest.candidate);
+    assert.deepEqual(mutations[0].input.candidate, candidates[0].manifest.candidate);
+    assert.equal("changes" in permissionInput, false);
+    assert.equal("changes" in mutations[0].input, false);
+    assert.doesNotMatch(permissions[0].operation.payloadJson, /before-|after-/);
+    assert.doesNotMatch(JSON.stringify(mutations[0].input), /before-|after-/);
     assert.equal(
-      JSON.parse(permissions[0].operation.payloadJson).candidate.manifestId,
+      permissionInput.candidate.manifestId,
       candidates[0].manifest.candidate.manifestId,
     );
-    assert.match(Buffer.from(candidates[0].chunks[0].bytesBase64, "base64").toString(), /alpha\.33/);
+    const stagedCandidate = Buffer.concat(candidates[0].chunks.map((chunk) =>
+      Buffer.from(chunk.bytesBase64, "base64"))).toString("utf8");
+    assert.match(stagedCandidate, /before-0/);
+    assert.equal(JSON.parse(stagedCandidate).changes.length, 88);
   } finally {
     await broker.close();
   }
