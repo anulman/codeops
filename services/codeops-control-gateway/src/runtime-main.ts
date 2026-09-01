@@ -613,6 +613,12 @@ function workspaceResourceConfig(
     ),
     sessionGatewayOrigin: required("CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN"),
     modelProxyOrigin: modelAuth.origin,
+    modelProxyServiceName: kubernetesObjectName(
+      "CODEOPS_AGENT_MODEL_PROXY_SERVICE_NAME",
+    ),
+    modelProxyPodName: kubernetesObjectName(
+      "CODEOPS_AGENT_MODEL_PROXY_POD_NAME",
+    ),
     ...(process.env.CODEOPS_RUNTIME_EGRESS_PROXY_ORIGIN?.trim()
       ? {
           runtimeEgressProxyOrigin:

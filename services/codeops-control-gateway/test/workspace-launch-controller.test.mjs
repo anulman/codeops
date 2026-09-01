@@ -72,6 +72,8 @@ function resourceConfig(current, identity) {
     sessionSecretsName: "agents-system-session-secrets",
     sessionGatewayOrigin: "http://agents-system-session-control-gateway:8080",
     modelProxyOrigin: "http://agents-system-model-proxy:8080",
+    modelProxyServiceName: "agents-system-model-proxy",
+    modelProxyPodName: "agents-system-model-proxy-pods",
     workspaceStorageSize: "10Gi",
   };
 }

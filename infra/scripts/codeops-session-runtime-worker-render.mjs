@@ -1,4 +1,8 @@
 import { parseAllDocuments } from "yaml";
+import {
+  assertModelProxyRouting,
+  assertModelProxySessionVolume,
+} from "./model-proxy-routing.mjs";
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -174,6 +178,8 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
     throw new Error("session runtime credential or volume boundary drifted");
   }
   const agentSource = JSON.stringify(agent);
+  assertModelProxyRouting(agent, "http://codeops-model-proxy:8080");
+  assertModelProxySessionVolume(pod, "runtime-worker");
   if (
     !agentSource.includes("/run/codeops/model-proxy-token") ||
     !agentSource.includes("http://codeops-model-proxy:8080/v1") ||

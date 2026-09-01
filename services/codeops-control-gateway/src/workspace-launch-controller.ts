@@ -127,10 +127,9 @@ export async function reconcileWorkspaceLaunch(
   const identity = workspaceLaunchRuntimeIdentity(launch);
   let resources: readonly Record<string, unknown>[];
   try {
-    resources = buildWorkspaceResources(
-      dependencies.resourceConfig(launch, identity),
-    );
-    assertWorkspaceResources(resources);
+    const resourceConfig = dependencies.resourceConfig(launch, identity);
+    resources = buildWorkspaceResources(resourceConfig);
+    assertWorkspaceResources(resources, resourceConfig.modelProxyServiceName);
   } catch (error) {
     return dependencies.update(
       failWorkspaceLaunch(launch, "identity-conflict", dependencies.now),
