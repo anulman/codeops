@@ -1,4 +1,8 @@
 import { parseDocument } from "yaml";
+import {
+  assertModelProxyRouting,
+  assertModelProxySessionVolume,
+} from "./model-proxy-routing.mjs";
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -65,6 +69,8 @@ export function renderAgentsSystemRootSession(template, input) {
     throw new Error("trusted root Job received unrelated authority");
   }
   const agent = pod.containers.find((container) => container.name === "coding-agent");
+  assertModelProxyRouting(agent, "http://agents-system-model-proxy:8080");
+  assertModelProxySessionVolume(pod, "runtime-worker");
   const source = JSON.stringify(agent);
   if (
     source.includes("codex-auth") ||

@@ -8,8 +8,10 @@ COPY packages/codeops-contracts/src ./packages/codeops-contracts/src
 
 COPY services/codeops-agent/package.json services/codeops-agent/package-lock.json ./services/codeops-agent/
 COPY infra/scripts/rewrite-workspace-dependency-for-npm.mjs ./infra/scripts/
+COPY services/codeops-agent/lock-provider-routing.mjs ./services/codeops-agent/
 RUN node infra/scripts/rewrite-workspace-dependency-for-npm.mjs services/codeops-agent/package.json \
   && npm ci --ignore-scripts --prefix services/codeops-agent \
+  && node services/codeops-agent/lock-provider-routing.mjs services/codeops-agent/node_modules/@agentclientprotocol/codex-acp/dist/index.js \
   && ln -s services/codeops-agent/node_modules node_modules \
   && services/codeops-agent/node_modules/.bin/tsc packages/codeops-contracts/src/canonical-json.ts \
     --declaration --module NodeNext --moduleResolution NodeNext --outDir packages/codeops-contracts/dist \

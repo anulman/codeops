@@ -25,6 +25,7 @@ const child = spawn("/opt/codeops-agent/node_modules/.bin/codex-acp", [], {
     ...process.env,
     CODEX_HOME: "/var/lib/codeops-agent/codex-home",
     CODEX_API_KEY: "provider-free-proof-key",
+    MODEL_PROVIDER: "codeops_proxy",
     CODEX_CONFIG: JSON.stringify({
       model: "gpt-5.6-sol",
       model_provider: "codeops_proxy",
