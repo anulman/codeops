@@ -57,7 +57,8 @@ test("renders one trusted idempotent root-session runtime Job", () => {
 });
 
 test("gives the root Job only source, initialization, worker, and receipt authority", () => {
-  const source = JSON.stringify(render());
+  const job = render();
+  const source = JSON.stringify(job);
   assert.match(source, /agents-system-runtime-source/);
   assert.match(source, /initialization-token/);
   assert.match(source, /runtime-worker-token/);
@@ -71,6 +72,10 @@ test("gives the root Job only source, initialization, worker, and receipt author
   assert.match(source, /auto_review/);
   assert.match(source, /web_search/);
   assert.match(source, /cached/);
+  const agent = job.spec.template.spec.containers.find(({ name }) => name === "coding-agent");
+  const env = Object.fromEntries(agent.env.map(({ name, value }) => [name, value]));
+  assert.equal(env.MODEL_PROVIDER, JSON.parse(env.CODEX_CONFIG).model_provider);
+  assert.equal(env.MODEL_PROVIDER, "codeops_proxy");
 });
 
 test("rejects mutable images and unsafe root identities", () => {
@@ -84,5 +89,27 @@ test("rejects mutable images and unsafe root identities", () => {
     { sessionSuffix: "UPPER" },
   ]) {
     assert.throws(() => render(patch));
+  }
+  for (const drifted of [
+    template.replace('            - { name: MODEL_PROVIDER, value: codeops_proxy }\n', ""),
+    template.replace("MODEL_PROVIDER, value: codeops_proxy", "MODEL_PROVIDER, value: openai"),
+    template.replace("CODEOPS_MODEL_PROXY_ORIGIN, value: http://agents-system-model-proxy:8080", "CODEOPS_MODEL_PROXY_ORIGIN, value: http://other-proxy:8080"),
+    template.replace('"model_provider":"codeops_proxy"', '"model_provider":"openai"'),
+    template.replace('"base_url":"http://agents-system-model-proxy:8080/v1"', '"base_url":"http://other-proxy:8080/v1"'),
+    template.replace('"env_key":"CODEX_API_KEY"', '"env_key":"OPENAI_API_KEY"'),
+    template.replace('"wire_api":"responses"', '"wire_api":"chat"'),
+    template.replace("/run/codeops/model-proxy-token", "/run/codeops/other-token"),
+    template.replace(
+      "            - { name: CODEOPS_MODEL_PROXY_TOKEN_FILE, value: /run/codeops/model-proxy-token }",
+      "            - { name: CODEX_API_KEY, value: literal-reusable-key }",
+    ),
+    template.replace(
+      "            - { name: CODEOPS_MODEL_PROXY_TOKEN_FILE, value: /run/codeops/model-proxy-token }",
+      "            - { name: OPENAI_API_KEY, value: '' }\n            - { name: CODEOPS_MODEL_PROXY_TOKEN_FILE, value: /run/codeops/model-proxy-token }",
+    ),
+    template.replace("name: session, emptyDir: { medium: Memory", "name: session, secret: { secretName: alternate }, unused: { medium: Memory"),
+    template.replace("- { name: session, mountPath: /run/codeops }", "- { name: temp, mountPath: /run/codeops }"),
+  ]) {
+    assert.throws(() => renderAgentsSystemRootSession(drifted, input), /model proxy/);
   }
 });
