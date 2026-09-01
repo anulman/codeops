@@ -7,6 +7,10 @@ import {
   type WorkspaceManifest,
 } from "@codeops/codeops-contracts";
 import { createHash } from "node:crypto";
+import {
+  assertAgentModelProxyRouting,
+  assertAgentModelProxySessionVolume,
+} from "./model-proxy-routing.js";
 
 const dnsLabel = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/;
 const digestImage = /^.+@sha256:[0-9a-f]{64}$/;
@@ -39,6 +43,8 @@ export interface WorkspaceResourceConfig {
   readonly sessionSecretsName: string;
   readonly sessionGatewayOrigin: string;
   readonly modelProxyOrigin: string;
+  readonly modelProxyServiceName: string;
+  readonly modelProxyPodName: string;
   readonly runtimeEgressProxyOrigin?: string;
   readonly runtimeEgressProxyServiceName?: string;
   readonly workspaceStorageSize: string;
@@ -156,11 +162,16 @@ export function buildWorkspaceResources(
     ["namespace", raw.namespace],
     ["runtime ServiceAccount", raw.runtimeServiceAccountName],
     ["session Secret", raw.sessionSecretsName],
+    ["model proxy Service", raw.modelProxyServiceName],
+    ["model proxy pod", raw.modelProxyPodName],
   ] as const) {
     if (!dnsLabel.test(value)) throw new Error(`workspace ${name} is invalid`);
   }
   if (!digestImage.test(raw.agentImage) || !digestImage.test(raw.runtimeWorkerImage)) {
     throw new Error("workspace runtime images must use immutable digests");
+  }
+  if (exactOrigin(raw.modelProxyOrigin) !== `http://${raw.modelProxyServiceName}:8080`) {
+    throw new Error("workspace model proxy origin must use the exact Service identity");
   }
   if (
     raw.displayName !== undefined &&
@@ -438,6 +449,8 @@ export function buildWorkspaceResources(
                 { name: "INITIAL_AGENT_MODE", value: "agent-full-access" },
                 { name: "CODEOPS_MODEL_PROXY_TOKEN_FILE", value: "/run/codeops/model-proxy-token" },
                 { name: "DEFAULT_AUTH_REQUEST", value: '{"methodId":"api-key"}' },
+                { name: "MODEL_PROVIDER", value: "codeops_proxy" },
+                { name: "CODEOPS_MODEL_PROXY_ORIGIN", value: exactOrigin(raw.modelProxyOrigin) },
                 { name: "CODEX_CONFIG", value: JSON.stringify({
                   model: policy.modelPolicy.model,
                   model_reasoning_effort: policy.modelPolicy.reasoningEffort,
@@ -494,7 +507,10 @@ export function buildWorkspaceResources(
   ];
 }
 
-export function assertWorkspaceResources(resources: readonly Record<string, unknown>[]): void {
+export function assertWorkspaceResources(
+  resources: readonly Record<string, unknown>[],
+  modelProxyServiceName = "agents-system-model-proxy",
+): void {
   if (
     resources.length !== 4 ||
     resources[0]?.kind !== "Secret" ||
@@ -533,6 +549,8 @@ export function assertWorkspaceResources(resources: readonly Record<string, unkn
   const codexHomeMount = agent?.volumeMounts?.find(
     (mount) => mount.mountPath === codexHomeMountPath,
   );
+  assertAgentModelProxyRouting(agent, `http://${modelProxyServiceName}:8080`);
+  assertAgentModelProxySessionVolume(runtime.spec?.template?.spec ?? {}, "runtime-worker");
   if (!serializedSecret.includes('"immutable":true')) {
     throw new Error("workspace source Secret must be immutable");
   }

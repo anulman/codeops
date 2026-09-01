@@ -131,7 +131,10 @@ export function createAgentJobRunner(input: {
       },
       request,
     );
-    assertRunResources(resources);
+    assertRunResources(resources, {
+      serviceName: input.config.modelProxyServiceName,
+      podName: input.config.modelProxyPodName,
+    });
     await claimRequest({
       rootDirectory: input.config.evidenceRoot,
       request,

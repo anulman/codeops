@@ -96,6 +96,9 @@ test("shares only workspace and the pod-local ACP socket across runtime containe
   assert.ok(agent.volumeMounts.some((mount) => mount.name === "workspace"));
   assert.ok(worker.volumeMounts.some((mount) => mount.name === "session"));
   assert.ok(agent.volumeMounts.some((mount) => mount.name === "session"));
+  const agentEnv = Object.fromEntries(agent.env.map(({ name, value }) => [name, value]));
+  assert.equal(agentEnv.MODEL_PROVIDER, JSON.parse(agentEnv.CODEX_CONFIG).model_provider);
+  assert.equal(agentEnv.MODEL_PROVIDER, "codeops_proxy");
 });
 
 test("denies ingress and permits only proof gateway, proof database, model proxy, DNS, and public HTTPS", () => {
@@ -126,11 +129,29 @@ test("rejects mutable images, unsafe identity, broad authority, and resource dri
     assert.throws(() => renderSessionRuntimeWorkerManifest(template, { ...input, ...patch }));
   }
   for (const drifted of [
+    template.replace('            - { name: MODEL_PROVIDER, value: codeops_proxy }\n', ""),
     template.replace("kind: NetworkPolicy", "kind: ConfigMap"),
     template.replace("secretName: codeops-session-runtime-worker-database", "secretName: codeops-session-broker-database"),
     template.replace("backoffLimit: 0", "backoffLimit: 1"),
     template.replace("/run/codeops/ready", "/tmp/unbound-ready"),
     template.replace("app.kubernetes.io/name: codeops-control-gateway", "app.kubernetes.io/name: broad-gateway"),
+    template.replace("MODEL_PROVIDER, value: codeops_proxy", "MODEL_PROVIDER, value: openai"),
+    template.replace('CODEOPS_MODEL_PROXY_ORIGIN, value: "http://codeops-model-proxy:8080"', 'CODEOPS_MODEL_PROXY_ORIGIN, value: "http://other-proxy:8080"'),
+    template.replace('"model_provider":"codeops_proxy"', '"model_provider":"openai"'),
+    template.replace('"base_url":"http://codeops-model-proxy:8080/v1"', '"base_url":"http://other-proxy:8080/v1"'),
+    template.replace('"env_key":"CODEX_API_KEY"', '"env_key":"OPENAI_API_KEY"'),
+    template.replace('"wire_api":"responses"', '"wire_api":"chat"'),
+    template.replace("/run/codeops/model-proxy-token", "/run/codeops/other-token"),
+    template.replace(
+      '            - { name: CODEOPS_MODEL_PROXY_TOKEN_FILE, value: "/run/codeops/model-proxy-token" }',
+      "            - { name: CODEX_API_KEY, value: literal-reusable-key }",
+    ),
+    template.replace(
+      '            - { name: CODEOPS_MODEL_PROXY_TOKEN_FILE, value: "/run/codeops/model-proxy-token" }',
+      '            - { name: OPENAI_API_KEY, valueFrom: { secretKeyRef: { name: alternate, key: token } } }\n            - { name: CODEOPS_MODEL_PROXY_TOKEN_FILE, value: "/run/codeops/model-proxy-token" }',
+    ),
+    template.replace("name: session, emptyDir: { medium: Memory", "name: session, secret: { secretName: alternate }, unused: { medium: Memory"),
+    template.replace("- { name: session, mountPath: /run/codeops }", "- { name: temp, mountPath: /run/codeops }"),
     `${template}\n---\napiVersion: v1\nkind: Secret\nmetadata:\n  name: forbidden\n`,
   ]) {
     assert.throws(() => renderSessionRuntimeWorkerManifest(drifted, input));

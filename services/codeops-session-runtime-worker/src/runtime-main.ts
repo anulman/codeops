@@ -17,6 +17,7 @@ import { loadRuntimeSessionIdentity } from "./session-identity.js";
 import { WorkItemsBroker } from "./work-items-broker.js";
 import { GitHubReadsBroker } from "./github-reads-broker.js";
 import { GitHubMutationsBroker } from "./github-mutations-broker.js";
+import { publishModelProxyToken } from "./model-proxy-token.js";
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -144,10 +145,10 @@ try {
   if (initialization.modelProxyToken === undefined) {
     throw new Error("session runtime requires a short-lived model proxy token");
   }
-  await writeFile(modelProxyTokenPath, initialization.modelProxyToken, {
-    mode: 0o600,
-    flag: "wx",
-  });
+  await publishModelProxyToken(
+    modelProxyTokenPath,
+    initialization.modelProxyToken,
+  );
   const transport = new SessionRuntimeTransport({
     gatewayOrigin,
     token: workerToken,

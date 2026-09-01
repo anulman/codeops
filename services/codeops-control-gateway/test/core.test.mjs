@@ -1229,9 +1229,44 @@ test("builds only the fixed tokenless run resources", () => {
   ).secret.items;
   assert.equal(
     runInputItems.some((item) =>
-      ["repository-read-token", "model-api-key"].includes(item.key),
+      ["repository-read-token", "model-api-key", "model-proxy-token"].includes(
+        item.key,
+      ),
     ),
     false,
+  );
+  assert.deepEqual(
+    resources[2].spec.template.spec.volumes.find(
+      (volume) => volume.name === "model-proxy-token",
+    ),
+    {
+      name: "model-proxy-token",
+      secret: {
+        secretName: `codeops-run-${identity.runId}`,
+        items: [{ key: "model-proxy-token", path: "model-proxy-token" }],
+      },
+    },
+  );
+  assert.deepEqual(
+    [
+      ...resources[2].spec.template.spec.initContainers,
+      ...resources[2].spec.template.spec.containers,
+    ].flatMap((container) =>
+      container.volumeMounts
+        .filter((mount) => mount.name === "model-proxy-token")
+        .map((mount) => ({ container: container.name, mount })),
+    ),
+    [
+      {
+        container: "session-gateway",
+        mount: {
+          name: "model-proxy-token",
+          mountPath: "/var/run/secrets/codeops-model-proxy/model-proxy-token",
+          subPath: "model-proxy-token",
+          readOnly: true,
+        },
+      },
+    ],
   );
   assert.deepEqual(
     JSON.parse(
@@ -1272,9 +1307,8 @@ test("builds only the fixed tokenless run resources", () => {
     '{"methodId":"api-key"}',
   );
   assert.equal(
-    codingAgent.env.find((entry) => entry.name === "CODEX_API_KEY").valueFrom
-      .secretKeyRef.key,
-    "model-proxy-token",
+    codingAgent.env.find((entry) => entry.name === "CODEOPS_MODEL_PROXY_TOKEN_FILE").value,
+    "/run/codeops/model-proxy-token",
   );
   assert.equal(
     resources[2].spec.template.spec.volumes.some(
@@ -1284,6 +1318,10 @@ test("builds only the fixed tokenless run resources", () => {
   );
   const codexConfig = JSON.parse(
     codingAgent.env.find((entry) => entry.name === "CODEX_CONFIG").value,
+  );
+  assert.equal(
+    codingAgent.env.find((entry) => entry.name === "MODEL_PROVIDER").value,
+    codexConfig.model_provider,
   );
   assert.equal(codexConfig.model_provider, "codeops_proxy");
   assert.equal(codexConfig.approvals_reviewer, "auto_review");
@@ -1296,6 +1334,354 @@ test("builds only the fixed tokenless run resources", () => {
   assert.equal(JSON.stringify(resources).includes("model-api-key"), false);
   assert.equal(JSON.stringify(resources).includes("codeops-codex-auth"), false);
   assert.equal(JSON.stringify(resources).includes("automountServiceAccountToken\":true"), false);
+
+  const mutations = [
+    (agent) => agent.env.splice(agent.env.findIndex(({ name }) => name === "MODEL_PROVIDER"), 1),
+    (agent) => { agent.env.find(({ name }) => name === "MODEL_PROVIDER").value = "openai"; },
+    (agent) => { agent.env.find(({ name }) => name === "CODEOPS_MODEL_PROXY_ORIGIN").value = "http://other-proxy:8080"; },
+    (agent) => { agent.env.find(({ name }) => name === "CODEOPS_MODEL_PROXY_TOKEN_FILE").name = "OPENAI_API_KEY"; },
+    (agent) => {
+      const entry = agent.env.find(({ name }) => name === "CODEX_CONFIG");
+      const value = JSON.parse(entry.value);
+      value.model_provider = "openai";
+      entry.value = JSON.stringify(value);
+    },
+    (agent) => {
+      const entry = agent.env.find(({ name }) => name === "CODEX_CONFIG");
+      const value = JSON.parse(entry.value);
+      value.model_providers.codeops_proxy.base_url = "http://other-proxy:8080/v1";
+      entry.value = JSON.stringify(value);
+    },
+    (agent) => {
+      const entry = agent.env.find(({ name }) => name === "CODEX_CONFIG");
+      const value = JSON.parse(entry.value);
+      value.model_providers.codeops_proxy.env_key = "OPENAI_API_KEY";
+      entry.value = JSON.stringify(value);
+    },
+    (agent) => {
+      const entry = agent.env.find(({ name }) => name === "CODEX_CONFIG");
+      const value = JSON.parse(entry.value);
+      value.model_providers.codeops_proxy.wire_api = "chat";
+      entry.value = JSON.stringify(value);
+    },
+  ];
+  for (const mutate of mutations) {
+    const drifted = structuredClone(resources);
+    mutate(drifted[2].spec.template.spec.containers.find(({ name }) => name === "coding-agent"));
+    assert.throws(() => assertRunResources(drifted), /model proxy/);
+  }
+  for (const mutate of [
+    (pod) => {
+      pod.containers.find(({ name }) => name === "coding-agent").env.push({
+        name: "CODEX_API_KEY",
+        value: "literal-reusable-key",
+      });
+    },
+    (pod) => {
+      pod.containers.find(({ name }) => name === "coding-agent").env.push({
+        name: "CODEX_API_KEY",
+        value: "",
+      });
+    },
+    (pod) => {
+      pod.containers.find(({ name }) => name === "coding-agent").env.push({
+        name: "OPENAI_API_KEY",
+        valueFrom: { secretKeyRef: { name: "alternate", key: "token" } },
+      });
+    },
+    (pod) => {
+      pod.containers.find(({ name }) => name === "coding-agent").env.find(
+        ({ name }) => name === "CODEOPS_MODEL_PROXY_TOKEN_FILE",
+      ).value = "/run/codeops/other-token";
+    },
+    (pod) => {
+      pod.volumes.find(({ name }) => name === "model-proxy-token")
+        .secret.secretName = "alternate-run-secret";
+    },
+    (pod) => {
+      pod.volumes.find(({ name }) => name === "model-proxy-token")
+        .secret.items[0].key = "alternate-token";
+    },
+    (pod) => {
+      pod.volumes.find(({ name }) => name === "model-proxy-token")
+        .secret.items[0].path = "alternate-token";
+    },
+    (pod) => {
+      pod.volumes.find(({ name }) => name === "session").secret = {
+        secretName: "alternate-run-secret",
+      };
+      delete pod.volumes.find(({ name }) => name === "session").emptyDir;
+    },
+    (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .volumeMounts.find(({ mountPath }) => mountPath === "/run/codeops").name = "temp";
+    },
+    (pod) => {
+      pod.containers.push({
+        name: "extra-sidecar",
+        volumeMounts: [{ name: "session", mountPath: "/alternate-session" }],
+      });
+    },
+    (pod) => {
+      pod.volumes.push({ name: "session-alias", emptyDir: {} });
+      pod.containers.push({
+        name: "extra-sidecar",
+        volumeMounts: [
+          { name: "session-alias", mountPath: "/alternate/../run/codeops" },
+        ],
+      });
+    },
+    (pod) => {
+      pod.containers.find(({ name }) => name === "coding-agent").volumeMounts.push({
+        name: "session",
+        mountPath: "/alternate-session",
+      });
+    },
+    (pod) => {
+      pod.volumes.push({ name: "session-alias", emptyDir: {} });
+      pod.containers.find(({ name }) => name === "coding-agent").volumeMounts.push({
+        name: "session-alias",
+        mountPath: "/run/codeops/consumer",
+      });
+    },
+    ...["/alternate/../run/codeops/secret", "/run"].map(
+      (mountPath) => (pod) => {
+        pod.volumes.push({
+          name: "overlapping-secret",
+          secret: { secretName: "alternate-run-secret" },
+        });
+        pod.initContainers.find(({ name }) => name === "workspace-builder")
+          .volumeMounts.push({
+            name: "overlapping-secret",
+            mountPath,
+            readOnly: true,
+          });
+      },
+    ),
+  ]) {
+    const drifted = structuredClone(resources);
+    mutate(drifted[2].spec.template.spec);
+    assert.throws(() => assertRunResources(drifted), /model proxy/);
+  }
+  const networkDrift = structuredClone(resources);
+  networkDrift[3].spec.egress[0].to[0].podSelector.matchLabels["app.kubernetes.io/name"] =
+    "other-proxy";
+  assert.throws(() => assertRunResources(networkDrift), /model proxy/);
+});
+
+test("rejects model proxy token projection and lifecycle mutations", () => {
+  const identity = createRunIdentity(request);
+  const resources = buildRunResources(
+    {
+      namespace: "codeops-trial",
+      ...identity,
+      repositoryUrl: "https://github.com/example-org/example-repository",
+      agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+      sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      repositoryReadToken: "repo-token",
+      modelAuth,
+    },
+    request,
+  );
+  const lifecycleCommand =
+    "const f=require('node:fs'),s='/var/run/secrets/codeops-model-proxy/model-proxy-token',d='/run/codeops/model-proxy-token',t=d+'.tmp',v=f.readFileSync(s);if(!v.length)throw new Error('model proxy token is empty');const h=f.openSync(t,f.constants.O_WRONLY|f.constants.O_CREAT|f.constants.O_EXCL,0o600);try{f.fchmodSync(h,0o600);f.writeFileSync(h,v);f.fsyncSync(h)}finally{f.closeSync(h)}const w=f.readFileSync(t);if(!w.length||!w.equals(v))throw new Error('model proxy token copy is incomplete');f.renameSync(t,d);const q=f.openSync(d,f.constants.O_RDONLY|f.constants.O_NOFOLLOW);try{const a=f.fstatSync(q),x=f.readFileSync(q);if(!a.isFile()||(a.mode&0o777)!==0o600||!x.length||!x.equals(v))throw new Error('published model proxy token is invalid')}finally{f.closeSync(q)}";
+  for (const [name, mutate] of [
+    ["removal", (pod) => {
+      pod.volumes.splice(
+        pod.volumes.findIndex((volume) => volume.name === "model-proxy-token"),
+        1,
+      );
+    }],
+    ["replacement", (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .lifecycle.postStart.exec.command = ["node", "-e", "process.exit(0)"];
+    }],
+    ["decoy", (pod) => {
+      const gateway = pod.containers.find(({ name }) => name === "session-gateway");
+      gateway.lifecycle.postStart.exec.command = ["node", "-e", "process.exit(0)"];
+      gateway.lifecycle.preStop = { exec: { command: ["node", "-e", lifecycleCommand] } };
+    }],
+    ["alternate file", (pod) => {
+      const gateway = pod.containers.find(({ name }) => name === "session-gateway");
+      gateway.lifecycle.postStart.exec.command[2] = gateway.lifecycle.postStart.exec.command[2]
+        .replace("/var/run/secrets/codeops-model-proxy/model-proxy-token", "/var/run/secrets/codeops-model-proxy/alternate-token");
+    }],
+    ["direct final write", (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .lifecycle.postStart.exec.command[2] = lifecycleCommand.replace("t=d+'.tmp'", "t=d");
+    }],
+    ["nonexclusive temporary", (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .lifecycle.postStart.exec.command[2] = lifecycleCommand.replace(
+          "f.constants.O_EXCL",
+          "f.constants.O_TRUNC",
+        );
+    }],
+    ["broad temporary mode", (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .lifecycle.postStart.exec.command[2] = lifecycleCommand.replaceAll("0o600", "0o644");
+    }],
+    ["empty token accepted", (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .lifecycle.postStart.exec.command[2] = lifecycleCommand.replace(
+          "if(!v.length)throw new Error('model proxy token is empty');",
+          "",
+        );
+    }],
+    ["incomplete copy accepted", (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .lifecycle.postStart.exec.command[2] = lifecycleCommand.replace(
+          "const w=f.readFileSync(t);if(!w.length||!w.equals(v))throw new Error('model proxy token copy is incomplete');",
+          "",
+        );
+    }],
+    ["non-atomic final copy", (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .lifecycle.postStart.exec.command[2] = lifecycleCommand.replace(
+          "f.renameSync(t,d)",
+          "f.copyFileSync(t,d)",
+        );
+    }],
+    ["symlink-following final validation", (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .lifecycle.postStart.exec.command[2] = lifecycleCommand.replace(
+          "|f.constants.O_NOFOLLOW",
+          "",
+        );
+    }],
+    ["final mode unchecked", (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .lifecycle.postStart.exec.command[2] = lifecycleCommand.replace(
+          "!a.isFile()||(a.mode&0o777)!==0o600||",
+          "",
+        );
+    }],
+    ["final content unchecked", (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .lifecycle.postStart.exec.command[2] = lifecycleCommand.replace(
+          "||!x.length||!x.equals(v)",
+          "",
+        );
+    }],
+    ["extra competing Secret volume", (pod) => {
+      pod.volumes.push({
+        name: "alternate-model-proxy-token",
+        secret: { secretName: "alternate-run-secret" },
+      });
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .volumeMounts.push({
+          name: "alternate-model-proxy-token",
+          mountPath: "/var/run/secrets/codeops-model-proxy",
+          readOnly: true,
+        });
+    }],
+    ["duplicate mount", (pod) => {
+      const gateway = pod.containers.find(({ name }) => name === "session-gateway");
+      gateway.volumeMounts.push(structuredClone(
+        gateway.volumeMounts.find(({ name }) => name === "model-proxy-token"),
+      ));
+    }],
+    ["workspace-builder mount", (pod) => {
+      pod.initContainers.find(({ name }) => name === "workspace-builder")
+        .volumeMounts.push({
+          name: "model-proxy-token",
+          mountPath: "/var/run/secrets/codeops-model-proxy/model-proxy-token",
+          subPath: "model-proxy-token",
+          readOnly: true,
+        });
+    }],
+    ["run-input projection", (pod) => {
+      pod.volumes.find(({ name }) => name === "run-input").secret.items.push({
+        key: "model-proxy-token",
+        path: "model-proxy-token",
+      });
+    }],
+    ["run-input items omission", (pod) => {
+      delete pod.volumes.find(({ name }) => name === "run-input").secret.items;
+    }],
+    ["alternate same-Secret volume", (pod) => {
+      pod.volumes.push({
+        name: "alternate-run-secret",
+        secret: { secretName: `codeops-run-${identity.runId}` },
+      });
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .volumeMounts.push({
+          name: "alternate-run-secret",
+          mountPath: "/alternate",
+          readOnly: true,
+        });
+    }],
+    ["secretKeyRef", (pod) => {
+      pod.initContainers.find(({ name }) => name === "workspace-builder").env.push({
+        name: "ALTERNATE_MODEL_TOKEN",
+        valueFrom: {
+          secretKeyRef: {
+            name: `codeops-run-${identity.runId}`,
+            key: "model-proxy-token",
+          },
+        },
+      });
+    }],
+    ["broad Secret environment", (pod) => {
+      pod.containers.find(({ name }) => name === "session-gateway").envFrom = [
+        { secretRef: { name: `codeops-run-${identity.runId}` } },
+      ];
+    }],
+    ["projected Secret parent mount", (pod) => {
+      pod.volumes.push({
+        name: "projected-run-secret",
+        projected: {
+          sources: [{ secret: { name: `codeops-run-${identity.runId}` } }],
+        },
+      });
+      pod.containers.find(({ name }) => name === "session-gateway")
+        .volumeMounts.push({
+          name: "projected-run-secret",
+          mountPath: "/var/run/secrets/codeops-model-proxy",
+          readOnly: true,
+        });
+    }],
+    ...["/var/run/secrets/codeops-model-proxy/", "/var/run/secrets/alternate/../codeops-model-proxy"].map(
+      (mountPath) => [mountPath, (pod) => {
+        pod.volumes.push({
+          name: "parent-secret",
+          secret: {
+            secretName: "alternate-run-secret",
+            items: [{ key: "repository-read-token", path: "repository-read-token" }],
+          },
+        });
+        pod.containers.find(({ name }) => name === "session-gateway")
+          .volumeMounts.push({ name: "parent-secret", mountPath, readOnly: true });
+      }],
+    ),
+    ...[
+      ["direct Secret child mount", "secret", "/var/run/secrets/codeops-model-proxy/model-proxy-token/child"],
+      ["projected Secret child mount", "projected", "/var/run/secrets/codeops-model-proxy/model-proxy-token/child"],
+      ["Secret child mount with trailing slash", "secret", "/var/run/secrets/codeops-model-proxy/model-proxy-token/child/"],
+      ["normalized Secret child mount", "secret", "/var/run/secrets/codeops-model-proxy/model-proxy-token/alternate/../child"],
+    ].map(([name, kind, mountPath]) => [name, (pod) => {
+      pod.volumes.push({
+        name: "child-secret",
+        ...(kind === "secret"
+          ? { secret: { secretName: "alternate-run-secret" } }
+          : {
+              projected: {
+                sources: [{ secret: { name: "alternate-run-secret" } }],
+              },
+            }),
+      });
+      pod.containers.find(({ name: containerName }) => containerName === "session-gateway")
+        .volumeMounts.push({ name: "child-secret", mountPath, readOnly: true });
+    }]),
+  ]) {
+    const drifted = structuredClone(resources);
+    mutate(drifted[2].spec.template.spec);
+    assert.throws(
+      () => assertRunResources(drifted),
+      /model proxy/,
+      name,
+    );
+  }
 });
 
 test("builds Agent Jobs from portable chart runtime identity", () => {
@@ -1312,7 +1698,7 @@ test("builds Agent Jobs from portable chart runtime identity", () => {
       nodeSelector: { "codeops.dev/operator": "true" },
       evidenceClaimName: "team-a-codeops-control-gateway-evidence",
       modelProxyServiceName: "team-a-codeops-model-proxy",
-      modelProxyPodName: "team-a-codeops-model-proxy",
+      modelProxyPodName: "team-a-model-proxy-pods",
       modelAuth: {
         ...modelAuth,
         origin: "http://team-a-codeops-model-proxy:8080",
@@ -1320,7 +1706,10 @@ test("builds Agent Jobs from portable chart runtime identity", () => {
     },
     request,
   );
-  assert.doesNotThrow(() => assertRunResources(resources));
+  assert.doesNotThrow(() => assertRunResources(resources, {
+    serviceName: "team-a-codeops-model-proxy",
+    podName: "team-a-model-proxy-pods",
+  }));
   const pod = resources[2].spec.template.spec;
   assert.deepEqual(pod.imagePullSecrets, [{ name: "team-a-registry" }]);
   assert.deepEqual(pod.nodeSelector, { "codeops.dev/operator": "true" });
@@ -1331,7 +1720,7 @@ test("builds Agent Jobs from portable chart runtime identity", () => {
   assert.equal(pod.affinity, undefined);
   assert.equal(
     resources[3].spec.egress[0].to[0].podSelector.matchLabels["app.kubernetes.io/name"],
-    "team-a-codeops-model-proxy",
+    "team-a-model-proxy-pods",
   );
   assert.equal(
     resources[2].spec.template.metadata.labels["app.kubernetes.io/part-of"],

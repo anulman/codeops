@@ -62,6 +62,8 @@ function config(sources = []) {
     sessionSecretsName: "agents-system-session-secrets",
     sessionGatewayOrigin: "http://agents-system-session-control-gateway:8080",
     modelProxyOrigin: "http://agents-system-model-proxy:8080",
+    modelProxyServiceName: "agents-system-model-proxy",
+    modelProxyPodName: "agents-system-model-proxy-pods",
     workspaceStorageSize: "10Gi",
   };
 }
@@ -139,6 +141,10 @@ test("binds workspace mounts and Codex configuration to the immutable session po
   const implementCodexConfig = JSON.parse(
     implementAgent.env.find((entry) => entry.name === "CODEX_CONFIG")?.value,
   );
+  assert.equal(
+    implementAgent.env.find((entry) => entry.name === "MODEL_PROVIDER")?.value,
+    implementCodexConfig.model_provider,
+  );
   assert.equal(implementCodexConfig.model, "gpt-5.6-sol");
   assert.equal(implementCodexConfig.model_reasoning_effort, "medium");
 
@@ -176,6 +182,10 @@ test("binds workspace mounts and Codex configuration to the immutable session po
   );
   const reviewCodexConfig = JSON.parse(
     reviewAgent.env.find((entry) => entry.name === "CODEX_CONFIG")?.value,
+  );
+  assert.equal(
+    reviewAgent.env.find((entry) => entry.name === "MODEL_PROVIDER")?.value,
+    reviewCodexConfig.model_provider,
   );
   assert.equal(reviewCodexConfig.model, "gpt-5.6-sol");
   assert.equal(reviewCodexConfig.model_reasoning_effort, "high");
@@ -240,6 +250,77 @@ test("rejects authority drift and mutable runtime images", () => {
     ({ mountPath }) => mountPath === "/var/lib/codeops-agent/codex-home",
   ).subPath = "sources/codeops";
   assert.throws(() => assertWorkspaceResources(drifted), /Codex home boundary drifted/);
+
+  const routingMutations = [
+    (agent) => agent.env.splice(agent.env.findIndex(({ name }) => name === "MODEL_PROVIDER"), 1),
+    (agent) => { agent.env.find(({ name }) => name === "MODEL_PROVIDER").value = "openai"; },
+    (agent) => { agent.env.find(({ name }) => name === "CODEOPS_MODEL_PROXY_ORIGIN").value = "http://other-proxy:8080"; },
+    (agent) => { agent.env.find(({ name }) => name === "CODEOPS_MODEL_PROXY_TOKEN_FILE").value = "/run/codeops/other-token"; },
+    (agent) => { agent.env.push({ name: "CODEX_API_KEY", value: "literal-reusable-key" }); },
+    (agent) => { agent.env.push({ name: "CODEX_API_KEY", value: "" }); },
+    (agent) => { agent.env.push({ name: "OPENAI_API_KEY", value: "" }); },
+    (agent) => { agent.env.push({ name: "OPENAI_API_KEY", valueFrom: { secretKeyRef: { name: "alternate", key: "token" } } }); },
+    (agent) => {
+      const entry = agent.env.find(({ name }) => name === "CODEX_CONFIG");
+      const value = JSON.parse(entry.value);
+      value.model_provider = "openai";
+      entry.value = JSON.stringify(value);
+    },
+    (agent) => {
+      const entry = agent.env.find(({ name }) => name === "CODEX_CONFIG");
+      const value = JSON.parse(entry.value);
+      value.model_providers.codeops_proxy.base_url = "http://other-proxy:8080/v1";
+      entry.value = JSON.stringify(value);
+    },
+    (agent) => {
+      const entry = agent.env.find(({ name }) => name === "CODEX_CONFIG");
+      const value = JSON.parse(entry.value);
+      value.model_providers.codeops_proxy.env_key = "OPENAI_API_KEY";
+      entry.value = JSON.stringify(value);
+    },
+    (agent) => {
+      const entry = agent.env.find(({ name }) => name === "CODEX_CONFIG");
+      const value = JSON.parse(entry.value);
+      value.model_providers.codeops_proxy.wire_api = "chat";
+      entry.value = JSON.stringify(value);
+    },
+  ];
+  for (const mutate of routingMutations) {
+    const resources = structuredClone(buildWorkspaceResources(config()));
+    mutate(resources[3].spec.template.spec.containers.find(({ name }) => name === "coding-agent"));
+    assert.throws(() => assertWorkspaceResources(resources), /model proxy/);
+  }
+  for (const mutate of [
+    (pod) => { pod.volumes.find(({ name }) => name === "session").emptyDir.medium = ""; },
+    (pod) => { pod.volumes.find(({ name }) => name === "session").secret = { secretName: "alternate" }; delete pod.volumes.find(({ name }) => name === "session").emptyDir; },
+    (pod) => { pod.containers.find(({ name }) => name === "runtime-worker").volumeMounts.find(({ name }) => name === "session").name = "temp"; },
+    (pod) => { pod.containers.find(({ name }) => name === "coding-agent").volumeMounts.push({ name: "session-secrets", mountPath: "/run/codeops/alternate" }); },
+  ]) {
+    const resources = structuredClone(buildWorkspaceResources(config()));
+    mutate(resources[3].spec.template.spec);
+    assert.throws(() => assertWorkspaceResources(resources), /model proxy/);
+  }
+});
+
+test("binds workspace routing to the Service name independently of pod identity", () => {
+  const distinct = config();
+  assert.notEqual(distinct.modelProxyServiceName, distinct.modelProxyPodName);
+  const resources = buildWorkspaceResources(distinct);
+  assert.doesNotThrow(() =>
+    assertWorkspaceResources(resources, distinct.modelProxyServiceName),
+  );
+  const drifted = structuredClone(resources);
+  const agent = drifted[3].spec.template.spec.containers.find(({ name }) => name === "coding-agent");
+  agent.env.find(({ name }) => name === "CODEOPS_MODEL_PROXY_ORIGIN").value =
+    "http://coordinated-drift:8080";
+  const codex = agent.env.find(({ name }) => name === "CODEX_CONFIG");
+  const configValue = JSON.parse(codex.value);
+  configValue.model_providers.codeops_proxy.base_url = "http://coordinated-drift:8080/v1";
+  codex.value = JSON.stringify(configValue);
+  assert.throws(
+    () => assertWorkspaceResources(drifted, distinct.modelProxyServiceName),
+    /routing origin drifted/,
+  );
 });
 
 test("binds the immutable Secret name to principal, request, workspace, and authority", () => {
