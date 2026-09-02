@@ -1,9 +1,9 @@
 export const GITHUB_BRANCH_PUBLICATION_CONCURRENCY = 4;
 export const GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS = 30_000;
 export const GITHUB_BRANCH_PUBLICATION_WRITE_TIMEOUT_MS = 120_000;
-export const GITHUB_BRANCH_PUBLICATION_DEADLINE_MS = 230_000;
+export const GITHUB_BRANCH_PUBLICATION_DEADLINE_MS = 1_170_000;
 export const GITHUB_BRANCH_PUBLICATION_BODY_BYTES = 4_194_304;
-export const GITHUB_BRANCH_PUBLICATION_CHANGED_PATHS = 20;
+export const GITHUB_BRANCH_PUBLICATION_CHANGED_PATHS = 100;
 export const GITHUB_BRANCH_PUBLICATION_READ_WAVE_MS = 10_000;
 export const GITHUB_BRANCH_PUBLICATION_WRITE_WAVE_MS = 30_000;
 export const GITHUB_BRANCH_PUBLICATION_SAFETY_MARGIN_MS = 20_000;
@@ -122,12 +122,12 @@ export function preflightGitHubBranchPublicationRequest(
     paths.size > GITHUB_BRANCH_PUBLICATION_CHANGED_PATHS
   ) {
     throw new Error(
-      "GitHub branch publication requires 1 to 20 unique changed paths",
+      `GitHub branch publication requires 1 to ${GITHUB_BRANCH_PUBLICATION_CHANGED_PATHS} unique changed paths`,
     );
   }
   const serializedBytes = input.candidate.sizeBytes;
-  if (serializedBytes > 4_194_304) throw new Error(
-    "GitHub branch publication candidate exceeds 4194304 bytes",
+  if (serializedBytes > GITHUB_BRANCH_PUBLICATION_BODY_BYTES) throw new Error(
+    `GitHub branch publication candidate exceeds ${GITHUB_BRANCH_PUBLICATION_BODY_BYTES} bytes`,
   );
 
   const existingFiles = changes.filter(
@@ -161,7 +161,7 @@ export function preflightGitHubBranchPublicationRequest(
   );
   if (rejected !== undefined) {
     throw new Error(
-      `GitHub branch publication ${rejected.path} estimate exceeds the 230000 ms request deadline`,
+      `GitHub branch publication ${rejected.path} estimate exceeds the ${GITHUB_BRANCH_PUBLICATION_DEADLINE_MS} ms request deadline`,
     );
   }
   const estimatedDurationMs = Math.max(...plans.map((plan) => plan.estimatedDurationMs));

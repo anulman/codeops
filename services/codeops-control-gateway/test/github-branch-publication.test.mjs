@@ -152,8 +152,7 @@ function fixture({ branchName, publicationTimeoutMs, writeBlob }) {
 }
 
 test("bounds cached publication reads and writes before ordered visibility", async () => {
-  assert.equal(GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS, 230_000);
-  assert.ok(GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS < 240_000);
+  assert.equal(GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS, 1_170_000);
   let releaseReads;
   const readsMayFinish = new Promise((resolve) => { releaseReads = resolve; });
   let fourReadsStarted;

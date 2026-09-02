@@ -22,11 +22,13 @@ import {
 import { createGitHubMutationAdapter as createFastForwardAdapter } from "../dist/github-branch-fast-forward.js";
 import {
   createGitHubMutationAdapter as createCreateAdapter,
+  GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS,
   GitHubMutationPreflightNoEffectError,
 } from "../dist/github-mutations-adapter.js";
 import {
   createGitHubMutationProviderClient,
   executeAuthorizedSessionRuntimeGitHubMutation,
+  GITHUB_MUTATION_PROVIDER_CLIENT_TIMEOUT_MS,
   GitHubMutationProviderNoEffectError,
 } from "../dist/session-runtime-github-mutations.js";
 import { sessionCapabilitiesFor } from "../dist/session-broker-transitions.js";
@@ -75,16 +77,45 @@ const newFiles = (count) => Array.from({ length: count }, (_, index) => ({
   newText: `proof-${index}\n`,
 }));
 
+const codeOpsPathPrefixes = [
+  "services/codeops-control-gateway/src/github",
+  "services/codeops-control-gateway/test/github",
+  "services/codeops-session-runtime/src/github",
+  "services/codeops-session-runtime/test/github",
+  "packages/codeops-contracts/src/github",
+  "packages/codeops-contracts/test/github",
+  "deploy/codeops-control/templates/github",
+  "docs/codeops/providers/github",
+];
+
+const existingCodeOpsFiles = (count) => Array.from({ length: count }, (_, index) => ({
+  path: `${codeOpsPathPrefixes[index % codeOpsPathPrefixes.length]}/proof-${index}.ts`,
+  oldText: `before-${index}\n`,
+  newText: `after-${index}\n`,
+}));
+
+const correctedCandidateFiles = [
+  "services/codeops-control-gateway/src/github-branch-publication.ts",
+  "services/codeops-control-gateway/src/session-runtime-github-mutations.ts",
+  "services/codeops-control-gateway/test/github-branch-publication-preflight.test.mjs",
+  "services/codeops-control-gateway/test/github-branch-publication.test.mjs",
+].map((path) => ({ path, oldText: "before\n", newText: "after\n" }));
+
 test("retains publication timing and capacity contract constants", () => {
   assert.equal(GITHUB_BRANCH_PUBLICATION_CONCURRENCY, 4);
   assert.equal(GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS, 30_000);
   assert.equal(GITHUB_BRANCH_PUBLICATION_WRITE_TIMEOUT_MS, 120_000);
-  assert.equal(GITHUB_BRANCH_PUBLICATION_DEADLINE_MS, 230_000);
+  assert.equal(GITHUB_BRANCH_PUBLICATION_DEADLINE_MS, 1_170_000);
   assert.equal(GITHUB_BRANCH_PUBLICATION_BODY_BYTES, 4_194_304);
-  assert.equal(GITHUB_BRANCH_PUBLICATION_CHANGED_PATHS, 20);
+  assert.equal(GITHUB_BRANCH_PUBLICATION_CHANGED_PATHS, 100);
   assert.equal(GITHUB_BRANCH_PUBLICATION_READ_WAVE_MS, 10_000);
   assert.equal(GITHUB_BRANCH_PUBLICATION_WRITE_WAVE_MS, 30_000);
   assert.equal(GITHUB_BRANCH_PUBLICATION_SAFETY_MARGIN_MS, 20_000);
+  assert.equal(GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS, 1_170_000);
+  assert.equal(GITHUB_MUTATION_PROVIDER_CLIENT_TIMEOUT_MS, 1_200_000);
+  assert.ok(
+    GITHUB_MUTATION_PROVIDER_CLIENT_TIMEOUT_MS > GITHUB_BRANCH_PUBLICATION_TIMEOUT_MS,
+  );
 });
 
 test("estimates each sequential phase independently at concurrency four", () => {
@@ -99,11 +130,20 @@ test("estimates each sequential phase independently at concurrency four", () => 
   assert.equal(estimateGitHubBranchPublicationDeadline({
     readPhases: [9],
     writePhases: [12, 1, 1, 1],
-  }), GITHUB_BRANCH_PUBLICATION_DEADLINE_MS);
+  }), 230_000);
   assert.equal(estimateGitHubBranchPublicationDeadline({
     readPhases: [4, 5],
     writePhases: [4, 5],
   }), 140_000);
+});
+
+test("keeps the corrected four-path candidate inside the legacy deadline", () => {
+  assert.equal(
+    preflightGitHubBranchPublicationRequest(publication(correctedCandidateFiles))
+      .estimatedDurationMs,
+    210_000,
+  );
+  assert.ok(210_000 <= 230_000);
 });
 
 test("models exact create, fast-forward, and replay request phases", () => {
@@ -151,24 +191,39 @@ test("models exact create, fast-forward, and replay request phases", () => {
   assert.equal(fastForward.estimatedDurationMs, 100_000);
 });
 
-test("accepts exactly 230000 ms and rejects the next create write wave", () => {
-  const exact = newFiles(12);
-  assert.equal(
-    preflightGitHubBranchPublicationRequest(publication(exact))
-      .estimatedDurationMs,
-    GITHUB_BRANCH_PUBLICATION_DEADLINE_MS,
+test("accepts representative 24-path and 93-path create plans at the corrected deadline", () => {
+  const representative24 = preflightGitHubBranchPublicationRequest(
+    publication(existingCodeOpsFiles(24)),
   );
+  const representative93 = preflightGitHubBranchPublicationRequest(
+    publication(existingCodeOpsFiles(93)),
+  );
+  assert.ok(representative24.estimatedDurationMs < GITHUB_BRANCH_PUBLICATION_DEADLINE_MS);
+  assert.equal(representative93.estimatedDurationMs, GITHUB_BRANCH_PUBLICATION_DEADLINE_MS);
+});
+
+test("rejects the next over-deadline create plan", () => {
+  const nextPlan = existingCodeOpsFiles(93);
+  nextPlan[0] = {
+    ...nextPlan[0],
+    path: nextPlan[0].path.replace("/proof-0.ts", "/nested/proof-0.ts"),
+  };
+  assert.equal(publicationPlan({
+    path: "create",
+    readPhases: [3, 1, 4, 5, 8, 8, 1, 93, 1],
+    writePhases: [93, 1, 1, 1],
+  }).estimatedDurationMs, GITHUB_BRANCH_PUBLICATION_DEADLINE_MS + 10_000);
   assert.throws(
-    () => preflightGitHubBranchPublicationRequest(publication(newFiles(13))),
-    /create estimate exceeds the 230000 ms request deadline/,
+    () => preflightGitHubBranchPublicationRequest(publication(nextPlan)),
+    new RegExp(`create estimate exceeds the ${GITHUB_BRANCH_PUBLICATION_DEADLINE_MS} ms request deadline`),
   );
 });
 
-test("counts unique changed paths and enforces the twenty-path limit", () => {
+test("counts unique changed paths and enforces the hundred-path limit", () => {
   assert.equal(
-    preflightGitHubBranchPublicationRequest(publication(newFiles(20), "fast_forward"))
+    preflightGitHubBranchPublicationRequest(publication(newFiles(100), "fast_forward"))
       .changedPaths,
-    20,
+    100,
   );
   assert.throws(
     () => preflightGitHubBranchPublicationRequest(publication([
@@ -178,8 +233,8 @@ test("counts unique changed paths and enforces the twenty-path limit", () => {
     /unique changed paths/,
   );
   assert.throws(
-    () => preflightGitHubBranchPublicationRequest(publication(newFiles(21))),
-    /1 to 20 unique changed paths/,
+    () => preflightGitHubBranchPublicationRequest(publication(newFiles(101))),
+    /1 to 100 unique changed paths/,
   );
 });
 
@@ -294,7 +349,12 @@ function providerRequest(input) {
 
 let lastCandidate;
 
-test("proves over-deadline create admission has no provider effect", async () => {
+test("proves the next over-deadline create admission has no provider effect", async () => {
+  const nextPlan = existingCodeOpsFiles(93);
+  nextPlan[0] = {
+    ...nextPlan[0],
+    path: nextPlan[0].path.replace("/proof-0.ts", "/nested/proof-0.ts"),
+  };
   let providerCalls = 0;
   const mutate = createCreateAdapter({
     resolve: () => authority,
@@ -305,7 +365,7 @@ test("proves over-deadline create admission has no provider effect", async () =>
     },
   });
   await assert.rejects(
-    mutate(providerRequest(publication(newFiles(13)))),
+    mutate(providerRequest(publication(nextPlan))),
     (error) => error instanceof GitHubMutationPreflightNoEffectError &&
       /create estimate exceeds/.test(error.message),
   );
