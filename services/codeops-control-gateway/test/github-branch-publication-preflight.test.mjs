@@ -29,6 +29,7 @@ import {
   executeAuthorizedSessionRuntimeGitHubMutation,
   GitHubMutationProviderNoEffectError,
 } from "../dist/session-runtime-github-mutations.js";
+import { sessionCapabilitiesFor } from "../dist/session-broker-transitions.js";
 
 function publication(changes, mode = "create") {
   return {
@@ -281,6 +282,11 @@ function providerRequest(input) {
     provenance: {
       sessionId: "session-admission",
       dispatchId: "11111111-1111-4111-8111-111111111111",
+      admissionId: "22222222-2222-4222-8222-222222222222",
+      sessionGeneration: 1,
+      sessionLeaseId: "33333333-3333-4333-8333-333333333333",
+      permissionRequestId: "permission-runtime",
+      authorizationExpiresAt: "2026-08-31T12:00:00.000Z",
       principalDigest: `sha256:${"e".repeat(64)}`,
     },
   };
@@ -367,11 +373,28 @@ test("maps a 409 no-effect response to a durable failed outcome", async () => {
   const client = {
     query: async (text, values) => {
       calls.push({ text, values });
+      if (text.includes("SELECT snapshot_json")) return { rowCount: 1, rows: [{
+        snapshot_json: {
+          version: "codeops.session-snapshot/v1", sessionId: request.provenance.sessionId,
+          generation: 1, state: "running", identity: { repository: request.input.repository,
+            branch: "codeops/runtime-permission", baseSha: request.input.expectedHeadSha,
+            workflowId: "runtime-permission", runId: "runtime-permission-1",
+            parentSessionId: null, forkedAtCursor: null },
+          lease: { leaseId: request.provenance.sessionLeaseId, generation: 1,
+            status: "active", holderId: "runtime-worker",
+            acquiredAt: "2026-08-31T10:00:00.000Z",
+            expiresAt: "2026-08-31T12:00:00.000Z" }, checkpoint: null,
+          pendingPermission: null, eventCursor: 1,
+          capabilities: sessionCapabilitiesFor("running", false),
+          updatedAt: "2026-08-31T10:00:00.000Z",
+        },
+      }] };
       return { rowCount: 1, rows: [] };
     },
   };
   await assert.rejects(
-    executeAuthorizedSessionRuntimeGitHubMutation(client, { request, provider }),
+    executeAuthorizedSessionRuntimeGitHubMutation(client, { request, provider,
+      now: () => new Date("2026-08-31T10:30:00.000Z") }),
     GitHubMutationProviderNoEffectError,
   );
   assert.deepEqual(responses, [409]);

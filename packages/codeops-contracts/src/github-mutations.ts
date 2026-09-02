@@ -11,6 +11,11 @@ const positiveId = z.number().int().positive().max(Number.MAX_SAFE_INTEGER);
 const uuid = z.string().uuid();
 const sha256Digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const operationId = z.string().regex(/^githubmutation-[0-9a-f]{64}$/);
+const reservedProviderEffectNamespace = "codeops-provider-effect:";
+const agentText = (schema: z.ZodString) => schema.refine(
+  (value) => !value.includes(reservedProviderEffectNamespace),
+  "Agent-controlled text must not contain the reserved provider-effect namespace",
+);
 const candidateManifestId = z.string().regex(/^githubcandidate-[0-9a-f]{64}$/);
 const branch = z
   .string()
@@ -72,8 +77,8 @@ export const githubPullRequestUpdateInputSchema = z
     pullRequestNumber,
     expectedHeadSha: gitSha,
     expectedBaseSha: gitSha,
-    title: z.string().trim().min(1).max(500).optional(),
-    body: z.string().max(50_000).optional(),
+    title: agentText(z.string().trim().min(1).max(500)).optional(),
+    body: agentText(z.string().max(50_000)).optional(),
     baseBranch: branch.optional(),
   })
   .strict()
@@ -91,7 +96,7 @@ export const githubReviewThreadReplyInputSchema = z
     pullRequestNumber,
     expectedHeadSha: gitSha,
     threadId: z.string().min(1).max(256),
-    body: z.string().trim().min(1).max(20_000),
+    body: agentText(z.string().trim().min(1).max(20_000)),
   })
   .strict();
 
@@ -190,7 +195,7 @@ export const githubBranchPublishInputSchema = z
     expectedBranchHeadEffectId: operationId.optional(),
     baseBranch: branch,
     branchName: branch,
-    commitMessage: z.string().trim().min(1).max(500),
+    commitMessage: agentText(z.string().trim().min(1).max(500)),
     candidate: githubBranchPublishCandidateReferenceSchema,
   })
   .strict()
@@ -228,7 +233,7 @@ export const githubBranchPublishLegacyInlineInputSchema = z
     expectedBranchHeadEffectId: operationId.optional(),
     baseBranch: branch,
     branchName: branch,
-    commitMessage: z.string().trim().min(1).max(500),
+    commitMessage: agentText(z.string().trim().min(1).max(500)),
     changes: z.array(githubBranchPublishChangeSchema).min(1).max(100),
   })
   .strict()
@@ -263,8 +268,8 @@ export const githubPullRequestCreateInputSchema = z
     expectedBaseSha: gitSha,
     headBranch: branch,
     baseBranch: branch,
-    title: z.string().trim().min(1).max(500),
-    body: z.string().max(50_000),
+    title: agentText(z.string().trim().min(1).max(500)),
+    body: agentText(z.string().max(50_000)),
     draft: z.boolean(),
   })
   .strict()
@@ -284,6 +289,7 @@ export const githubMutationOperationSchema = z.enum([
 
 export const providerEffectStateSchema = z.enum([
   "authorized",
+  "not_attempted",
   "attempting",
   "succeeded",
   "failed",
@@ -330,6 +336,7 @@ export const providerEffectReceiptSchema = z
   .strict()
   .superRefine((receipt, context) => {
     const terminal = [
+      "not_attempted",
       "succeeded",
       "failed",
       "reconciled_satisfied",
@@ -343,7 +350,8 @@ export const providerEffectReceiptSchema = z
         path: ["attemptedAt"],
       });
     }
-    if (receipt.state !== "authorized" && receipt.attemptedAt === null) {
+    if (!["authorized", "not_attempted"].includes(receipt.state) &&
+        receipt.attemptedAt === null) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
         message: "attempted provider effect requires an attempt time",
@@ -381,6 +389,11 @@ const providerMutationBase = z.object({
     .object({
       sessionId: z.string().min(1).max(128),
       dispatchId: uuid,
+      admissionId: uuid,
+      sessionGeneration: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+      sessionLeaseId: uuid,
+      permissionRequestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
+      authorizationExpiresAt: isoDateTime,
       principalDigest: sha256Digest,
     })
     .strict(),

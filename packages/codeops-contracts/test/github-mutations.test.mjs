@@ -194,6 +194,10 @@ test("keeps the bounded v1 inline publication compatible only at the runtime bou
     payloadDigest: `sha256:${"e".repeat(64)}`,
     permissionDigest: `sha256:${"f".repeat(64)}`,
     provenance: { sessionId: "session-legacy", dispatchId: claimToken,
+      admissionId: "33333333-3333-4333-8333-333333333333",
+      sessionGeneration: 1, sessionLeaseId: "44444444-4444-4444-8444-444444444444",
+      permissionRequestId: "permission-runtime",
+      authorizationExpiresAt: "2026-08-31T12:00:00.000Z",
       principalDigest: `sha256:${"1".repeat(64)}` },
   }));
 });
@@ -290,6 +294,23 @@ test("requires optimistic concurrency and bounded pull-request fields", () => {
   }));
 });
 
+test("rejects the reserved provider-effect namespace in every agent field", () => {
+  const marker = "codeops-provider-effect:githubmutation-injected";
+  for (const mutation of [
+    { ...operations[0], input: { ...operations[0].input, commitMessage: marker } },
+    { ...operations[1], input: { ...operations[1].input, title: marker } },
+    { ...operations[1], input: { ...operations[1].input, body: marker } },
+    { ...operations[3], input: { ...operations[3].input, title: marker } },
+    { ...operations[3], input: { ...operations[3].input, body: marker } },
+    { ...operations[4], input: { ...operations[4].input, body: marker } },
+  ]) {
+    assert.throws(() => sessionRuntimeGitHubMutationRequestSchema.parse({
+      version: "codeops.session-runtime-github-mutation-request/v1",
+      claimToken, operationId, ...mutation,
+    }), /reserved provider-effect namespace/);
+  }
+});
+
 test("separates the live claim from permission-bound provider provenance", () => {
   const mutation = operations[2];
   const provider = githubMutationProviderRequestSchema.parse({
@@ -300,6 +321,11 @@ test("separates the live claim from permission-bound provider provenance", () =>
     provenance: {
       sessionId: "session-1",
       dispatchId: "22222222-2222-4222-8222-222222222222",
+      admissionId: "33333333-3333-4333-8333-333333333333",
+      sessionGeneration: 1,
+      sessionLeaseId: "44444444-4444-4444-8444-444444444444",
+      permissionRequestId: "permission-runtime",
+      authorizationExpiresAt: "2026-08-31T12:00:00.000Z",
       principalDigest: `sha256:${"f".repeat(64)}`,
     },
     ...mutation,
@@ -390,6 +416,11 @@ test("models authorization separately from every provider effect outcome", () =>
     resolutionSummary: null,
   };
   assert.equal(providerEffectReceiptSchema.parse(authorized).state, "authorized");
+  assert.equal(providerEffectReceiptSchema.parse({
+    ...authorized, state: "not_attempted",
+    resolvedAt: "2026-08-16T00:00:01.000Z",
+    resolutionSummary: "Dispatch claim expired before any provider attempt.",
+  }).attemptedAt, null);
   assert.equal(providerEffectReceiptSchema.parse({
     ...authorized,
     state: "unknown",

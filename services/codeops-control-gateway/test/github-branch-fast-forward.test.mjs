@@ -34,7 +34,11 @@ function request() {
     version: "codeops.github-mutation-provider-request/v1", operation: "branch_publish", operationId, input: value,
     payloadDigest: sha256CanonicalJsonDigest(value), permissionDigest: sha256CanonicalJsonDigest(permission),
     provenance: {
-      sessionId: "session-bootstrap", dispatchId: "11111111-1111-4111-8111-111111111111", principalDigest: `sha256:${"3".repeat(64)}`,
+      sessionId: "session-bootstrap", dispatchId: "11111111-1111-4111-8111-111111111111",
+      admissionId: "22222222-2222-4222-8222-222222222222", sessionGeneration: 1,
+      sessionLeaseId: "33333333-3333-4333-8333-333333333333",
+      permissionRequestId: "permission-runtime", authorizationExpiresAt: "2026-08-31T12:00:00.000Z",
+      principalDigest: `sha256:${"3".repeat(64)}`,
     },
   };
 }

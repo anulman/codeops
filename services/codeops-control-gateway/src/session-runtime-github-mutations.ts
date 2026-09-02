@@ -10,6 +10,7 @@ import {
   sessionPermissionOperationSchema,
   sessionRuntimeGitHubMutationRequestSchema,
   sessionRuntimePermissionSubmissionSchema,
+  sessionSnapshotSchema,
   type GitHubMutationProviderRequest,
   type GitHubMutationResult,
   type GitHubMutationReconciliationResult,
@@ -21,6 +22,7 @@ import {
   ClaimedDispatchAuthorityNotFoundError,
   loadClaimedDispatchAuthority,
   selectClaimedWorkspaceSource,
+  validateClaimedDispatchAuthority,
   type ClaimedDispatchAuthority,
 } from "./claimed-dispatch-authority.js";
 import {
@@ -38,9 +40,16 @@ export class SessionRuntimeGitHubMutationNotFoundError extends Error {}
 export class SessionRuntimeGitHubMutationConflictError extends Error {}
 
 interface MutationAuthorizationRow extends Record<string, unknown> {
+  readonly command_id: unknown;
+  readonly principal_id: unknown;
   readonly request_json: unknown;
   readonly command_json: unknown;
   readonly result_json: unknown;
+  readonly admission_id: unknown;
+  readonly session_generation: unknown;
+  readonly session_lease_id: unknown;
+  readonly operation_provider: unknown;
+  readonly operation_id: unknown;
 }
 
 interface StoredMutationRow extends Record<string, unknown> {
@@ -48,12 +57,25 @@ interface StoredMutationRow extends Record<string, unknown> {
   readonly payload_digest: unknown;
   readonly permission_digest: unknown;
   readonly state: unknown;
+  readonly attempted_at: unknown;
   readonly evidence_json: unknown;
+  readonly provider_effect_marker: unknown;
+}
+
+interface LockedMutationDispatchRow extends Record<string, unknown> {
+  readonly dispatch_json: unknown;
+  readonly status: unknown;
+  readonly claim_token: unknown;
+  readonly claimed_by: unknown;
+  readonly claim_expires_at: unknown;
+  readonly owner_principal_id: unknown;
+  readonly admission_id: unknown;
 }
 
 function assertStoredMutationIdentity(
   stored: StoredMutationRow,
   input: {
+    readonly operationId: string;
     readonly dispatchId: string;
     readonly payloadDigest: string;
     readonly permissionDigest: string;
@@ -62,7 +84,9 @@ function assertStoredMutationIdentity(
   if (
     stored.dispatch_id !== input.dispatchId ||
     stored.payload_digest !== input.payloadDigest ||
-    stored.permission_digest !== input.permissionDigest
+    stored.permission_digest !== input.permissionDigest ||
+    (typeof stored.provider_effect_marker === "string" &&
+      stored.provider_effect_marker !== `codeops-provider-effect:${input.operationId}`)
   ) {
     throw new SessionRuntimeGitHubMutationConflictError(
       "GitHub mutation operation conflicts with its immutable stored identity",
@@ -89,6 +113,39 @@ function replayStoredMutation(
     );
   }
   return parsed.data;
+}
+
+function recoverStoredMutation(
+  stored: StoredMutationRow,
+  request: SessionRuntimeGitHubMutationRequest,
+): "authorized" | {
+  readonly disposition: "replayed";
+  readonly result: GitHubMutationResult;
+} {
+  if (
+    stored.state === "authorized" &&
+    stored.attempted_at === null &&
+    stored.evidence_json === null
+  ) {
+    return "authorized";
+  }
+  if (
+    ["succeeded", "reconciled_satisfied"].includes(String(stored.state)) &&
+    stored.attempted_at !== null &&
+    stored.evidence_json !== null
+  ) {
+    return { disposition: "replayed", result: replayStoredMutation(stored, request) };
+  }
+  if (["not_attempted", "failed", "reconciled_not_observed", "operator_resolved"].includes(
+    String(stored.state),
+  )) {
+    throw new SessionRuntimeGitHubMutationConflictError(
+      "GitHub mutation has a definitive non-success outcome and cannot be retried",
+    );
+  }
+  throw new SessionRuntimeGitHubMutationConflictError(
+    "GitHub mutation outcome is not known and cannot be retried",
+  );
 }
 
 export class GitHubMutationProviderNoEffectError extends Error {}
@@ -223,6 +280,7 @@ async function authorizeSessionRuntimeGitHubMutationTransaction(
   },
 ): Promise<SessionRuntimeGitHubMutationAuthorization> {
   const request = sessionRuntimeGitHubMutationRequestSchema.parse(input.request);
+  const nowDate = (input.now ?? (() => new Date()))();
   const target = permissionTarget(request);
   const authority = await loadMutationAuthority(client, {
     dispatchId: input.dispatchId,
@@ -231,9 +289,93 @@ async function authorizeSessionRuntimeGitHubMutationTransaction(
     repository: request.input.repository,
     pullRequestNumber: target.pullRequestNumber,
     expectedHeadSha: request.input.expectedHeadSha,
-    now: (input.now ?? (() => new Date()))(),
+    now: nowDate,
   });
   const dispatch = authority.dispatch;
+  const sessionRows = await client.query<Record<string, unknown>>(
+    `SELECT snapshot_json
+       FROM codeops.sessions
+      WHERE session_id = $1
+      FOR UPDATE`,
+    [dispatch.command.sessionId],
+  );
+  if (sessionRows.rows[0] === undefined) {
+    throw new SessionRuntimeGitHubMutationNotFoundError("session was not found");
+  }
+  const current = sessionSnapshotSchema.parse(sessionRows.rows[0].snapshot_json);
+  const currentLease = current.lease;
+  if (
+    current.generation !== dispatch.command.generation ||
+    current.state !== "running" ||
+    currentLease?.status !== "active" ||
+    currentLease.leaseId !== dispatch.command.leaseId ||
+    canonicalJsonText(current.identity) !== canonicalJsonText(dispatch.snapshot.identity)
+  ) {
+    throw new SessionRuntimeGitHubMutationConflictError(
+      "GitHub mutation Session authority is cancelled, terminal, or drifted",
+    );
+  }
+  const lockedDispatch = await client.query<LockedMutationDispatchRow>(
+    `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
+            outbox.claimed_by, outbox.claim_expires_at,
+            session.owner_principal_id, outbox.admission_id
+       FROM codeops.session_runtime_outbox AS outbox
+       JOIN codeops.sessions AS session ON session.session_id = outbox.session_id
+      WHERE outbox.dispatch_id = $1
+      FOR UPDATE OF outbox`,
+    [input.dispatchId],
+  );
+  const lockedRow = lockedDispatch.rows[0];
+  if (lockedRow === undefined) {
+    throw new SessionRuntimeGitHubMutationNotFoundError("runtime dispatch was not found");
+  }
+  let lockedAuthority: ClaimedDispatchAuthority;
+  try {
+    lockedAuthority = validateClaimedDispatchAuthority(lockedRow, {
+      dispatchId: input.dispatchId, workerId: input.workerId,
+      claimToken: request.claimToken, now: nowDate,
+    });
+  } catch (error) {
+    if (error instanceof ClaimedDispatchAuthorityConflictError) {
+      throw new SessionRuntimeGitHubMutationConflictError(error.message);
+    }
+    throw error;
+  }
+  if (canonicalJsonText(lockedAuthority.dispatch) !== canonicalJsonText(dispatch)) {
+    throw new SessionRuntimeGitHubMutationConflictError(
+      "GitHub mutation dispatch authority drifted while locking",
+    );
+  }
+  if (typeof lockedRow.admission_id !== "string") {
+    throw new SessionRuntimeGitHubMutationConflictError(
+      "GitHub mutation requires one admitted work item",
+    );
+  }
+  const admissionId = lockedRow.admission_id;
+  const admission = await client.query(
+    `SELECT admission_id
+       FROM codeops.work_item_admissions
+      WHERE admission_id = $1 AND child_dispatch_id = $2
+        AND child_session_id = $3 AND repository = $4
+      FOR UPDATE`,
+    [admissionId, dispatch.dispatchId, dispatch.command.sessionId,
+      request.input.repository],
+  );
+  if (admission.rowCount !== 1) {
+    throw new SessionRuntimeGitHubMutationConflictError(
+      "GitHub mutation drifted from its admitted work item",
+    );
+  }
+  const authorizationExpiresAtMs = Math.min(
+    Date.parse(lockedAuthority.claimExpiresAt),
+    Date.parse(currentLease.expiresAt),
+  );
+  if (!Number.isFinite(authorizationExpiresAtMs) || authorizationExpiresAtMs <= nowDate.getTime()) {
+    throw new SessionRuntimeGitHubMutationConflictError(
+      "GitHub mutation authorization expired before consumption",
+    );
+  }
+  const authorizationExpiresAt = new Date(authorizationExpiresAtMs).toISOString();
   const legacyInline = request.operation === "branch_publish" &&
     "changes" in request.input;
   const expectedOperationId = request.operation === "branch_publish" && !legacyInline
@@ -241,6 +383,7 @@ async function authorizeSessionRuntimeGitHubMutationTransaction(
     : `githubmutation-${createHash("sha256")
       .update(canonicalJsonText({
         dispatchId: dispatch.dispatchId,
+        claimToken: request.claimToken,
         operation: request.operation,
         input: request.input,
       }))
@@ -260,32 +403,25 @@ async function authorizeSessionRuntimeGitHubMutationTransaction(
     .update(request.operationId)
     .digest("hex")}`;
   const result = await client.query<MutationAuthorizationRow>(
-    `SELECT permission.request_json, decision.command_json,
-            decision.result_json
-       FROM codeops.session_runtime_outbox AS outbox
-       LEFT JOIN codeops.session_runtime_permission_requests AS permission
-         ON permission.dispatch_id = outbox.dispatch_id
-        AND permission.request_id = $2
-       LEFT JOIN LATERAL (
-         SELECT command_json, result_json
-           FROM codeops.session_commands
-          WHERE session_id = permission.session_id
-            AND command_json->>'type' = 'respond_permission'
-            AND command_json->>'permissionRequestId' = permission.request_id
-          ORDER BY committed_at ASC, command_id ASC
-          LIMIT 1
-       ) AS decision ON TRUE
-      WHERE outbox.dispatch_id = $1`,
+    `SELECT permission.request_json, permission.admission_id,
+            permission.session_generation, permission.session_lease_id,
+            permission.operation_provider, permission.operation_id,
+            decision.command_id, decision.principal_id,
+            decision.command_json, decision.result_json
+       FROM codeops.session_runtime_permission_requests AS permission
+       LEFT JOIN codeops.session_commands AS decision
+         ON decision.session_id = permission.session_id
+        AND decision.command_json->>'type' = 'respond_permission'
+        AND decision.command_json->>'permissionRequestId' = permission.request_id
+      WHERE permission.dispatch_id = $1 AND permission.request_id = $2
+      ORDER BY decision.committed_at ASC NULLS LAST,
+               decision.command_id ASC NULLS LAST
+      FOR UPDATE OF permission`,
     [input.dispatchId, expectedRequestId],
   );
   const row = result.rows[0];
-  if (row === undefined) {
-    throw new SessionRuntimeGitHubMutationNotFoundError(
-      "runtime dispatch was not found",
-    );
-  }
-
-  if (row.request_json === null || row.command_json === null || row.result_json === null) {
+  if (result.rows.length !== 1 || row === undefined || row.request_json === null ||
+      row.command_json === null || row.result_json === null) {
     throw new SessionRuntimeGitHubMutationConflictError(
       "GitHub mutation requires one durable permission decision",
     );
@@ -304,17 +440,35 @@ async function authorizeSessionRuntimeGitHubMutationTransaction(
       { optionId: "allow-once", acpOptionId: "allow-once" },
       { optionId: "deny", acpOptionId: "deny" },
     ]) ||
+    row.admission_id !== admissionId ||
+    Number(row.session_generation) !== dispatch.command.generation ||
+    row.session_lease_id !== dispatch.command.leaseId ||
+    row.operation_provider !== "github" ||
+    row.operation_id !== request.operationId ||
     command.type !== "respond_permission" ||
     command.sessionId !== dispatch.command.sessionId ||
+    command.generation !== dispatch.command.generation ||
+    command.leaseId !== dispatch.command.leaseId ||
     command.permissionRequestId !== expectedRequestId ||
     command.decision.outcome !== "selected" ||
     command.decision.optionId !== "allow-once" ||
     commandResult.sessionId !== command.sessionId ||
+    commandResult.commandId !== row.command_id ||
     commandResult.generation !== command.generation ||
     commandResult.leaseId !== command.leaseId ||
     commandResult.idempotencyKey !== command.idempotencyKey ||
     commandResult.type !== command.type ||
-    commandResult.disposition !== "committed"
+    commandResult.disposition !== "committed" ||
+    row.principal_id !== dispatch.principalId ||
+    commandResult.snapshot.sessionId !== current.sessionId ||
+    commandResult.snapshot.generation !== current.generation ||
+    commandResult.snapshot.state !== "running" ||
+    commandResult.snapshot.pendingPermission !== null ||
+    commandResult.snapshot.eventCursor !== current.eventCursor ||
+    commandResult.snapshot.lease?.leaseId !== currentLease.leaseId ||
+    canonicalJsonText(commandResult.snapshot.identity) !==
+      canonicalJsonText(current.identity) ||
+    Date.parse(commandResult.committedAt) > nowDate.getTime()
   ) {
     throw new SessionRuntimeGitHubMutationConflictError(
       "durable permission does not authorize this exact GitHub mutation",
@@ -322,37 +476,27 @@ async function authorizeSessionRuntimeGitHubMutationTransaction(
   }
 
   const payloadDigest = digest(canonicalJsonText(request.input));
-  let existingBranchReceipt: StoredMutationRow | undefined;
-  if (request.operation === "branch_publish") {
+  let existingAuthorization: StoredMutationRow | undefined;
+  {
     const existing = await client.query<StoredMutationRow>(
-      `SELECT dispatch_id, payload_digest, permission_digest, state, evidence_json
+      `SELECT dispatch_id, payload_digest, permission_digest, state,
+              attempted_at, evidence_json, provider_effect_marker
          FROM codeops.provider_effect_receipts
         WHERE effect_id = $1
         FOR UPDATE`,
       [request.operationId],
     );
-    existingBranchReceipt = existing.rows[0];
-    if (existingBranchReceipt !== undefined) {
-      assertStoredMutationIdentity(existingBranchReceipt, {
+    const existingReceipt = existing.rows[0];
+    if (existingReceipt !== undefined) {
+      assertStoredMutationIdentity(existingReceipt, {
+        operationId: request.operationId,
         dispatchId: dispatch.dispatchId,
         payloadDigest,
         permissionDigest: operationDigest,
       });
-      if (["succeeded", "reconciled_satisfied"].includes(
-        String(existingBranchReceipt.state),
-      )) {
-        return {
-          disposition: "replayed",
-          result: replayStoredMutation(existingBranchReceipt, request),
-        };
-      }
-      if (["failed", "reconciled_not_observed", "operator_resolved"].includes(
-        String(existingBranchReceipt.state),
-      )) {
-        throw new SessionRuntimeGitHubMutationConflictError(
-          "GitHub mutation has a definitive non-success outcome and cannot be retried",
-        );
-      }
+      const recovery = recoverStoredMutation(existingReceipt, request);
+      if (recovery !== "authorized") return recovery;
+      existingAuthorization = existingReceipt;
     }
   }
 
@@ -402,7 +546,7 @@ async function authorizeSessionRuntimeGitHubMutationTransaction(
     if (digest(canonicalJsonText(logicalInput)) !== manifest.effectDigest ||
         request.operationId !== `githubmutation-${createHash("sha256")
           .update(canonicalJsonText({
-            dispatchId: dispatch.dispatchId,
+            dispatchId: dispatch.dispatchId, claimToken: request.claimToken,
             operation: request.operation,
             input: logicalInput,
           })).digest("hex")}`) {
@@ -472,16 +616,27 @@ async function authorizeSessionRuntimeGitHubMutationTransaction(
     provenance: {
       sessionId: dispatch.command.sessionId,
       dispatchId: dispatch.dispatchId,
+      admissionId,
+      sessionGeneration: dispatch.command.generation,
+      sessionLeaseId: dispatch.command.leaseId,
+      permissionRequestId: expectedRequestId,
+      authorizationExpiresAt,
       principalDigest: digest(dispatch.principalId),
     },
   });
+  if (existingAuthorization !== undefined) {
+    return { disposition: "authorized", request: providerRequest };
+  }
   const inserted = await client.query(
     `INSERT INTO codeops.provider_effect_receipts
        (effect_id, provider, repository, operation, pull_request_number,
         target_id, expected_head_sha, session_id, dispatch_id, payload_digest,
-        permission_digest, state, reconciliation_action, authorized_at)
+        permission_digest, state, reconciliation_action, authorized_at,
+        permission_request_id, admission_id, session_generation,
+        session_lease_id, authorization_expires_at, dispatch_claim_token)
      VALUES ($1, 'github', $2, $3, $4, $5, $6, $7, $8, $9, $10,
-             'authorized', 'none', $11::timestamptz)
+             'authorized', 'none', $11::timestamptz, $12, $13, $14, $15,
+             $16::timestamptz, $17)
      ON CONFLICT DO NOTHING`,
     [
       request.operationId,
@@ -494,14 +649,22 @@ async function authorizeSessionRuntimeGitHubMutationTransaction(
       dispatch.dispatchId,
       payloadDigest,
       operationDigest,
-      (input.now ?? (() => new Date()))().toISOString(),
+      nowDate.toISOString(),
+      expectedRequestId,
+      admissionId,
+      dispatch.command.generation,
+      dispatch.command.leaseId,
+      authorizationExpiresAt,
+      request.claimToken,
     ],
   );
   if (inserted.rowCount !== 1) {
     const stored = await client.query<StoredMutationRow>(
-      `SELECT dispatch_id, payload_digest, permission_digest, state, evidence_json
+      `SELECT dispatch_id, payload_digest, permission_digest, state,
+              attempted_at, evidence_json, provider_effect_marker
          FROM codeops.provider_effect_receipts
-        WHERE effect_id = $1`,
+        WHERE effect_id = $1
+        FOR UPDATE`,
       [request.operationId],
     );
     const replay = stored.rows[0];
@@ -511,36 +674,16 @@ async function authorizeSessionRuntimeGitHubMutationTransaction(
       );
     }
     assertStoredMutationIdentity(replay, {
+      operationId: request.operationId,
       dispatchId: dispatch.dispatchId,
       payloadDigest,
       permissionDigest: operationDigest,
     });
-    if (replay.state === "authorized" && replay.evidence_json === null) {
+    const recovery = recoverStoredMutation(replay, request);
+    if (recovery === "authorized") {
       return { disposition: "authorized", request: providerRequest };
     }
-    if (replay.state === "attempting") {
-      await client.query(
-        `UPDATE codeops.provider_effect_receipts
-            SET state = 'unknown',
-                reconciliation_action = $2,
-                updated_at = $3::timestamptz
-          WHERE effect_id = $1 AND state = 'attempting'`,
-        [
-          request.operationId,
-          reconciliationAction(providerRequest.operation),
-          (input.now ?? (() => new Date()))().toISOString(),
-        ],
-      );
-    }
-    if (
-      !["succeeded", "reconciled_satisfied"].includes(String(replay.state)) ||
-      replay.evidence_json === null
-    ) {
-      throw new SessionRuntimeGitHubMutationConflictError(
-        "GitHub mutation outcome is not known and cannot be retried",
-      );
-    }
-    return { disposition: "replayed", result: replayStoredMutation(replay, request) };
+    return recovery;
   }
   return { disposition: "authorized", request: providerRequest };
 }
@@ -550,9 +693,6 @@ export async function authorizeSessionRuntimeGitHubMutation(
   input: Parameters<typeof authorizeSessionRuntimeGitHubMutationTransaction>[1],
 ): Promise<SessionRuntimeGitHubMutationAuthorization> {
   const request = sessionRuntimeGitHubMutationRequestSchema.parse(input.request);
-  if (request.operation !== "branch_publish") {
-    return authorizeSessionRuntimeGitHubMutationTransaction(client, input);
-  }
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
     const result = await authorizeSessionRuntimeGitHubMutationTransaction(client, input);
@@ -573,24 +713,120 @@ export async function beginSessionRuntimeGitHubMutationAttempt(
 ): Promise<void> {
   const request = githubMutationProviderRequestSchema.parse(input.request);
   const attemptedAt = (input.now ?? (() => new Date()))().toISOString();
+  let authorityLost = false;
+  await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
+  const session = await client.query(
+    `SELECT snapshot_json FROM codeops.sessions
+      WHERE session_id = $1 FOR UPDATE`,
+    [request.provenance.sessionId],
+  );
+  const snapshot = session.rows[0] === undefined
+    ? null
+    : sessionSnapshotSchema.parse(session.rows[0].snapshot_json);
+  const liveSession = snapshot !== null && snapshot.state === "running" &&
+    snapshot.generation === request.provenance.sessionGeneration &&
+    snapshot.lease?.status === "active" &&
+    snapshot.lease.leaseId === request.provenance.sessionLeaseId;
+  const terminalize = () => client.query(
+    `UPDATE codeops.provider_effect_receipts AS effect
+        SET state = 'not_attempted',
+            resolution_summary =
+              'Dispatch claim authority ended before any provider attempt.',
+            reconciliation_action = 'none', resolved_at = $1::timestamptz,
+            updated_at = $1::timestamptz
+      WHERE effect.effect_id = $2 AND effect.dispatch_id = $3
+        AND effect.payload_digest = $4 AND effect.permission_digest = $5
+        AND effect.session_id = $6 AND effect.admission_id = $7
+        AND effect.session_generation = $8 AND effect.session_lease_id = $9
+        AND effect.permission_request_id = $10
+        AND effect.authorization_expires_at = $11::timestamptz
+        AND effect.state = 'authorized' AND effect.attempted_at IS NULL
+        AND (effect.authorization_expires_at <= $1::timestamptz OR NOT EXISTS (
+          SELECT 1
+            FROM codeops.sessions AS session
+           WHERE session.session_id = effect.session_id
+             AND session.snapshot_json->>'state' = 'running'
+             AND (session.snapshot_json->>'generation')::bigint =
+                 effect.session_generation
+             AND session.snapshot_json#>>'{lease,status}' = 'active'
+             AND session.snapshot_json#>>'{lease,leaseId}' = effect.session_lease_id::text
+        ) OR NOT EXISTS (
+          SELECT 1
+            FROM codeops.session_runtime_outbox AS outbox
+           WHERE outbox.dispatch_id = effect.dispatch_id
+             AND outbox.status = 'claimed'
+             AND outbox.claim_token = effect.dispatch_claim_token
+             AND outbox.claim_expires_at > $1::timestamptz
+        ))`,
+    [attemptedAt, request.operationId, request.provenance.dispatchId,
+      request.payloadDigest, request.permissionDigest,
+      request.provenance.sessionId, request.provenance.admissionId,
+      request.provenance.sessionGeneration, request.provenance.sessionLeaseId,
+      request.provenance.permissionRequestId,
+      request.provenance.authorizationExpiresAt],
+  );
+  if (!liveSession) {
+    authorityLost = (await terminalize()).rowCount === 1;
+  } else {
   const updated = await client.query(
     `UPDATE codeops.provider_effect_receipts
         SET state = 'attempting', attempted_at = $1::timestamptz,
             updated_at = $1::timestamptz
       WHERE effect_id = $2 AND dispatch_id = $3
         AND payload_digest = $4 AND permission_digest = $5
-        AND state = 'authorized' AND attempted_at IS NULL`,
+        AND session_id = $6 AND admission_id = $7
+        AND session_generation = $8 AND session_lease_id = $9
+        AND permission_request_id = $10
+        AND authorization_expires_at = $11::timestamptz
+        AND authorization_expires_at > $1::timestamptz
+        AND state = 'authorized' AND attempted_at IS NULL
+        AND EXISTS (
+          SELECT 1 FROM codeops.session_runtime_outbox AS outbox
+           WHERE outbox.dispatch_id = $3 AND outbox.status = 'claimed'
+             AND outbox.claim_token =
+                 codeops.provider_effect_receipts.dispatch_claim_token
+             AND outbox.claim_expires_at > $1::timestamptz
+        )
+        AND EXISTS (
+          SELECT 1 FROM codeops.work_item_admissions AS admission
+           WHERE admission.admission_id = $7
+             AND admission.child_dispatch_id = $3
+             AND admission.child_session_id = $6
+             AND admission.repository = $12
+        )`,
     [
       attemptedAt,
       request.operationId,
       request.provenance.dispatchId,
       request.payloadDigest,
       request.permissionDigest,
+      request.provenance.sessionId,
+      request.provenance.admissionId,
+      request.provenance.sessionGeneration,
+      request.provenance.sessionLeaseId,
+      request.provenance.permissionRequestId,
+      request.provenance.authorizationExpiresAt,
+      request.input.repository,
     ],
   );
   if (updated.rowCount !== 1) {
+    authorityLost = (await terminalize()).rowCount === 1;
+    if (!authorityLost) {
+      throw new SessionRuntimeGitHubMutationConflictError(
+        "GitHub mutation attempt does not match one authorized effect",
+      );
+    }
+  }
+  }
+  await client.query("COMMIT");
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+  if (authorityLost) {
     throw new SessionRuntimeGitHubMutationConflictError(
-      "GitHub mutation attempt does not match one authorized effect",
+      "GitHub mutation attempt lost its active dispatch authority before any provider call",
     );
   }
 }
@@ -618,6 +854,10 @@ export async function recordSessionRuntimeGitHubMutationFailure(
             updated_at = $4::timestamptz
       WHERE effect_id = $5 AND dispatch_id = $6
         AND payload_digest = $7 AND permission_digest = $8
+        AND session_id = $9 AND admission_id = $10
+        AND session_generation = $11 AND session_lease_id = $12
+        AND permission_request_id = $13
+        AND authorization_expires_at = $14::timestamptz
         AND state = 'attempting' AND attempted_at IS NOT NULL`,
     [
       input.outcome,
@@ -628,6 +868,12 @@ export async function recordSessionRuntimeGitHubMutationFailure(
       request.provenance.dispatchId,
       request.payloadDigest,
       request.permissionDigest,
+      request.provenance.sessionId,
+      request.provenance.admissionId,
+      request.provenance.sessionGeneration,
+      request.provenance.sessionLeaseId,
+      request.provenance.permissionRequestId,
+      request.provenance.authorizationExpiresAt,
     ],
   );
   if (updated.rowCount !== 1) {
@@ -709,6 +955,10 @@ export async function completeSessionRuntimeGitHubMutation(
             updated_at = $2::timestamptz
       WHERE effect_id = $3 AND dispatch_id = $4
         AND payload_digest = $5 AND permission_digest = $6
+        AND session_id = $7 AND admission_id = $8
+        AND session_generation = $9 AND session_lease_id = $10
+        AND permission_request_id = $11
+        AND authorization_expires_at = $12::timestamptz
         AND state = 'attempting' AND evidence_json IS NULL
         AND attempted_at IS NOT NULL`,
     [
@@ -718,6 +968,12 @@ export async function completeSessionRuntimeGitHubMutation(
       request.provenance.dispatchId,
       request.payloadDigest,
       request.permissionDigest,
+      request.provenance.sessionId,
+      request.provenance.admissionId,
+      request.provenance.sessionGeneration,
+      request.provenance.sessionLeaseId,
+      request.provenance.permissionRequestId,
+      request.provenance.authorizationExpiresAt,
     ],
   );
   if (updated.rowCount !== 1) {

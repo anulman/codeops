@@ -236,7 +236,8 @@ test("normalizes inline publication before every candidate and effect identity",
         };
       },
     }, async () => {
-      for (const commitMessage of [` \t${normalizedMessage}\n`, normalizedMessage]) {
+      for (const [index, commitMessage] of
+        [` \t${normalizedMessage}\n`, normalizedMessage].entries()) {
         const response = await fetch(
           `http://127.0.0.1:${port}/v1/github-mutations/branch/publish`,
           {
@@ -245,22 +246,18 @@ test("normalizes inline publication before every candidate and effect identity",
             body: JSON.stringify(publication(commitMessage)),
           },
         );
-        assert.equal(response.status, 200);
+        assert.equal(response.status, index === 0 ? 200 : 409);
       }
     });
     assert.equal(candidates.length, 2);
-    assert.equal(mutations.length, 2);
-    assert.equal(permissions.length, 2);
-    assert.equal(mutations[0].operationId, mutations[1].operationId);
-    assert.deepEqual(mutations[0].input, mutations[1].input);
+    assert.equal(mutations.length, 1);
+    assert.equal(permissions.length, 1);
     assert.equal(mutations[0].input.commitMessage, normalizedMessage);
     assert.deepEqual(candidates[0], candidates[1]);
     assert.equal(candidates[0].manifest.effectDigest,
       candidates[1].manifest.effectDigest);
     assert.equal(candidates[0].manifest.candidate.manifestId,
       candidates[1].manifest.candidate.manifestId);
-    assert.equal(permissions[0].operation.payloadJson,
-      permissions[1].operation.payloadJson);
     assert.equal(JSON.parse(permissions[0].operation.payloadJson).commitMessage,
       normalizedMessage);
   } finally {
@@ -355,6 +352,99 @@ test("denial stops before the GitHub provider boundary", async () => {
   }
 });
 
+test("retries an exact operation after a transient permission failure", async () => {
+  const broker = new GitHubMutationsBroker();
+  const port = await broker.listen(0);
+  let permissionCalls = 0;
+  let mutationCalls = 0;
+  const body = { repository, expectedHeadSha, checkRunId: 91 };
+  try {
+    await broker.run(dispatch, {
+      async requestPermission() {
+        permissionCalls += 1;
+        if (permissionCalls === 1) throw new Error("transient permission failure");
+        return { outcome: "selected", acpOptionId: "allow-once" };
+      },
+      async mutateGitHub(input) {
+        mutationCalls += 1;
+        return {
+          version: "codeops.github-check-rerun-result/v1",
+          repository,
+          operationId: input.operationId,
+          headSha: expectedHeadSha,
+          checkRunId: body.checkRunId,
+          accepted: true,
+        };
+      },
+    }, async () => {
+      const request = () => fetch(
+        `http://127.0.0.1:${port}/v1/github-mutations/check/rerun`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      assert.equal((await request()).status, 503);
+      assert.equal((await request()).status, 200);
+      assert.equal((await request()).status, 409);
+    });
+    assert.equal(permissionCalls, 2);
+    assert.equal(mutationCalls, 1);
+  } finally {
+    await broker.close();
+  }
+});
+
+test("retries after the first gateway call returns 503 before a provider attempt", async () => {
+  const broker = new GitHubMutationsBroker();
+  const port = await broker.listen(0);
+  let permissionCalls = 0;
+  let mutationCalls = 0;
+  const permissionRequestIds = [];
+  const body = { repository, expectedHeadSha, checkRunId: 92 };
+  try {
+    await broker.run(dispatch, {
+      async requestPermission(input) {
+        permissionCalls += 1;
+        permissionRequestIds.push(input.request.requestId);
+        return { outcome: "selected", acpOptionId: "allow-once" };
+      },
+      async mutateGitHub(input) {
+        mutationCalls += 1;
+        if (mutationCalls === 1) {
+          throw new Error("session runtime gateway request failed: HTTP 503");
+        }
+        return {
+          version: "codeops.github-check-rerun-result/v1",
+          repository,
+          operationId: input.operationId,
+          headSha: expectedHeadSha,
+          checkRunId: body.checkRunId,
+          accepted: true,
+        };
+      },
+    }, async () => {
+      const request = () => fetch(
+        `http://127.0.0.1:${port}/v1/github-mutations/check/rerun`,
+        {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify(body),
+        },
+      );
+      assert.equal((await request()).status, 503);
+      assert.equal((await request()).status, 200);
+      assert.equal((await request()).status, 409);
+    });
+    assert.equal(permissionCalls, 2);
+    assert.equal(new Set(permissionRequestIds).size, 1);
+    assert.equal(mutationCalls, 2);
+  } finally {
+    await broker.close();
+  }
+});
+
 test("rejects inactive, unknown, and unbounded mutation requests", async () => {
   const broker = new GitHubMutationsBroker();
   const port = await broker.listen(0);
@@ -374,7 +464,7 @@ test("rejects inactive, unknown, and unbounded mutation requests", async () => {
         headers: { "content-type": "application/json" },
         body: JSON.stringify({ repository, pullRequestNumber: 27, expectedHeadSha }),
       });
-      assert.equal(invalid.status, 503);
+      assert.equal(invalid.status, 400);
       const unknown = await fetch(`http://127.0.0.1:${port}/v1/github-mutations/pull-request/merge`, {
         method: "POST",
         headers: { "content-type": "application/json" },

@@ -32,6 +32,7 @@ interface StoredDispatchRow extends Record<string, unknown> {
   readonly claimed_by: unknown;
   readonly claim_expires_at: unknown;
   readonly owner_principal_id: unknown;
+  readonly admission_id: unknown;
 }
 
 interface StoredSessionRow extends Record<string, unknown> {
@@ -42,6 +43,11 @@ interface StoredSessionRow extends Record<string, unknown> {
 interface StoredPermissionRow extends Record<string, unknown> {
   readonly request_id: unknown;
   readonly request_json: unknown;
+  readonly admission_id: unknown;
+  readonly session_generation: unknown;
+  readonly session_lease_id: unknown;
+  readonly operation_provider: unknown;
+  readonly operation_id: unknown;
 }
 
 interface PolledPermissionRow extends StoredDispatchRow, StoredSessionRow {
@@ -279,7 +285,7 @@ export async function submitSessionRuntimePermission(
   const discovered = await client.query<StoredDispatchRow>(
     `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
             outbox.claimed_by, outbox.claim_expires_at,
-            session.owner_principal_id
+            session.owner_principal_id, outbox.admission_id
        FROM codeops.session_runtime_outbox AS outbox
        JOIN codeops.sessions AS session
          ON session.session_id = outbox.session_id
@@ -316,7 +322,7 @@ export async function submitSessionRuntimePermission(
     const dispatchRows = await client.query<StoredDispatchRow>(
       `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
               outbox.claimed_by, outbox.claim_expires_at,
-              session.owner_principal_id
+              session.owner_principal_id, outbox.admission_id
          FROM codeops.session_runtime_outbox AS outbox
          JOIN codeops.sessions AS session
            ON session.session_id = outbox.session_id
@@ -345,6 +351,31 @@ export async function submitSessionRuntimePermission(
         "runtime permissions belong only to the exact claimed prompt dispatch",
       );
     }
+    const githubOperation = submission.request.operation.kind === "github_mutation";
+    const admissionId = githubOperation && typeof dispatchRows.rows[0].admission_id === "string"
+      ? dispatchRows.rows[0].admission_id
+      : null;
+    if (submission.request.operation.kind === "github_mutation") {
+      if (admissionId === null || dispatch.snapshot.lease?.status !== "active") {
+        throw new SessionRuntimePermissionConflictError(
+          "GitHub runtime permission requires one active admitted work item",
+        );
+      }
+      const admission = await client.query(
+        `SELECT admission_id
+           FROM codeops.work_item_admissions
+          WHERE admission_id = $1 AND child_dispatch_id = $2
+            AND child_session_id = $3 AND repository = $4
+          FOR UPDATE`,
+        [admissionId, input.dispatchId, dispatch.command.sessionId,
+          submission.request.operation.repository],
+      );
+      if (admission.rowCount !== 1) {
+        throw new SessionRuntimePermissionConflictError(
+          "GitHub runtime permission drifted from its admitted work item",
+        );
+      }
+    }
     if (
       Date.parse(submission.request.requestedAt) <
         Date.parse(dispatch.dispatchedAt) ||
@@ -356,7 +387,8 @@ export async function submitSessionRuntimePermission(
     }
 
     const existing = await client.query<StoredPermissionRow>(
-      `SELECT request_id, request_json
+      `SELECT request_id, request_json, admission_id, session_generation,
+              session_lease_id, operation_provider, operation_id
          FROM codeops.session_runtime_permission_requests
         WHERE dispatch_id = $1 AND request_id = $2
         FOR UPDATE`,
@@ -369,6 +401,17 @@ export async function submitSessionRuntimePermission(
       if (
         existing.rows[0].request_id !== submission.request.requestId ||
         canonicalJsonText(stored) !== canonicalJsonText(submission)
+        || (existing.rows[0].admission_id ?? null) !== admissionId
+        || (existing.rows[0].session_generation === undefined
+          ? null : existing.rows[0].session_generation === null
+            ? null : Number(existing.rows[0].session_generation)) !==
+          (githubOperation ? dispatch.command.generation : null)
+        || (existing.rows[0].session_lease_id ?? null) !==
+          (githubOperation ? dispatch.command.leaseId : null)
+        || (existing.rows[0].operation_provider ?? null) !==
+          (githubOperation ? "github" : null)
+        || (existing.rows[0].operation_id ?? null) !==
+          (githubOperation ? submission.toolCallId : null)
       ) {
         throw new SessionRuntimePermissionConflictError(
           "runtime permission request conflicts with its immutable stored identity",
@@ -402,14 +445,22 @@ export async function submitSessionRuntimePermission(
 
     await client.query(
       `INSERT INTO codeops.session_runtime_permission_requests
-         (dispatch_id, request_id, session_id, request_json, created_at)
-       VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz)`,
+         (dispatch_id, request_id, session_id, request_json, created_at,
+          admission_id, session_generation, session_lease_id,
+          operation_provider, operation_id)
+       VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz,
+               $6, $7, $8, $9, $10)`,
       [
         input.dispatchId,
         submission.request.requestId,
         dispatch.command.sessionId,
         canonicalJsonText(submission),
         submission.request.requestedAt,
+        admissionId,
+        githubOperation ? dispatch.command.generation : null,
+        githubOperation ? dispatch.command.leaseId : null,
+        githubOperation ? "github" : null,
+        githubOperation ? submission.toolCallId : null,
       ],
     );
     await client.query(

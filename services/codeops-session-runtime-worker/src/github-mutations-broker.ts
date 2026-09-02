@@ -20,6 +20,7 @@ import type {
   RuntimeExecutionContext,
   RuntimeGitHubMutationRequest,
 } from "./transport.js";
+import { ZodError } from "zod";
 
 const MAX_BODY_BYTES = 4_456_448;
 const routes = new Map<string, GitHubMutationOperation>([
@@ -33,6 +34,17 @@ const routes = new Map<string, GitHubMutationOperation>([
 
 function digest(value: unknown): string {
   return `sha256:${createHash("sha256").update(canonicalJsonText(value)).digest("hex")}`;
+}
+
+function operationIdentity(
+  context: RuntimeExecutionContext,
+  dispatchId: string,
+  operation: GitHubMutationOperation,
+  input: unknown,
+): string {
+  return context.bindGitHubMutationOperationId?.(operation, input) ??
+    `githubmutation-${createHash("sha256")
+      .update(canonicalJsonText({ dispatchId, operation, input })).digest("hex")}`;
 }
 
 async function mutationRequest(
@@ -89,8 +101,9 @@ async function mutationRequest(
       sizeBytes: bytes.length,
     }));
     const effectDigest = digest(logicalInput);
-    const operationId = `githubmutation-${createHash("sha256")
-      .update(canonicalJsonText({ dispatchId, operation, input: logicalInput })).digest("hex")}`;
+    const operationId = operationIdentity(
+      context, dispatchId, operation, logicalInput,
+    );
     const manifestId = `githubcandidate-${createHash("sha256")
       .update(canonicalJsonText({
         version: "codeops.github-branch-publish-candidate-manifest/v1",
@@ -132,8 +145,7 @@ async function mutationRequest(
   const input = schemas[operation].parse(preparedInput);
   return {
     operation,
-    operationId: `githubmutation-${createHash("sha256")
-      .update(canonicalJsonText({ dispatchId, operation, input })).digest("hex")}`,
+    operationId: operationIdentity(context, dispatchId, operation, input),
     input,
   } as RuntimeGitHubMutationRequest;
 }
@@ -184,7 +196,12 @@ function permissionTarget(request: RuntimeGitHubMutationRequest): {
 
 export class GitHubMutationsBroker {
   readonly #server;
-  #active: { readonly dispatch: SessionRuntimeDispatch; readonly context: RuntimeExecutionContext } | undefined;
+  #active: {
+    readonly dispatch: SessionRuntimeDispatch;
+    readonly context: RuntimeExecutionContext;
+    readonly inFlightOperationIds: Set<string>;
+    readonly consumedOperationIds: Set<string>;
+  } | undefined;
 
   constructor() {
     this.#server = createServer((request, response) => void this.#serve(request, response));
@@ -213,51 +230,72 @@ export class GitHubMutationsBroker {
         active.dispatch,
         active.context,
       );
-      const target = permissionTarget(mutation);
-      const permissionOperation = sessionPermissionOperationSchema.parse({
-        kind: "github_mutation",
-        repository: mutation.input.repository,
-        operation,
-        ...target,
-        expectedHeadSha: mutation.input.expectedHeadSha,
-        payloadJson: canonicalJsonText(mutation.input),
-      });
-      const permissionRequestId = `permission-${createHash("sha256")
-        .update(canonicalJsonText(permissionOperation))
-        .update("\0")
-        .update(active.dispatch.dispatchId)
-        .update("\0")
-        .update(mutation.operationId)
-        .digest("hex")}`;
-      const decision = await active.context.requestPermission({
-        request: {
-          requestId: permissionRequestId,
-          title: `Allow ${operation.replaceAll("_", " ")} once in ${mutation.input.repository}?`,
-          description: "CodeOps will reject repository, target, branch, or commit drift before it performs this one GitHub operation.",
-          operation: permissionOperation,
-          operationDigest: digest(permissionOperation),
-          options: [
-            { optionId: "allow-once", label: "Allow once" },
-            { optionId: "deny", label: "Do not allow it" },
-          ],
-          requestedAt: new Date().toISOString(),
-        },
-        acpSessionId: "codeops-github",
-        toolCallId: mutation.operationId,
-        options: [
-          { optionId: "allow-once", acpOptionId: "allow-once" },
-          { optionId: "deny", acpOptionId: "deny" },
-        ],
-      });
-      if (decision.outcome !== "selected" || decision.acpOptionId !== "allow-once") {
-        json(response, 403, { status: "permission-denied" });
+      if (
+        active.inFlightOperationIds.has(mutation.operationId) ||
+        active.consumedOperationIds.has(mutation.operationId)
+      ) {
+        json(response, 409, { status: "permission-consumed" });
         return;
       }
-      json(response, 200, githubMutationResultSchema.parse(
-        await active.context.mutateGitHub(mutation),
-      ));
-    } catch {
-      json(response, 503, { status: "unavailable" });
+      active.inFlightOperationIds.add(mutation.operationId);
+      let mutationStarted = false;
+      try {
+        const target = permissionTarget(mutation);
+        const permissionOperation = sessionPermissionOperationSchema.parse({
+          kind: "github_mutation",
+          repository: mutation.input.repository,
+          operation,
+          ...target,
+          expectedHeadSha: mutation.input.expectedHeadSha,
+          payloadJson: canonicalJsonText(mutation.input),
+        });
+        const permissionRequestId = `permission-${createHash("sha256")
+          .update(canonicalJsonText(permissionOperation))
+          .update("\0")
+          .update(active.dispatch.dispatchId)
+          .update("\0")
+          .update(mutation.operationId)
+          .digest("hex")}`;
+        const decision = await active.context.requestPermission({
+          request: {
+            requestId: permissionRequestId,
+            title: `Allow ${operation.replaceAll("_", " ")} once in ${mutation.input.repository}?`,
+            description: "CodeOps will reject repository, target, branch, or commit drift before it performs this one GitHub operation.",
+            operation: permissionOperation,
+            operationDigest: digest(permissionOperation),
+            options: [
+              { optionId: "allow-once", label: "Allow once" },
+              { optionId: "deny", label: "Do not allow it" },
+            ],
+            requestedAt: new Date().toISOString(),
+          },
+          acpSessionId: "codeops-github",
+          toolCallId: mutation.operationId,
+          options: [
+            { optionId: "allow-once", acpOptionId: "allow-once" },
+            { optionId: "deny", acpOptionId: "deny" },
+          ],
+        });
+        if (decision.outcome !== "selected" || decision.acpOptionId !== "allow-once") {
+          json(response, 403, { status: "permission-denied" });
+          return;
+        }
+        const result = githubMutationResultSchema.parse(
+          await active.context.mutateGitHub(mutation),
+        );
+        active.inFlightOperationIds.delete(mutation.operationId);
+        active.consumedOperationIds.add(mutation.operationId);
+        mutationStarted = true;
+        json(response, 200, result);
+      } finally {
+        if (!mutationStarted) active.inFlightOperationIds.delete(mutation.operationId);
+      }
+    } catch (error) {
+      if (error instanceof SyntaxError || error instanceof ZodError) {
+        json(response, 400, { status: "invalid-request" });
+      } else {
+        json(response, 503, { status: "unavailable" });
+      }
     }
   }
 
@@ -285,7 +323,12 @@ export class GitHubMutationsBroker {
     operation: () => Promise<Result>,
   ): Promise<Result> {
     if (this.#active !== undefined) throw new Error("GitHub mutations broker is already active");
-    this.#active = { dispatch, context };
+    this.#active = {
+      dispatch,
+      context,
+      inFlightOperationIds: new Set(),
+      consumedOperationIds: new Set(),
+    };
     try {
       return await operation();
     } finally {

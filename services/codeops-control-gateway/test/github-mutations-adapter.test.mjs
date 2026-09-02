@@ -5,6 +5,8 @@ import {
   createGitHubMutationAdapter as createCandidateAdapter,
   createGitHubMutationReconciler as createCandidateReconciler,
   GITHUB_MUTATION_WRITE_TIMEOUT_MS,
+  GitHubMutationPreflightNoEffectError,
+  GitHubMutationProviderAmbiguousError,
   githubEffectMarker,
 } from "../dist/github-mutations-adapter.js";
 
@@ -92,6 +94,11 @@ function request(operation, input) {
     provenance: {
       sessionId: "session-github-mutation",
       dispatchId: "11111111-1111-4111-8111-111111111111",
+      admissionId: "22222222-2222-4222-8222-222222222222",
+      sessionGeneration: 1,
+      sessionLeaseId: "33333333-3333-4333-8333-333333333333",
+      permissionRequestId: "permission-runtime",
+      authorizationExpiresAt: "2026-08-31T12:00:00.000Z",
       principalDigest: `sha256:${"d".repeat(64)}`,
     },
   };
@@ -168,6 +175,7 @@ test("executes only four bounded routes with preflight and postflight identity p
         json({ data: { addPullRequestReviewThreadReply: { comment: {
           databaseId: 9876,
           url: "https://github.com/anulman/codeops/pull/27#discussion_r9876",
+          body: `Addressed in the exact head.\n\n${githubEffectMarker(operationId)}`,
           pullRequest: {
             number: 27,
             headRefOid: head,
@@ -416,6 +424,31 @@ test("creates one pull request after exact head and base ref proof", async () =>
   assert.equal(responses.length, 0);
 });
 
+test("classifies multiple preflight pull-request matches as no effect", async () => {
+  const branchName = "codeops/ambiguous-provider-match";
+  const responses = [
+    json({ ref: `refs/heads/${branchName}`, object: { sha: head, type: "commit" } }),
+    json({ ref: "refs/heads/main", object: { sha: base, type: "commit" } }),
+    json([pull({ number: 27 }), pull({ number: 28 })]),
+  ];
+  const calls = [];
+  const mutate = createGitHubMutationAdapter({
+    resolve: () => authority,
+    fetch: async (url, init) => {
+      calls.push({ url: String(url), init });
+      return responses.shift();
+    },
+  });
+  await assert.rejects(mutate(request("pull_request_create", {
+    repository, expectedHeadSha: head, expectedBaseSha: base,
+    headBranch: branchName, baseBranch: "main", title: "Ambiguous",
+    body: "Do not choose one provider result.", draft: false,
+  })), (error) => error instanceof GitHubMutationPreflightNoEffectError &&
+    /more than one pull request matches/.test(error.message));
+  assert.equal(new URL(calls[2].url).searchParams.get("per_page"), "2");
+  assert.deepEqual(calls.map(({ init }) => init.method ?? "GET"), ["GET", "GET", "GET"]);
+});
+
 test("rejects pull-request ref-name drift before the provider write", async () => {
   const responses = [
     json({ ref: "refs/heads/foreign", object: { sha: head, type: "commit" } }),
@@ -565,6 +598,26 @@ test("rejects an arbitrary create-publication tree, accepts exact replay, and re
     (await reconcileCreatedPull(request("pull_request_create", createInput), attemptedAt, observedAt)).state,
     "reconciled_satisfied",
   );
+  for (const drift of [
+    { title: "Injected title" },
+    { body: `Changed body\n\n<!-- codeops-provider-effect:${operationId} -->` },
+    { draft: true },
+  ]) {
+    const reconcileDrift = createGitHubMutationReconciler({
+      resolve: () => authority,
+      fetch: async () => json([pull({
+        title: createInput.title,
+        body: `${createInput.body}\n\n<!-- codeops-provider-effect:${operationId} -->`,
+        draft: false,
+        head: { ref: createInput.headBranch, sha: head },
+        base: { ref: createInput.baseBranch, sha: base },
+        ...drift,
+      })]),
+    });
+    assert.equal((await reconcileDrift(
+      request("pull_request_create", createInput), attemptedAt, observedAt,
+    )).state, "unknown");
+  }
 
   const updateInput = {
     repository,
@@ -603,12 +656,28 @@ test("rejects an arbitrary create-publication tree, accepts exact replay, and re
         databaseId: 9876,
         url: "https://github.com/anulman/codeops/pull/27#discussion_r9876",
         body: `Addressed.\n\n${githubEffectMarker(operationId)}`,
-      }], pageInfo: { hasPreviousPage: false } },
+      }], pageInfo: { hasPreviousPage: false, startCursor: null } },
     } } }),
   });
   const reply = await reconcileReply(replyRequest, attemptedAt, observedAt);
   assert.equal(reply.state, "reconciled_satisfied");
   assert.equal(reply.result.commentId, 9876);
+
+  const reconcileChangedReply = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async () => json({ data: { node: {
+      id: replyInput.threadId,
+      pullRequest: { number: 27, headRefOid: head,
+        repository: { nameWithOwner: repository } },
+      comments: { nodes: [{ databaseId: 9876,
+        url: "https://github.com/anulman/codeops/pull/27#discussion_r9876",
+        body: `Changed.\n\n${githubEffectMarker(operationId)}` }],
+        pageInfo: { hasPreviousPage: false, startCursor: null } },
+    } } }),
+  });
+  assert.equal((await reconcileChangedReply(
+    replyRequest, attemptedAt, observedAt,
+  )).state, "reconciled_not_observed");
 
   const reconcileAbsentReply = createGitHubMutationReconciler({
     resolve: () => authority,
@@ -619,7 +688,7 @@ test("rejects an arbitrary create-publication tree, accepts exact replay, and re
         headRefOid: head,
         repository: { nameWithOwner: repository },
       },
-      comments: { nodes: [], pageInfo: { hasPreviousPage: false } },
+      comments: { nodes: [], pageInfo: { hasPreviousPage: false, startCursor: null } },
     } } }),
   });
   assert.equal(
@@ -648,6 +717,94 @@ test("rejects an arbitrary create-publication tree, accepts exact replay, and re
   }), attemptedAt, observedAt)).state, "unknown");
 });
 
+test("fails closed when multiple review comments have the exact operation marker", async () => {
+  const replyInput = {
+    repository,
+    pullRequestNumber: 27,
+    expectedHeadSha: head,
+    threadId: "PRRT_duplicate_marker",
+    body: "Addressed.",
+  };
+  const marker = githubEffectMarker(operationId);
+  let page = 0;
+  const reconcile = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async () => {
+      page += 1;
+      return json({ data: { node: {
+        id: replyInput.threadId,
+        pullRequest: {
+          number: 27,
+          headRefOid: head,
+          repository: { nameWithOwner: repository },
+        },
+        comments: {
+          nodes: page === 1
+            ? [{ databaseId: 9876, url: "https://github.com/anulman/codeops/pull/27#discussion_r9876", body: `First.\n\n${marker}` }]
+            : [{ databaseId: 9877, url: "https://github.com/anulman/codeops/pull/27#discussion_r9877", body: `Second.\n\n${marker}` }],
+          pageInfo: page === 1
+            ? { hasPreviousPage: true, startCursor: "cursor-duplicate" }
+            : { hasPreviousPage: false, startCursor: null },
+        },
+      } } });
+    },
+  });
+  await assert.rejects(
+    reconcile(
+      request("review_thread_reply", replyInput),
+      new Date("2026-08-16T00:00:00.000Z"),
+      new Date("2026-08-16T00:02:00.000Z"),
+    ),
+    (error) => error instanceof GitHubMutationProviderAmbiguousError &&
+      /duplicate provider effect markers/.test(error.message),
+  );
+  assert.equal(page, 2);
+});
+
+test("searches hasPreviousPage before accepting one review marker", async () => {
+  const replyInput = {
+    repository,
+    pullRequestNumber: 27,
+    expectedHeadSha: head,
+    threadId: "PRRT_paginated_marker",
+    body: "Addressed.",
+  };
+  const calls = [];
+  const reconcile = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async (_url, init) => {
+      calls.push(JSON.parse(init.body));
+      const latest = calls.length === 1;
+      return json({ data: { node: {
+        id: replyInput.threadId,
+        pullRequest: {
+          number: 27,
+          headRefOid: head,
+          repository: { nameWithOwner: repository },
+        },
+        comments: {
+          nodes: latest ? [{
+            databaseId: 9876,
+            url: "https://github.com/anulman/codeops/pull/27#discussion_r9876",
+            body: `Addressed.\n\n${githubEffectMarker(operationId)}`,
+          }] : [],
+          pageInfo: latest
+            ? { hasPreviousPage: true, startCursor: "cursor-page-2" }
+            : { hasPreviousPage: false, startCursor: null },
+        },
+      } } });
+    },
+  });
+  const result = await reconcile(
+    request("review_thread_reply", replyInput),
+    new Date("2026-08-16T00:00:00.000Z"),
+    new Date("2026-08-16T00:02:00.000Z"),
+  );
+  assert.equal(result.state, "reconciled_satisfied");
+  assert.equal(result.result.commentId, 9876);
+  assert.deepEqual(calls.map((call) => call.variables.before), [null, "cursor-page-2"]);
+});
+
 test("reconciles an absent publication branch after the consistency window", async () => {
   const reconcile = createGitHubMutationReconciler({
     resolve: () => authority,
@@ -667,4 +824,43 @@ test("reconciles an absent publication branch after the consistency window", asy
     attemptedAt,
     new Date("2026-08-14T15:08:01.000Z"),
   )).state, "reconciled_not_observed");
+});
+
+test("rejects a duplicate pull-request marker on a later reconciliation page", async () => {
+  const headBranch = "codeops/paginated-provider-identity";
+  const marker = githubEffectMarker(operationId);
+  const firstPage = Array.from({ length: 100 }, (_, index) => pull({
+    number: index + 1,
+    body: index === 0 ? `First match.\n\n${marker}` : `Unrelated ${index}`,
+    head: { ref: headBranch, sha: head },
+    base: { ref: "main", sha: base },
+  }));
+  const secondPage = [pull({
+    number: 101,
+    body: `Later duplicate.\n\n${marker}`,
+    head: { ref: headBranch, sha: head },
+    base: { ref: "main", sha: base },
+  })];
+  const calls = [];
+  const reconcile = createGitHubMutationReconciler({
+    resolve: () => authority,
+    fetch: async (url) => {
+      calls.push(String(url));
+      return json(calls.length === 1 ? firstPage : secondPage);
+    },
+  });
+  await assert.rejects(reconcile(request("pull_request_create", {
+    repository,
+    expectedHeadSha: head,
+    expectedBaseSha: base,
+    headBranch,
+    baseBranch: "main",
+    title: "Paginated identity",
+    body: "Reject an ambiguous provider identity.",
+    draft: false,
+  }), new Date("2026-08-14T15:07:00.000Z"),
+  new Date("2026-08-14T15:08:01.000Z")),
+  GitHubMutationProviderAmbiguousError);
+  assert.deepEqual(calls.map((url) => new URL(url).searchParams.get("page")),
+    ["1", "2"]);
 });

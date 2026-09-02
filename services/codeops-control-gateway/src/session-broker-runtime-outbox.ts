@@ -274,6 +274,18 @@ export async function claimSessionRuntimeDispatch(
     throw new Error("runtime claim returned a different session authority");
   }
   if (Number(row.claim_count) > 1) {
+    await client.query(
+      `UPDATE codeops.provider_effect_receipts
+          SET state = 'not_attempted',
+              resolution_summary =
+                'Dispatch claim authority ended before any provider attempt.',
+              reconciliation_action = 'none', resolved_at = $1::timestamptz,
+              updated_at = $1::timestamptz
+        WHERE dispatch_id = $2 AND state = 'authorized'
+          AND attempted_at IS NULL
+          AND dispatch_claim_token IS DISTINCT FROM $3::uuid`,
+      [claimedAt, dispatch.dispatchId, claimToken],
+    );
     await cleanupNoReceiptGitHubBranchCandidatesForDispatch(
       client,
       dispatch.dispatchId,

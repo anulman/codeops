@@ -26,10 +26,13 @@ import {
 } from "./github-branch-publication.js";
 
 const MAX_GITHUB_JSON_BYTES = 1 * 1_024 * 1_024;
+const GITHUB_PULL_REQUEST_RECONCILIATION_MAX_PAGES = 10;
+const GITHUB_REVIEW_THREAD_RECONCILIATION_MAX_PAGES = 10;
 export const GITHUB_MUTATION_WRITE_TIMEOUT_MS =
   GITHUB_BRANCH_PUBLICATION_WRITE_TIMEOUT_MS;
 
 export class GitHubMutationPreflightNoEffectError extends Error {}
+export class GitHubMutationProviderAmbiguousError extends Error {}
 
 export function githubEffectMarker(operationId: string): string {
   if (!/^githubmutation-[0-9a-f]{64}$/.test(operationId)) {
@@ -328,6 +331,13 @@ function providerEffectText(operationId: string): string {
   return `codeops-provider-effect:${operationId}`;
 }
 
+function occurrenceCount(value: string, needle: string): number {
+  let count = 0;
+  for (let at = value.indexOf(needle); at >= 0;
+       at = value.indexOf(needle, at + needle.length)) count += 1;
+  return count;
+}
+
 async function requireMissingBranch(
   authority: RepositoryAuthority,
   branchName: string,
@@ -476,7 +486,10 @@ const reviewThreadIdentityResponse = z
                 url: z.string(),
                 body: z.string(),
               }).passthrough().nullable()).max(100),
-              pageInfo: z.object({ hasPreviousPage: z.boolean() }).passthrough(),
+              pageInfo: z.object({
+                hasPreviousPage: z.boolean(),
+                startCursor: z.string().nullable(),
+              }).passthrough(),
             })
             .passthrough()
             .optional(),
@@ -492,6 +505,7 @@ async function reviewThreadIdentity(
   authority: RepositoryAuthority,
   threadId: string,
   requestFetch: typeof fetch,
+  before?: string,
 ) {
   return reviewThreadIdentityResponse.parse(
     await githubJson(authority, "https://api.github.com/graphql", requestFetch, {
@@ -499,16 +513,16 @@ async function reviewThreadIdentity(
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         query: [
-          "query CodeOpsMutationThread($threadId: ID!) {",
+          "query CodeOpsMutationThread($threadId: ID!, $before: String) {",
           "  node(id: $threadId) {",
           "    ... on PullRequestReviewThread {",
           "      id pullRequest { number headRefOid repository { nameWithOwner } }",
-          "      comments(last: 100) { nodes { databaseId url body } pageInfo { hasPreviousPage } }",
+          "      comments(last: 100, before: $before) { nodes { databaseId url body } pageInfo { hasPreviousPage startCursor } }",
           "    }",
           "  }",
           "}",
         ].join("\n"),
-        variables: { threadId },
+        variables: { threadId, before: before ?? null },
       }),
     }),
   );
@@ -572,13 +586,17 @@ export function createGitHubMutationReconciler(input: {
           apiUrl(authority, `/git/commits/${current.object.sha}`),
           requestFetch,
         ));
+        const renderedMessage = `${request.input.commitMessage}\n\n${
+          providerEffectText(request.operationId)
+        }`;
         const identitySatisfied =
           current.ref === `refs/heads/${request.input.branchName}` &&
           current.object.type === "commit" &&
           commit.sha === current.object.sha &&
           commit.parents.length === 1 &&
           commit.parents[0]?.sha === request.input.expectedHeadSha &&
-          commit.message.split(/\r?\n/).includes(providerEffectText(request.operationId));
+          commit.message === renderedMessage &&
+          occurrenceCount(commit.message, providerEffectText(request.operationId)) === 1;
         if (!identitySatisfied) {
           return { state: "unknown", result: null, summary: "The branch commit does not contain the exact operation identity and base parent." };
         }
@@ -614,19 +632,47 @@ export function createGitHubMutationReconciler(input: {
         query.searchParams.set("head", `${owner}:${request.input.headBranch}`);
         query.searchParams.set("base", request.input.baseBranch);
         query.searchParams.set("per_page", "100");
-        const pulls = z.array(pullRequestResponse).max(100).parse(
-          await githubJson(authority, query, requestFetch),
-        );
         const marker = `<!-- ${providerEffectText(request.operationId)} -->`;
-        const current = pulls.find((candidate) =>
-          candidate.body?.split(/\r?\n/).includes(marker)
-        );
+        const renderedBody = `${request.input.body}\n\n${marker}`;
+        const matching: z.infer<typeof pullRequestResponse>[] = [];
+        let markerOccurrences = 0;
+        for (
+          let page = 1;
+          page <= GITHUB_PULL_REQUEST_RECONCILIATION_MAX_PAGES;
+          page += 1
+        ) {
+          query.searchParams.set("page", String(page));
+          const pulls = z.array(pullRequestResponse).max(100).parse(
+            await githubJson(authority, query, requestFetch),
+          );
+          for (const candidate of pulls) {
+            const body = candidate.body ?? "";
+            markerOccurrences += occurrenceCount(body, marker);
+            if (body === renderedBody) matching.push(candidate);
+          }
+          if (pulls.length < 100) break;
+          if (page === GITHUB_PULL_REQUEST_RECONCILIATION_MAX_PAGES) {
+            throw new GitHubMutationProviderAmbiguousError(
+              "pull-request reconciliation exceeded its bounded provider search",
+            );
+          }
+        }
+        if (markerOccurrences > 1 || matching.length > 1) {
+          throw new GitHubMutationProviderAmbiguousError(
+            "pull-request reconciliation found duplicate provider effect markers",
+          );
+        }
+        const current = matching[0];
         if (
           current === undefined ||
+          markerOccurrences !== 1 ||
           current.head.sha !== request.input.expectedHeadSha ||
           current.base.sha !== request.input.expectedBaseSha ||
           current.head.ref !== request.input.headBranch ||
-          current.base.ref !== request.input.baseBranch
+          current.base.ref !== request.input.baseBranch ||
+          current.title !== request.input.title ||
+          current.body !== renderedBody ||
+          (current.draft ?? false) !== request.input.draft
         ) {
           return { state: "unknown", result: null, summary: "No pull request has the exact operation marker and ref identities." };
         }
@@ -683,38 +729,86 @@ export function createGitHubMutationReconciler(input: {
         };
       }
       case "review_thread_reply": {
-        const current = await reviewThreadIdentity(authority, request.input.threadId, requestFetch);
-        const thread = current.data.node;
-        if (
-          current.errors !== undefined ||
-          thread === null ||
-          thread.pullRequest.number !== request.input.pullRequestNumber ||
-          thread.pullRequest.repository.nameWithOwner !== authority.repository
-        ) {
-          return { state: "unknown", result: null, summary: "The review-thread identity cannot be proved." };
-        }
         const marker = githubEffectMarker(request.operationId);
-        const comment = thread.comments?.nodes.find((entry) =>
-          entry?.body.split(/\r?\n/).includes(marker),
-        ) ?? null;
-        if (comment !== null) {
+        const matching: Array<{
+          readonly databaseId: number;
+          readonly url: string;
+          readonly body: string;
+        }> = [];
+        let markerOccurrences = 0;
+        const renderedBody = `${request.input.body}\n\n${marker}`;
+        let threadIdentity: {
+          readonly number: number;
+          readonly headRefOid: string;
+        } | undefined;
+        let before: string | undefined;
+        for (
+          let page = 1;
+          page <= GITHUB_REVIEW_THREAD_RECONCILIATION_MAX_PAGES;
+          page += 1
+        ) {
+          const current = await reviewThreadIdentity(
+            authority,
+            request.input.threadId,
+            requestFetch,
+            before,
+          );
+          const thread = current.data.node;
+          if (
+            current.errors !== undefined ||
+            thread === null ||
+            thread.comments === undefined ||
+            thread.pullRequest.number !== request.input.pullRequestNumber ||
+            thread.pullRequest.repository.nameWithOwner !== authority.repository ||
+            (threadIdentity !== undefined &&
+              (thread.pullRequest.number !== threadIdentity.number ||
+                thread.pullRequest.headRefOid !== threadIdentity.headRefOid))
+          ) {
+            return { state: "unknown", result: null, summary: "The review-thread identity cannot be proved." };
+          }
+          threadIdentity = {
+            number: thread.pullRequest.number,
+            headRefOid: thread.pullRequest.headRefOid,
+          };
+          for (const entry of thread.comments.nodes) {
+            if (entry === null) continue;
+            markerOccurrences += occurrenceCount(entry.body, marker);
+            if (entry.body === renderedBody) matching.push(entry);
+          }
+          if (!thread.comments.pageInfo.hasPreviousPage) break;
+          if (
+            page === GITHUB_REVIEW_THREAD_RECONCILIATION_MAX_PAGES ||
+            thread.comments.pageInfo.startCursor === null
+          ) {
+            throw new GitHubMutationProviderAmbiguousError(
+              "review-thread reconciliation exceeded its bounded provider search",
+            );
+          }
+          before = thread.comments.pageInfo.startCursor;
+        }
+        if (markerOccurrences > 1 || matching.length > 1) {
+          throw new GitHubMutationProviderAmbiguousError(
+            "review-thread reconciliation found duplicate provider effect markers",
+          );
+        }
+        const comment = matching[0];
+        if (comment !== undefined && threadIdentity !== undefined &&
+            markerOccurrences === 1 &&
+            threadIdentity.headRefOid === request.input.expectedHeadSha) {
           return {
             state: "reconciled_satisfied",
             result: githubMutationResultSchema.parse({
               version: "codeops.github-review-thread-reply-result/v1",
               repository: authority.repository,
               operationId: request.operationId,
-              pullRequestNumber: thread.pullRequest.number,
-              headSha: thread.pullRequest.headRefOid,
+              pullRequestNumber: threadIdentity.number,
+              headSha: threadIdentity.headRefOid,
               threadId: request.input.threadId,
               commentId: comment.databaseId,
               url: comment.url,
             }),
             summary: "The exact hidden operation marker is present in the review thread.",
           };
-        }
-        if (thread.comments?.pageInfo.hasPreviousPage !== false) {
-          return { state: "unknown", result: null, summary: "The bounded review-thread page cannot prove that the operation marker is absent." };
         }
         return windowElapsed
           ? { state: "reconciled_not_observed", result: null, summary: "The exact operation marker is absent after the provider consistency window." }
@@ -751,6 +845,7 @@ const reviewReplyResponse = z
           comment: z.object({
             databaseId: z.number().int().positive(),
             url: z.string(),
+            body: z.string(),
             pullRequest: z.object({
               number: z.number().int().positive(),
               headRefOid: z.string(),
@@ -943,10 +1038,15 @@ export function createGitHubMutationAdapter(input: {
           query.searchParams.set("state", "all");
           query.searchParams.set("head", `${owner}:${request.input.headBranch}`);
           query.searchParams.set("base", request.input.baseBranch);
-          query.searchParams.set("per_page", "1");
-          const existing = z.array(pullRequestResponse).max(1).parse(
+          query.searchParams.set("per_page", "2");
+          const existing = z.array(pullRequestResponse).max(2).parse(
             await githubJson(authority, query, requestFetch),
           );
+          if (existing.length > 1) {
+            throw new GitHubMutationProviderAmbiguousError(
+              "more than one pull request matches the exact head and base refs",
+            );
+          }
           if (existing.length !== 0) {
             throw new Error("GitHub pull request already exists for the exact branches");
           }
@@ -1137,7 +1237,7 @@ export function createGitHubMutationAdapter(input: {
                 query: [
                   "mutation CodeOpsMutationReply($threadId: ID!, $body: String!) {",
                   "  addPullRequestReviewThreadReply(input: { pullRequestReviewThreadId: $threadId, body: $body }) {",
-                  "    comment { databaseId url pullRequest { number headRefOid repository { nameWithOwner } } }",
+                  "    comment { databaseId url body pullRequest { number headRefOid repository { nameWithOwner } } }",
                   "  }",
                   "}",
                 ].join("\n"),
@@ -1156,6 +1256,8 @@ export function createGitHubMutationAdapter(input: {
           comment.pullRequest.number !== request.input.pullRequestNumber ||
           comment.pullRequest.headRefOid !== request.input.expectedHeadSha ||
           comment.pullRequest.repository.nameWithOwner !== authority.repository
+          || comment.body !== `${request.input.body}\n\n${githubEffectMarker(request.operationId)}`
+          || occurrenceCount(comment.body, githubEffectMarker(request.operationId)) !== 1
         ) {
           throw new Error("GitHub review-thread identity changed during reply");
         }
