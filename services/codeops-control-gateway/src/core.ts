@@ -522,10 +522,19 @@ export function createRunIdentity(request: AgentJobDispatchRequest): {
   };
 }
 
+const agentQualityDefaults = [
+  "Tautological tests are considered harmful. Tests must exercise observable behavior independently of the implementation under test.",
+  "Prefer the simplest architecture and the least code that satisfy the ticket and its acceptance criteria without sacrificing correctness, security, or maintainability.",
+] as const;
+
+const validationRecommendationDefault =
+  "Suggest concrete validation mechanisms that the coding agent should use before handoff. Prefer independent, observable checks that can falsify the implementation, and include exact commands when the repository supports them.";
+
 export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
   if (request.role === "coding-agent") {
     return [
       "You are the bounded CodeOps coding agent.",
+      ...agentQualityDefaults,
       `Work item: ${request.workItemId}`,
       `Exact base SHA: ${request.baseSha}`,
       `Task: ${request.summary}`,
@@ -647,6 +656,8 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
     };
     return [
       "You are the isolated CodeOps critic agent.",
+      ...agentQualityDefaults,
+      validationRecommendationDefault,
       "Review only; do not edit source. The gateway will reject any source patch.",
       `Work item: ${request.workItemId}`,
       `Exact base SHA: ${request.baseSha}`,
@@ -672,6 +683,8 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
         : []),
       "Pursue narrow ticket completion. Do not demand adjacent roadmap work in this candidate.",
       "Review every lens independently: ticket completion; unused/dead code; simplicity and maintainability; effective reuse or extension of existing systems; test effectiveness and likely bugs; user-facing behavior; and security/privacy.",
+      "Report only the most meaningful issues that will cause problems in production. Do not report speculative, cosmetic, or low-impact concerns that fail this primary test.",
+      "When a simpler architecture can mitigate a production bug, recommend that simpler architecture instead of additional complexity.",
       "Independently run at least one relevant focused test after inspecting the final source. Record every exact passing command in verificationTests; do not rely only on the coder's report.",
       "A ticket-required acceptance gap or concrete security/privacy regression is a must-fix finding, never a fast follow.",
       "Use fastFollowRecommendations for genuinely non-blocking next steps, especially valuable adjacent work discovered with evidence. Keep them narrow and actionable.",
@@ -686,6 +699,8 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
   if (request.researchStage.kind === "synthesis") {
     return [
       "You are the final QA Contract Researcher synthesizer.",
+      ...agentQualityDefaults,
+      validationRecommendationDefault,
       "Research only. The source workspace is read-only.",
       `Plane work item: ${request.workItemId}`,
       `Exact base SHA: ${request.baseSha}`,
@@ -792,6 +807,8 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
   };
   return [
     `You are the ${request.researchStage.persona} QA Contract Researcher perspective.`,
+    ...agentQualityDefaults,
+    validationRecommendationDefault,
     "Research only. The source workspace is read-only.",
     `Plane work item: ${request.workItemId}`,
     `Exact base SHA: ${request.baseSha}`,

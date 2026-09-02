@@ -547,6 +547,8 @@ test("delivers immutable ticket and sibling decision context to coding jobs", ()
   assert.match(prompt, /Pause at normal proof boundaries/);
   assert.match(prompt, /local or cluster resources/);
   assert.match(prompt, /one coherent, reviewable increment/);
+  assert.match(prompt, /Tautological tests are considered harmful/);
+  assert.match(prompt, /simplest architecture and the least code/);
   const resources = buildRunResources(
     {
       namespace: "codeops-trial",
@@ -618,6 +620,21 @@ test("critic prompt keeps an empty fast-follow pass inside the strict review sch
     },
   };
   const promptLines = buildAgentPrompt(critic).split("\n");
+  assert.ok(promptLines.includes(
+    "Tautological tests are considered harmful. Tests must exercise observable behavior independently of the implementation under test.",
+  ));
+  assert.ok(promptLines.includes(
+    "Prefer the simplest architecture and the least code that satisfy the ticket and its acceptance criteria without sacrificing correctness, security, or maintainability.",
+  ));
+  assert.ok(promptLines.includes(
+    "Suggest concrete validation mechanisms that the coding agent should use before handoff. Prefer independent, observable checks that can falsify the implementation, and include exact commands when the repository supports them.",
+  ));
+  assert.ok(promptLines.includes(
+    "Report only the most meaningful issues that will cause problems in production. Do not report speculative, cosmetic, or low-impact concerns that fail this primary test.",
+  ));
+  assert.ok(promptLines.includes(
+    "When a simpler architecture can mitigate a production bug, recommend that simpler architecture instead of additional complexity.",
+  ));
   assert.deepEqual(
     promptLines.filter((line) => line.includes("planeMutationAuthorized")),
     [
@@ -908,6 +925,14 @@ test("runs a distinct ticket-specific synthesis checkpoint after persona researc
     ...request,
     researchStage: { kind: "synthesis", reports: [personaReport] },
   };
+  for (const planningPrompt of [
+    buildAgentPrompt(request),
+    buildAgentPrompt(synthesisRequest),
+  ]) {
+    assert.match(planningPrompt, /Tautological tests are considered harmful/);
+    assert.match(planningPrompt, /simplest architecture and the least code/);
+    assert.match(planningPrompt, /Suggest concrete validation mechanisms/);
+  }
   assert.match(buildAgentPrompt(synthesisRequest), /no more than five ranked findings/);
   assert.match(
     buildAgentPrompt(synthesisRequest),
