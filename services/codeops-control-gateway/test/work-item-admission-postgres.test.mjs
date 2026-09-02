@@ -1,11 +1,20 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
+import test, { after, before } from "node:test";
 import { Client } from "pg";
 import { canonicalJsonText, createEventId, createTransitionId, DEFAULT_SESSION_BUDGET_V2_LIMITS,
   projectSessionBudgetV2, sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
 import { migrateSessionBroker } from "../dist/session-broker-migration.js";
+import {
+  authorizeSessionRuntimeGitHubMutation,
+  beginSessionRuntimeGitHubMutationAttempt,
+  completeSessionRuntimeGitHubMutation,
+  SessionRuntimeGitHubMutationConflictError,
+} from "../dist/session-runtime-github-mutations.js";
+import { loadUnknownProviderEffectReconciliation } from
+  "../dist/provider-effect-receipts.js";
+import { submitSessionRuntimePermission } from "../dist/session-runtime-permissions.js";
 import { serveSessionRuntime } from "../dist/session-broker-runtime-http.js";
 import { admitSessionRuntimeWorkItem, WorkItemAdmissionConflictError } from "../dist/work-item-admission.js";
 import { sessionCapabilitiesFor } from "../dist/session-broker-transitions.js";
@@ -25,6 +34,19 @@ async function client() {
   await connection.connect();
   return connection;
 }
+
+let suiteLock;
+before(async () => {
+  if (skip !== false) return;
+  requireDedicatedDatabase();
+  suiteLock = await client();
+  await suiteLock.query("SELECT pg_advisory_lock(hashtext('codeops-control-gateway-postgres-tests'))");
+});
+after(async () => {
+  if (suiteLock === undefined) return;
+  await suiteLock.query("SELECT pg_advisory_unlock(hashtext('codeops-control-gateway-postgres-tests'))");
+  await suiteLock.end();
+});
 
 const parentSessionId = "session-parent";
 const driftSessionId = "session-drift";
@@ -138,6 +160,36 @@ async function admit(connection, request = admissionRequest(0), time = admittedA
     now: () => new Date(time) });
 }
 
+async function commitGitHubPermissionDecision(connection, childSessionId, permission, ordinal = 0) {
+  const current = (await connection.query(
+    "SELECT snapshot_json FROM codeops.sessions WHERE session_id=$1",
+    [childSessionId],
+  )).rows[0].snapshot_json;
+  const committedAt = `2026-08-30T10:${String(12 + ordinal).padStart(2, "0")}:00.000Z`;
+  const next = { ...current, state: "running", pendingPermission: null,
+    eventCursor: current.eventCursor + 1, capabilities: sessionCapabilitiesFor("running", false),
+    updatedAt: committedAt };
+  const digit = String(ordinal + 1);
+  const commandId = `${digit.repeat(8)}-${digit.repeat(4)}-4${digit.repeat(3)}-8${digit.repeat(3)}-${digit.repeat(12)}`;
+  const idempotencyKey = `${digit.repeat(7)}2-${digit.repeat(3)}2-4${digit.repeat(2)}2-8${digit.repeat(2)}2-${digit.repeat(11)}2`;
+  const command = { version: "codeops.session-command/v1", sessionId: childSessionId,
+    generation: 1, leaseId: current.lease.leaseId, idempotencyKey,
+    type: "respond_permission", permissionRequestId: permission.request.requestId,
+    decision: { outcome: "selected", optionId: "allow-once" } };
+  const result = { version: "codeops.session-command-result/v1", commandId,
+    sessionId: childSessionId, generation: 1, leaseId: current.lease.leaseId,
+    idempotencyKey, type: "respond_permission", disposition: "committed",
+    eventCursor: next.eventCursor, snapshot: next, committedAt };
+  await connection.query(`INSERT INTO codeops.session_commands
+    (command_id,session_id,idempotency_key,command_json,result_json,principal_id,committed_at)
+    VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7::timestamptz)`,
+  [commandId, childSessionId, idempotencyKey, canonicalJsonText(command),
+    canonicalJsonText(result), owner, committedAt]);
+  await connection.query(`UPDATE codeops.sessions SET snapshot_json=$2::jsonb,updated_at=$3::timestamptz
+    WHERE session_id=$1`, [childSessionId, canonicalJsonText(next), committedAt]);
+  return { command, result };
+}
+
 test("PostgreSQL applies and truthfully reverts the admission migration", { skip }, async () => {
   requireDedicatedDatabase();
   const connection = await client();
@@ -147,11 +199,89 @@ test("PostgreSQL applies and truthfully reverts the admission migration", { skip
     assert.deepEqual((await connection.query(`SELECT table_name FROM information_schema.tables
       WHERE table_schema='codeops' AND table_name IN ('project_plan_approvals','work_item_admissions') ORDER BY table_name`))
       .rows.map((row) => row.table_name), ["project_plan_approvals", "work_item_admissions"]);
+    const consumptionRevert = await readFile(new URL(
+      "../sql/runtime-permission-consumption-v1-revert.sql", import.meta.url), "utf8");
+    await connection.query(consumptionRevert);
     const revert = await readFile(new URL("../sql/work-item-admission-v1-revert.sql", import.meta.url), "utf8");
     await connection.query(revert);
     assert.equal((await connection.query("SELECT count(*)::integer count FROM codeops.schema_migrations WHERE migration_name='work-item-admission-v1'"))
       .rows[0].count, 0);
     assert.equal((await connection.query("SELECT to_regclass('codeops.work_item_admissions') relation")).rows[0].relation, null);
+  } finally { await connection.end(); }
+});
+
+test("PostgreSQL fences legacy GitHub authority without admission or permission rows", { skip }, async () => {
+  requireDedicatedDatabase();
+  const connection = await client();
+  try {
+    await resetAndSeed(connection);
+    const revert = await readFile(new URL(
+      "../sql/runtime-permission-consumption-v1-revert.sql", import.meta.url), "utf8");
+    await connection.query(revert);
+    const permissionEffectId = `githubmutation-${"a".repeat(64)}`;
+    const missingPermissionEffectId = `githubmutation-${"b".repeat(64)}`;
+    const unattemptedMissingPermissionEffectId = `githubmutation-${"e".repeat(64)}`;
+    const operation = { kind: "github_mutation", repository: workItems[0].repository,
+      operation: "check_rerun", pullRequestNumber: null, targetId: "1234",
+      expectedHeadSha: sourceSha, payloadJson: "{}" };
+    const permission = { version: "codeops.session-runtime-permission-submission/v1",
+      claimToken, request: { requestId: "permission-legacy-without-admission",
+        title: "Legacy permission", description: "Historical row.", operation,
+        operationDigest: sha256CanonicalJsonDigest(operation),
+        options: [{ optionId: "allow-once", label: "Allow once" }],
+        requestedAt: admittedAt }, acpSessionId: "codeops-github",
+      toolCallId: permissionEffectId,
+      options: [{ optionId: "allow-once", acpOptionId: "allow-once" }] };
+    await connection.query(`INSERT INTO codeops.session_runtime_permission_requests
+      (dispatch_id,request_id,session_id,request_json,created_at)
+      VALUES($1,$2,$3,$4::jsonb,$5::timestamptz)`,
+    [parentDispatchId, permission.request.requestId, parentSessionId,
+      canonicalJsonText(permission), admittedAt]);
+    await connection.query(`INSERT INTO codeops.provider_effect_receipts
+      (effect_id,provider,repository,operation,pull_request_number,target_id,
+       expected_head_sha,session_id,dispatch_id,payload_digest,permission_digest,
+       state,reconciliation_action,authorized_at,attempted_at,updated_at)
+      VALUES($1,'github',$2,'check_rerun',NULL,'1234',$3,$4,$5,$6,$7,
+       'unknown','inspect_check_attempts',$8::timestamptz,$8::timestamptz,
+       $8::timestamptz)`, [missingPermissionEffectId, workItems[0].repository,
+      sourceSha, parentSessionId, parentDispatchId, `sha256:${"c".repeat(64)}`,
+      `sha256:${"d".repeat(64)}`, admittedAt]);
+    await connection.query(`INSERT INTO codeops.provider_effect_receipts
+      (effect_id,provider,repository,operation,pull_request_number,target_id,
+       expected_head_sha,session_id,dispatch_id,payload_digest,permission_digest,
+       state,reconciliation_action,authorized_at,updated_at)
+      VALUES($1,'github',$2,'check_rerun',NULL,'5678',$3,$4,$5,$6,$7,
+       'authorized','inspect_check_attempts',$8::timestamptz,$8::timestamptz)`,
+    [unattemptedMissingPermissionEffectId, workItems[0].repository,
+      sourceSha, parentSessionId, parentDispatchId, `sha256:${"e".repeat(64)}`,
+      `sha256:${"f".repeat(64)}`, admittedAt]);
+    const migration = await readFile(new URL(
+      "../sql/runtime-permission-consumption-v1.sql", import.meta.url), "utf8");
+    await connection.query(migration);
+    const fencedPermission = (await connection.query(
+      `SELECT legacy_non_replayable,admission_id,operation_id
+         FROM codeops.session_runtime_permission_requests WHERE request_id=$1`,
+      [permission.request.requestId])).rows[0];
+    assert.deepEqual(fencedPermission, {
+      legacy_non_replayable: true, admission_id: null, operation_id: null,
+    });
+    const fencedReceipt = (await connection.query(
+      `SELECT legacy_non_replayable,state,attempted_at IS NOT NULL AS attempted,
+              permission_request_id,provider_effect_marker
+         FROM codeops.provider_effect_receipts WHERE effect_id=$1`,
+      [missingPermissionEffectId])).rows[0];
+    assert.deepEqual(fencedReceipt, { legacy_non_replayable: true,
+      state: "operator_resolved", attempted: true, permission_request_id: null,
+      provider_effect_marker: `codeops-provider-effect:${missingPermissionEffectId}` });
+    const unattemptedFencedReceipt = (await connection.query(
+      `SELECT legacy_non_replayable,state,attempted_at IS NOT NULL AS attempted,
+              permission_request_id,provider_effect_marker
+         FROM codeops.provider_effect_receipts WHERE effect_id=$1`,
+      [unattemptedMissingPermissionEffectId])).rows[0];
+    assert.deepEqual(unattemptedFencedReceipt, { legacy_non_replayable: true,
+      state: "not_attempted", attempted: false, permission_request_id: null,
+      provider_effect_marker:
+        `codeops-provider-effect:${unattemptedMissingPermissionEffectId}` });
   } finally { await connection.end(); }
 });
 
@@ -163,12 +293,13 @@ test("PostgreSQL enforces admission constraints, rollback visibility, and row lo
     await assert.rejects(setup.query("UPDATE codeops.work_item_admissions SET source_sha=$2 WHERE admission_id=$1",
       [created.admissionId, "b".repeat(40)]), /immutable/);
     await setup.query("BEGIN");
-    await setup.query("SET LOCAL session_replication_role='replica'");
+    await setup.query("ALTER TABLE codeops.project_plan_approvals DISABLE TRIGGER project_plan_approvals_immutable");
     await assert.rejects(setup.query("UPDATE codeops.project_plan_approvals SET authority_json='{}'::jsonb"),
       (error) => error.code === "23514");
     await setup.query("ROLLBACK");
 
-    await first.query("BEGIN"); await first.query("SET LOCAL session_replication_role='replica'");
+    await first.query("BEGIN");
+    await first.query("ALTER TABLE codeops.work_item_admissions DISABLE TRIGGER work_item_admissions_immutable");
     await first.query("UPDATE codeops.work_item_admissions SET authority_digest=$2 WHERE admission_id=$1",
       [created.admissionId, `sha256:${"f".repeat(64)}`]);
     assert.notEqual((await second.query("SELECT authority_digest FROM codeops.work_item_admissions WHERE admission_id=$1",
@@ -243,6 +374,145 @@ test("PostgreSQL rejects schema-valid parent dispatch decision identity drift on
       /claimed parent dispatch snapshot identity does not match/);
     assert.equal((await connection.query("SELECT count(*)::integer count FROM codeops.work_item_admissions")).rows[0].count, 1);
   } finally { await connection.end(); }
+});
+
+test("PostgreSQL consumes one admitted runtime permission under concurrency and retains its authority", { skip }, async () => {
+  requireDedicatedDatabase();
+  const setup = await client(); const first = await client(); const second = await client();
+  try {
+    await resetAndSeed(setup);
+    const admitted = await admit(setup);
+    const child = admissionRequest(0).child;
+    const runtimeClaim = "abababab-abab-4bab-8bab-abababababab";
+    const runtimeWorker = "runtime-worker:child-0";
+    await setup.query(`UPDATE codeops.session_runtime_outbox
+      SET status='claimed',claim_token=$2,claimed_by=$3,claimed_at=$4::timestamptz,
+          claim_expires_at=$5::timestamptz,claim_count=1
+      WHERE dispatch_id=$1`, [admitted.dispatchId, runtimeClaim, runtimeWorker,
+      "2026-08-30T10:05:00.000Z", "2026-08-30T11:00:00.000Z"]);
+    const input = { repository: workItems[0].repository, pullRequestNumber: 27,
+      expectedHeadSha: sourceSha, expectedBaseSha: "b".repeat(40),
+      body: "Apply the exact admitted update." };
+    const operationName = "pull_request_update";
+    const operationId = `githubmutation-${createHash("sha256").update(canonicalJsonText({
+      dispatchId: admitted.dispatchId, claimToken: runtimeClaim,
+      operation: operationName, input,
+    })).digest("hex")}`;
+    const operation = { kind: "github_mutation", repository: input.repository,
+      operation: operationName, pullRequestNumber: 27, targetId: null,
+      expectedHeadSha: input.expectedHeadSha, payloadJson: canonicalJsonText(input) };
+    const permissionRequestId = `permission-${createHash("sha256")
+      .update(canonicalJsonText(operation)).update("\0").update(admitted.dispatchId)
+      .update("\0").update(operationId).digest("hex")}`;
+    const permission = { version: "codeops.session-runtime-permission-submission/v1",
+      claimToken: runtimeClaim, request: { requestId: permissionRequestId,
+        title: "Allow exact update?", description: "Consume one admitted permission.",
+        operation, operationDigest: sha256CanonicalJsonDigest(operation),
+        options: [{ optionId: "allow-once", label: "Allow once" },
+          { optionId: "deny", label: "Do not allow" }],
+        requestedAt: "2026-08-30T10:10:00.000Z" }, acpSessionId: "codeops-github",
+      toolCallId: operationId, options: [
+        { optionId: "allow-once", acpOptionId: "allow-once" },
+        { optionId: "deny", acpOptionId: "deny" }] };
+    await submitSessionRuntimePermission(setup, { dispatchId: admitted.dispatchId,
+      workerId: runtimeWorker, submission: permission,
+      now: () => new Date("2026-08-30T10:10:30.000Z") });
+    const decision = await commitGitHubPermissionDecision(
+      setup, child.sessionId, permission,
+    );
+    const request = { version: "codeops.session-runtime-github-mutation-request/v1",
+      claimToken: runtimeClaim, operation: operationName, operationId, input };
+    const authorization = await authorizeSessionRuntimeGitHubMutation(setup, {
+      dispatchId: admitted.dispatchId, workerId: runtimeWorker, request,
+      now: () => new Date("2026-08-30T10:13:00.000Z"),
+    });
+    assert.equal(authorization.disposition, "authorized");
+    const recovered = await authorizeSessionRuntimeGitHubMutation(setup, {
+      dispatchId: admitted.dispatchId, workerId: runtimeWorker, request,
+      now: () => new Date("2026-08-30T10:14:00.000Z"),
+    });
+    assert.deepEqual(recovered, authorization);
+    assert.equal((await setup.query(`SELECT pull_request_number,permission_request_id,
+      admission_id,session_generation,session_lease_id,authorization_expires_at
+      FROM codeops.provider_effect_receipts WHERE effect_id=$1`, [operationId])).rows[0]
+      .pull_request_number, 27);
+
+    const attempts = await Promise.allSettled([first, second].map((connection) =>
+      beginSessionRuntimeGitHubMutationAttempt(connection, {
+        request: authorization.request,
+        now: () => new Date("2026-08-30T10:15:00.000Z"),
+      })));
+    assert.equal(attempts.filter((attempt) => attempt.status === "fulfilled").length, 1);
+    assert.equal(attempts.filter((attempt) => attempt.status === "rejected").length, 1);
+    await assert.rejects(authorizeSessionRuntimeGitHubMutation(setup, {
+      dispatchId: admitted.dispatchId, workerId: runtimeWorker, request,
+      now: () => new Date("2026-08-30T10:16:00.000Z"),
+    }), /outcome is not known/);
+    assert.equal((await setup.query(`SELECT state
+      FROM codeops.provider_effect_receipts WHERE effect_id=$1`, [operationId]))
+      .rows[0].state, "attempting");
+
+    await setup.query(`UPDATE codeops.provider_effect_receipts
+      SET attempted_at=now() - interval '60 seconds' WHERE effect_id=$1`,
+    [operationId]);
+    await assert.rejects(loadUnknownProviderEffectReconciliation(
+      setup, operationId, owner,
+    ), /not eligible for reconciliation/);
+    assert.equal((await setup.query(`SELECT state
+      FROM codeops.provider_effect_receipts WHERE effect_id=$1`, [operationId]))
+      .rows[0].state, "attempting");
+
+    const completedAt = new Date((await setup.query(
+      "SELECT now() + interval '3 minutes' AS completed_at",
+    )).rows[0].completed_at);
+    const providerResult = {
+      version: "codeops.github-pull-request-update-result/v1",
+      repository: input.repository, operationId, pullRequestNumber: 27,
+      headSha: sourceSha, baseSha: input.expectedBaseSha,
+      title: "Admitted update", body: input.body, baseBranch: "main",
+      url: "https://github.com/example-org/example-repository/pull/27",
+    };
+    assert.deepEqual(await completeSessionRuntimeGitHubMutation(setup, {
+      request: authorization.request, result: providerResult,
+      now: () => completedAt,
+    }), providerResult);
+    await assert.rejects(beginSessionRuntimeGitHubMutationAttempt(setup, {
+      request: authorization.request,
+      now: () => new Date("2026-08-30T11:00:00.000Z"),
+    }), SessionRuntimeGitHubMutationConflictError);
+
+    await setup.query(`DELETE FROM codeops.session_runtime_permission_requests AS permission
+      USING codeops.session_runtime_outbox AS outbox
+      WHERE permission.dispatch_id=outbox.dispatch_id AND outbox.session_id=$1
+        AND NOT EXISTS (SELECT 1 FROM codeops.provider_effect_receipts AS effect
+          WHERE effect.dispatch_id=permission.dispatch_id
+            AND effect.permission_request_id=permission.request_id)`, [child.sessionId]);
+    assert.equal((await setup.query(`SELECT count(*)::integer count
+      FROM codeops.session_runtime_permission_requests WHERE dispatch_id=$1`,
+    [admitted.dispatchId])).rows[0].count, 1);
+
+    const duplicateId = "99999999-9999-4999-8999-999999999999";
+    const duplicateKey = "98989898-9898-4989-8989-989898989898";
+    const duplicateCommand = { ...decision.command, idempotencyKey: duplicateKey };
+    const duplicateResult = { ...decision.result, commandId: duplicateId,
+      idempotencyKey: duplicateKey };
+    await setup.query(`INSERT INTO codeops.session_commands
+      (command_id,session_id,idempotency_key,command_json,result_json,principal_id,committed_at)
+      VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7::timestamptz)`, [duplicateId,
+      child.sessionId, duplicateKey, canonicalJsonText(duplicateCommand),
+      canonicalJsonText(duplicateResult), owner, duplicateResult.committedAt]);
+    await assert.rejects(authorizeSessionRuntimeGitHubMutation(setup, {
+      dispatchId: admitted.dispatchId, workerId: runtimeWorker, request,
+      now: () => new Date("2026-08-30T10:15:00.000Z"),
+    }), /one durable permission decision/);
+
+    const revert = await readFile(new URL(
+      "../sql/runtime-permission-consumption-v1-revert.sql", import.meta.url), "utf8");
+    await assert.rejects(setup.query(revert), /cannot revert runtime permission consumption after authority activation/);
+  } finally {
+    await Promise.allSettled([first.query("ROLLBACK"), second.query("ROLLBACK")]);
+    await Promise.allSettled([first.end(), second.end(), setup.end()]);
+  }
 });
 
 test("PostgreSQL binds approval owners and payload projections with composite foreign keys", { skip }, async () => {
@@ -420,11 +690,11 @@ test("PostgreSQL replay survives parent, budget, lifecycle, and publication prog
 
     const originalParentDispatch = (await connection.query("SELECT dispatch_json FROM codeops.session_runtime_outbox WHERE dispatch_id=$1",
       [parentDispatchId])).rows[0].dispatch_json;
-    await connection.query("BEGIN"); await connection.query("SET LOCAL session_replication_role='replica'");
+    await connection.query("BEGIN");
     await connection.query("UPDATE codeops.session_runtime_outbox SET dispatch_json=jsonb_set(dispatch_json,'{command,prompt}','\"drift\"') WHERE dispatch_id=$1", [parentDispatchId]);
     await connection.query("COMMIT");
     await assert.rejects(admit(connection, request, "2026-08-30T10:07:00.000Z"), /parent dispatch payload drifted/);
-    await connection.query("BEGIN"); await connection.query("SET LOCAL session_replication_role='replica'");
+    await connection.query("BEGIN");
     await connection.query("UPDATE codeops.session_runtime_outbox SET dispatch_json=$2::jsonb WHERE dispatch_id=$1",
       [parentDispatchId, canonicalJsonText(originalParentDispatch)]); await connection.query("COMMIT");
 
@@ -450,6 +720,9 @@ test("PostgreSQL replay survives parent, budget, lifecycle, and publication prog
 
     await connection.query("DELETE FROM codeops.work_item_lifecycle_publications WHERE event_id=$1", [created.lifecycleEventId]);
     await assert.rejects(admit(connection, request, "2026-08-30T10:10:00.000Z"), /durable owner is missing/);
+    const consumptionRevert = await readFile(new URL(
+      "../sql/runtime-permission-consumption-v1-revert.sql", import.meta.url), "utf8");
+    await connection.query(consumptionRevert);
     const revert = await readFile(new URL("../sql/work-item-admission-v1-revert.sql", import.meta.url), "utf8");
     await assert.rejects(connection.query(revert), /cannot revert work-item admission while admitted work exists/);
     await connection.query("ROLLBACK");
@@ -458,7 +731,9 @@ test("PostgreSQL replay survives parent, budget, lifecycle, and publication prog
       .rows[0].count, 1);
 
     await resetAndSeed(connection); await admit(connection, request);
-    await connection.query("BEGIN"); await connection.query("SET LOCAL session_replication_role='replica'");
+    await connection.query("BEGIN");
+    await connection.query("ALTER TABLE codeops.work_item_admissions DISABLE TRIGGER work_item_admissions_immutable");
+    await connection.query("UPDATE codeops.session_runtime_outbox SET admission_id=NULL WHERE admission_id IS NOT NULL");
     await connection.query("DELETE FROM codeops.work_item_admissions"); await connection.query("COMMIT");
     await assert.rejects(connection.query(revert), /cannot revert work-item admission while project-plan approval authority exists/);
     await connection.query("ROLLBACK");

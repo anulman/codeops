@@ -554,15 +554,21 @@ export async function admitSessionRuntimeWorkItem(client: TransactionClient, inp
       sourceSha: request.workItem.sourceSha, lifecycleEventId: lifecycleEvent.eventId,
       supervisionEventId: supervisionEvent.eventId, request: requestAuthority, childSnapshot: child,
       childEvent, dispatch, lifecycleEvent, supervisionEvent, admittedAt } as const;
-    await client.query(`INSERT INTO codeops.work_item_admissions(admission_id,approval_id,parent_session_id,child_session_id,
+    const storedAdmission = await client.query(`INSERT INTO codeops.work_item_admissions(admission_id,approval_id,parent_session_id,child_session_id,
       child_dispatch_id,child_event_id,repository,provider,workspace_id,project_id,work_item_id,workflow_id,run_id,source_sha,
       lifecycle_event_id,supervision_event_id,authority_digest,authority_json,admitted_at)
-      VALUES($1,$2,$3,$4,$5,$6,$7,'plane',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::timestamptz)`,
+      VALUES($1,$2,$3,$4,$5,$6,$7,'plane',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::timestamptz)
+      RETURNING admission_id`,
       [request.admissionId, approvalId, parentSessionId, child.sessionId, dispatch.dispatchId, childEvent.eventId,
         request.workItem.repository, request.workItem.provider.workspaceId, request.workItem.provider.projectId,
         request.workItem.workItemId, request.workItem.workflowId, request.workItem.runId, request.workItem.sourceSha,
         lifecycleEvent.eventId, supervisionEvent.eventId, sha256CanonicalJsonDigest(admissionAuthority),
         canonicalJsonText(admissionAuthority), admittedAt]);
+    if (storedAdmission.rowCount !== 1) {
+      throw new WorkItemAdmissionConflictError(
+        "work-item admission did not establish one durable authority row",
+      );
+    }
     await client.query(`INSERT INTO codeops.session_runtime_outbox(dispatch_id,session_id,idempotency_key,principal_id,
       dispatch_json,status,available_at,created_at,admission_id) VALUES($1,$2,$3,$4,$5::jsonb,'pending',$6::timestamptz,$6::timestamptz,$7)`,
       [dispatch.dispatchId, child.sessionId, prompt.idempotencyKey, dispatch.principalId,

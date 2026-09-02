@@ -283,6 +283,13 @@ test("retained base-shaped failed Job releases the exact active lease once", asy
   assert.equal(client.current.state, "failed");
   assert.equal(client.current.lease.status, "released");
   assert.equal(client.current.lease.leaseId, leaseId);
+  const abandoned = client.calls.find(({ text }) =>
+    text.includes("SET state = 'not_attempted'"));
+  assert.ok(abandoned);
+  assert.match(abandoned.text, /attempted_at IS NULL/);
+  assert.deepEqual(abandoned.values, [
+    retainedObservation.observedAt, sessionId, generation, leaseId,
+  ]);
   assert.equal(await reconcileInteractiveRuntimeTerminal(client,
     retainedObservation), "duplicate");
   assert.equal(client.calls.filter(({ text }) =>

@@ -221,7 +221,12 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
     leaseId,
     JSON.stringify(Object.fromEntries(Object.entries(snapshot().identity).sort())),
   ]);
-  assert.match(client.calls[2].text, /FOR UPDATE OF manifest/);
+  assert.match(client.calls[2].text, /SET state = 'not_attempted'/);
+  assert.match(client.calls[2].text, /attempted_at IS NULL/);
+  assert.deepEqual(client.calls[2].values, [
+    "2026-08-04T18:00:00.000Z", dispatchId, claimToken,
+  ]);
+  assert.match(client.calls[3].text, /FOR UPDATE OF manifest/);
   assert.equal(client.calls.at(-1).text, "COMMIT");
 });
 

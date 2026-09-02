@@ -616,13 +616,32 @@ export async function reconcileInteractiveRuntimeTerminal(
       throw new Error("runtime terminal Session compare-and-swap failed");
     }
     await client.query(
+      `UPDATE codeops.provider_effect_receipts
+          SET state = 'not_attempted',
+              resolution_summary =
+                'Runtime became terminal before any provider attempt.',
+              reconciliation_action = 'none', resolved_at = $1::timestamptz,
+              updated_at = $1::timestamptz
+        WHERE session_id = $2 AND session_generation = $3
+          AND session_lease_id = $4 AND state = 'authorized'
+          AND attempted_at IS NULL`,
+      [updatedAt, observation.sessionId, observation.generation,
+        observation.leaseId],
+    );
+    await client.query(
       `DELETE FROM codeops.session_runtime_permission_requests AS permission
         USING codeops.session_runtime_outbox AS outbox
         WHERE permission.dispatch_id = outbox.dispatch_id
           AND outbox.session_id = $1
           AND (outbox.dispatch_json#>>'{command,generation}')::bigint = $2
           AND outbox.dispatch_json#>>'{command,leaseId}' = $3
-          AND outbox.status IN ('pending', 'claimed')`,
+          AND outbox.status IN ('pending', 'claimed')
+          AND NOT EXISTS (
+            SELECT 1
+              FROM codeops.provider_effect_receipts AS effect
+             WHERE effect.dispatch_id = permission.dispatch_id
+               AND effect.permission_request_id = permission.request_id
+          )`,
       [observation.sessionId, observation.generation, observation.leaseId],
     );
     await client.query(

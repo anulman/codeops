@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import test from "node:test";
+import test, { after, before } from "node:test";
 import { Client } from "pg";
 import {
   canonicalJsonText,
@@ -39,6 +39,19 @@ async function client() {
   await connection.connect();
   return connection;
 }
+
+let suiteLock;
+before(async () => {
+  if (skip !== false) return;
+  requireDedicatedDatabase();
+  suiteLock = await client();
+  await suiteLock.query("SELECT pg_advisory_lock(hashtext('codeops-control-gateway-postgres-tests'))");
+});
+after(async () => {
+  if (suiteLock === undefined) return;
+  await suiteLock.query("SELECT pg_advisory_unlock(hashtext('codeops-control-gateway-postgres-tests'))");
+  await suiteLock.end();
+});
 
 const dispatchId = "11111111-1111-4111-8111-111111111111";
 const claimToken = "22222222-2222-4222-8222-222222222222";
@@ -155,6 +168,155 @@ async function resetAndSeed(connection, status = "claimed") {
       claimed ? "2026-08-30T11:00:00.000Z" : null,
       claimed ? 1 : 0],
   );
+}
+
+async function seedAdmittedAuthority(connection) {
+  const parentSessionId = "session-candidate-authority-parent";
+  const parentDispatchId = "abababab-abab-4bab-8bab-abababababab";
+  const parentDispatchKey = "acacacac-acac-4cac-8cac-acacacacacac";
+  const admissionId = "77777777-7777-4777-8777-777777777777";
+  const approvalId = "66666666-6666-4666-8666-666666666666";
+  const decisionCommandId = "55555555-5555-4555-8555-555555555555";
+  const decisionKey = "56565656-5656-4565-8565-565656565656";
+  const planEventId = `sha256:${"1".repeat(64)}`;
+  const childEventId = `sha256:${"2".repeat(64)}`;
+  const supervisionEventId = `sha256:${"3".repeat(64)}`;
+  const lifecycleEventId = "candidate-lifecycle-event";
+  const permissionRequestId = "candidate-plan-permission";
+  const planDigest = `sha256:${"4".repeat(64)}`;
+  const workspaceId = "88888888-8888-4888-8888-888888888888";
+  const projectId = "99999999-9999-4999-8999-999999999999";
+  const workItemId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+  const workflowId = "candidate-authority-workflow";
+  const runId = "candidate-authority-run";
+  const parentSnapshot = { ...snapshot(), sessionId: parentSessionId };
+  const parentDispatch = { ...dispatch(), dispatchId: parentDispatchId,
+    command: { ...dispatch().command, sessionId: parentSessionId,
+      idempotencyKey: parentDispatchKey }, snapshot: parentSnapshot };
+  await connection.query(`INSERT INTO codeops.sessions(
+    session_id,generation,lease_id,snapshot_json,updated_at,owner_principal_id)
+    VALUES($1,1,$2,$3::jsonb,$4::timestamptz,$5)`,
+  [parentSessionId, leaseId, canonicalJsonText(parentSnapshot), seededAt, owner]);
+  await connection.query(`INSERT INTO codeops.session_runtime_outbox(
+    dispatch_id,session_id,idempotency_key,principal_id,dispatch_json,status,
+    available_at,created_at,claim_token,claimed_by,claimed_at,claim_expires_at,claim_count)
+    VALUES($1,$2,$3,$4,$5::jsonb,'claimed',$6::timestamptz,$6::timestamptz,
+      $7,$8,$9::timestamptz,$10::timestamptz,1)`,
+  [parentDispatchId, parentSessionId, parentDispatchKey, owner,
+    canonicalJsonText(parentDispatch), seededAt, claimToken, workerId,
+    "2026-08-30T10:01:00.000Z", "2026-08-30T11:00:00.000Z"]);
+  const command = { version: "codeops.session-command/v1", sessionId: parentSessionId,
+    generation: 1, leaseId, idempotencyKey: decisionKey, type: "respond_permission",
+    permissionRequestId, decision: { outcome: "selected", optionId: "allow-once" } };
+  const result = { version: "codeops.session-command-result/v1", commandId: decisionCommandId,
+    sessionId: parentSessionId, generation: 1, leaseId, idempotencyKey: decisionKey,
+    type: "respond_permission", disposition: "committed", eventCursor: 2,
+    snapshot: { sessionId: parentSessionId, generation: 1, lease: { leaseId }, eventCursor: 2 },
+    committedAt: seededAt };
+  await connection.query(`INSERT INTO codeops.session_commands(
+    command_id,session_id,idempotency_key,command_json,result_json,principal_id,committed_at)
+    VALUES($1,$2,$3,$4::jsonb,$5::jsonb,$6,$7::timestamptz)`,
+  [decisionCommandId, parentSessionId, decisionKey, canonicalJsonText(command),
+    canonicalJsonText(result), owner, seededAt]);
+  const events = [
+    { eventId: planEventId, sessionId: parentSessionId, cursor: 1, type: "acp_update",
+      update: { kind: "plan_update", planId: "candidate-plan" } },
+    { eventId: childEventId, sessionId, cursor: 1, type: "session_created" },
+    { eventId: supervisionEventId, sessionId: parentSessionId, cursor: 2, type: "acp_update" },
+  ];
+  for (const event of events) {
+    const eventJson = { version: "codeops.session-event/v1", eventId: event.eventId,
+      sessionId: event.sessionId, generation: 1, cursor: event.cursor, type: event.type,
+      ...(event.update === undefined ? {} : { update: event.update }), occurredAt: seededAt };
+    await connection.query(`INSERT INTO codeops.session_events(
+      event_id,session_id,generation,cursor,event_type,event_json,command_id,occurred_at)
+      VALUES($1,$2,1,$3,$4,$5::jsonb,$6,$7::timestamptz)`,
+    [event.eventId, event.sessionId, event.cursor, event.type, canonicalJsonText(eventJson),
+      decisionCommandId, seededAt]);
+  }
+  const planOperation = { kind: "project_plan", planId: "candidate-plan", planDigest, workItems: [] };
+  const permissionRequest = { version: "codeops.session-runtime-permission-submission/v1", claimToken,
+    request: { requestId: permissionRequestId, operation: planOperation, requestedAt: seededAt },
+    acpSessionId: "candidate-acp", toolCallId: "candidate-plan-call", options: [] };
+  await connection.query(`INSERT INTO codeops.session_runtime_permission_requests(
+    dispatch_id,request_id,session_id,request_json,created_at)
+    VALUES($1,$2,$3,$4::jsonb,$5::timestamptz)`,
+  [parentDispatchId, permissionRequestId, parentSessionId,
+    canonicalJsonText(permissionRequest), seededAt]);
+  const approval = { version: "codeops.project-plan-approval-authority/v1", approvalId,
+    parentSessionId, dispatchId: parentDispatchId, permissionRequestId, planEventId,
+    planId: "candidate-plan", planDigest, decisionCommandId, approvedByPrincipalId: owner,
+    workItems: [], parentDispatch: { dispatchId: parentDispatchId, principalId: owner,
+      command: { sessionId: parentSessionId } },
+    permissionRequest: { request: { requestId: permissionRequestId, operation: planOperation } },
+    planEvent: { eventId: planEventId, sessionId: parentSessionId,
+      update: { kind: "plan_update", planId: "candidate-plan" } },
+    decisionCommand: command, decisionResult: result, approvedAt: seededAt };
+  await connection.query(`INSERT INTO codeops.project_plan_approvals(
+    approval_id,parent_session_id,dispatch_id,permission_request_id,plan_event_id,plan_id,
+    plan_digest,decision_command_id,approved_by_principal_id,authority_digest,authority_json,approved_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::timestamptz)`,
+  [approvalId, parentSessionId, parentDispatchId, permissionRequestId, planEventId, "candidate-plan",
+    planDigest, decisionCommandId, owner, sha256CanonicalJsonDigest(approval),
+    canonicalJsonText(approval), seededAt]);
+  const lifecycleEvent = { version: "codeops.work-item-lifecycle-event/v1", eventId: lifecycleEventId,
+    transitionId: "candidate-lifecycle-transition", transitionKey: "candidate:admitted",
+    repository: { owner: "example-org", name: "example-repository" },
+    provider: { kind: "plane", workspaceId, projectId }, workItemId, workflowId, runId,
+    sequence: 1, sourceSha, occurredAt: seededAt };
+  await connection.query(`INSERT INTO codeops.work_item_lifecycle(
+    repository,provider,workspace_id,project_id,work_item_id,workflow_id,run_id,phase,
+    attention,sequence,source_sha,updated_at)
+    VALUES($1,'plane',$2,$3,$4,$5,$6,'in_progress','clear',1,$7,$8::timestamptz)`,
+  [repository, workspaceId, projectId, workItemId, workflowId, runId, sourceSha, seededAt]);
+  await connection.query(`INSERT INTO codeops.work_item_lifecycle_events(
+    event_id,transition_id,transition_key,repository,provider,workspace_id,project_id,
+    work_item_id,workflow_id,run_id,source_sha,sequence,event_digest,event_json,created_at)
+    VALUES($1,$2,$3,$4,'plane',$5,$6,$7,$8,$9,$10,1,$11,$12::jsonb,$13::timestamptz)`,
+  [lifecycleEventId, lifecycleEvent.transitionId, lifecycleEvent.transitionKey, repository,
+    workspaceId, projectId, workItemId, workflowId, runId, sourceSha, "5".repeat(64),
+    canonicalJsonText(lifecycleEvent), seededAt]);
+  const workItem = { repository, provider: { kind: "plane", workspaceId, projectId },
+    workItemId, workflowId, runId, sourceSha };
+  const admission = { version: "codeops.work-item-admission-authority/v1", admissionId,
+    approvalId, parentSessionId, childSessionId: sessionId, dispatchId,
+    childEventId, repository, provider: workItem.provider, workItemId, workflowId, runId,
+    sourceSha, lifecycleEventId, supervisionEventId,
+    request: { admissionId, workItem, child: { sessionId, dispatchId } },
+    childSnapshot: { sessionId }, childEvent: { eventId: childEventId },
+    dispatch: { dispatchId }, lifecycleEvent: { eventId: lifecycleEventId },
+    supervisionEvent: { eventId: supervisionEventId }, admittedAt: seededAt };
+  await connection.query(`INSERT INTO codeops.work_item_admissions(
+    admission_id,approval_id,parent_session_id,child_session_id,child_dispatch_id,child_event_id,
+    repository,provider,workspace_id,project_id,work_item_id,workflow_id,run_id,source_sha,
+    lifecycle_event_id,supervision_event_id,authority_digest,authority_json,admitted_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,'plane',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::timestamptz)`,
+  [admissionId, approvalId, parentSessionId, sessionId, dispatchId, childEventId, repository,
+    workspaceId, projectId, workItemId, workflowId, runId, sourceSha, lifecycleEventId,
+    supervisionEventId, sha256CanonicalJsonDigest(admission), canonicalJsonText(admission), seededAt]);
+  await connection.query("UPDATE codeops.session_runtime_outbox SET admission_id=$2 WHERE dispatch_id=$1",
+    [dispatchId, admissionId]);
+  return admissionId;
+}
+
+async function seedGitHubPermissionAuthorities(connection, operations) {
+  const admissionId = await seedAdmittedAuthority(connection);
+  for (const [index, operation] of operations.entries()) {
+    const requestId = `candidate-github-${String(index).padStart(3, "0")}`;
+    const requestJson = { version: "codeops.session-runtime-permission-submission/v1", claimToken,
+      request: { requestId, operation: { kind: "github_mutation", repository,
+        operation: "branch_publish", targetId: operation.targetId, expectedHeadSha: sourceSha },
+        operationDigest: operation.permissionDigest, requestedAt: seededAt },
+      acpSessionId: "candidate-acp", toolCallId: operation.operationId, options: [] };
+    await connection.query(`INSERT INTO codeops.session_runtime_permission_requests(
+      dispatch_id,request_id,session_id,request_json,created_at,admission_id,
+      session_generation,session_lease_id,operation_provider,operation_id)
+      VALUES($1,$2,$3,$4::jsonb,$5::timestamptz,$6,1,$7,'github',$8)`,
+    [dispatchId, requestId, sessionId, canonicalJsonText(requestJson), seededAt,
+      admissionId, leaseId, operation.operationId]);
+    operation.permissionRequestId = requestId;
+    operation.admissionId = admissionId;
+  }
 }
 
 function candidateFixture(changes = [
@@ -339,21 +501,29 @@ test("PostgreSQL keeps manifest replay identity after definitive chunk cleanup",
   try {
     await resetAndSeed(connection);
     const fixture = await stage(connection);
+    const permissionDigest = sha256CanonicalJsonDigest({ permission: fixture.operationId });
+    const authority = { operationId: fixture.operationId, targetId: "codeops/candidate-proof",
+      permissionDigest };
+    await seedGitHubPermissionAuthorities(connection, [authority]);
     await connection.query(
       `INSERT INTO codeops.provider_effect_receipts(
          effect_id,provider,repository,operation,pull_request_number,target_id,
          expected_head_sha,session_id,dispatch_id,payload_digest,
          permission_digest,state,evidence_json,resolution_summary,
-         reconciliation_action,authorized_at,attempted_at,resolved_at,updated_at)
+         reconciliation_action,authorized_at,attempted_at,resolved_at,updated_at,
+         permission_request_id,admission_id,session_generation,session_lease_id,
+         authorization_expires_at)
        VALUES($1,'github',$2,'branch_publish',NULL,'codeops/candidate-proof',$3,
          $4,$5,$6,$7,'succeeded',$8::jsonb,'Candidate publication succeeded.',
-         'none',$9::timestamptz,$10::timestamptz,$11::timestamptz,$11::timestamptz)`,
+         'none',$9::timestamptz,$10::timestamptz,$11::timestamptz,$11::timestamptz,
+         $12,$13,1,$14,$15::timestamptz)`,
       [fixture.operationId, repository, sourceSha, sessionId, dispatchId,
         sha256CanonicalJsonDigest({ candidate: fixture.manifest.candidate }),
-        sha256CanonicalJsonDigest({ permission: fixture.operationId }),
+        permissionDigest,
         canonicalJsonText({ version: "codeops.github-branch-publish-result/v1" }),
         "2026-08-30T10:03:00.000Z", "2026-08-30T10:04:00.000Z",
-        "2026-08-30T10:05:00.000Z"],
+        "2026-08-30T10:05:00.000Z", authority.permissionRequestId,
+        authority.admissionId, leaseId, "2026-08-30T11:00:00.000Z"],
     );
     await cleanupDefinitiveGitHubBranchCandidateChunks(connection, fixture.operationId);
     assert.equal((await connection.query(
@@ -372,6 +542,12 @@ test("PostgreSQL terminal cleanup progresses beyond 100 rows and retries idempot
   const connection = await client();
   try {
     await resetAndSeed(connection);
+    const permissions = Array.from({ length: 104 }, (_, index) => ({
+      operationId: `githubmutation-${(index + 1).toString(16).padStart(64, "0")}`,
+      targetId: "codeops/candidate-cleanup",
+      permissionDigest: `sha256:${"d".repeat(64)}`,
+    }));
+    await seedGitHubPermissionAuthorities(connection, permissions);
     await connection.query(
       `WITH identities AS (
          SELECT index,
@@ -418,13 +594,14 @@ test("PostgreSQL terminal cleanup progresses beyond 100 rows and retries idempot
          target_id, expected_head_sha, session_id, dispatch_id, payload_digest,
          permission_digest, state, evidence_json, resolution_summary,
          reconciliation_action, authorized_at, attempted_at, resolved_at,
-         updated_at)
-       SELECT operation_id, 'github', $1, 'branch_publish', NULL,
+         updated_at,permission_request_id,admission_id,session_generation,
+         session_lease_id,authorization_expires_at)
+       SELECT identities.operation_id, 'github', $1, 'branch_publish', NULL,
               'codeops/candidate-cleanup', $2, $3, $4,
               'sha256:' || repeat('c', 64), 'sha256:' || repeat('d', 64),
               state,
               CASE WHEN state = 'succeeded'
-                THEN jsonb_build_object('result', operation_id) ELSE NULL END,
+                THEN jsonb_build_object('result', identities.operation_id) ELSE NULL END,
               CASE WHEN state = 'succeeded'
                 THEN 'Candidate publication succeeded.' ELSE NULL END,
               CASE WHEN state IN ('attempting', 'unknown')
@@ -434,8 +611,13 @@ test("PostgreSQL terminal cleanup progresses beyond 100 rows and retries idempot
                 ELSE $5::timestamptz + interval '1 minute' END,
               CASE WHEN state = 'succeeded'
                 THEN $5::timestamptz + interval '2 minutes' ELSE NULL END,
-              $5::timestamptz + interval '2 minutes'
-         FROM identities`,
+              $5::timestamptz + interval '2 minutes',permission.request_id,
+              permission.admission_id,permission.session_generation,
+              permission.session_lease_id,$5::timestamptz + interval '1 hour'
+         FROM identities
+         JOIN codeops.session_runtime_permission_requests AS permission
+           ON permission.operation_provider='github'
+          AND permission.operation_id=identities.operation_id`,
       [repository, sourceSha, sessionId, dispatchId, seededAt],
     );
 

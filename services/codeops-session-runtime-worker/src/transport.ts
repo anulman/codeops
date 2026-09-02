@@ -1,4 +1,5 @@
 import {
+  canonicalJsonText,
   githubMutationResultSchema,
   githubBranchPublishCandidateManifestRequestSchema,
   githubBranchPublishCandidateChunkRequestSchema,
@@ -31,6 +32,7 @@ import {
   workItemUpdateResultSchema,
   type SessionCommandResult,
   type GitHubMutationResult,
+  type GitHubMutationOperation,
   type GitHubBranchPublishCandidateManifestRequest,
   type GitHubBranchPublishCandidateChunkRequest,
   type GitHubReadResult,
@@ -55,6 +57,7 @@ import {
   type WorkItemUpdateInput,
   type WorkItemUpdateResult,
 } from "@codeops/codeops-contracts";
+import { createHash } from "node:crypto";
 import { z } from "zod";
 import { setTimeout as delay } from "node:timers/promises";
 
@@ -135,6 +138,10 @@ export type RuntimeGitHubMutationRequest =
     : never;
 
 export interface RuntimeExecutionContext {
+  bindGitHubMutationOperationId?(
+    operation: GitHubMutationOperation,
+    input: unknown,
+  ): string;
   requestPermission(
     submission: RuntimePermissionSubmission,
   ): Promise<NonNullable<SessionRuntimePermissionResult["decision"]>>;
@@ -668,6 +675,13 @@ export class SessionRuntimeTransport {
     const execution = await input.execute(claim.dispatch, {
       // Claim authority remains captured inside the transport callback. The
       // ACP/workspace executor receives neither bearer nor claim token.
+      bindGitHubMutationOperationId: (operation, mutationInput) =>
+        `githubmutation-${createHash("sha256").update(canonicalJsonText({
+          dispatchId: claim.dispatch.dispatchId,
+          claimToken: claim.claimToken,
+          operation,
+          input: mutationInput,
+        })).digest("hex")}`,
       requestPermission: (submission) =>
         this.#requestPermission(claim, submission, now),
       createWorkItem: (workItem) => this.#createWorkItem(claim, workItem, now),

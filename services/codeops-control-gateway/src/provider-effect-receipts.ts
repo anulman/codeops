@@ -47,8 +47,14 @@ interface ReconciliationAuthorityRow extends Record<string, unknown> {
   readonly operation: unknown;
   readonly attempted_at: unknown;
   readonly state: unknown;
+  readonly permission_request_id: unknown;
+  readonly admission_id: unknown;
+  readonly session_generation: unknown;
+  readonly session_lease_id: unknown;
+  readonly authorization_expires_at: unknown;
   readonly request_json: unknown;
   readonly dispatch_json: unknown;
+  readonly provider_effect_marker: unknown;
 }
 
 function timestamp(value: unknown): string | null {
@@ -152,12 +158,22 @@ export async function loadUnknownProviderEffectReconciliation(
   const result = await client.query<ReconciliationAuthorityRow>(
     `SELECT effect.effect_id, effect.session_id, effect.dispatch_id,
             effect.payload_digest, effect.permission_digest, effect.operation,
-            effect.attempted_at, effect.state, permission.request_json,
+            effect.attempted_at, effect.state, effect.permission_request_id,
+            effect.admission_id, effect.session_generation,
+            effect.session_lease_id, effect.authorization_expires_at,
+            effect.provider_effect_marker,
+            permission.request_json,
             outbox.dispatch_json
        FROM codeops.provider_effect_receipts AS effect
        JOIN codeops.session_runtime_permission_requests AS permission
          ON permission.dispatch_id = effect.dispatch_id
-        AND permission.request_json->>'toolCallId' = effect.effect_id
+        AND permission.request_id = effect.permission_request_id
+        AND permission.session_id = effect.session_id
+        AND permission.admission_id = effect.admission_id
+        AND permission.session_generation = effect.session_generation
+        AND permission.session_lease_id = effect.session_lease_id
+        AND permission.operation_provider = effect.provider
+        AND permission.operation_id = effect.effect_id
        JOIN codeops.session_runtime_outbox AS outbox
          ON outbox.dispatch_id = effect.dispatch_id
        JOIN codeops.sessions AS session
@@ -168,6 +184,7 @@ export async function loadUnknownProviderEffectReconciliation(
   );
   const row = result.rows[0];
   if (row === undefined) throw new Error("provider effect was not found");
+  if (result.rows.length !== 1) throw new Error("provider effect authority is ambiguous");
   if (row.state !== "unknown" || row.attempted_at === null) {
     throw new Error("provider effect is not eligible for reconciliation");
   }
@@ -175,6 +192,8 @@ export async function loadUnknownProviderEffectReconciliation(
   const dispatch = sessionRuntimeDispatchSchema.parse(row.dispatch_json);
   if (
     permission.toolCallId !== effectId ||
+    (typeof row.provider_effect_marker === "string" &&
+      row.provider_effect_marker !== `codeops-provider-effect:${effectId}`) ||
     permission.request.operation.kind !== "github_mutation" ||
     dispatch.dispatchId !== row.dispatch_id ||
     dispatch.command.sessionId !== row.session_id
@@ -193,14 +212,13 @@ export async function loadUnknownProviderEffectReconciliation(
   if (row.operation === "branch_publish") {
     const legacy = githubBranchPublishLegacyInlineInputSchema.safeParse(durableInput);
     if (legacy.success) {
-      const expectedEffectId = `githubmutation-${createHash("sha256")
-        .update(canonicalJsonText({
-          dispatchId: row.dispatch_id,
-          operation: "branch_publish",
-          input: legacy.data,
-        }))
-        .digest("hex")}`;
-      if (expectedEffectId !== effectId) {
+      const expectedEffectIds = [
+        { dispatchId: row.dispatch_id, operation: "branch_publish", input: legacy.data },
+        { dispatchId: row.dispatch_id, claimToken: permission.claimToken,
+          operation: "branch_publish", input: legacy.data },
+      ].map((identity) => `githubmutation-${createHash("sha256")
+        .update(canonicalJsonText(identity)).digest("hex")}`);
+      if (!expectedEffectIds.includes(effectId)) {
         throw new Error("provider effect reconciliation authority is inconsistent");
       }
       await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
@@ -232,6 +250,11 @@ export async function loadUnknownProviderEffectReconciliation(
     provenance: {
       sessionId: row.session_id,
       dispatchId: row.dispatch_id,
+      admissionId: row.admission_id,
+      sessionGeneration: Number(row.session_generation),
+      sessionLeaseId: row.session_lease_id,
+      permissionRequestId: row.permission_request_id,
+      authorizationExpiresAt: timestamp(row.authorization_expires_at),
       principalDigest: `sha256:${createHash("sha256").update(dispatch.principalId).digest("hex")}`,
     },
   });
@@ -275,6 +298,10 @@ export async function recordProviderEffectReconciliation(
       WHERE effect_id = $6 AND state = 'unknown'
         AND dispatch_id = $7 AND payload_digest = $8
         AND permission_digest = $9 AND attempted_at IS NOT NULL
+        AND session_id = $10 AND admission_id = $11
+        AND session_generation = $12 AND session_lease_id = $13
+        AND permission_request_id = $14
+        AND authorization_expires_at = $15::timestamptz
         AND EXISTS (
           SELECT 1 FROM codeops.sessions AS session
            WHERE session.session_id = codeops.provider_effect_receipts.session_id
@@ -292,6 +319,12 @@ export async function recordProviderEffectReconciliation(
       request.provenance.dispatchId,
       request.payloadDigest,
       request.permissionDigest,
+      request.provenance.sessionId,
+      request.provenance.admissionId,
+      request.provenance.sessionGeneration,
+      request.provenance.sessionLeaseId,
+      request.provenance.permissionRequestId,
+      request.provenance.authorizationExpiresAt,
     ],
   );
   if (updated.rowCount !== 1) {

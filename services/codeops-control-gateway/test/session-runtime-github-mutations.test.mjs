@@ -24,6 +24,7 @@ const claimToken = "22222222-2222-4222-8222-222222222222";
 const workerId = "acp-worker:primary";
 const repository = "anulman/codeops";
 const leaseId = "33333333-3333-4333-8333-333333333333";
+const admissionId = "77777777-7777-4777-8777-777777777777";
 
 function canonical(value) {
   const normalize = (entry) => {
@@ -133,7 +134,7 @@ function runtimeRequest() {
     claimToken,
     operation,
     operationId: `githubmutation-${createHash("sha256")
-      .update(canonical({ dispatchId, operation, input }))
+      .update(canonical({ dispatchId, claimToken, operation, input }))
       .digest("hex")}`,
     input,
   };
@@ -214,7 +215,11 @@ class Client {
   constructor({ insertCount = 1, permissionValue = permission(), decisionValue, storedMutation = null, dispatchValue = dispatch() } = {}) {
     this.insertCount = insertCount;
     this.permissionValue = permissionValue;
-    this.decisionValue = decisionValue ?? decision(permissionValue);
+    const selectedDecision = decisionValue ?? decision(permissionValue);
+    this.decisionValue = {
+      ...selectedDecision,
+      result: { ...selectedDecision.result, snapshot: dispatchValue.snapshot },
+    };
     this.storedMutation = storedMutation;
     this.dispatchValue = dispatchValue;
     this.calls = [];
@@ -222,6 +227,12 @@ class Client {
 
   async query(text, values = []) {
     this.calls.push({ text, values });
+    if (["BEGIN ISOLATION LEVEL SERIALIZABLE", "COMMIT", "ROLLBACK"].includes(text)) {
+      return { rowCount: null, rows: [] };
+    }
+    if (text.includes("SELECT snapshot_json") && text.includes("FROM codeops.sessions")) {
+      return { rowCount: 1, rows: [{ snapshot_json: this.decisionValue.result.snapshot }] };
+    }
     if (
       text.includes("FROM codeops.session_runtime_outbox AS outbox") &&
       text.includes("JOIN codeops.sessions AS session")
@@ -235,21 +246,31 @@ class Client {
           claimed_by: workerId,
           claim_expires_at: "2026-08-14T15:30:00.000Z",
           owner_principal_id: "access:aidan@example.com",
+          admission_id: admissionId,
         }],
       };
     }
     if (
-      text.includes("FROM codeops.session_runtime_outbox AS outbox") &&
-      text.includes("session_runtime_permission_requests AS permission")
+      text.includes("FROM codeops.session_runtime_permission_requests AS permission")
     ) {
       return {
         rowCount: 1,
         rows: [{
           request_json: this.permissionValue,
+          command_id: this.decisionValue.result.commandId,
+          principal_id: this.dispatchValue.principalId,
           command_json: this.decisionValue.command,
           result_json: this.decisionValue.result,
+          admission_id: admissionId,
+          session_generation: "1",
+          session_lease_id: leaseId,
+          operation_provider: "github",
+          operation_id: this.permissionValue.toolCallId,
         }],
       };
+    }
+    if (text.includes("FROM codeops.work_item_admissions")) {
+      return { rowCount: 1, rows: [{ admission_id: admissionId }] };
     }
     if (text.includes("INSERT INTO codeops.provider_effect_receipts")) {
       return { rowCount: this.insertCount, rows: [] };
@@ -304,7 +325,7 @@ function mutationRequest(operation, input) {
     claimToken,
     operation,
     operationId: `githubmutation-${createHash("sha256")
-      .update(canonical({ dispatchId, operation, input }))
+      .update(canonical({ dispatchId, claimToken, operation, input }))
       .digest("hex")}`,
     input,
   };
@@ -391,7 +412,8 @@ test("rejects trusted Temporal pull-request number drift before permission", asy
     }),
     /exact Temporal repository, pull request, and head/,
   );
-  assert.equal(client.calls.length, 1);
+  assert.equal(client.calls.length, 3);
+  assert.equal(client.calls.at(-1).text, "ROLLBACK");
 });
 
 test("rejects pull-request number drift for every numbered mutation", async () => {
@@ -427,7 +449,8 @@ test("rejects pull-request number drift for every numbered mutation", async () =
       /exact Temporal repository, pull request, and head/,
       operation,
     );
-    assert.equal(client.calls.length, 1, operation);
+    assert.equal(client.calls.length, 3, operation);
+    assert.equal(client.calls.at(-1).text, "ROLLBACK", operation);
   }
 });
 
@@ -493,7 +516,7 @@ test("preserves an older producer payload without rewriting after permission", a
   );
 });
 
-test("normalizes inline publication identity before staging and replays it once", async () => {
+test("normalizes inline publication identity and rejects its replay", async () => {
   const input = {
     repository, expectedHeadSha: "a".repeat(40), baseBranch: "main",
     branchName: "codeops/legacy-publication", commitMessage: "Publish  legacy bytes",
@@ -527,6 +550,11 @@ test("normalizes inline publication identity before staging and replays it once"
           operation: "branch_publish",
           attempted_at: new Date("2026-08-14T15:08:00.000Z"),
           state: "unknown",
+          permission_request_id: permissionValue.request.requestId,
+          admission_id: admissionId,
+          session_generation: 1,
+          session_lease_id: leaseId,
+          authorization_expires_at: new Date("2026-08-14T15:30:00.000Z"),
           request_json: permissionValue,
           dispatch_json: dispatch(),
         }] };
@@ -618,6 +646,7 @@ test("normalizes inline publication identity before staging and replays it once"
     url: "https://github.com/anulman/codeops/tree/codeops%2Flegacy-publication",
   };
   client.receipt = { ...client.receipt, state: "succeeded",
+    attempted_at: new Date("2026-08-14T15:08:00.000Z"),
     evidence_json: replayResult };
   assert.deepEqual(await authorizeSessionRuntimeGitHubMutation(client, {
     dispatchId, workerId, request: normalizedRequest,
@@ -730,7 +759,7 @@ test("rejects denial, payload drift, and reuse before provider authority", async
   );
 });
 
-test("replays an exact completed operation without granting provider authority", async () => {
+test("replays validated completed and lost-response outcomes without another attempt", async () => {
   const request = runtimeRequest();
   const permissionSubmission = permission(request);
   const operationDigest = permissionSubmission.request.operationDigest;
@@ -743,26 +772,29 @@ test("replays an exact completed operation without granting provider authority",
     checkRunId: 1234,
     accepted: true,
   };
-  const authorization = await authorizeSessionRuntimeGitHubMutation(
-    new Client({
-      insertCount: 0,
-      permissionValue: permissionSubmission,
-      storedMutation: {
-        dispatch_id: dispatchId,
-        payload_digest: payloadDigest,
-        permission_digest: operationDigest,
-        state: "succeeded",
-        evidence_json: result,
+  for (const state of ["succeeded", "reconciled_satisfied"]) {
+    const replay = await authorizeSessionRuntimeGitHubMutation(
+      new Client({
+        insertCount: 0,
+        permissionValue: permissionSubmission,
+        storedMutation: {
+          dispatch_id: dispatchId,
+          payload_digest: payloadDigest,
+          permission_digest: operationDigest,
+          state,
+          attempted_at: new Date("2026-08-14T15:06:30.000Z"),
+          evidence_json: result,
+        },
+      }),
+      {
+        dispatchId,
+        workerId,
+        request,
+        now: () => new Date("2026-08-14T15:07:00.000Z"),
       },
-    }),
-    {
-      dispatchId,
-      workerId,
-      request,
-      now: () => new Date("2026-08-14T15:07:00.000Z"),
-    },
-  );
-  assert.deepEqual(authorization, { disposition: "replayed", result });
+    );
+    assert.deepEqual(replay, { disposition: "replayed", result });
+  }
 
   await assert.rejects(
     authorizeSessionRuntimeGitHubMutation(
@@ -774,6 +806,7 @@ test("replays an exact completed operation without granting provider authority",
           payload_digest: payloadDigest,
           permission_digest: operationDigest,
           state: "unknown",
+          attempted_at: new Date("2026-08-14T15:06:30.000Z"),
           evidence_json: null,
         },
       }),
@@ -788,7 +821,59 @@ test("replays an exact completed operation without granting provider authority",
   );
 });
 
-test("resumes the exact authorization when no provider attempt was committed", async () => {
+test("keeps a duplicate authorization in flight until the original provider request completes", async () => {
+  const request = runtimeRequest();
+  const permissionSubmission = permission(request);
+  const payloadDigest = digest(canonical(request.input));
+  const attemptedAt = new Date("2026-08-14T15:07:01.000Z");
+  const client = new Client({
+    insertCount: 0,
+    permissionValue: permissionSubmission,
+    storedMutation: {
+      dispatch_id: dispatchId,
+      payload_digest: payloadDigest,
+      permission_digest: permissionSubmission.request.operationDigest,
+      state: "attempting",
+      attempted_at: attemptedAt,
+      evidence_json: null,
+    },
+  });
+
+  await assert.rejects(authorizeSessionRuntimeGitHubMutation(client, {
+    dispatchId,
+    workerId,
+    request,
+    now: () => new Date("2026-08-14T15:08:01.000Z"),
+  }), /outcome is not known/);
+  assert.equal(client.calls.some(({ text }) =>
+    text.includes("UPDATE codeops.provider_effect_receipts")), false);
+
+  const provider = (await authorizeSessionRuntimeGitHubMutation(new Client(), {
+    dispatchId,
+    workerId,
+    request,
+    now: () => new Date("2026-08-14T15:07:00.000Z"),
+  })).request;
+  const result = {
+    version: "codeops.github-check-rerun-result/v1",
+    repository,
+    operationId: request.operationId,
+    headSha: request.input.expectedHeadSha,
+    checkRunId: request.input.checkRunId,
+    accepted: true,
+  };
+  assert.deepEqual(await completeSessionRuntimeGitHubMutation(client, {
+    request: provider,
+    result,
+    now: () => new Date("2026-08-14T15:11:01.000Z"),
+  }), result);
+  const completion = client.calls.find(({ text }) =>
+    text.includes("SET state = 'succeeded'"));
+  assert.ok(completion);
+  assert.match(completion.text, /state = 'attempting'/);
+});
+
+test("resumes an exact authorization after a crash before the provider attempt", async () => {
   const request = runtimeRequest();
   const permissionSubmission = permission(request);
   const authorization = await authorizeSessionRuntimeGitHubMutation(
@@ -800,6 +885,7 @@ test("resumes the exact authorization when no provider attempt was committed", a
         payload_digest: digest(canonical(request.input)),
         permission_digest: permissionSubmission.request.operationDigest,
         state: "authorized",
+        attempted_at: null,
         evidence_json: null,
       },
     }),
@@ -810,7 +896,6 @@ test("resumes the exact authorization when no provider attempt was committed", a
       now: () => new Date("2026-08-14T15:07:00.000Z"),
     },
   );
-
   assert.equal(authorization.disposition, "authorized");
   assert.equal(authorization.request.operationId, request.operationId);
 });
@@ -993,7 +1078,7 @@ test("does not call the provider when the attempting commit fails", async () => 
         throw new Error("must not run");
       },
     }),
-    /does not match one authorized effect/,
+    /lost its active dispatch authority|does not match one authorized effect/,
   );
   assert.equal(providerCalls, 0);
 });
@@ -1079,7 +1164,8 @@ function cleanedBranchPublication(state) {
   };
   const stored = {
     dispatch_id: dispatchId, payload_digest: payloadDigest,
-    permission_digest: permissionDigest, state, evidence_json: result,
+    permission_digest: permissionDigest, state,
+    attempted_at: new Date("2026-08-14T15:06:30.000Z"), evidence_json: result,
   };
   class PostCleanupClient extends Client {
     constructor() {
@@ -1101,11 +1187,10 @@ test("replays successful branch states after candidate chunks are gone", async (
   for (const state of ["succeeded", "reconciled_satisfied"]) {
     const { PostCleanupClient, request, result } = cleanedBranchPublication(state);
     const client = new PostCleanupClient();
-    const replay = await authorizeSessionRuntimeGitHubMutation(client, {
+    assert.deepEqual(await authorizeSessionRuntimeGitHubMutation(client, {
       dispatchId, workerId, request,
       now: () => new Date("2026-08-14T15:07:00.000Z"),
-    });
-    assert.deepEqual(replay, { disposition: "replayed", result });
+    }), { disposition: "replayed", result });
     assert.equal(client.calls.some(({ text }) =>
       text.includes("github_branch_publish_candidate_")), false);
     assert.match(client.calls.find(({ text }) =>

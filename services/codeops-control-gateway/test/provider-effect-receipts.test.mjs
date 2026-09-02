@@ -105,6 +105,11 @@ test("records only a bounded terminal reconciliation behind the unknown-state fe
     provenance: {
       sessionId: row.session_id,
       dispatchId: row.dispatch_id,
+      admissionId: "22222222-2222-4222-8222-222222222222",
+      sessionGeneration: 1,
+      sessionLeaseId: "33333333-3333-4333-8333-333333333333",
+      permissionRequestId: "permission-runtime",
+      authorizationExpiresAt: "2026-08-31T12:00:00.000Z",
       principalDigest: `sha256:${"e".repeat(64)}`,
     },
   };

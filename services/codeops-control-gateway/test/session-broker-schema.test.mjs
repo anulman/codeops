@@ -64,6 +64,14 @@ const runtimeTerminalReconciliationRevertUrl = new URL(
 );
 const workItemAdmissionUrl = new URL("../sql/work-item-admission-v1.sql", import.meta.url);
 const workItemAdmissionRevertUrl = new URL("../sql/work-item-admission-v1-revert.sql", import.meta.url);
+const runtimePermissionConsumptionUrl = new URL(
+  "../sql/runtime-permission-consumption-v1.sql",
+  import.meta.url,
+);
+const runtimePermissionConsumptionRevertUrl = new URL(
+  "../sql/runtime-permission-consumption-v1-revert.sql",
+  import.meta.url,
+);
 const workItemAdmissionSourceUrl = new URL("../src/work-item-admission.ts", import.meta.url);
 
 test("defines exact immutable admission authority and a fail-closed revert", async () => {
@@ -95,6 +103,21 @@ test("defines exact immutable admission authority and a fail-closed revert", asy
   }
   assert.ok(source.indexOf("const replayed = await replayResult") < source.indexOf("SELECT session_id FROM codeops.session_runtime_outbox"));
   assert.doesNotMatch(source, /code === "23505"|code === "40001"|code === "40P01"/);
+});
+
+test("consumes one admitted GitHub permission and retains its exact receipt", async () => {
+  const sql = await readFile(runtimePermissionConsumptionUrl, "utf8");
+  const revert = await readFile(runtimePermissionConsumptionRevertUrl, "utf8");
+  assert.match(sql, /legacy_non_replayable = true/);
+  assert.match(sql, /Legacy authorization lacks durable admission evidence/);
+  assert.match(sql, /state = 'not_attempted'/);
+  assert.match(sql, /provider_effect_marker text GENERATED ALWAYS/);
+  assert.match(sql, /session_runtime_permission_requests_consumption_key/);
+  assert.match(sql, /provider_effect_receipts_exact_permission_fk/);
+  assert.match(sql, /authorization_expires_at/);
+  assert.match(sql, /dispatch_claim_token/);
+  assert.match(revert, /cannot revert runtime permission consumption after authority activation/);
+  assert.match(revert, /runtime-permission-consumption-v1/);
 });
 
 test("defines the durable session, command, and ordered event identities", async () => {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   buildSessionRuntimeCompletion,
@@ -18,6 +19,15 @@ const promptResult = {
     stopReason: "end_turn",
   },
 };
+
+const canonical = (value) => JSON.stringify(Object.fromEntries(
+  Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
+    .map(([key, nested]) => [key,
+      nested !== null && typeof nested === "object" && !Array.isArray(nested)
+        ? Object.fromEntries(Object.entries(nested).sort(([left], [right]) =>
+          left.localeCompare(right)))
+        : nested]),
+));
 
 const authority = {
   sessionId: "ses_91a4",
@@ -419,6 +429,15 @@ test("relays a permission-bound GitHub mutation through hidden live-claim author
     now: () => new Date("2026-08-04T20:03:00.000Z"),
     execute: async (_dispatch, context) => {
       assert.equal("claimToken" in context, false);
+      const boundInput = {
+        repository: "example-org/example-repository",
+        expectedHeadSha: "a".repeat(40), checkRunId: 1234,
+      };
+      assert.equal(context.bindGitHubMutationOperationId(
+        "check_rerun", boundInput,
+      ), `githubmutation-${createHash("sha256").update(canonical({
+        dispatchId, claimToken, operation: "check_rerun", input: boundInput,
+      })).digest("hex")}`);
       const result = await context.mutateGitHub({
         operation: "check_rerun",
         operationId: `githubmutation-${"b".repeat(64)}`,
