@@ -151,6 +151,7 @@ function recoverStoredMutation(
 export class GitHubMutationProviderNoEffectError extends Error {}
 
 export const GITHUB_MUTATION_PROVIDER_TIMEOUT_MS = 240_000;
+export const GITHUB_MUTATION_PROVIDER_CLIENT_TIMEOUT_MS = 1_200_000;
 const MAX_GITHUB_MUTATION_PROVIDER_RESPONSE_BYTES = 1_024 * 1_024;
 
 export type SessionRuntimeGitHubMutationAuthorization =
@@ -1036,7 +1037,7 @@ export function createGitHubMutationProviderClient(input: {
       maxBytes: MAX_GITHUB_MUTATION_PROVIDER_RESPONSE_BYTES,
       statuses: [200, 409],
       mediaTypes: ["json"],
-      timeoutMs: input.timeoutMs ?? GITHUB_MUTATION_PROVIDER_TIMEOUT_MS,
+      timeoutMs: input.timeoutMs ?? GITHUB_MUTATION_PROVIDER_CLIENT_TIMEOUT_MS,
     });
     if (response.status === 409) {
       throw new GitHubMutationProviderNoEffectError(
