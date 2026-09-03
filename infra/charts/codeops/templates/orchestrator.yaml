@@ -40,7 +40,7 @@ spec:
             - { name: CODEOPS_TEMPORAL_ADDRESS, value: {{ required "temporal.address is required" .Values.temporal.address | quote }} }
             - { name: CODEOPS_TEMPORAL_NAMESPACE, value: {{ .Values.temporal.namespace | quote }} }
             - { name: CODEOPS_TEMPORAL_TASK_QUEUE, value: {{ .Values.temporal.taskQueue | quote }} }
-            - { name: CODEOPS_AGENT_DISPATCH_ORIGIN, value: http://{{ include "codeops.fullname" . }}-control-gateway:8080 }
+            - { name: CODEOPS_AGENT_DISPATCH_ORIGIN, value: http://{{ include "codeops.fullname" . }}-control-gateway-dispatcher:8080 }
             - { name: CODEOPS_AGENT_DISPATCH_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/dispatch-token }
             - { name: CODEOPS_PUBLICATION_TOKEN_FILE, value: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway/publication-token }
             - { name: CODEOPS_RESEARCH_PROJECTION_ORIGIN, value: http://{{ include "codeops.fullname" . }}-github-controller:8080 }

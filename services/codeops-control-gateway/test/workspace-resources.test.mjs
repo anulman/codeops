@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
 import {
+  admittedChildWorkspaceLaunchId,
   assertWorkspaceResources,
   buildWorkspaceResources,
 } from "../dist/workspace-resources.js";
@@ -125,6 +126,65 @@ test("builds isolated materializer and runtime Jobs on bounded persistent storag
   assert.equal(JSON.stringify(resources).includes("RXhhY3QgY29udGV4dCBwYXlsb2Fk"), false);
 });
 
+test("uses every admitted UUID bit while preserving Kubernetes DNS-label bounds", () => {
+  const first = "11111111-1111-4111-8111-111111111111";
+  const second = "11111111-1111-4111-8111-111111111112";
+  const admitted = (admissionId) => buildWorkspaceResources({
+    ...config(),
+    launchId: admittedChildWorkspaceLaunchId(admissionId),
+    admittedChildOwner: { admissionId,
+      approvalId: "33333333-3333-4333-8333-333333333333",
+      parentSessionId: "session-parent",
+      childDispatchId: "44444444-4444-4444-8444-444444444444",
+      repository: "example-org/example-repository", sourceSha: sha,
+      workItemId: "work-item-1", release: "v0.5.0-alpha.58", profile: "custom" },
+  });
+  const firstNames = admitted(first).map((resource) => resource.metadata.name);
+  const secondNames = admitted(second).map((resource) => resource.metadata.name);
+  assert.notDeepEqual(firstNames, secondNames);
+  for (let index = 0; index < firstNames.length; index += 1) {
+    assert.notEqual(firstNames[index], secondNames[index]);
+  }
+  for (const name of [...firstNames, ...secondNames]) {
+    assert.match(name, /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/);
+  }
+  assert.equal(firstNames[0], "workspace-11111111111141118111111111111111-source");
+});
+
+test("hashes long and colon-containing label identities while retaining exact annotations and env", () => {
+  const sessionId = `session:${"s".repeat(100)}`;
+  const runId = `run:${"r".repeat(110)}`;
+  const admissionId = "11111111-1111-4111-8111-111111111111";
+  const base = config();
+  const resources = buildWorkspaceResources({ ...base, sessionId, runId,
+    launchId: admittedChildWorkspaceLaunchId(admissionId),
+    identity: { version: "codeops.session-workspace-identity/v1",
+      policy: base.policy, contextAttachments: base.contextAttachments,
+      workspace: base.workspace, workflowId: base.workflowId, runId,
+      parentSessionId: "session-parent", forkedAtCursor: 1 },
+    admittedChildOwner: { admissionId,
+      approvalId: "33333333-3333-4333-8333-333333333333",
+      parentSessionId: "session-parent",
+      childDispatchId: "44444444-4444-4444-8444-444444444444",
+      repository: "example-org/example-repository", sourceSha: sha,
+      workItemId: "work-item-1", release: "v0.5.0-alpha.58", profile: "custom" },
+  });
+  const runtime = resources.find((resource) =>
+    resource.metadata.labels["codeops.example/resource-role"] === "workspace-runtime");
+  assert.notEqual(runtime.metadata.labels["codeops.example/session-id"], sessionId);
+  assert.notEqual(runtime.metadata.labels["codeops.example/run-id"], runId);
+  for (const value of Object.values(runtime.metadata.labels)) {
+    assert.match(value, /^(?:[A-Za-z0-9][-A-Za-z0-9_.]{0,61}[A-Za-z0-9]|[A-Za-z0-9])$/);
+  }
+  assert.equal(runtime.metadata.annotations["codeops.example/session-id"], sessionId);
+  assert.equal(runtime.metadata.annotations["codeops.example/run-id"], runId);
+  const env = Object.fromEntries(runtime.spec.template.spec.containers[0].env.map(
+    ({ name, value }) => [name, value],
+  ));
+  assert.equal(env.CODEOPS_SESSION_ID, sessionId);
+  assert.equal(env.CODEOPS_SESSION_RUN_ID, runId);
+});
+
 test("binds workspace mounts and Codex configuration to the immutable session policy", () => {
   const implementRuntime = buildWorkspaceResources(config())[3];
   for (const container of implementRuntime.spec.template.spec.containers) {
@@ -223,10 +283,11 @@ test("routes runtime HTTP traffic through only the exact internal egress proxy",
 });
 
 test("puts exact source authority only in the init-only immutable Secret", () => {
-  const resources = buildWorkspaceResources(config([
+  const sourceConfig = config([
     { catalogKey: "example-app", repository: "example-org/Example-App" },
     { catalogKey: "codeops", repository: "anulman/CodeOps" },
-  ]));
+  ]);
+  const resources = buildWorkspaceResources(sourceConfig);
   assert.doesNotThrow(() => assertWorkspaceResources(resources));
   const sources = JSON.parse(Buffer.from(resources[0].data["sources.json"], "base64").toString("utf8"));
   assert.equal(sources.sources.length, 2);
@@ -237,7 +298,13 @@ test("puts exact source authority only in the init-only immutable Secret", () =>
   assert.equal(JSON.stringify(runtime).includes(sources.sources[0].readToken), false);
   assert.equal(runtime.spec.template.spec.containers[0].volumeMounts.some((mount) => mount.name === "source"), false);
   assert.equal(runtime.spec.template.spec.containers[1].volumeMounts.some((mount) => mount.name === "source"), false);
-  assert.match(resources[0].metadata.name, /-source-[0-9a-f]{10}$/);
+  assert.match(resources[0].metadata.name, /-source$/);
+  const rotated = buildWorkspaceResources({ ...sourceConfig,
+    sources: sourceConfig.sources.map((source) => ({ ...source,
+    readToken: `${source.readToken}-rotated` })) });
+  assert.equal(rotated[0].metadata.name, resources[0].metadata.name);
+  assert.notEqual(rotated[0].metadata.annotations["codeops.example/source-identity"],
+    resources[0].metadata.annotations["codeops.example/source-identity"]);
 });
 
 test("rejects authority drift and mutable runtime images", () => {
@@ -326,15 +393,15 @@ test("binds workspace routing to the Service name independently of pod identity"
 test("binds the immutable Secret name to principal, request, workspace, and authority", () => {
   const base = config([{ catalogKey: "codeops", repository: "anulman/CodeOps" }]);
   const name = buildWorkspaceResources(base)[0].metadata.name;
-  assert.notEqual(
+  assert.equal(
     buildWorkspaceResources({ ...base, principalId: "other@example.com" })[0].metadata.name,
     name,
   );
-  assert.notEqual(
+  assert.equal(
     buildWorkspaceResources({ ...base, requestDigest: `sha256:${"d".repeat(64)}` })[0].metadata.name,
     name,
   );
-  assert.notEqual(
+  assert.equal(
     buildWorkspaceResources({
       ...base,
       sources: base.sources.map((source) => ({ ...source, readToken: `${source.readToken}-rotated` })),

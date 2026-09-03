@@ -136,6 +136,13 @@ const migrations = [
       import.meta.url,
     ),
   },
+  {
+    name: "admitted-child-materializations-v1",
+    url: new URL(
+      "../sql/admitted-child-materializations-v1.sql",
+      import.meta.url,
+    ),
+  },
 ] as const;
 
 const ownerPrincipalPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;

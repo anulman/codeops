@@ -5,7 +5,8 @@ import {
   githubBranchPublishCandidateChunkRequestSchema,
   githubReadResultSchema,
   sessionRuntimeClaimRequestSchema,
-  sessionRuntimeClaimResponseSchema,
+  sessionRuntimeClaimRequestV2Schema,
+  sessionRuntimeClaimResponseV2Schema,
   sessionRuntimeCheckpointMaterialSchema,
   sessionRuntimeCompletionRequestSchema,
   sessionRuntimeCompletionResponseSchema,
@@ -39,7 +40,7 @@ import {
   type SessionIdentity,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
-  type SessionRuntimeDispatchClaim,
+  type SessionRuntimeDispatchClaimV2,
   type SessionRuntimePermissionResult,
   type SessionRuntimePermissionSubmission,
   type SessionRuntimeGitHubMutationRequest,
@@ -138,6 +139,7 @@ export type RuntimeGitHubMutationRequest =
     : never;
 
 export interface RuntimeExecutionContext {
+  readonly isAdmittedInitialDispatch: boolean;
   bindGitHubMutationOperationId?(
     operation: GitHubMutationOperation,
     input: unknown,
@@ -187,7 +189,7 @@ export type RuntimeExecutor = (
 ) => Promise<RuntimeExecutionResult>;
 
 export function buildSessionRuntimeCompletion(
-  claim: SessionRuntimeDispatchClaim,
+  claim: SessionRuntimeDispatchClaimV2,
   rawExecution: unknown,
   completedAt: Date,
 ): SessionRuntimeCompletion {
@@ -305,7 +307,7 @@ export function requireSuccess(response: Response): void {
 }
 
 function requireCompletionIdentity(
-  claim: SessionRuntimeDispatchClaim,
+  claim: SessionRuntimeDispatchClaimV2,
   completion: SessionRuntimeCompletion,
 ): void {
   const { dispatch, claimExpiresAt } = claim;
@@ -406,20 +408,20 @@ export class SessionRuntimeTransport {
     }
   }
 
-  async claim(leaseMs: number): Promise<SessionRuntimeDispatchClaim | null> {
-    const request = sessionRuntimeClaimRequestSchema.parse({
-      version: "codeops.session-runtime-claim-request/v1",
+  async claim(leaseMs: number): Promise<SessionRuntimeDispatchClaimV2 | null> {
+    const request = sessionRuntimeClaimRequestV2Schema.parse({
+      version: "codeops.session-runtime-claim-request/v2",
       ...this.#authority,
       leaseMs,
     });
-    const response = sessionRuntimeClaimResponseSchema.parse(
+    const response = sessionRuntimeClaimResponseV2Schema.parse(
       await this.#post("/v1/session-runtime/claims", request),
     );
     return response.claim;
   }
 
   async complete(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     rawCompletion: unknown,
     now: () => Date = () => new Date(),
   ): Promise<SessionCommandResult> {
@@ -444,7 +446,7 @@ export class SessionRuntimeTransport {
   }
 
   async #requestPermission(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     input: RuntimePermissionSubmission,
     now: () => Date,
   ): Promise<NonNullable<SessionRuntimePermissionResult["decision"]>> {
@@ -506,7 +508,7 @@ export class SessionRuntimeTransport {
   }
 
   async #createWorkItem(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     input: {
       readonly operationId: string;
       readonly workItem: WorkItemCreateInput;
@@ -536,7 +538,7 @@ export class SessionRuntimeTransport {
   }
 
   async #operateWorkItem(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     operation: "get" | "search" | "comment" | "update" | "relate",
     input: { readonly operationId: string; readonly workItem: unknown },
     now: () => Date,
@@ -578,7 +580,7 @@ export class SessionRuntimeTransport {
   }
 
   async #readGitHub(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     input: RuntimeGitHubReadRequest,
     now: () => Date,
   ): Promise<GitHubReadResult> {
@@ -604,7 +606,7 @@ export class SessionRuntimeTransport {
   }
 
   async #mutateGitHub(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     input: RuntimeGitHubMutationRequest,
     now: () => Date,
   ): Promise<GitHubMutationResult> {
@@ -630,7 +632,7 @@ export class SessionRuntimeTransport {
   }
 
   async #storeGitHubBranchCandidate(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     input: Parameters<RuntimeExecutionContext["storeGitHubBranchCandidate"]>[0],
     now: () => Date,
   ): Promise<void> {
@@ -673,6 +675,7 @@ export class SessionRuntimeTransport {
     // The executor owns ACP/workspace side effects, not broker claim authority.
     // Never expose the claim token or its completion lease to that boundary.
     const execution = await input.execute(claim.dispatch, {
+      isAdmittedInitialDispatch: claim.isAdmittedInitialDispatch,
       // Claim authority remains captured inside the transport callback. The
       // ACP/workspace executor receives neither bearer nor claim token.
       bindGitHubMutationOperationId: (operation, mutationInput) =>

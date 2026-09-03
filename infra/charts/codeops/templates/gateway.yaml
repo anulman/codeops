@@ -37,6 +37,10 @@ spec:
           image: {{ include "codeops.image" .Values.gateway.image | quote }}
           imagePullPolicy: IfNotPresent
           env:
+            - { name: CODEOPS_DEPLOYMENT_PROFILE, value: {{ .Values.profile | quote }} }
+            - { name: CODEOPS_RELEASE, value: {{ .Chart.Version | quote }} }
+            - { name: CODEOPS_AGENT_IMAGE, value: {{ include "codeops.image" .Values.runtime.agentImage | quote }} }
+            - { name: CODEOPS_SESSION_RUNTIME_WORKER_IMAGE, value: {{ include "codeops.image" .Values.runtime.workerImage | quote }} }
             - { name: CODEOPS_HTTP_HOST, value: 0.0.0.0 }
             - { name: CODEOPS_HTTP_PORT, value: "8080" }
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_ID, value: {{ .Values.gateway.workerId | quote }} }

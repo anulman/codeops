@@ -1,4 +1,47 @@
 {{- if .Values.migration.enabled }}
+{{- if .Release.IsUpgrade }}
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ include "codeops.fullname" . }}-session-migration-quiesce
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-migration
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-weight: "-12"
+rules:
+  - apiGroups: [apps]
+    resources: [deployments, deployments/scale]
+    verbs: [get, patch]
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ include "codeops.fullname" . }}-session-migration-quiesce
+  namespace: {{ .Release.Namespace }}
+  labels:
+    {{- include "codeops.labels" . | nindent 4 }}
+    app.kubernetes.io/component: session-migration
+  annotations:
+    helm.sh/hook: pre-upgrade
+    helm.sh/hook-delete-policy: before-hook-creation,hook-succeeded
+    helm.sh/hook-weight: "-11"
+subjects:
+  - kind: ServiceAccount
+    name: {{ include "codeops.fullname" . }}-control-gateway
+    namespace: {{ .Release.Namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ include "codeops.fullname" . }}-session-migration-quiesce
+---
+{{- end }}
 apiVersion: batch/v1
 kind: Job
 metadata:
@@ -24,8 +67,8 @@ spec:
         app.kubernetes.io/part-of: codeops
     spec:
       restartPolicy: Never
-      serviceAccountName: {{ include "codeops.fullname" . }}-session-gateway
-      automountServiceAccountToken: false
+      serviceAccountName: {{ include "codeops.fullname" . }}-{{ ternary "control-gateway" "session-gateway" .Release.IsUpgrade }}
+      automountServiceAccountToken: {{ .Release.IsUpgrade }}
       enableServiceLinks: false
       imagePullSecrets:
         {{- include "codeops.imagePullSecrets" . | nindent 8 }}
@@ -59,6 +102,12 @@ spec:
           imagePullPolicy: IfNotPresent
           command: [node, services/codeops-control-gateway/dist/session-migrate-main.js]
           env:
+            {{- if .Release.IsUpgrade }}
+            - { name: CODEOPS_MIGRATION_QUIESCE_WRITERS, value: "true" }
+            - { name: CODEOPS_NAMESPACE, value: {{ .Release.Namespace | quote }} }
+            - name: CODEOPS_MIGRATION_WRITER_DEPLOYMENTS
+              value: {{ list (printf "%s-session-gateway" (include "codeops.fullname" .)) | toJson | quote }}
+            {{- end }}
             - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/codeops/database-url }
             {{- with .Values.sessionOwner.legacyPrincipalId }}
             - { name: CODEOPS_LEGACY_SESSION_OWNER_PRINCIPAL_ID, value: {{ . | quote }} }

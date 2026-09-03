@@ -9,6 +9,28 @@ import {
   migrateSessionBroker,
   sessionRuntimeDatabaseCredentials,
 } from "./session-broker-migration.js";
+import { quiesceInClusterMigrationWriters } from "./migration-writer-quiescence.js";
+
+const quiesceWriters = process.env.CODEOPS_MIGRATION_QUIESCE_WRITERS?.trim();
+if (quiesceWriters !== undefined && quiesceWriters !== "true") {
+  throw new Error("CODEOPS_MIGRATION_QUIESCE_WRITERS must be true when configured");
+}
+if (quiesceWriters === "true") {
+  const namespace = process.env.CODEOPS_NAMESPACE?.trim();
+  const rawNames = process.env.CODEOPS_MIGRATION_WRITER_DEPLOYMENTS?.trim();
+  if (!namespace || !rawNames) {
+    throw new Error("migration writer quiescence identity is required");
+  }
+  let deploymentNames: unknown;
+  try { deploymentNames = JSON.parse(rawNames); } catch {
+    throw new Error("CODEOPS_MIGRATION_WRITER_DEPLOYMENTS must be JSON");
+  }
+  if (!Array.isArray(deploymentNames) ||
+      deploymentNames.some((name) => typeof name !== "string")) {
+    throw new Error("CODEOPS_MIGRATION_WRITER_DEPLOYMENTS must be a string array");
+  }
+  await quiesceInClusterMigrationWriters({ namespace, deploymentNames });
+}
 
 const databaseUrlFile = process.env.CODEOPS_DATABASE_URL_FILE?.trim();
 if (!databaseUrlFile) throw new Error("CODEOPS_DATABASE_URL_FILE is required");

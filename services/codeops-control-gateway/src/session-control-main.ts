@@ -58,6 +58,7 @@ import {
 import {
   InvalidSessionJobInitializationRequestError,
   initializeSessionFromJob,
+  initializeAdmittedChildSessionFromJob,
   serveSessionJobInitialization,
 } from "./session-job-initialization.js";
 import { issueSessionModelAuthority } from "./session-model-authority.js";
@@ -104,6 +105,12 @@ const MAX_BODY_BYTES = 1024 * 1024;
 function required(name: string): string {
   const value = process.env[name]?.trim();
   if (!value) throw new Error(`${name} is required`);
+  return value;
+}
+
+function requireDigestImage(name: string): string {
+  const value = required(name);
+  if (!/^.+@sha256:[0-9a-f]{64}$/.test(value)) throw new Error(`${name} must be an immutable digest image`);
   return value;
 }
 
@@ -163,6 +170,16 @@ const repositorySteeringRegistry =
       ])
     : await loadGitHubSteeringRegistryFile(repositorySteeringRegistryFile);
 const workerId = required("CODEOPS_SESSION_RUNTIME_WORKER_ID");
+const materializationProfile = required("CODEOPS_DEPLOYMENT_PROFILE");
+if (!["full-managed", "full-external", "custom"].includes(materializationProfile)) {
+  throw new Error("CODEOPS_DEPLOYMENT_PROFILE is invalid");
+}
+const admittedChildMaterialization = {
+  profile: materializationProfile as "full-managed" | "full-external" | "custom",
+  release: required("CODEOPS_RELEASE"),
+  agentImage: requireDigestImage("CODEOPS_AGENT_IMAGE"),
+  runtimeWorkerImage: requireDigestImage("CODEOPS_SESSION_RUNTIME_WORKER_IMAGE"),
+};
 const modelProxySigningKey = await secretFile(
   "CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE",
 );
@@ -417,9 +434,10 @@ const server = createServer((request, response) => {
         initialize: async (initializationRequest) => {
           const client = await database.connect();
           try {
-            const initialized = await initializeSessionFromJob(client, {
-              request: initializationRequest,
-            });
+            const initialized = (initializationRequest as { version?: string }).version ===
+                "codeops.session-job-initialization/v3"
+              ? await initializeAdmittedChildSessionFromJob(client, { request: initializationRequest })
+              : await initializeSessionFromJob(client, { request: initializationRequest });
             const issuedAt = new Date();
             const modelAuthority = issueSessionModelAuthority({
               snapshot: initialized.snapshot,
@@ -492,7 +510,9 @@ const server = createServer((request, response) => {
         },
         admitWorkItem: async (input) => {
           const client = await database.connect();
-          try { return await admitSessionRuntimeWorkItem(client, input); }
+          try { return await admitSessionRuntimeWorkItem(client, {
+            ...input, materialization: admittedChildMaterialization,
+          }); }
           finally { client.release(); }
         },
         ...(configuredWorkItemProvider === undefined

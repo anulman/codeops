@@ -72,6 +72,12 @@ const runtimePermissionConsumptionRevertUrl = new URL(
   "../sql/runtime-permission-consumption-v1-revert.sql",
   import.meta.url,
 );
+const admittedChildMaterializationsUrl = new URL(
+  "../sql/admitted-child-materializations-v1.sql", import.meta.url,
+);
+const admittedChildMaterializationsRevertUrl = new URL(
+  "../sql/admitted-child-materializations-v1-revert.sql", import.meta.url,
+);
 const workItemAdmissionSourceUrl = new URL("../src/work-item-admission.ts", import.meta.url);
 
 test("defines exact immutable admission authority and a fail-closed revert", async () => {
@@ -103,6 +109,32 @@ test("defines exact immutable admission authority and a fail-closed revert", asy
   }
   assert.ok(source.indexOf("const replayed = await replayResult") < source.indexOf("SELECT session_id FROM codeops.session_runtime_outbox"));
   assert.doesNotMatch(source, /code === "23505"|code === "40001"|code === "40P01"/);
+});
+
+test("defines immutable admitted-child input and fails closed across old/new gateway ordering", async () => {
+  const sql = await readFile(admittedChildMaterializationsUrl, "utf8");
+  const revert = await readFile(admittedChildMaterializationsRevertUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.admitted_child_materializations/);
+  assert.match(sql, /admitted_child_materializations_admission_fk/);
+  assert.match(sql, /admitted_child_materializations_dispatch_fk/);
+  assert.match(sql, /initial_dispatch_json jsonb GENERATED ALWAYS AS/);
+  assert.match(sql, /initial_dispatch_digest text NOT NULL/);
+  assert.match(sql, /dispatch_id, session_id, principal_id, dispatch_digest/);
+  assert.doesNotMatch(sql, /UNIQUE\s*\([^)]*dispatch_json/s);
+  assert.match(sql, /contextAttachments/);
+  assert.match(sql, /reconciliation_owner text/);
+  assert.match(sql, /reconciliation_token uuid/);
+  assert.match(sql, /input is immutable/);
+  assert.match(sql, /state cannot move backward/);
+  assert.match(sql, /'runtime-authorized','success-finalizing','cleanup-pending'/);
+  assert.match(sql, /OLD\.state = 'success-finalizing'.*'success-finalizing','cleanup-pending','ready'/s);
+  assert.match(sql, /CREATE CONSTRAINT TRIGGER work_item_admissions_require_materialization_owner/);
+  assert.match(sql, /DEFERRABLE INITIALLY DEFERRED/);
+  assert.match(sql, /work-item admission requires a materialization owner/);
+  assert.doesNotMatch(sql, /INSERT INTO codeops\.admitted_child_materializations\s+SELECT/i);
+  assert.match(revert, /cannot revert admitted child materializations with durable rows/);
+  assert.match(revert, /DROP TRIGGER work_item_admissions_require_materialization_owner/);
+  assert.match(revert, /admitted-child-materializations-v1/);
 });
 
 test("consumes one admitted GitHub permission and retains its exact receipt", async () => {

@@ -6,6 +6,7 @@ import {
   githubBranchPublishCandidateChunkRequestSchema,
   githubReadResultSchema,
   sessionRuntimeClaimRequestSchema,
+  sessionRuntimeClaimRequestV2Schema,
   sessionRuntimeCompletionRequestSchema,
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionSubmissionSchema,
@@ -239,9 +240,11 @@ export async function serveSessionRuntime(input: {
   requireJson(input.headers);
 
   if (isClaim) {
-    const request = sessionRuntimeClaimRequestSchema.safeParse(
-      await readRequestBody(input.readBody),
-    );
+    const requestBody = await readRequestBody(input.readBody);
+    const request = z.union([
+      sessionRuntimeClaimRequestSchema,
+      sessionRuntimeClaimRequestV2Schema,
+    ]).safeParse(requestBody);
     if (!request.success) {
       throw new InvalidSessionRuntimeRequestError(
         "session runtime claim body is invalid",
@@ -255,11 +258,19 @@ export async function serveSessionRuntime(input: {
       identity: request.data.identity,
       leaseMs: request.data.leaseMs,
     });
+    const extended = request.data.version === "codeops.session-runtime-claim-request/v2";
     return {
       status: 200,
       body: {
-        version: "codeops.session-runtime-claim-response/v1",
-        claim,
+        version: extended
+          ? "codeops.session-runtime-claim-response/v2"
+          : "codeops.session-runtime-claim-response/v1",
+        claim: claim === null || extended ? claim : {
+          dispatch: claim.dispatch,
+          claimToken: claim.claimToken,
+          claimExpiresAt: claim.claimExpiresAt,
+          claimCount: claim.claimCount,
+        },
       },
     };
   }

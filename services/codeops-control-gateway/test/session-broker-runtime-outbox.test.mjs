@@ -193,6 +193,7 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
     claim_token: claimToken,
     claim_expires_at: "2026-08-04T18:05:00.000Z",
     claim_count: 2,
+    is_admitted_initial_dispatch: false,
   });
   const claim = await claimSessionRuntimeDispatch(client, {
     workerId: "acp-worker:7",
@@ -204,6 +205,7 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
   assert.equal(claim.dispatch.dispatchId, dispatchId);
   assert.equal(claim.claimToken, claimToken);
   assert.equal(claim.claimCount, 2);
+  assert.equal(claim.isAdmittedInitialDispatch, false);
   assert.equal(client.calls[0].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
   assert.match(client.calls[1].text, /FOR UPDATE OF outbox SKIP LOCKED/);
   assert.match(client.calls[1].text, /status = 'pending'/);
@@ -211,6 +213,12 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
   assert.match(client.calls[1].text, /claim_count = outbox\.claim_count \+ 1/);
   assert.match(client.calls[1].text, /outbox\.session_id = \$5/);
   assert.match(client.calls[1].text, /session\.snapshot_json->'identity' = \$8::jsonb/);
+  assert.match(client.calls[1].text, /LEFT JOIN codeops\.admitted_child_materializations/);
+  assert.match(client.calls[1].text, /initial_dispatch\.status = 'completed'/);
+  assert.match(client.calls[1].text, /outbox\.dispatch_digest = materialization\.initial_dispatch_digest/);
+  assert.match(client.calls[1].text, /outbox\.dispatch_json = materialization\.input_json->'initialDispatch'/);
+  assert.ok(client.calls[1].text.indexOf("CASE WHEN materialization.admission_id") <
+    client.calls[1].text.indexOf("outbox.available_at ASC"));
   assert.deepEqual(client.calls[1].values, [
     "2026-08-04T18:00:00.000Z",
     claimToken,
@@ -237,6 +245,7 @@ test("preserves millisecond precision when pg returns a Date for the claim expir
     claim_token: claimToken,
     claim_expires_at: new Date("2026-08-04T18:05:00.123Z"),
     claim_count: 1,
+    is_admitted_initial_dispatch: false,
   });
   const claim = await claimSessionRuntimeDispatch(client, {
     workerId: "acp-worker:7",
@@ -257,6 +266,7 @@ test("rejects a claim rebound to another session after persistence", async () =>
     claim_token: claimToken,
     claim_expires_at: "2026-08-04T18:05:00.000Z",
     claim_count: 1,
+    is_admitted_initial_dispatch: false,
   });
   await assert.rejects(
     claimSessionRuntimeDispatch(client, {

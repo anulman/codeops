@@ -16,10 +16,15 @@ import { loadUnknownProviderEffectReconciliation } from
   "../dist/provider-effect-receipts.js";
 import { submitSessionRuntimePermission } from "../dist/session-runtime-permissions.js";
 import { serveSessionRuntime } from "../dist/session-broker-runtime-http.js";
+import { claimSessionRuntimeDispatch } from "../dist/session-broker-runtime-outbox.js";
 import { admitSessionRuntimeWorkItem, WorkItemAdmissionConflictError } from "../dist/work-item-admission.js";
 import { sessionCapabilitiesFor } from "../dist/session-broker-transitions.js";
 import { acknowledgeWorkItemLifecyclePublication, appendWorkItemLifecycleEvent,
   claimWorkItemLifecyclePublication } from "../dist/work-item-lifecycle-journal.js";
+import { claimAdmittedChildMaterialization,
+  loadAdmittedChildMaterialization,
+  releaseAdmittedChildMaterializationClaim } from
+  "../dist/admitted-child-materialization-controller.js";
 
 const databaseUrl = process.env.CODEOPS_TEST_POSTGRES_URL?.trim();
 const skip = databaseUrl === undefined ? "CODEOPS_TEST_POSTGRES_URL is not configured" : false;
@@ -57,6 +62,9 @@ const owner = "access:owner@example.com";
 const workerId = "runtime-worker:parent";
 const admittedAt = "2026-08-30T10:00:00.000Z";
 const sourceSha = "a".repeat(40);
+const materialization = { profile: "custom", release: "v0.5.0-alpha.58",
+  agentImage: `registry.example/agent@sha256:${"1".repeat(64)}`,
+  runtimeWorkerImage: `registry.example/worker@sha256:${"2".repeat(64)}` };
 const planContent = { type: "items", entries: [{ content: "Implement both items", priority: "high", status: "pending" }] };
 const planDigest = sha256CanonicalJsonDigest(planContent);
 const workItems = [
@@ -110,7 +118,7 @@ async function resetAndSeed(connection, activeChildren = 4) {
   const dispatch = { version: "codeops.session-runtime-dispatch/v1", dispatchId: parentDispatchId,
     principalId: owner, command: { version: "codeops.session-command/v1", sessionId: parentSessionId,
       generation: 1, leaseId: parentLeaseId, idempotencyKey: "12121212-1212-4121-8121-121212121212",
-      type: "prompt", prompt: "Prepare an implementation plan." }, snapshot: dispatchSnapshot,
+      type: "prompt", prompt: "Prepare an implementation plan.", contextAttachments: [] }, snapshot: dispatchSnapshot,
     dispatchedAt: "2026-08-30T09:30:00.000Z" };
   const operation = { kind: "project_plan", planId: "approved-plan", planDigest, workItems };
   const permission = { version: "codeops.session-runtime-permission-submission/v1", claimToken,
@@ -157,7 +165,7 @@ async function resetAndSeed(connection, activeChildren = 4) {
 
 async function admit(connection, request = admissionRequest(0), time = admittedAt) {
   return admitSessionRuntimeWorkItem(connection, { dispatchId: parentDispatchId, workerId, request,
-    now: () => new Date(time) });
+    materialization, now: () => new Date(time) });
 }
 
 async function commitGitHubPermissionDecision(connection, childSessionId, permission, ordinal = 0) {
@@ -197,8 +205,13 @@ test("PostgreSQL applies and truthfully reverts the admission migration", { skip
     await connection.query("DROP SCHEMA IF EXISTS codeops CASCADE");
     await migrateSessionBroker(connection);
     assert.deepEqual((await connection.query(`SELECT table_name FROM information_schema.tables
-      WHERE table_schema='codeops' AND table_name IN ('project_plan_approvals','work_item_admissions') ORDER BY table_name`))
-      .rows.map((row) => row.table_name), ["project_plan_approvals", "work_item_admissions"]);
+      WHERE table_schema='codeops' AND table_name IN
+        ('admitted_child_materializations','project_plan_approvals','work_item_admissions') ORDER BY table_name`))
+      .rows.map((row) => row.table_name), ["admitted_child_materializations",
+        "project_plan_approvals", "work_item_admissions"]);
+    const materializationRevert = await readFile(new URL(
+      "../sql/admitted-child-materializations-v1-revert.sql", import.meta.url), "utf8");
+    await connection.query(materializationRevert);
     const consumptionRevert = await readFile(new URL(
       "../sql/runtime-permission-consumption-v1-revert.sql", import.meta.url), "utf8");
     await connection.query(consumptionRevert);
@@ -290,6 +303,31 @@ test("PostgreSQL enforces admission constraints, rollback visibility, and row lo
   const setup = await client(); const first = await client(); const second = await client();
   try {
     await resetAndSeed(setup); const created = await admit(setup);
+    const durable = (await setup.query(`SELECT input_json,state_json FROM codeops.admitted_child_materializations
+      WHERE admission_id=$1`, [created.admissionId])).rows[0];
+    assert.equal(durable.input_json.contextAttachments.length, 0);
+    assert.equal(durable.input_json.images.agent, materialization.agentImage);
+    assert.equal(durable.input_json.initialDispatch.dispatchId, created.dispatchId);
+    assert.equal(durable.state_json.state, "queued");
+    await assert.rejects(setup.query(`UPDATE codeops.admitted_child_materializations
+      SET input_json=jsonb_set(input_json,'{release}','"drift"') WHERE admission_id=$1`,
+    [created.admissionId]), /input is immutable/);
+    await setup.query("BEGIN");
+    for (const next of ["provisioning", "runtime-authorized", "success-finalizing"]) {
+      await setup.query(`UPDATE codeops.admitted_child_materializations SET state=$2,
+        state_json=jsonb_set(state_json,'{state}',to_jsonb($2::text)) WHERE admission_id=$1`,
+      [created.admissionId, next]);
+    }
+    await setup.query("SAVEPOINT success_finalization_transition");
+    await assert.rejects(setup.query(`UPDATE codeops.admitted_child_materializations
+      SET state='runtime-authorized',state_json=jsonb_set(state_json,'{state}',
+        '"runtime-authorized"') WHERE admission_id=$1`, [created.admissionId]),
+    /state cannot move backward/);
+    await setup.query("ROLLBACK TO SAVEPOINT success_finalization_transition");
+    await setup.query(`UPDATE codeops.admitted_child_materializations SET state='ready',
+      state_json=jsonb_set(state_json,'{state}','"ready"') WHERE admission_id=$1`,
+    [created.admissionId]);
+    await setup.query("ROLLBACK");
     await assert.rejects(setup.query("UPDATE codeops.work_item_admissions SET source_sha=$2 WHERE admission_id=$1",
       [created.admissionId, "b".repeat(40)]), /immutable/);
     await setup.query("BEGIN");
@@ -300,10 +338,21 @@ test("PostgreSQL enforces admission constraints, rollback visibility, and row lo
 
     await first.query("BEGIN");
     await first.query("ALTER TABLE codeops.work_item_admissions DISABLE TRIGGER work_item_admissions_immutable");
-    await first.query("UPDATE codeops.work_item_admissions SET authority_digest=$2 WHERE admission_id=$1",
-      [created.admissionId, `sha256:${"f".repeat(64)}`]);
-    assert.notEqual((await second.query("SELECT authority_digest FROM codeops.work_item_admissions WHERE admission_id=$1",
-      [created.admissionId])).rows[0].authority_digest, `sha256:${"f".repeat(64)}`);
+    await assert.rejects(first.query(
+      "UPDATE codeops.work_item_admissions SET authority_digest=$2 WHERE admission_id=$1",
+      [created.admissionId, `sha256:${"f".repeat(64)}`]),
+    (error) => error.code === "23503" &&
+      error.constraint === "admitted_child_materializations_admission_fk");
+    await first.query("ROLLBACK");
+
+    const rollbackOnlyAdmittedAt = "2026-08-30T10:01:00.000Z";
+    await first.query("BEGIN");
+    await first.query("ALTER TABLE codeops.work_item_admissions DISABLE TRIGGER work_item_admissions_immutable");
+    await first.query(`UPDATE codeops.work_item_admissions SET admitted_at=$2::timestamptz,
+      authority_json=jsonb_set(authority_json,'{admittedAt}',to_jsonb($2::text)) WHERE admission_id=$1`,
+    [created.admissionId, rollbackOnlyAdmittedAt]);
+    assert.notEqual((await second.query("SELECT admitted_at FROM codeops.work_item_admissions WHERE admission_id=$1",
+      [created.admissionId])).rows[0].admitted_at.toISOString(), rollbackOnlyAdmittedAt);
     await first.query("ROLLBACK");
 
     await first.query("BEGIN");
@@ -316,6 +365,156 @@ test("PostgreSQL enforces admission constraints, rollback visibility, and row lo
     await Promise.allSettled([first.query("ROLLBACK"), second.query("ROLLBACK")]);
     await Promise.allSettled([first.end(), second.end(), setup.end()]);
   }
+});
+
+test("ordinary PostgreSQL role admits and exclusively claims one exact materialization owner", { skip }, async () => {
+  requireDedicatedDatabase();
+  const connection = await client();
+  const role = "codeops_admission_ordinary_test";
+  try {
+    await resetAndSeed(connection);
+    await connection.query(`DROP ROLE IF EXISTS ${role}`);
+    await connection.query(`CREATE ROLE ${role} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOLOGIN`);
+    await connection.query(`GRANT USAGE ON SCHEMA codeops TO ${role}`);
+    await connection.query(`GRANT SELECT,INSERT,UPDATE ON ALL TABLES IN SCHEMA codeops TO ${role}`);
+    await connection.query(`SET ROLE ${role}`);
+    assert.equal((await connection.query(`SELECT rolsuper FROM pg_roles WHERE rolname=current_user`)).rows[0].rolsuper, false);
+    const result = await admit(connection);
+    assert.equal((await connection.query(`SELECT count(*)::integer AS count
+      FROM codeops.admitted_child_materializations WHERE admission_id=$1`, [result.admissionId])).rows[0].count, 1);
+    const firstToken = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
+    const replacementToken = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb";
+    assert.deepEqual(await claimAdmittedChildMaterialization(
+      connection, "ordinary-controller", firstToken), { admissionId: result.admissionId,
+      token: firstToken });
+    assert.equal(await claimAdmittedChildMaterialization(
+      connection, "ordinary-controller", replacementToken), null);
+    await releaseAdmittedChildMaterializationClaim(
+      connection, result.admissionId, replacementToken);
+    assert.equal((await connection.query(`SELECT reconciliation_token::text AS token
+      FROM codeops.admitted_child_materializations WHERE admission_id=$1`,
+    [result.admissionId])).rows[0].token, firstToken);
+    await releaseAdmittedChildMaterializationClaim(connection, result.admissionId, firstToken);
+    assert.deepEqual(await claimAdmittedChildMaterialization(
+      connection, "replacement-controller", replacementToken), { admissionId: result.admissionId,
+      token: replacementToken });
+    await connection.query("RESET ROLE");
+  } finally {
+    await connection.query("RESET ROLE").catch(() => undefined);
+    await connection.query(`DROP OWNED BY ${role}`).catch(() => undefined);
+    await connection.query(`DROP ROLE IF EXISTS ${role}`).catch(() => undefined);
+    await connection.end();
+  }
+});
+
+test("PostgreSQL fair scan serializes RFC3339 that scan-then-load parsing accepts", { skip }, async () => {
+  requireDedicatedDatabase();
+  const connection = await client();
+  try {
+    await resetAndSeed(connection);
+    const admitted = await admit(connection);
+    assert.equal((await claimAdmittedChildMaterialization(connection))?.admissionId,
+      admitted.admissionId);
+    const loaded = await loadAdmittedChildMaterialization(connection, admitted.admissionId);
+    assert.match(loaded.state.updatedAt,
+      /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/);
+  } finally { await connection.end(); }
+});
+
+test("PostgreSQL inserts and replays a maximum-size admitted prompt through a bounded dispatch key", { skip }, async () => {
+  requireDedicatedDatabase();
+  const connection = await client();
+  try {
+    await resetAndSeed(connection);
+    const request = admissionRequest(0);
+    request.workItem = { ...request.workItem, prompt: "p".repeat(100_000) };
+    const created = await admit(connection, request);
+    assert.equal((await admit(connection, request, "2026-08-30T10:01:00.000Z")).disposition,
+      "replayed");
+    const row = (await connection.query(`SELECT octet_length(outbox.dispatch_json::text) AS bytes,
+        outbox.dispatch_digest,materialization.initial_dispatch_digest
+      FROM codeops.session_runtime_outbox outbox
+      JOIN codeops.admitted_child_materializations materialization
+        ON materialization.child_dispatch_id=outbox.dispatch_id
+      WHERE materialization.admission_id=$1`, [created.admissionId])).rows[0];
+    assert.ok(Number(row.bytes) > 100_000);
+    assert.match(row.dispatch_digest, /^sha256:[0-9a-f]{64}$/);
+    assert.equal(row.dispatch_digest, row.initial_dispatch_digest);
+    const definition = (await connection.query(`SELECT pg_get_constraintdef(oid) AS definition
+      FROM pg_constraint WHERE conname='session_runtime_outbox_materialization_dispatch_key'`))
+      .rows[0].definition;
+    assert.match(definition, /dispatch_digest/);
+    assert.doesNotMatch(definition, /dispatch_json/);
+    await connection.query("BEGIN");
+    await connection.query(`UPDATE codeops.session_runtime_outbox
+      SET dispatch_digest=$2 WHERE dispatch_id=$1`, [created.dispatchId,
+      `sha256:${"f".repeat(64)}`]);
+    await assert.rejects(connection.query("SET CONSTRAINTS ALL IMMEDIATE"),
+      (error) => error.code === "23503");
+    await connection.query("ROLLBACK");
+    const original = (await connection.query(`SELECT dispatch_json
+      FROM codeops.session_runtime_outbox WHERE dispatch_id=$1`, [created.dispatchId]))
+      .rows[0].dispatch_json;
+    await connection.query(`UPDATE codeops.session_runtime_outbox SET dispatch_json=
+      jsonb_set(dispatch_json,'{command,prompt}','"drift"') WHERE dispatch_id=$1`,
+    [created.dispatchId]);
+    await assert.rejects(admit(connection, request, "2026-08-30T10:02:00.000Z"),
+      /child dispatch payload drifted/);
+    await connection.query(`UPDATE codeops.session_runtime_outbox SET dispatch_json=$2::jsonb
+      WHERE dispatch_id=$1`, [created.dispatchId, canonicalJsonText(original)]);
+  } finally { await connection.end(); }
+});
+
+test("PostgreSQL prioritizes and concurrency-fences the exact admitted initial dispatch", { skip }, async () => {
+  requireDedicatedDatabase();
+  const setup = await client(); const first = await client(); const second = await client();
+  try {
+    for (const [ordinal, laterAt] of [
+      [0, admittedAt],
+      [1, "2026-08-30T09:00:00.000Z"],
+    ]) {
+      await resetAndSeed(setup);
+      const admitted = await admit(setup);
+      const stored = (await setup.query(`SELECT outbox.dispatch_json,session.snapshot_json
+        FROM codeops.session_runtime_outbox outbox
+        JOIN codeops.sessions session ON session.session_id=outbox.session_id
+        WHERE outbox.dispatch_id=$1`, [admitted.dispatchId])).rows[0];
+      const tail = ordinal === 0 ? "4" : "5";
+      const laterDispatchId = `${tail.repeat(8)}-${tail.repeat(4)}-4${tail.repeat(3)}-8${tail.repeat(3)}-${tail.repeat(12)}`;
+      const laterKey = `${tail.repeat(7)}6-${tail.repeat(3)}6-4${tail.repeat(2)}6-8${tail.repeat(2)}6-${tail.repeat(11)}6`;
+      const later = { ...stored.dispatch_json, dispatchId: laterDispatchId,
+        command: { ...stored.dispatch_json.command, idempotencyKey: laterKey,
+          prompt: "A later child command." }, dispatchedAt: laterAt };
+      await setup.query(`INSERT INTO codeops.session_runtime_outbox
+        (dispatch_id,session_id,idempotency_key,principal_id,dispatch_json,dispatch_digest,
+         status,available_at,created_at)
+        VALUES($1,$2,$3,$4,$5::jsonb,$6,'pending',$7::timestamptz,$7::timestamptz)`,
+      [laterDispatchId, later.command.sessionId, laterKey, later.principalId,
+        canonicalJsonText(later), sha256CanonicalJsonDigest(later), laterAt]);
+      const authority = { sessionId: later.command.sessionId,
+        generation: later.command.generation, leaseId: later.command.leaseId,
+        identity: stored.snapshot_json.identity };
+      const claimInput = (worker, token) => ({ workerId: worker, ...authority,
+        leaseMs: 60_000, now: () => new Date("2026-08-30T10:02:00.000Z"),
+        claimToken: () => token });
+      if (ordinal === 0) {
+        const claimed = await claimSessionRuntimeDispatch(setup,
+          claimInput("runtime-worker:equal", "56565656-5656-4565-8565-565656565656"));
+        assert.equal(claimed.dispatch.dispatchId, admitted.dispatchId);
+      } else {
+        const claims = await Promise.all([
+          claimSessionRuntimeDispatch(first, claimInput("runtime-worker:first",
+            "57575757-5757-4575-8575-575757575757")),
+          claimSessionRuntimeDispatch(second, claimInput("runtime-worker:second",
+            "58585858-5858-4585-8585-585858585858")),
+        ]);
+        assert.deepEqual(claims.map((claim) => claim?.dispatch.dispatchId ?? null).sort(),
+          [null, admitted.dispatchId].sort());
+        assert.equal((await setup.query(`SELECT status FROM codeops.session_runtime_outbox
+          WHERE dispatch_id=$1`, [laterDispatchId])).rows[0].status, "pending");
+      }
+    }
+  } finally { await Promise.allSettled([first.end(), second.end(), setup.end()]); }
 });
 
 test("PostgreSQL rejects forged decision-result linkage before projection admission", { skip }, async () => {
@@ -361,17 +560,21 @@ test("PostgreSQL rejects schema-valid parent dispatch decision identity drift on
     const driftedDecisionResult = { ...stored.decisionResult, snapshot: { ...stored.decisionResult.snapshot,
       identity: { ...stored.decisionResult.snapshot.identity, displayName: "Replay identity drift" } } };
     const driftedApproval = { ...stored, decisionResult: driftedDecisionResult };
+    await connection.query("BEGIN");
     await connection.query("ALTER TABLE codeops.project_plan_approvals DISABLE TRIGGER project_plan_approvals_immutable");
     try {
-      await connection.query(`UPDATE codeops.project_plan_approvals SET authority_digest=$1,authority_json=$2::jsonb`,
-        [sha256CanonicalJsonDigest(driftedApproval), canonicalJsonText(driftedApproval)]);
+      await assert.rejects(connection.query(
+        `UPDATE codeops.project_plan_approvals SET authority_digest=$1,authority_json=$2::jsonb`,
+        [sha256CanonicalJsonDigest(driftedApproval), canonicalJsonText(driftedApproval)]),
+      (error) => error.code === "23503" &&
+        error.constraint === "admitted_child_materializations_approval_fk");
     } finally {
-      await connection.query("ALTER TABLE codeops.project_plan_approvals ENABLE TRIGGER project_plan_approvals_immutable");
+      await connection.query("ROLLBACK");
     }
     await connection.query(`UPDATE codeops.session_commands SET result_json=$1::jsonb
       WHERE command_json->>'type'='respond_permission'`, [canonicalJsonText(driftedDecisionResult)]);
     await assert.rejects(admit(connection, request, "2026-08-30T10:01:00.000Z"),
-      /claimed parent dispatch snapshot identity does not match/);
+      /project-plan decision result payload drifted/);
     assert.equal((await connection.query("SELECT count(*)::integer count FROM codeops.work_item_admissions")).rows[0].count, 1);
   } finally { await connection.end(); }
 });
@@ -559,10 +762,19 @@ test("PostgreSQL binds approval owners and payload projections with composite fo
       [workItems[1].repository, workItems[1].provider.workspaceId, workItems[1].provider.projectId,
         workItems[1].workItemId, sourceSha, admittedAt]);
 
-    async function rejectsForeignKey(constraint, statements) {
+    async function rejectsForeignKey(constraint, statements, materializationConstraint) {
       await connection.query("BEGIN");
       try {
         for (const statement of statements.slice(0, -1)) await connection.query(statement);
+        if (materializationConstraint !== undefined) {
+          await connection.query("SAVEPOINT materialization_guard_proof");
+          await assert.rejects(connection.query(statements.at(-1)),
+            (error) => error.code === "23503" && error.constraint === materializationConstraint);
+          await connection.query("ROLLBACK TO SAVEPOINT materialization_guard_proof");
+          await connection.query(`ALTER TABLE codeops.admitted_child_materializations
+            DISABLE TRIGGER admitted_child_materializations_guard`);
+          await connection.query("DELETE FROM codeops.admitted_child_materializations");
+        }
         await assert.rejects(connection.query(statements.at(-1)),
           (error) => error.code === "23503" && error.constraint === constraint);
       } finally { await connection.query("ROLLBACK"); }
@@ -575,7 +787,7 @@ test("PostgreSQL binds approval owners and payload projections with composite fo
           authority_json,'{parentSessionId}','"${driftSessionId}"'),
           '{supervisionEventId}','"${driftEvent.eventId}"'),'{supervisionEvent}',
           '${canonicalJsonText(driftEvent)}'::jsonb)`,
-    ]);
+    ], "admitted_child_materializations_admission_fk");
     await rejectsForeignKey("work_item_admissions_child_event_fk", [
       "ALTER TABLE codeops.work_item_admissions DISABLE TRIGGER work_item_admissions_immutable",
       `UPDATE codeops.work_item_admissions SET child_event_id='${driftEvent.eventId}',
@@ -652,6 +864,21 @@ test("PostgreSQL replay survives parent, budget, lifecycle, and publication prog
     }), "published");
     assert.equal((await admit(connection, request, "2026-08-30T10:09:00.000Z")).disposition, "replayed");
 
+    const storedMaterialization = (await connection.query(`SELECT input_json FROM
+      codeops.admitted_child_materializations WHERE admission_id=$1`, [created.admissionId])).rows[0].input_json;
+    const driftedMaterialization = { ...storedMaterialization, release: "v0.5.0-alpha.59" };
+    await connection.query("ALTER TABLE codeops.admitted_child_materializations DISABLE TRIGGER admitted_child_materializations_guard");
+    await connection.query(`UPDATE codeops.admitted_child_materializations SET input_digest=$2,input_json=$3::jsonb,
+      state_json=jsonb_set(state_json,'{inputDigest}',to_jsonb($2::text)) WHERE admission_id=$1`,
+    [created.admissionId, sha256CanonicalJsonDigest(driftedMaterialization), canonicalJsonText(driftedMaterialization)]);
+    await connection.query("ALTER TABLE codeops.admitted_child_materializations ENABLE TRIGGER admitted_child_materializations_guard");
+    await assert.rejects(admit(connection, request, "2026-08-30T10:09:10.000Z"), /release identity drifted/);
+    await connection.query("ALTER TABLE codeops.admitted_child_materializations DISABLE TRIGGER admitted_child_materializations_guard");
+    await connection.query(`UPDATE codeops.admitted_child_materializations SET input_digest=$2,input_json=$3::jsonb,
+      state_json=jsonb_set(state_json,'{inputDigest}',to_jsonb($2::text)) WHERE admission_id=$1`,
+    [created.admissionId, sha256CanonicalJsonDigest(storedMaterialization), canonicalJsonText(storedMaterialization)]);
+    await connection.query("ALTER TABLE codeops.admitted_child_materializations ENABLE TRIGGER admitted_child_materializations_guard");
+
     const permissionPayload = (await connection.query(`SELECT request_json FROM codeops.session_runtime_permission_requests
       WHERE dispatch_id=$1 AND request_id='approve-plan'`, [parentDispatchId])).rows[0].request_json;
     await connection.query(`UPDATE codeops.session_runtime_permission_requests SET request_json=
@@ -720,6 +947,14 @@ test("PostgreSQL replay survives parent, budget, lifecycle, and publication prog
 
     await connection.query("DELETE FROM codeops.work_item_lifecycle_publications WHERE event_id=$1", [created.lifecycleEventId]);
     await assert.rejects(admit(connection, request, "2026-08-30T10:10:00.000Z"), /durable owner is missing/);
+    const materializationRevert = await readFile(new URL(
+      "../sql/admitted-child-materializations-v1-revert.sql", import.meta.url), "utf8");
+    await assert.rejects(connection.query(materializationRevert),
+      /cannot revert admitted child materializations with durable rows/);
+    await connection.query("ROLLBACK");
+    await connection.query("ALTER TABLE codeops.admitted_child_materializations DISABLE TRIGGER admitted_child_materializations_guard");
+    await connection.query("DELETE FROM codeops.admitted_child_materializations");
+    await connection.query(materializationRevert);
     const consumptionRevert = await readFile(new URL(
       "../sql/runtime-permission-consumption-v1-revert.sql", import.meta.url), "utf8");
     await connection.query(consumptionRevert);
@@ -731,6 +966,11 @@ test("PostgreSQL replay survives parent, budget, lifecycle, and publication prog
       .rows[0].count, 1);
 
     await resetAndSeed(connection); await admit(connection, request);
+    await connection.query("ALTER TABLE codeops.admitted_child_materializations DISABLE TRIGGER admitted_child_materializations_guard");
+    await connection.query("DELETE FROM codeops.admitted_child_materializations");
+    const secondMaterializationRevert = await readFile(new URL(
+      "../sql/admitted-child-materializations-v1-revert.sql", import.meta.url), "utf8");
+    await connection.query(secondMaterializationRevert);
     await connection.query("BEGIN");
     await connection.query("ALTER TABLE codeops.work_item_admissions DISABLE TRIGGER work_item_admissions_immutable");
     await connection.query("UPDATE codeops.session_runtime_outbox SET admission_id=NULL WHERE admission_id IS NOT NULL");
@@ -760,7 +1000,9 @@ test("PostgreSQL preserves serialized concurrency failure and returns duplicate 
       headers: { authorization: "Bearer runtime-token", "content-type": "application/json" }, token: "runtime-token",
       workerId, readBody: async () => duplicate, claim: async () => null, complete: async () => ({}),
       submitPermission: async () => ({}), pollPermission: async () => ({}),
-      admitWorkItem: async (input) => admitSessionRuntimeWorkItem(second, { ...input, now: () => new Date(admittedAt) }),
+      admitWorkItem: async (input) => admitSessionRuntimeWorkItem(second, {
+        ...input, materialization, now: () => new Date(admittedAt),
+      }),
     });
     assert.deepEqual(result, { status: 409, body: { status: "conflict" } });
   } finally { await Promise.allSettled([first.end(), second.end(), setup.end()]); }

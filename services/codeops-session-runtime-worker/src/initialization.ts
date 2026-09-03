@@ -1,9 +1,15 @@
+import { createHash } from "node:crypto";
 import {
+  canonicalJsonText,
   sessionJobInitializationRequestSchema,
   sessionJobInitializationResponseSchema,
+  type SessionRuntimeDispatch,
   type SessionJobInitializationRequest,
   type SessionJobInitializationResponse,
+  type WorkspaceContextAttachment,
 } from "@codeops/codeops-contracts";
+import { verifyWorkspaceContextAttachments, workspaceContextAttachmentDescriptors } from
+  "@codeops/codeops-contracts/workspace-context-node";
 import {
   boundedJson,
   exactGatewayOrigin,
@@ -11,6 +17,31 @@ import {
   requireSuccess,
   SessionRuntimeTransportError,
 } from "./transport.js";
+import type { RuntimeExecutor } from "./transport.js";
+
+export function admittedChildInitialDispatchExecutor(input: {
+  readonly initialDispatchDigest: string;
+  readonly contextAttachments: readonly WorkspaceContextAttachment[];
+  readonly execute: RuntimeExecutor;
+}): RuntimeExecutor {
+  return async (dispatch, context) => {
+    const dispatchDigest = `sha256:${createHash("sha256")
+      .update(canonicalJsonText(dispatch)).digest("hex")}`;
+    const exactInitialDispatch = dispatch.command.type === "prompt" &&
+      dispatchDigest === input.initialDispatchDigest;
+    if (context.isAdmittedInitialDispatch !== exactInitialDispatch) {
+      throw new Error("admitted child initial dispatch marker or identity drifted before ACP exposure");
+    }
+    if (!context.isAdmittedInitialDispatch) return input.execute(dispatch, context);
+    const admittedDispatch: SessionRuntimeDispatch = {
+      ...dispatch,
+      command: { ...dispatch.command, ...(input.contextAttachments.length === 0 ? {} : {
+        contextAttachments: [...input.contextAttachments],
+      }) },
+    };
+    return input.execute(admittedDispatch, context);
+  };
+}
 
 /**
  * Narrow Job bootstrap client. Its bearer can create only a root broker
@@ -77,6 +108,17 @@ export class SessionJobInitializer {
       const duplicateReleasedLease =
         result.disposition === "duplicate" &&
         result.snapshot.lease?.status === "released";
+      if (request.version === "codeops.session-job-initialization/v3") {
+        if (result.disposition !== "duplicate" || result.contextAttachments === undefined ||
+            result.initialDispatchDigest === undefined) {
+          throw new SessionRuntimeTransportError("admitted child initialization response is incomplete");
+        }
+        const attachments = verifyWorkspaceContextAttachments(result.contextAttachments);
+        if (canonicalJsonText(workspaceContextAttachmentDescriptors(attachments)) !==
+            canonicalJsonText(request.identity.contextAttachments)) {
+          throw new SessionRuntimeTransportError("admitted child attachment bytes drifted from the exact descriptors");
+        }
+      }
       if (
         result.snapshot.sessionId !== request.sessionId ||
         JSON.stringify(result.snapshot.identity) !==

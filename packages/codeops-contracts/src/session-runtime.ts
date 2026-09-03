@@ -243,13 +243,24 @@ export const sessionRuntimeCompletionSchema = z.discriminatedUnion("type", [
     .strict(),
 ]);
 
-export const sessionRuntimeDispatchClaimSchema = z
+const sessionRuntimeDispatchClaimBaseSchema = z
   .object({
     dispatch: sessionRuntimeDispatchSchema,
     claimToken: uuid,
     claimExpiresAt: isoDateTime,
     claimCount: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   })
+  .strict();
+
+export const sessionRuntimeDispatchClaimSchema = sessionRuntimeDispatchClaimBaseSchema
+  .refine(
+    (claim) =>
+      Date.parse(claim.claimExpiresAt) > Date.parse(claim.dispatch.dispatchedAt),
+    "runtime claim must expire after dispatch",
+  );
+
+export const sessionRuntimeDispatchClaimV2Schema = sessionRuntimeDispatchClaimBaseSchema
+  .extend({ isAdmittedInitialDispatch: z.boolean() })
   .strict()
   .refine(
     (claim) =>
@@ -272,6 +283,17 @@ export const sessionRuntimeClaimResponseSchema = z
   .object({
     version: z.literal("codeops.session-runtime-claim-response/v1"),
     claim: sessionRuntimeDispatchClaimSchema.nullable(),
+  })
+  .strict();
+
+export const sessionRuntimeClaimRequestV2Schema = sessionRuntimeClaimRequestSchema
+  .extend({ version: z.literal("codeops.session-runtime-claim-request/v2") })
+  .strict();
+
+export const sessionRuntimeClaimResponseV2Schema = z
+  .object({
+    version: z.literal("codeops.session-runtime-claim-response/v2"),
+    claim: sessionRuntimeDispatchClaimV2Schema.nullable(),
   })
   .strict();
 
@@ -360,6 +382,9 @@ export type SessionRuntimeCompletion = z.infer<
 >;
 export type SessionRuntimeDispatchClaim = z.infer<
   typeof sessionRuntimeDispatchClaimSchema
+>;
+export type SessionRuntimeDispatchClaimV2 = z.infer<
+  typeof sessionRuntimeDispatchClaimV2Schema
 >;
 export type SessionRuntimePermissionSubmission = z.infer<
   typeof sessionRuntimePermissionSubmissionSchema

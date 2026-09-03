@@ -52,6 +52,11 @@ const request = {
 };
 const image = `ghcr.io/anulman/codeops/image@sha256:${"c".repeat(64)}`;
 
+function resourceBinding(resource) {
+  const role = resource.metadata.labels["codeops.example/resource-role"];
+  return { uid: `uid-${role}`, configDigest: `sha256:${"d".repeat(64)}` };
+}
+
 function resourceConfig(current, identity) {
   return {
     namespace: "agents-system",
@@ -93,6 +98,7 @@ test("provisions fixed resources, waits for the exact session, and sends one pro
       if (resource.metadata.labels["codeops.example/resource-role"] === "workspace-runtime") {
         runtimeEnsured = true;
       }
+      return resourceBinding(resource);
     },
     loadSession: async () => runtimeEnsured ? {
       version: "codeops.session-snapshot/v1",
@@ -141,7 +147,13 @@ test("provisions fixed resources, waits for the exact session, and sends one pro
       status: { podIP: "10.42.1.8" },
     }],
     recordRuntimePodObservations: async (entries) => observations.push(...entries),
-    removeResource: async (resource) => ensured.push(`deleted:${resource.kind}`),
+    removeResource: async (resource, requestDigest, uid, configDigest) => {
+      const binding = resourceBinding(resource);
+      assert.equal(requestDigest, launch.requestDigest);
+      assert.equal(uid, binding.uid);
+      assert.equal(configDigest, binding.configDigest);
+      ensured.push(`deleted:${resource.kind}`);
+    },
     enqueuePrompt: async (input) => {
       enqueued.push(input);
       return { command: input.command };
@@ -155,8 +167,12 @@ test("provisions fixed resources, waits for the exact session, and sends one pro
     "source-authority",
     "workspace-storage",
     "source-materializer",
+    "source-authority",
+    "workspace-storage",
+    "source-materializer",
     "deleted:Secret",
     "deleted:Job",
+    "workspace-runtime",
     "workspace-runtime",
     "deleted:Secret",
   ]);
@@ -180,7 +196,7 @@ test("keeps provisioning durable until the root session initializes", async () =
   const dependencies = {
     load: async () => ({ launch: current, request }),
     update: async (next) => (current = next),
-    ensureResource: async () => {},
+    ensureResource: async (resource) => resourceBinding(resource),
     loadSession: async () => null,
     loadJob: async () => ({ status: { active: 1 } }),
     removeResource: async () => {},
@@ -192,13 +208,137 @@ test("keeps provisioning durable until the root session initializes", async () =
   assert.equal((await reconcileWorkspaceLaunch(launch.launchId, dependencies)).state, "provisioning");
 });
 
+test("persists and deletes an exact legacy credential identity before stable recreation", async () => {
+  let current = launch;
+  const events = [];
+  const legacyName = "workspace-0123456789abcdef01234567-source-0123456789";
+  const dependencies = {
+    load: async () => ({ launch: current, request }),
+    update: async (next) => { current = next; events.push({ type: "persist",
+      binding: next.resourceBindings?.sourceAuthority }); return next; },
+    recoverResource: async (resource) => resource.kind === "Secret" &&
+      !events.some(({ type }) => type === "delete") ? {
+      uid: "legacy-secret-uid", configDigest: `sha256:${"e".repeat(64)}`,
+      resourceName: legacyName, matchesExpectedConfiguration: false,
+      desiredConfigDigest: `sha256:${"f".repeat(64)}`,
+    } : null,
+    ensureResource: async (resource, _requestDigest, _uid, expectedConfigDigest) => {
+      events.push({ type: "ensure", name: resource.metadata.name });
+      return { ...resourceBinding(resource), configDigest: expectedConfigDigest ??
+        resourceBinding(resource).configDigest };
+    },
+    loadSession: async () => null,
+    loadJob: async () => ({ status: { active: 1 } }),
+    removeResource: async (resource, _digest, uid) => { events.push({ type: "delete",
+      name: resource.metadata.name, uid,
+      persisted: current.resourceBindings?.sourceAuthority,
+      replacement: current.resourceReplacements?.sourceAuthority }); },
+    readResourceUid: async (resource) => resource.metadata.name === legacyName &&
+      !events.some(({ type }) => type === "delete") ? "legacy-secret-uid" : null,
+    enqueuePrompt: async () => assert.fail("unexpected prompt"),
+    resourceConfig,
+    now,
+  };
+  assert.equal((await reconcileWorkspaceLaunch(launch.launchId, dependencies)).state,
+    "provisioning");
+  const deletion = events.find(({ type }) => type === "delete");
+  assert.deepEqual(deletion, { type: "delete", name: legacyName, uid: "legacy-secret-uid",
+    persisted: { uid: "legacy-secret-uid", configDigest: `sha256:${"e".repeat(64)}`,
+      resourceName: legacyName }, replacement: { uid: "legacy-secret-uid",
+      configDigest: `sha256:${"e".repeat(64)}`, resourceName: legacyName,
+      desiredConfigDigest: `sha256:${"f".repeat(64)}` } });
+  assert.equal(events.some(({ type, name }) => type === "ensure" &&
+    name === "workspace-0123456789abcdef01234567-source"), true);
+});
+
+test("replays asynchronous Secret deletion only from durable replacement intent", async () => {
+  let current = launch;
+  const legacyName = "workspace-0123456789abcdef01234567-source-0123456789";
+  const desiredDigest = `sha256:${"f".repeat(64)}`;
+  let deleting = false;
+  let deleted = false;
+  let deleteCalls = 0;
+  let recoverCalls = 0;
+  const dependencies = {
+    load: async () => ({ launch: current, request }),
+    update: async (next) => (current = next),
+    recoverResource: async (resource) => {
+      recoverCalls += 1;
+      if (recoverCalls === 1) return { uid: "old-uid", configDigest: `sha256:${"e".repeat(64)}`,
+        resourceName: legacyName, matchesExpectedConfiguration: false,
+        desiredConfigDigest: desiredDigest };
+      return null;
+    },
+    readResourceUid: async (resource) => resource.metadata.name !== legacyName || deleted
+      ? null : "old-uid",
+    removeResource: async () => { deleteCalls += 1; deleting = true; },
+    ensureResource: async (resource, _digest, uid, configDigest) => ({
+      uid: uid ?? `new-${resource.metadata.labels["codeops.example/resource-role"]}`,
+      configDigest: configDigest ?? `sha256:${"d".repeat(64)}`,
+    }),
+    loadSession: async () => null,
+    loadJob: async () => ({ status: { active: 1 } }),
+    enqueuePrompt: async () => assert.fail("unexpected prompt"),
+    resourceConfig,
+    now,
+  };
+  const pending = await reconcileWorkspaceLaunch(launch.launchId, dependencies);
+  assert.equal(pending.state, "queued");
+  assert.equal(deleting, true);
+  assert.equal(deleteCalls, 1);
+  assert.deepEqual(current.resourceReplacements.sourceAuthority, {
+    uid: "old-uid", resourceName: legacyName,
+    configDigest: `sha256:${"e".repeat(64)}`, desiredConfigDigest: desiredDigest,
+  });
+  deleted = true;
+  const replayed = await reconcileWorkspaceLaunch(launch.launchId, dependencies);
+  assert.equal(replayed.state, "provisioning");
+  assert.equal(deleteCalls, 1);
+  assert.equal(replayed.resourceBindings.sourceAuthority.uid, "new-source-authority");
+  assert.equal(replayed.resourceReplacements.sourceAuthority, undefined);
+});
+
+test("replacement-race replay binds an exact new Secret without deleting its UID", async () => {
+  const desiredName = "workspace-0123456789abcdef01234567-source";
+  const desiredDigest = `sha256:${"f".repeat(64)}`;
+  let current = { ...launch, resourceBindings: { sourceAuthority: {
+    uid: "old-uid", configDigest: `sha256:${"e".repeat(64)}` } },
+  resourceReplacements: { sourceAuthority: { uid: "old-uid", resourceName: desiredName,
+    configDigest: `sha256:${"e".repeat(64)}`, desiredConfigDigest: desiredDigest } } };
+  let deleteCalls = 0;
+  const result = await reconcileWorkspaceLaunch(launch.launchId, {
+    load: async () => ({ launch: current, request }),
+    update: async (next) => (current = next),
+    readResourceUid: async () => "new-uid",
+    recoverResource: async () => ({ uid: "new-uid", configDigest: desiredDigest,
+      desiredConfigDigest: desiredDigest, matchesExpectedConfiguration: true }),
+    removeResource: async () => { deleteCalls += 1; },
+    ensureResource: async (resource, _digest, uid, configDigest) => ({ uid: uid ??
+      `uid-${resource.metadata.labels["codeops.example/resource-role"]}`,
+    configDigest: configDigest ?? `sha256:${"d".repeat(64)}` }),
+    loadSession: async () => null,
+    loadJob: async () => ({ status: { active: 1 } }),
+    enqueuePrompt: async () => assert.fail("unexpected prompt"),
+    resourceConfig,
+    now,
+  });
+  assert.equal(result.state, "provisioning");
+  assert.equal(deleteCalls, 0);
+  assert.deepEqual(result.resourceBindings.sourceAuthority,
+    { uid: "new-uid", configDigest: desiredDigest });
+  assert.equal(result.resourceReplacements.sourceAuthority, undefined);
+});
+
 test("terminates a session that drifts from the resolved workspace", async () => {
   const identity = workspaceLaunchRuntimeIdentity(launch);
   const removed = [];
   const result = await reconcileWorkspaceLaunch(launch.launchId, {
-    load: async () => ({ launch: { ...launch, state: "provisioning" }, request }),
+    load: async () => ({ launch: { ...launch, state: "provisioning",
+      resourceBindings: { sourceAuthority: {
+        uid: "uid-source-authority", configDigest: `sha256:${"d".repeat(64)}`,
+      } } }, request }),
     update: async (next) => next,
-    ensureResource: async () => {},
+    ensureResource: async (resource) => resourceBinding(resource),
     loadSession: async () => ({
       sessionId: identity.sessionId,
       generation: 1,
@@ -222,7 +362,7 @@ test("fails a launch whose fixed Job reaches a terminal failure", async () => {
   const result = await reconcileWorkspaceLaunch(launch.launchId, {
     load: async () => ({ launch: current, request }),
     update: async (next) => (current = next),
-    ensureResource: async () => {},
+    ensureResource: async (resource) => resourceBinding(resource),
     loadSession: async () => null,
     loadJob: async () => ({
       status: { conditions: [{ type: "Failed", status: "True" }] },
@@ -269,7 +409,35 @@ test("backs off transient provisioning failures and stops at the durable deadlin
   });
   assert.equal(expired.state, "failed");
   assert.equal(expired.failureCode, "provisioning-timeout");
-  assert.deepEqual(removed, ["Secret"]);
+  assert.deepEqual(removed, []);
+});
+
+test("cleans a created credential from the exact ensure result when binding persistence fails", async () => {
+  let updateCount = 0;
+  const removed = [];
+  const result = await reconcileWorkspaceLaunch(launch.launchId, {
+    load: async () => ({ launch: { ...launch, deadlineAt: now().toISOString() }, request }),
+    update: async (next) => {
+      updateCount += 1;
+      if (updateCount === 1) throw new Error("binding persistence failed");
+      return next;
+    },
+    ensureResource: async (resource) => resourceBinding(resource),
+    loadSession: async () => null,
+    loadJob: async () => assert.fail("Job status must not be consumed"),
+    removeResource: async (resource, requestDigest, uid, configDigest) => {
+      removed.push({ role: resource.metadata.labels["codeops.example/resource-role"],
+        requestDigest, uid, configDigest });
+    },
+    enqueuePrompt: async () => assert.fail("unexpected prompt"),
+    resourceConfig,
+    now,
+  });
+  assert.equal(result.state, "failed");
+  assert.deepEqual(removed, [{ role: "source-authority", requestDigest: launch.requestDigest,
+    ...resourceBinding({ metadata: { labels: {
+      "codeops.example/resource-role": "source-authority",
+    } } }) }]);
 });
 
 test("terminates incompatible resources after credential cleanup", async () => {
@@ -278,7 +446,10 @@ test("terminates incompatible resources after credential cleanup", async () => {
   const result = await reconcileWorkspaceLaunch(launch.launchId, {
     load: async () => ({ launch: current, request }),
     update: async (next) => (current = next),
-    ensureResource: async () => {
+    ensureResource: async (resource) => {
+      if (resource.metadata.labels["codeops.example/resource-role"] === "source-authority") {
+        return resourceBinding(resource);
+      }
       throw new PermanentWorkspaceLaunchError("resource identity drift");
     },
     loadSession: async () => null,
@@ -291,4 +462,43 @@ test("terminates incompatible resources after credential cleanup", async () => {
   assert.equal(result.state, "failed");
   assert.equal(result.failureCode, "identity-conflict");
   assert.deepEqual(removed, ["Secret"]);
+});
+
+test("replay never deletes a replacement Job identity", async () => {
+  const bindings = {
+    sourceAuthority: { uid: "uid-source-authority", configDigest: `sha256:${"1".repeat(64)}` },
+    workspaceStorage: { uid: "uid-workspace-storage", configDigest: `sha256:${"2".repeat(64)}` },
+    sourceMaterializer: { uid: "uid-source-materializer", configDigest: `sha256:${"3".repeat(64)}` },
+  };
+  const removed = [];
+  const result = await reconcileWorkspaceLaunch(launch.launchId, {
+    load: async () => ({ launch: { ...launch, state: "provisioning",
+      resourceBindings: bindings }, request }),
+    update: async (next) => next,
+    ensureResource: async (resource, requestDigest, expectedUid, expectedConfigDigest) => {
+      const key = {
+        "source-authority": "sourceAuthority",
+        "workspace-storage": "workspaceStorage",
+        "source-materializer": "sourceMaterializer",
+      }[resource.metadata.labels["codeops.example/resource-role"]];
+      assert.equal(requestDigest, launch.requestDigest);
+      assert.deepEqual({ uid: expectedUid, configDigest: expectedConfigDigest }, bindings[key]);
+      if (key === "sourceMaterializer") {
+        throw new PermanentWorkspaceLaunchError("replacement Kubernetes UID");
+      }
+      return bindings[key];
+    },
+    loadSession: async () => null,
+    loadJob: async () => assert.fail("replacement Job status must not be consumed"),
+    removeResource: async (resource, requestDigest, uid, configDigest) => {
+      removed.push({ role: resource.metadata.labels["codeops.example/resource-role"],
+        requestDigest, uid, configDigest });
+    },
+    enqueuePrompt: async () => assert.fail("unexpected prompt"),
+    resourceConfig,
+    now,
+  });
+  assert.equal(result.state, "failed");
+  assert.deepEqual(removed, [{ role: "source-authority", requestDigest: launch.requestDigest,
+    ...bindings.sourceAuthority }]);
 });

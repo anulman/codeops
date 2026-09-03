@@ -8,10 +8,16 @@ import type {
 import {
   createRunIdentity,
   claimRequest,
+  completeAgentJobSecretReplacement,
   parseCheckpointLogs,
+  readAgentJobResourceBindings,
+  readAgentJobSecretReplacements,
   readCandidatePatch,
   readRetainedResult,
+  removeAgentJobResourceBinding,
   retainCheckpoint,
+  retainAgentJobResourceBinding,
+  retainAgentJobSecretReplacement,
   retainFailure,
 } from "./core.js";
 import type { KubernetesClient } from "./kubernetes.js";
@@ -141,12 +147,39 @@ export function createAgentJobRunner(input: {
       ...identity,
     });
     await input.config.sessionProjection?.started(request, identity.runId);
+    const resourceKey = (resource: Record<string, unknown>): string => {
+      const metadata = resource.metadata as { readonly name?: unknown } | undefined;
+      if (typeof resource.kind !== "string" || typeof metadata?.name !== "string") {
+        throw new Error("Agent Job Kubernetes resource identity is invalid");
+      }
+      return `${resource.kind}/${metadata.name}`;
+    };
+    const resourceBindings = { ...await readAgentJobResourceBindings({
+      rootDirectory: input.config.evidenceRoot,
+      ...identity,
+    }) };
+    const resourceReplacements = { ...await readAgentJobSecretReplacements({
+      rootDirectory: input.config.evidenceRoot,
+      ...identity,
+    }) };
     const cleanup = async (): Promise<void> => {
       let firstError: unknown;
       for (const resource of [...resources].reverse()) {
+        const binding = resourceBindings[resourceKey(resource)];
+        // Results retained before exact cleanup bindings were introduced remain
+        // successful. Without the original UID, deleting a same-name resource
+        // would weaken the replacement-identity guard.
+        if (binding === undefined) continue;
         try {
+          const cleanupResource = resource.kind === "Secret"
+            ? { apiVersion: resource.apiVersion, kind: resource.kind,
+                metadata: structuredClone(resource.metadata) }
+            : resource;
           await input.kubernetes.delete(
-            resource as unknown as Parameters<KubernetesClient["delete"]>[0],
+            cleanupResource as unknown as Parameters<KubernetesClient["delete"]>[0],
+            identity.requestDigest,
+            binding.uid,
+            binding.configDigest,
           );
         } catch (error) {
           firstError ??= error;
@@ -174,10 +207,127 @@ export function createAgentJobRunner(input: {
     try {
       for (const resource of resources) {
         signal?.throwIfAborted();
-        await input.kubernetes.ensure(
+        const key = resourceKey(resource);
+        const continueSecretReplacement = async () => {
+          const replacement = resourceReplacements[key];
+          if (resource.kind !== "Secret" || replacement === undefined) return undefined;
+          const metadata = resource.metadata as Record<string, unknown>;
+          const cleanupIdentity = { apiVersion: resource.apiVersion, kind: resource.kind,
+            metadata: { ...metadata, name: replacement.resourceName ?? metadata.name } };
+          await input.kubernetes.delete(
+            cleanupIdentity as unknown as Parameters<KubernetesClient["delete"]>[0],
+            identity.requestDigest,
+            replacement.uid,
+            replacement.configDigest,
+          );
+          const oldBinding = resourceBindings[key];
+          if (oldBinding !== undefined) {
+            if (oldBinding.uid !== replacement.uid ||
+                oldBinding.configDigest !== replacement.configDigest) {
+              throw new Error("durable Agent Job Secret replacement binding drift");
+            }
+            await removeAgentJobResourceBinding({
+              rootDirectory: input.config.evidenceRoot,
+              ...identity,
+              resourceKey: key,
+              binding: oldBinding,
+            });
+            delete resourceBindings[key];
+          }
+          const recovered = await input.kubernetes.recoverOwned?.(
+            resource as unknown as Parameters<KubernetesClient["recoverOwned"]>[0],
+            identity.requestDigest,
+          ) ?? null;
+          let binding;
+          if (recovered === null) {
+            binding = await input.kubernetes.ensure(
+              resource as unknown as Parameters<KubernetesClient["ensure"]>[0],
+              identity.requestDigest,
+              undefined,
+              replacement.desiredConfigDigest,
+            );
+          } else {
+            const { matchesExpectedConfiguration, resourceName, desiredConfigDigest,
+              ...recoveredBinding } = recovered;
+            if (!matchesExpectedConfiguration || resourceName !== undefined ||
+                desiredConfigDigest !== replacement.desiredConfigDigest ||
+                recoveredBinding.configDigest !== replacement.desiredConfigDigest) {
+              throw new Error("recreated Agent Job Secret configuration drifted");
+            }
+            binding = recoveredBinding;
+          }
+          await completeAgentJobSecretReplacement({
+            rootDirectory: input.config.evidenceRoot,
+            ...identity,
+            resourceKey: key,
+            replacement,
+            binding,
+          });
+          resourceBindings[key] = binding;
+          delete resourceReplacements[key];
+          return binding;
+        };
+        const replacementBinding = await continueSecretReplacement();
+        if (replacementBinding !== undefined) continue;
+        let expected = resourceBindings[key];
+        if (expected === undefined) {
+          const recovered = await input.kubernetes.recoverOwned?.(
+            resource as unknown as Parameters<KubernetesClient["recoverOwned"]>[0],
+            identity.requestDigest,
+          ) ?? null;
+          if (recovered !== null) {
+            const { matchesExpectedConfiguration, resourceName, desiredConfigDigest,
+              ...binding } = recovered;
+            resourceBindings[key] = binding;
+            await retainAgentJobResourceBinding({
+              rootDirectory: input.config.evidenceRoot,
+              ...identity,
+              resourceKey: key,
+              binding,
+            });
+            expected = binding;
+            if (!matchesExpectedConfiguration) {
+              if (resource.kind !== "Secret") {
+                throw new Error("recovered Agent Job Kubernetes resource configuration drifted");
+              }
+              if (desiredConfigDigest === undefined) {
+                throw new Error("Agent Job Secret replacement proof is missing");
+              }
+              const replacement = { ...binding, desiredConfigDigest,
+                ...(resourceName === undefined ? {} : { resourceName }) };
+              await retainAgentJobSecretReplacement({
+                rootDirectory: input.config.evidenceRoot,
+                ...identity,
+                resourceKey: key,
+                replacement,
+              });
+              resourceReplacements[key] = replacement;
+              await continueSecretReplacement();
+              continue;
+            } else if (resourceName !== undefined) {
+              throw new Error("recovered Agent Job Kubernetes resource name drifted");
+            }
+          }
+        }
+        const binding = await input.kubernetes.ensure(
           resource as unknown as Parameters<KubernetesClient["ensure"]>[0],
           identity.requestDigest,
+          expected?.uid,
+          expected?.configDigest,
         );
+        if (expected !== undefined && (binding.uid !== expected.uid ||
+            binding.configDigest !== expected.configDigest)) {
+          throw new Error("Agent Job Kubernetes resource binding drifted");
+        }
+        if (expected === undefined) {
+          resourceBindings[key] = binding;
+          await retainAgentJobResourceBinding({
+            rootDirectory: input.config.evidenceRoot,
+            ...identity,
+            resourceKey: key,
+            binding,
+          });
+        }
       }
 
       const jobName = `codeops-agent-${identity.runId}`;

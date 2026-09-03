@@ -187,8 +187,8 @@ async function seedAdmittedAuthority(connection) {
   const workspaceId = "88888888-8888-4888-8888-888888888888";
   const projectId = "99999999-9999-4999-8999-999999999999";
   const workItemId = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa";
-  const workflowId = "candidate-authority-workflow";
-  const runId = "candidate-authority-run";
+  const workflowId = snapshot().identity.workflowId;
+  const runId = snapshot().identity.runId;
   const parentSnapshot = { ...snapshot(), sessionId: parentSessionId };
   const parentDispatch = { ...dispatch(), dispatchId: parentDispatchId,
     command: { ...dispatch().command, sessionId: parentSessionId,
@@ -252,12 +252,13 @@ async function seedAdmittedAuthority(connection) {
     planEvent: { eventId: planEventId, sessionId: parentSessionId,
       update: { kind: "plan_update", planId: "candidate-plan" } },
     decisionCommand: command, decisionResult: result, approvedAt: seededAt };
+  const approvalDigest = sha256CanonicalJsonDigest(approval);
   await connection.query(`INSERT INTO codeops.project_plan_approvals(
     approval_id,parent_session_id,dispatch_id,permission_request_id,plan_event_id,plan_id,
     plan_digest,decision_command_id,approved_by_principal_id,authority_digest,authority_json,approved_at)
     VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11::jsonb,$12::timestamptz)`,
   [approvalId, parentSessionId, parentDispatchId, permissionRequestId, planEventId, "candidate-plan",
-    planDigest, decisionCommandId, owner, sha256CanonicalJsonDigest(approval),
+    planDigest, decisionCommandId, owner, approvalDigest,
     canonicalJsonText(approval), seededAt]);
   const lifecycleEvent = { version: "codeops.work-item-lifecycle-event/v1", eventId: lifecycleEventId,
     transitionId: "candidate-lifecycle-transition", transitionKey: "candidate:admitted",
@@ -286,6 +287,8 @@ async function seedAdmittedAuthority(connection) {
     childSnapshot: { sessionId }, childEvent: { eventId: childEventId },
     dispatch: { dispatchId }, lifecycleEvent: { eventId: lifecycleEventId },
     supervisionEvent: { eventId: supervisionEventId }, admittedAt: seededAt };
+  const admissionDigest = sha256CanonicalJsonDigest(admission);
+  await connection.query("BEGIN");
   await connection.query(`INSERT INTO codeops.work_item_admissions(
     admission_id,approval_id,parent_session_id,child_session_id,child_dispatch_id,child_event_id,
     repository,provider,workspace_id,project_id,work_item_id,workflow_id,run_id,source_sha,
@@ -293,9 +296,48 @@ async function seedAdmittedAuthority(connection) {
     VALUES($1,$2,$3,$4,$5,$6,$7,'plane',$8,$9,$10,$11,$12,$13,$14,$15,$16,$17::jsonb,$18::timestamptz)`,
   [admissionId, approvalId, parentSessionId, sessionId, dispatchId, childEventId, repository,
     workspaceId, projectId, workItemId, workflowId, runId, sourceSha, lifecycleEventId,
-    supervisionEventId, sha256CanonicalJsonDigest(admission), canonicalJsonText(admission), seededAt]);
-  await connection.query("UPDATE codeops.session_runtime_outbox SET admission_id=$2 WHERE dispatch_id=$1",
-    [dispatchId, admissionId]);
+    supervisionEventId, admissionDigest, canonicalJsonText(admission), seededAt]);
+  const materializationInput = {
+    version: "codeops.admitted-child-materialization-input/v1",
+    admissionId, admissionDigest, approvalId, approvalDigest, parentSessionId,
+    childSessionId: sessionId, childDispatchId: dispatchId, principalId: owner,
+    workItem, source: snapshot().identity.workspace.sources[0],
+    policy: snapshot().identity.policy, profile: "custom", release: "fixture",
+    images: {
+      agent: `registry.example/agent@sha256:${"a".repeat(64)}`,
+      runtimeWorker: `registry.example/worker@sha256:${"b".repeat(64)}`,
+    },
+    contextAttachments: [], generation: 1, lease: {
+      leaseId, holderId: snapshot().lease.holderId,
+      acquiredAt: snapshot().lease.acquiredAt, expiresAt: snapshot().lease.expiresAt,
+    },
+    workflowId, runId, initialDispatch: dispatch(), identity: snapshot().identity,
+    admittedAt: seededAt,
+  };
+  const inputDigest = sha256CanonicalJsonDigest(materializationInput);
+  const initialDispatchDigest = sha256CanonicalJsonDigest(materializationInput.initialDispatch);
+  const materializationState = {
+    version: "codeops.admitted-child-materialization-state/v1",
+    admissionId, inputDigest, state: "queued", resources: {}, attemptCount: 0,
+    createdAt: seededAt, updatedAt: seededAt,
+  };
+  await connection.query(`INSERT INTO codeops.admitted_child_materializations(
+    admission_id,admission_digest,approval_id,approval_digest,parent_session_id,
+    child_session_id,child_dispatch_id,initial_dispatch_digest,principal_id,repository,provider,workspace_id,
+    project_id,work_item_id,workflow_id,run_id,source_sha,generation,lease_id,
+    input_digest,input_json,state,state_json,attempt_count,created_at,updated_at)
+    VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'plane',$11,$12,$13,$14,$15,$16,1,$17,
+      $18,$19::jsonb,'queued',$20::jsonb,0,$21::timestamptz,$21::timestamptz)`,
+  [admissionId, admissionDigest, approvalId, approvalDigest, parentSessionId, sessionId,
+    dispatchId, initialDispatchDigest, owner, repository, workspaceId, projectId, workItemId, workflowId, runId,
+    sourceSha, leaseId, inputDigest, canonicalJsonText(materializationInput),
+    canonicalJsonText(materializationState), seededAt]);
+  const initialDispatch = await connection.query(`UPDATE codeops.session_runtime_outbox
+    SET admission_id=$2,dispatch_digest=$3,is_admitted_initial_dispatch=true
+    WHERE dispatch_id=$1 RETURNING is_admitted_initial_dispatch`,
+    [dispatchId, admissionId, initialDispatchDigest]);
+  assert.equal(initialDispatch.rows[0]?.is_admitted_initial_dispatch, true);
+  await connection.query("COMMIT");
   return admissionId;
 }
 

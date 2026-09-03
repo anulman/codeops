@@ -27,6 +27,7 @@ const gitSha = z.string().regex(/^[0-9a-f]{40}$/);
 const sha256Digest = z.string().regex(/^sha256:[0-9a-f]{64}$/);
 const isoDateTime = z.string().datetime({ offset: true });
 const uuid = z.string().uuid();
+const canonicalUuid = z.string().uuid().transform((value) => value.toLowerCase());
 export const sessionOwnerPrincipalSchema = z
   .string()
   .min(1)
@@ -761,6 +762,29 @@ export const sessionJobInitializationRequestSchema = z.union([
     holderId: identifier,
     ownerPrincipalId: sessionOwnerPrincipalSchema,
   }).strict(),
+  z.object({
+    version: z.literal("codeops.session-job-initialization/v3"),
+    admissionId: canonicalUuid,
+    approvalId: canonicalUuid,
+    dispatchId: canonicalUuid,
+    inputDigest: sha256Digest,
+    sessionId: identifier,
+    generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    identity: workspaceSessionIdentitySchema,
+    leaseId: canonicalUuid,
+    holderId: identifier,
+    ownerPrincipalId: sessionOwnerPrincipalSchema,
+    parentSessionId: identifier,
+    repository: z.string().regex(/^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/),
+    sourceSha: gitSha,
+    workItemId: identifier,
+    profile: z.enum(["full-managed", "full-external", "custom"]),
+    release: safeText(128),
+    images: z.object({
+      agent: z.string().regex(/^[^\s@]+@sha256:[0-9a-f]{64}$/),
+      runtimeWorker: z.string().regex(/^[^\s@]+@sha256:[0-9a-f]{64}$/),
+    }).strict(),
+  }).strict(),
 ]);
 
 export const sessionJobInitializationResponseSchema = z
@@ -768,6 +792,8 @@ export const sessionJobInitializationResponseSchema = z
     version: z.literal("codeops.session-job-initialization-result/v1"),
     disposition: z.enum(["created", "duplicate"]),
     snapshot: sessionSnapshotSchema,
+    contextAttachments: workspaceContextAttachmentsSchema.optional(),
+    initialDispatchDigest: sha256Digest.optional(),
     modelProxyToken: z.string().regex(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/).optional(),
   })
   .strict();

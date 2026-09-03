@@ -101,6 +101,7 @@ function claim() {
     claimToken,
     claimExpiresAt: "2026-08-04T20:05:00.000Z",
     claimCount: 1,
+    isAdmittedInitialDispatch: false,
   };
 }
 
@@ -152,7 +153,7 @@ test("claims and completes one exact dispatch through the worker-only boundary",
       requests.push({ url, init, body: JSON.parse(init.body) });
       if (url.endsWith("/claims")) {
         return json({
-          version: "codeops.session-runtime-claim-response/v1",
+          version: "codeops.session-runtime-claim-response/v2",
           claim: claim(),
         });
       }
@@ -186,7 +187,7 @@ test("claims and completes one exact dispatch through the worker-only boundary",
   assert.equal(requests[0].init.redirect, "error");
   assert.equal(requests[0].init.headers.authorization, `Bearer ${token}`);
   assert.deepEqual(requests[0].body, {
-    version: "codeops.session-runtime-claim-request/v1",
+    version: "codeops.session-runtime-claim-request/v2",
     ...authority,
     leaseMs: 300_000,
   });
@@ -205,7 +206,7 @@ test("returns null without invoking the executor when no dispatch is available",
     token,
     authority,
     fetch: async () => json({
-      version: "codeops.session-runtime-claim-response/v1",
+      version: "codeops.session-runtime-claim-response/v2",
       claim: null,
     }),
   });
@@ -230,7 +231,7 @@ test("relays permission through a claim-hidden executor callback", async () => {
       requests.push({ url, body });
       if (url.endsWith("/claims")) {
         return json({
-          version: "codeops.session-runtime-claim-response/v1",
+          version: "codeops.session-runtime-claim-response/v2",
           claim: claim(),
         });
       }
@@ -315,7 +316,7 @@ test("relays a bounded GitHub read through hidden live-claim authority", async (
       requests.push({ url, body });
       if (url.endsWith("/claims")) {
         return json({
-          version: "codeops.session-runtime-claim-response/v1",
+          version: "codeops.session-runtime-claim-response/v2",
           claim: claim(),
         });
       }
@@ -394,7 +395,7 @@ test("relays a permission-bound GitHub mutation through hidden live-claim author
       requests.push({ url, body });
       if (url.endsWith("/claims")) {
         return json({
-          version: "codeops.session-runtime-claim-response/v1",
+          version: "codeops.session-runtime-claim-response/v2",
           claim: claim(),
         });
       }
@@ -533,7 +534,7 @@ test("rejects identity drift and expired claims before completion crosses the ne
     fetch: async () => {
       claimCalls += 1;
       return json({
-        version: "codeops.session-runtime-claim-response/v1",
+        version: "codeops.session-runtime-claim-response/v2",
         claim: claim(),
       });
     },

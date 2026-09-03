@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { IncomingHttpHeaders } from "node:http";
 import {
   canonicalJsonText,
+  admittedChildMaterializationInputSchema,
   SESSION_BROKER_VERSION,
   projectSessionBudgetV2,
   sessionEventSchema,
@@ -11,6 +12,8 @@ import {
   type SessionJobInitializationResponse,
   type SessionSnapshot,
 } from "@codeops/codeops-contracts";
+import { verifyWorkspaceContextAttachments, workspaceContextAttachmentDescriptors } from
+  "@codeops/codeops-contracts/workspace-context-node";
 import { authenticateBearer } from "./bearer-auth.js";
 import type { TransactionClient } from "./session-broker-repository.js";
 import { sessionCapabilitiesFor } from "./session-broker-transitions.js";
@@ -192,6 +195,102 @@ export async function initializeSessionFromJob(
       version: "codeops.session-job-initialization-result/v1",
       disposition: "duplicate",
       snapshot: existing,
+    });
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  }
+}
+
+export async function initializeAdmittedChildSessionFromJob(
+  client: TransactionClient,
+  input: { readonly request: unknown; readonly now?: () => Date },
+): Promise<SessionJobInitializationResponse> {
+  const request = sessionJobInitializationRequestSchema.parse(input.request);
+  if (request.version !== "codeops.session-job-initialization/v3") {
+    throw new Error("admitted child initialization requires version 3");
+  }
+  await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
+    const result = await client.query<StoredSessionRow & {
+      input_json: unknown; input_digest: unknown; state: unknown;
+      authority_current: unknown; initial_dispatch_digest: unknown;
+    }>(`SELECT materialization.input_json,materialization.input_digest,
+        materialization.initial_dispatch_digest,materialization.state,
+        session.snapshot_json,session.owner_principal_id,
+        (admission.authority_digest=materialization.admission_digest AND
+         approval.authority_digest=materialization.approval_digest AND
+         dispatch.session_id=materialization.child_session_id AND
+         dispatch.principal_id=materialization.principal_id AND
+         dispatch.admission_id=materialization.admission_id AND
+         dispatch.dispatch_digest=materialization.initial_dispatch_digest AND
+         dispatch.dispatch_json=materialization.input_json->'initialDispatch' AND
+         session.generation=materialization.generation AND
+         session.lease_id=materialization.lease_id AND
+         session.snapshot_json->>'state' IN ('running','waiting_permission','checkpointing') AND
+         session.snapshot_json->'lease'->>'status'='active' AND
+         session.snapshot_json->'lease'->>'leaseId'=materialization.lease_id::text AND
+         (session.snapshot_json->'lease'->>'generation')::bigint=materialization.generation AND
+         session.snapshot_json->'lease'->>'holderId'=materialization.input_json#>>'{lease,holderId}' AND
+         (session.snapshot_json->'lease'->>'expiresAt')::timestamptz=
+           (materialization.input_json#>>'{lease,expiresAt}')::timestamptz AND
+         CURRENT_TIMESTAMP < (session.snapshot_json->'lease'->>'expiresAt')::timestamptz)
+          AS authority_current
+      FROM codeops.admitted_child_materializations materialization
+      JOIN codeops.work_item_admissions admission ON admission.admission_id=materialization.admission_id
+      JOIN codeops.project_plan_approvals approval ON approval.approval_id=materialization.approval_id
+      JOIN codeops.sessions session ON session.session_id=materialization.child_session_id
+      JOIN codeops.session_runtime_outbox dispatch ON dispatch.dispatch_id=materialization.child_dispatch_id
+      WHERE materialization.admission_id=$1 AND materialization.child_session_id=$2
+      FOR SHARE OF materialization,admission,approval,session,dispatch`,
+      [request.admissionId, request.sessionId]);
+    if (result.rowCount !== 1) throw new Error("admitted child initialization authority is missing");
+    const row = result.rows[0]!;
+    const materialization = admittedChildMaterializationInputSchema.parse(row.input_json);
+    const snapshot = sessionSnapshotSchema.parse(row.snapshot_json);
+    const digest = `sha256:${createHash("sha256").update(canonicalJsonText(materialization)).digest("hex")}`;
+    const initialDispatchDigest = `sha256:${createHash("sha256")
+      .update(canonicalJsonText(materialization.initialDispatch)).digest("hex")}`;
+    const attachments = verifyWorkspaceContextAttachments(materialization.contextAttachments);
+    const exact = (left: unknown, right: unknown) => canonicalJsonText(left) === canonicalJsonText(right);
+    if ((row.state !== "runtime-authorized" && row.state !== "success-finalizing" &&
+          row.state !== "ready") ||
+        row.authority_current !== true ||
+        row.input_digest !== digest || request.inputDigest !== digest ||
+        row.initial_dispatch_digest !== initialDispatchDigest ||
+        request.approvalId !== materialization.approvalId ||
+        request.dispatchId !== materialization.childDispatchId ||
+        request.generation !== materialization.generation ||
+        request.leaseId !== materialization.lease.leaseId ||
+        request.holderId !== materialization.lease.holderId ||
+        request.ownerPrincipalId !== materialization.principalId ||
+        request.parentSessionId !== materialization.parentSessionId ||
+        request.repository !== materialization.workItem.repository ||
+        request.sourceSha !== materialization.workItem.sourceSha ||
+        request.workItemId !== materialization.workItem.workItemId ||
+        request.profile !== materialization.profile || request.release !== materialization.release ||
+        !exact(request.images, materialization.images) ||
+        !exact(request.identity, snapshot.identity) ||
+        !exact(request.identity.policy, materialization.policy) ||
+        request.identity.workflowId !== materialization.workflowId ||
+        request.identity.runId !== materialization.runId ||
+        !exact(workspaceContextAttachmentDescriptors(attachments), request.identity.contextAttachments) ||
+        snapshot.sessionId !== materialization.childSessionId ||
+        snapshot.generation !== materialization.generation ||
+        snapshot.lease?.status !== "active" || snapshot.lease.leaseId !== materialization.lease.leaseId ||
+        snapshot.lease.generation !== materialization.generation ||
+        snapshot.lease.holderId !== materialization.lease.holderId ||
+        snapshot.lease.expiresAt !== materialization.lease.expiresAt ||
+        row.owner_principal_id !== materialization.principalId ||
+        (input.now ?? (() => new Date()))().getTime() >= Date.parse(materialization.lease.expiresAt)) {
+      throw new Error("admitted child initialization authority drifted");
+    }
+    await ensureSessionModelBudget(client, snapshot);
+    await client.query("COMMIT");
+    return sessionJobInitializationResponseSchema.parse({
+      version: "codeops.session-job-initialization-result/v1",
+      disposition: "duplicate", snapshot, contextAttachments: attachments,
+      initialDispatchDigest,
     });
   } catch (error) {
     await client.query("ROLLBACK");

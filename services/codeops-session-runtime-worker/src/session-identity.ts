@@ -10,6 +10,7 @@ import {
 const MAX_WORKSPACE_MANIFEST_BYTES = 32 * 1_024;
 const MAX_SESSION_POLICY_BYTES = 2 * 1_024;
 const MAX_CONTEXT_ATTACHMENT_DESCRIPTORS_BYTES = 8 * 1_024;
+const MAX_SESSION_IDENTITY_BYTES = 64 * 1_024;
 
 export async function loadRuntimeSessionIdentity(input: {
   readonly env: NodeJS.ProcessEnv;
@@ -20,6 +21,14 @@ export async function loadRuntimeSessionIdentity(input: {
     if (!value) throw new Error(`${name} is required`);
     return value;
   };
+  const exactIdentityJson = input.env.CODEOPS_SESSION_IDENTITY_JSON?.trim();
+  if (exactIdentityJson !== undefined && exactIdentityJson !== "") {
+    const contents = Buffer.from(exactIdentityJson);
+    if (contents.byteLength < 1 || contents.byteLength > MAX_SESSION_IDENTITY_BYTES) {
+      throw new Error("session identity must contain 1 to 65536 bytes");
+    }
+    return sessionIdentitySchema.parse(JSON.parse(contents.toString("utf8")));
+  }
   const common = {
     workflowId: required("CODEOPS_SESSION_WORKFLOW_ID"),
     runId: required("CODEOPS_SESSION_RUN_ID"),

@@ -7,6 +7,7 @@ import {
   recordInteractiveRuntimeJobProgress,
   reconcileInteractiveRuntimeTerminal,
 } from "../dist/session-runtime-terminal-reconciler.js";
+import { kubernetesIdentityLabel } from "../dist/kubernetes.js";
 
 const sessionId = "ses_0123456789abcdef01234567";
 const generation = 1;
@@ -172,6 +173,11 @@ test("fair discovery advances a durable cursor and admits released hibernation i
       assert.deepEqual(values, ["ses_early", 100]);
       assert.match(text, /ORDER BY \(session\.session_id > \$1\) DESC/);
       assert.match(text, /'hibernated'/);
+      assert.match(text, /admitted_child_materializations/);
+      assert.match(text, /materialization\.state IN \('success-finalizing','ready'\)/);
+      assert.match(text, /workspaceRuntime,uid/);
+      assert.match(text, /workspaceRuntime,configDigest/);
+      assert.match(text, /SELECT session\.launch_id,session\.request_digest,session\.snapshot_json,\s*session\.runtime_uid,session\.runtime_config_digest/);
       return { rowCount: 1, rows: [{ launch_id: runId,
         request_digest: requestDigest,
         snapshot_json: hibernatedSnapshot() }] };
@@ -185,6 +191,28 @@ test("fair discovery advances a durable cursor and admits released hibernation i
   assert.equal(cursor, sessionId);
   assert.equal(client.calls[0].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
   assert.equal(client.calls.at(-1).text, "COMMIT");
+});
+
+test("admitted terminal evidence retains the persisted runtime UID and configuration digest", () => {
+  const runtimeConfigDigest = `sha256:${"c".repeat(64)}`;
+  const admittedCandidate = { ...candidate, runtimeUid: jobUid, runtimeConfigDigest };
+  const admittedJob = job({ active: 1 }, { labels: {
+    "codeops.example/resource-role": "workspace-runtime",
+    "codeops.example/session-id": kubernetesIdentityLabel(sessionId),
+    "codeops.example/run-id": kubernetesIdentityLabel(runId),
+  }, annotations: { ...job().metadata.annotations,
+    "codeops.example/resource-configuration-digest": runtimeConfigDigest } });
+  assert.equal(observeInteractiveRuntimeTerminal({ candidate: admittedCandidate,
+    job: admittedJob, pods: [], observedAt }), null);
+  assert.throws(() => observeInteractiveRuntimeTerminal({ candidate: admittedCandidate,
+    job: { ...admittedJob, metadata: { ...admittedJob.metadata,
+      uid: "99999999-9999-4999-8999-999999999999" } }, pods: [], observedAt }),
+  /identity drifted/);
+  assert.throws(() => observeInteractiveRuntimeTerminal({ candidate: admittedCandidate,
+    job: { ...admittedJob, metadata: { ...admittedJob.metadata, annotations: {
+      ...admittedJob.metadata.annotations,
+      "codeops.example/resource-configuration-digest": `sha256:${"d".repeat(64)}`,
+    } } }, pods: [], observedAt }), /identity drifted/);
 });
 
 test("later Sessions progress beyond a full batch and the durable cursor wraps", async () => {

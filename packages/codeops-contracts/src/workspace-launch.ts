@@ -203,6 +203,24 @@ const launchBaseSchema = z
     attemptCount: z.number().int().nonnegative().max(100_000),
     nextAttemptAt: isoDateTime.optional(),
     materializedAt: isoDateTime.optional(),
+    resourceBindings: z.object({
+      sourceAuthority: z.object({ uid: safeText(256), configDigest: sha256Digest,
+        resourceName: safeText(253).optional() }).strict().optional(),
+      workspaceStorage: z.object({ uid: safeText(256), configDigest: sha256Digest,
+        resourceName: safeText(253).optional() }).strict().optional(),
+      sourceMaterializer: z.object({ uid: safeText(256), configDigest: sha256Digest,
+        resourceName: safeText(253).optional() }).strict().optional(),
+      workspaceRuntime: z.object({ uid: safeText(256), configDigest: sha256Digest,
+        resourceName: safeText(253).optional() }).strict().optional(),
+    }).strict().optional(),
+    resourceReplacements: z.object({
+      sourceAuthority: z.object({
+        uid: safeText(256),
+        resourceName: safeText(253),
+        configDigest: sha256Digest,
+        desiredConfigDigest: sha256Digest,
+      }).strict().optional(),
+    }).strict().optional(),
   })
   .strict();
 
