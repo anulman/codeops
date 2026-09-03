@@ -353,6 +353,14 @@ test("runs migration as an ordinary install Job and a pre-upgrade hook", () => {
     "team-a-codeops-session-migration-quiesce");
   assert.equal(binding.metadata.annotations["helm.sh/hook-weight"], "-11");
   assert.equal(binding.subjects[0].name, "team-a-codeops-control-gateway");
+  const migrationPolicy = resource(resources, "NetworkPolicy",
+    "team-a-codeops-session-migration");
+  assert.ok(JSON.stringify(migrationPolicy).includes("10.43.0.1/32"));
+  assert.deepEqual(
+    migrationPolicy.spec.egress.flatMap(({ ports = [] }) =>
+      ports.map(({ protocol, port }) => `${protocol}:${port}`)).sort(),
+    ["TCP:443", "TCP:53", "TCP:5432", "TCP:6443", "UDP:53"],
+  );
 });
 
 test("keeps a multi-node API rollout off the singleton RWO file dispatcher", () => {

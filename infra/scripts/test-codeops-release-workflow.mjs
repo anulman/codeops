@@ -129,6 +129,10 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   const quickstartValues = registryInstall.steps.find(
     ({ name }) => name === "Create isolated quickstart values",
   );
+  assert.match(quickstartValues.run, /kubectl get endpoints kubernetes/);
+  assert.match(quickstartValues.run, /API_CIDRS/);
+  assert.match(quickstartValues.run, /kubernetesApiCidrs: apiCidrs/);
+  assert.match(quickstartValues.run, /kubernetesServiceCidrs: apiCidrs/);
   const kindInstall = registryInstall.steps.find(({ name }) => name === "Install kind");
   assert.match(kindInstall.run, /curl -fsSLo \/tmp\/kind-linux-amd64/);
   assert.match(kindInstall.run, /sha256sum --check kind\.sha256sum/);
