@@ -103,7 +103,7 @@ export async function quiesceMigrationWriterDeployments(input: {
     const deploymentMetadata = metadata(deployment, "Deployment");
     const uid = deploymentMetadata.uid as string;
     deploymentUids.set(name, uid);
-    const patched = await classified("scale-deployment", input.request("PATCH", `${path}/scale`,
+    await classified("scale-deployment", input.request("PATCH", `${path}/scale`,
       { metadata: { uid }, spec: { replicas: 0 } },
       "application/merge-patch+json"), (text) => {
       const scale = object(text, "Deployment scale");
@@ -114,9 +114,6 @@ export async function quiesceMigrationWriterDeployments(input: {
       }
       return scale;
     });
-    if ((patched.spec as Record<string, unknown> | undefined)?.replicas !== 0) {
-      throw new Error(`migration writer Deployment ${name} did not accept quiescence`);
-    }
   }
 
   const deadline = clock.now() + timeoutMs;

@@ -49,6 +49,24 @@ test("quiesces both admission writers and waits for every Pod to disappear", asy
   assert.equal(calls.filter(({ path }) => path.includes("/pods?")).length, 4);
 });
 
+test("accepts a scale response that omits its zero-valued replica field", async () => {
+  let replicas = 1;
+  await quiesceMigrationWriterDeployments({ namespace, deploymentNames: [names[0]],
+    request: async (method, path) => {
+      if (path.includes("/pods?")) return { status: 200, text: JSON.stringify({
+        apiVersion: "v1", kind: "PodList", items: [],
+      }) };
+      if (method === "PATCH") {
+        replicas = 0;
+        const response = scale(names[0]);
+        response.spec = {};
+        return { status: 200, text: JSON.stringify(response) };
+      }
+      return { status: 200, text: JSON.stringify(deployment(names[0], replicas)) };
+    } });
+  assert.equal(replicas, 0);
+});
+
 test("fails closed on identity drift, partial quiescence, or a resumed writer", async () => {
   await assert.rejects(quiesceMigrationWriterDeployments({ namespace,
     deploymentNames: names, request: async () => ({ status: 200,

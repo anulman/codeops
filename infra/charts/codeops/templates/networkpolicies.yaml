@@ -202,6 +202,14 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress: []
   egress:
+    {{- if .Release.IsUpgrade }}
+    {{- range .Values.controlGateway.kubernetesApiCidrs }}
+    - to: [{ ipBlock: { cidr: {{ . | quote }} } }]
+      ports:
+        - { protocol: TCP, port: 443 }
+        - { protocol: TCP, port: 6443 }
+    {{- end }}
+    {{- end }}
     - to:
         - {{ include "codeops.postgresqlEgressTarget" . | nindent 10 | trim }}
       ports: [{ protocol: TCP, port: 5432 }]

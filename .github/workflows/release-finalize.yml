@@ -193,13 +193,17 @@ jobs:
         run: |
           set -euo pipefail
           api_ip=$(kubectl get service kubernetes --output jsonpath='{.spec.clusterIP}')
-          API_IP="$api_ip" node --input-type=module -e '
+          api_cidrs=$(kubectl get endpoints kubernetes --output json | jq -ce --arg service "$api_ip" '
+            [$service, (.subsets[]?.addresses[]?.ip)] | unique | map(. + "/32")
+          ')
+          API_CIDRS="$api_cidrs" node --input-type=module -e '
             import { writeFileSync } from "node:fs";
+            const apiCidrs = JSON.parse(process.env.API_CIDRS);
             const values = {
               profile: "custom",
               nodeSelector: { "codeops.dev/operator": "true" },
               agentsUi: { access: { issuer: "https://example.cloudflareaccess.com" } },
-              controlGateway: { kubernetesApiCidrs: [`${process.env.API_IP}/32`] },
+              controlGateway: { kubernetesApiCidrs: apiCidrs },
               temporal: { enabled: false, driver: "none", deployment: "none" },
               jetstream: { enabled: false, driver: "none", deployment: "none" },
               plane: {
@@ -266,7 +270,7 @@ jobs:
               httpTimeoutMs: 15000,
               requiredSecrets: [],
               cluster: {
-                kubernetesServiceCidrs: [`${process.env.API_IP}/32`],
+                kubernetesServiceCidrs: apiCidrs,
                 readyNodeSelector: "codeops.dev/operator=true",
               },
               postDeployHttpChecks: [],
