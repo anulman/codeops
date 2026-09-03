@@ -31,8 +31,8 @@ test("quiesces both admission writers and waits for every Pod to disappear", asy
       const scan = podScans.get(podName) ?? 0;
       podScans.set(podName, scan + 1);
       return { status: 200, text: JSON.stringify({ apiVersion: "v1", kind: "PodList",
-        items: scan === 0 ? [{ apiVersion: "v1", kind: "Pod",
-          metadata: { name: `pod-${podName}`, namespace, uid: `pod-uid-${podName}` } }] : [] }) };
+        items: scan === 0 ? [{ metadata: { name: `pod-${podName}`, namespace,
+          uid: `pod-uid-${podName}`, labels: { "app.kubernetes.io/name": podName } } }] : [] }) };
     }
     if (method === "PATCH") {
       assert.deepEqual(body, { metadata: { uid: `uid-${name}` }, spec: { replicas: 0 } });
@@ -85,7 +85,8 @@ test("fails closed on identity drift, partial quiescence, or a resumed writer", 
       if (path.includes("/pods?")) return { status: 200,
         text: JSON.stringify({ apiVersion: "v1", kind: "PodList", items: [{
           apiVersion: "v1", kind: "Pod",
-          metadata: { name: "remaining", namespace, uid: "pod-uid" } }] }) };
+          metadata: { name: "remaining", namespace, uid: "pod-uid",
+            labels: { "app.kubernetes.io/name": name } } }] }) };
       return { status: 200, text: JSON.stringify(deployment(name,
         patches >= names.length ? 1 : 2)) };
     } }), /resumed during quiescence/);
@@ -100,7 +101,7 @@ test("classifies every malformed successful migration identity as permanent", as
       spec: { replicas: 0 } } },
     { operation: "list-pods", response: { apiVersion: "v1", kind: "PodList", items: [{
       apiVersion: "v1", kind: "Job", metadata: { name: "unrelated", namespace,
-        uid: "unrelated-uid" } }] } },
+        uid: "unrelated-uid", labels: { "app.kubernetes.io/name": names[0] } } }] } },
   ];
   for (const item of cases) {
     await assert.rejects(quiesceMigrationWriterDeployments({ namespace,
@@ -123,7 +124,8 @@ test("rejects non-string Deployment, Scale, and Pod identity metadata", async ()
     { operation: "get-deployment", create: () => deployment(names[0], 2) },
     { operation: "scale-deployment", create: () => scale(names[0]) },
     { operation: "list-pods", create: () => ({ apiVersion: "v1", kind: "Pod",
-      metadata: { name: "remaining", namespace, uid: "pod-uid" } }) },
+      metadata: { name: "remaining", namespace, uid: "pod-uid",
+        labels: { "app.kubernetes.io/name": names[0] } } }) },
   ];
   for (const { operation, create } of resources) {
     for (const field of ["name", "namespace", "uid"]) {

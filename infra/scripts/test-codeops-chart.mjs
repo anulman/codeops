@@ -834,9 +834,10 @@ test("defaults to deny and opens only explicit component paths", () => {
   assert.ok(JSON.stringify(orchestrator).includes("team-a-codeops-control-gateway"));
   const migration = resource(resources, "NetworkPolicy", "team-a-codeops-session-migration");
   assert.ok(JSON.stringify(migration).includes("team-a-codeops-postgresql"));
+  assert.ok(JSON.stringify(migration).includes("10.43.0.1/32"));
   assert.deepEqual(
     migration.spec.egress.flatMap(({ ports = [] }) => ports.map(({ protocol, port }) => `${protocol}:${port}`)).sort(),
-    ["TCP:53", "TCP:5432", "UDP:53"],
+    ["TCP:443", "TCP:53", "TCP:5432", "TCP:6443", "UDP:53"],
   );
   const modelProxy = resource(resources, "NetworkPolicy", "team-a-codeops-model-proxy");
   assert.deepEqual(modelProxy.spec.ingress[0].from, [
