@@ -105,6 +105,25 @@ function claim() {
   };
 }
 
+test("renews an exact claim without changing its authority", async () => {
+  const original = claim();
+  const renewed = { ...original, claimExpiresAt: "2026-08-04T20:10:00.000Z" };
+  const requests = [];
+  const transport = new SessionRuntimeTransport({
+    gatewayOrigin: "http://codeops-control-gateway:8080", token, authority,
+    fetch: async (url, init) => {
+      requests.push({ url, body: JSON.parse(init.body) });
+      return json({ version: "codeops.session-runtime-claim-renewal-result/v1", claim: renewed });
+    },
+  });
+  assert.deepEqual(await transport.renewClaim(original, 600_000), renewed);
+  assert.equal(requests[0].url,
+    `http://codeops-control-gateway:8080/v1/session-runtime/dispatches/${dispatchId}/claim-renewal`);
+  assert.deepEqual(requests[0].body, {
+    version: "codeops.session-runtime-claim-renewal-request/v1", claimToken, leaseMs: 600_000,
+  });
+});
+
 function completion(overrides = {}) {
   return {
     version: "codeops.session-runtime-completion/v1",
@@ -230,7 +249,7 @@ test("loads fresh model authority only through the hidden live claim", async () 
       const body = JSON.parse(init.body);
       requests.push({ url, body });
       if (url.endsWith("/claims")) return json({
-        version: "codeops.session-runtime-claim-response/v1",
+        version: "codeops.session-runtime-claim-response/v2",
         claim: claim(),
       });
       if (url.endsWith("/model-authority")) return json({

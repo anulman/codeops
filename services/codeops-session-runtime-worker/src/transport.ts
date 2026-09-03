@@ -7,6 +7,8 @@ import {
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeClaimRequestV2Schema,
   sessionRuntimeClaimResponseV2Schema,
+  sessionRuntimeClaimRenewalRequestSchema,
+  sessionRuntimeClaimRenewalResponseSchema,
   sessionRuntimeCheckpointMaterialSchema,
   sessionRuntimeCompletionRequestSchema,
   sessionRuntimeCompletionResponseSchema,
@@ -424,6 +426,35 @@ export class SessionRuntimeTransport {
     return response.claim;
   }
 
+  async renewClaim(
+    claim: SessionRuntimeDispatchClaimV2,
+    leaseMs: number,
+  ): Promise<SessionRuntimeDispatchClaimV2> {
+    const request = sessionRuntimeClaimRenewalRequestSchema.parse({
+      version: "codeops.session-runtime-claim-renewal-request/v1",
+      claimToken: claim.claimToken,
+      leaseMs,
+    });
+    const response = sessionRuntimeClaimRenewalResponseSchema.parse(
+      await this.#post(
+        `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/claim-renewal`,
+        request,
+      ),
+    );
+    if (
+      response.claim.dispatch.dispatchId !== claim.dispatch.dispatchId ||
+      response.claim.claimToken !== claim.claimToken ||
+      response.claim.claimCount !== claim.claimCount ||
+      canonicalJsonText(response.claim.dispatch) !== canonicalJsonText(claim.dispatch) ||
+      Date.parse(response.claim.claimExpiresAt) <= Date.parse(claim.claimExpiresAt)
+    ) {
+      throw new SessionRuntimeTransportError(
+        "session runtime claim renewal drifted from the exact claim",
+      );
+    }
+    return response.claim;
+  }
+
   async complete(
     claim: SessionRuntimeDispatchClaimV2,
     rawCompletion: unknown,
@@ -512,7 +543,7 @@ export class SessionRuntimeTransport {
   }
 
   async #issueModelAuthority(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     now: () => Date,
   ): Promise<SessionRuntimeModelAuthorityResponse> {
     if (
@@ -702,8 +733,9 @@ export class SessionRuntimeTransport {
     readonly execute: RuntimeExecutor;
     readonly now?: () => Date;
   }): Promise<SessionCommandResult | null> {
-    const claim = await this.claim(input.leaseMs);
-    if (claim === null) return null;
+    const claimed = await this.claim(input.leaseMs);
+    if (claimed === null) return null;
+    let claim = claimed;
     const now = input.now ?? (() => new Date());
     if (now().getTime() >= Date.parse(claim.claimExpiresAt)) {
       throw new SessionRuntimeTransportError(
@@ -712,7 +744,29 @@ export class SessionRuntimeTransport {
     }
     // The executor owns ACP/workspace side effects, not broker claim authority.
     // Never expose the claim token or its completion lease to that boundary.
-    const execution = await input.execute(claim.dispatch, {
+    const renewalAbort = new AbortController();
+    let renewalError: unknown;
+    const renewalTask = (async () => {
+      const intervalMs = Math.max(1_000, Math.floor(input.leaseMs / 3));
+      while (!renewalAbort.signal.aborted) {
+        try {
+          await delay(intervalMs, undefined, { signal: renewalAbort.signal });
+        } catch (error) {
+          if (renewalAbort.signal.aborted) return;
+          renewalError = error;
+          return;
+        }
+        try {
+          claim = await this.renewClaim(claim, input.leaseMs);
+        } catch (error) {
+          renewalError = error;
+          return;
+        }
+      }
+    })();
+    let execution: RuntimeExecutionResult;
+    try {
+      execution = await input.execute(claim.dispatch, {
       isAdmittedInitialDispatch: claim.isAdmittedInitialDispatch,
       // Claim authority remains captured inside the transport callback. The
       // ACP/workspace executor receives neither bearer nor claim token.
@@ -747,7 +801,16 @@ export class SessionRuntimeTransport {
         this.#mutateGitHub(claim, githubMutation, now),
       storeGitHubBranchCandidate: (candidate) =>
         this.#storeGitHubBranchCandidate(claim, candidate, now),
-    });
+      });
+    } finally {
+      renewalAbort.abort();
+      await renewalTask;
+    }
+    if (renewalError !== undefined) {
+      throw new SessionRuntimeTransportError(
+        `session runtime claim renewal failed: ${renewalError instanceof Error ? renewalError.message : String(renewalError)}`,
+      );
+    }
     const completedAt = now();
     if (completedAt.getTime() >= Date.parse(claim.claimExpiresAt)) {
       throw new SessionRuntimeTransportError(

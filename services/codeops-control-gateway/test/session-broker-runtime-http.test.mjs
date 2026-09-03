@@ -49,6 +49,49 @@ test("routes dispatch-bound model authority through the exact live claim", async
   assert.deepEqual(result, { status: 200, body: issued });
 });
 
+test("routes claim renewal and maps expired authority to typed conflict", async () => {
+  const renewed = {
+    dispatch: {
+      version: "codeops.session-runtime-dispatch/v1",
+      dispatchId,
+      principalId: "access:aidan@example.com",
+      command: { version: "codeops.session-command/v1", sessionId: "ses_91a4", generation: 3,
+        leaseId: "11111111-1111-4111-8111-111111111111",
+        idempotencyKey: "33333333-3333-4333-8333-333333333333", type: "prompt", prompt: "Continue." },
+      snapshot: { version: "codeops.session-snapshot/v1", sessionId: "ses_91a4", generation: 3,
+        state: "running", identity: { repository: "example-org/example-repository", branch: "feat/runtime",
+          baseSha: "a".repeat(40), workflowId: "workflow", runId: "run", parentSessionId: null, forkedAtCursor: null },
+        lease: { leaseId: "11111111-1111-4111-8111-111111111111", generation: 3, status: "active",
+          holderId: "worker-3", acquiredAt: "2026-08-04T17:30:00.000Z", expiresAt: "2026-08-04T19:30:00.000Z" },
+        checkpoint: null, pendingPermission: null, eventCursor: 184,
+        capabilities: ["prompt", "respond_permission", "cancel", "checkpoint", "hibernate", "resume", "fork", "archive"]
+          .map((action) => ({ action, availability: action === "prompt" ? "enabled" : "disabled",
+            ...(action === "prompt" ? {} : { reason: "Unavailable." }) })),
+        updatedAt: "2026-08-04T18:00:00.000Z" },
+      dispatchedAt: "2026-08-04T18:00:00.000Z",
+    },
+    claimToken,
+    claimExpiresAt: "2026-08-04T18:10:00.000Z",
+    claimCount: 1,
+    isAdmittedInitialDispatch: false,
+  };
+  const inputs = [];
+  const base = {
+    method: "POST", url: `/v1/session-runtime/dispatches/${dispatchId}/claim-renewal`,
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, token,
+    workerId: "runtime-worker:renew", readBody: async () => ({
+      version: "codeops.session-runtime-claim-renewal-request/v1", claimToken, leaseMs: 600_000,
+    }), claim: async () => null, complete: async () => ({}),
+    issueModelAuthority: async () => ({}), submitPermission: async () => ({}), pollPermission: async () => ({}),
+  };
+  const result = await serveSessionRuntime({ ...base, renewClaim: async (input) => { inputs.push(input); return renewed; } });
+  assert.equal(result.status, 200);
+  assert.deepEqual(inputs, [{ dispatchId, claimToken, workerId: "runtime-worker:renew", leaseMs: 600_000 }]);
+  assert.deepEqual(await serveSessionRuntime({ ...base, renewClaim: async () => {
+    throw new (await import("../dist/session-broker-runtime-outbox.js")).ImmutableSessionRuntimeDispatchConflictError("expired");
+  } }), { status: 409, body: { status: "claim-authority-expired" } });
+});
+
 function admissionBody() {
   return { version: "codeops.work-item-admission/v1",
     admissionId: "11111111-1111-4111-8111-111111111111", claimToken,

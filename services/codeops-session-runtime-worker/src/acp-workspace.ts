@@ -58,6 +58,7 @@ const MAX_ASSISTANT_RESPONSE_CHARS = 200_000;
 const MAX_TIMELINE_UPDATES = 2_000;
 const MAX_TIMELINE_UPDATE_BYTES = 800_000;
 const MAX_TIMELINE_PROCESSED_UPDATES = 2_500;
+const MAX_TIMELINE_TOOL_TEXT_CHARS = 2_048;
 const GIT_SHA = /^[0-9a-f]{40}$/;
 
 const PLAN_ARCHITECTURE_GUIDANCE = `Architecture planning default:
@@ -252,18 +253,61 @@ function normalizeAcpContent(content: acp.ContentBlock): SessionContentBlock {
   }
 }
 
+function boundedTimelineToolText(text: string): string {
+  if (text.length <= MAX_TIMELINE_TOOL_TEXT_CHARS) return text;
+  const prefixChars = 1_200;
+  const suffixChars = 600;
+  const digest = createHash("sha256").update(text).digest("hex");
+  return `${text.slice(0, prefixChars)}\n\n[CodeOps timeline truncated ${text.length - prefixChars - suffixChars} characters; sha256:${digest}]\n\n${text.slice(-suffixChars)}`;
+}
+
+function normalizeTimelineToolContentBlock(content: acp.ContentBlock): SessionContentBlock {
+  if (content.type === "text") {
+    return { type: "text", text: boundedTimelineToolText(content.text) };
+  }
+  if (content.type === "resource" && "text" in content.resource) {
+    return {
+      type: "resource",
+      uri: content.resource.uri,
+      text: boundedTimelineToolText(content.resource.text),
+      ...(content.resource.mimeType ? { mimeType: content.resource.mimeType } : {}),
+    };
+  }
+  if (content.type === "image" || content.type === "audio") {
+    return {
+      type: "text",
+      text: `[CodeOps timeline omitted ${content.type} payload; sha256:${createHash("sha256").update(content.data).digest("hex")}]`,
+    };
+  }
+  if (content.type === "resource" && "blob" in content.resource) {
+    return {
+      type: "resource",
+      uri: content.resource.uri,
+      text: `[CodeOps timeline omitted binary resource; sha256:${createHash("sha256").update(content.resource.blob).digest("hex")}]`,
+      ...(content.resource.mimeType ? { mimeType: content.resource.mimeType } : {}),
+    };
+  }
+  return normalizeAcpContent(content);
+}
+
 function normalizeToolContent(
   content: acp.ToolCallContent,
 ): NonNullable<Extract<SessionTimelineUpdate, { kind: "tool_call" }>["content"]>[number] {
   switch (content.type) {
     case "content":
-      return { type: "content", content: normalizeAcpContent(content.content) };
+      return { type: "content", content: normalizeTimelineToolContentBlock(content.content) };
     case "diff":
       return {
         type: "diff",
         path: content.path,
-        newText: content.newText,
-        ...(content.oldText !== undefined ? { oldText: content.oldText } : {}),
+        newText: boundedTimelineToolText(content.newText),
+        ...(content.oldText !== undefined
+          ? {
+              oldText: content.oldText === null
+                ? null
+                : boundedTimelineToolText(content.oldText),
+            }
+          : {}),
       };
     case "terminal":
       return { type: "terminal", terminalId: content.terminalId };
@@ -410,14 +454,14 @@ export function captureAcpTimelineUpdate(
 ): AcpPromptCapture {
   const processedUpdates =
     (current[acpTimelineProcessedUpdates] ?? current.updates.length) + 1;
-  if (processedUpdates > MAX_TIMELINE_PROCESSED_UPDATES) {
-    throw new Error("ACP timeline exceeds 2500 processed updates");
-  }
-  const normalized = normalizeAcpTimelineUpdate(update);
   const response =
     update.sessionUpdate === "agent_message_chunk" && update.content.type === "text"
       ? appendAcpAssistantText(current.response, update.content.text)
       : current.response;
+  if (processedUpdates > MAX_TIMELINE_PROCESSED_UPDATES) {
+    return capturedAcpTimeline(response, current.updates, processedUpdates);
+  }
+  const normalized = normalizeAcpTimelineUpdate(update);
   if (normalized === null) {
     return capturedAcpTimeline(response, current.updates, processedUpdates);
   }
@@ -480,11 +524,14 @@ export function captureAcpTimelineUpdate(
   } else {
     updates.push(normalized);
   }
-  if (updates.length > MAX_TIMELINE_UPDATES) {
-    throw new Error("ACP timeline exceeds 2000 retained updates");
-  }
-  if (Buffer.byteLength(JSON.stringify(updates)) > MAX_TIMELINE_UPDATE_BYTES) {
-    throw new Error("ACP timeline exceeds 800000 retained bytes");
+  while (
+    updates.length > MAX_TIMELINE_UPDATES ||
+    Buffer.byteLength(JSON.stringify(updates)) > MAX_TIMELINE_UPDATE_BYTES
+  ) {
+    const removable = updates.findIndex((candidate) =>
+      candidate.kind !== "user_content" && candidate.kind !== "assistant_content"
+    );
+    updates.splice(removable === -1 ? 0 : removable, 1);
   }
   return capturedAcpTimeline(response, updates, processedUpdates);
 }

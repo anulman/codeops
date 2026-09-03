@@ -7,6 +7,8 @@ import {
   githubReadResultSchema,
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeClaimRequestV2Schema,
+  sessionRuntimeClaimRenewalRequestSchema,
+  sessionRuntimeClaimRenewalResponseSchema,
   sessionRuntimeCompletionRequestSchema,
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionSubmissionSchema,
@@ -35,7 +37,10 @@ import {
   type WorkItemAdmissionResult,
 } from "@codeops/codeops-contracts";
 import { authenticateBearer } from "./bearer-auth.js";
-import type { SessionRuntimeDispatchClaim } from "./session-broker-runtime-outbox.js";
+import {
+  ImmutableSessionRuntimeDispatchConflictError,
+  type SessionRuntimeDispatchClaim,
+} from "./session-broker-runtime-outbox.js";
 import { WorkItemAdmissionDuplicateError, WorkItemAdmissionNotFoundError } from "./work-item-admission.js";
 import {
   ClaimedDispatchAuthorityConflictError,
@@ -55,6 +60,8 @@ import {
 
 const dispatchId = z.string().uuid();
 const claimPath = "/v1/session-runtime/claims";
+const claimRenewalPath =
+  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/claim-renewal$/i;
 const completionPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/completions$/i;
 const modelAuthorityPath =
@@ -153,6 +160,12 @@ export async function serveSessionRuntime(input: {
     readonly workerId: string;
     readonly completion: unknown;
   }) => Promise<SessionCommandResult>;
+  readonly renewClaim: (input: {
+    readonly dispatchId: string;
+    readonly claimToken: string;
+    readonly workerId: string;
+    readonly leaseMs: number;
+  }) => Promise<SessionRuntimeDispatchClaim>;
   readonly issueModelAuthority: (input: {
     readonly dispatchId: string;
     readonly claimToken: string;
@@ -224,6 +237,7 @@ export async function serveSessionRuntime(input: {
   const url = new URL(input.url, "http://codeops.internal");
   const isClaim = url.pathname === claimPath;
   const completionMatch = url.pathname.match(completionPath);
+  const claimRenewalMatch = url.pathname.match(claimRenewalPath);
   const modelAuthorityMatch = url.pathname.match(modelAuthorityPath);
   const permissionSubmissionMatch = url.pathname.match(permissionSubmissionPath);
   const permissionPollMatch = url.pathname.match(permissionPollPath);
@@ -236,6 +250,7 @@ export async function serveSessionRuntime(input: {
   if (
     !isClaim &&
     completionMatch === null &&
+    claimRenewalMatch === null &&
     modelAuthorityMatch === null &&
     permissionSubmissionMatch === null &&
     permissionPollMatch === null
@@ -290,6 +305,36 @@ export async function serveSessionRuntime(input: {
         },
       },
     };
+  }
+
+  if (claimRenewalMatch !== null) {
+    const request = sessionRuntimeClaimRenewalRequestSchema.safeParse(
+      await readRequestBody(input.readBody),
+    );
+    if (!request.success) {
+      throw new InvalidSessionRuntimeRequestError(
+        "session runtime claim-renewal body is invalid",
+      );
+    }
+    try {
+      return {
+        status: 200,
+        body: sessionRuntimeClaimRenewalResponseSchema.parse({
+          version: "codeops.session-runtime-claim-renewal-result/v1",
+          claim: await input.renewClaim({
+            dispatchId: dispatchId.parse(claimRenewalMatch[1]),
+            claimToken: request.data.claimToken,
+            workerId: input.workerId,
+            leaseMs: request.data.leaseMs,
+          }),
+        }),
+      };
+    } catch (error) {
+      if (error instanceof ImmutableSessionRuntimeDispatchConflictError) {
+        return { status: 409, body: { status: "claim-authority-expired" } };
+      }
+      throw error;
+    }
   }
 
   if (modelAuthorityMatch !== null) {

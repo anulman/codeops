@@ -297,6 +297,21 @@ export const sessionRuntimeClaimResponseV2Schema = z
   })
   .strict();
 
+export const sessionRuntimeClaimRenewalRequestSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-claim-renewal-request/v1"),
+    claimToken: uuid,
+    leaseMs: z.number().int().min(1_000).max(15 * 60_000),
+  })
+  .strict();
+
+export const sessionRuntimeClaimRenewalResponseSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-claim-renewal-result/v1"),
+    claim: sessionRuntimeDispatchClaimV2Schema,
+  })
+  .strict();
+
 export const sessionRuntimeModelAuthorityRequestSchema = z
   .object({
     version: z.literal("codeops.session-runtime-model-authority-request/v1"),

@@ -298,7 +298,7 @@ test("compacts more than 2000 updates for one ACP tool within the work bound", (
   }]);
 });
 
-test("rejects compactable updates beyond the finite processed-work bound", () => {
+test("drops timeline telemetry beyond the finite processed-work bound", () => {
   let capture = { response: "", updates: [] };
   for (let index = 0; index < 2_500; index += 1) {
     capture = captureAcpTimelineUpdate(capture, {
@@ -308,16 +308,14 @@ test("rejects compactable updates beyond the finite processed-work bound", () =>
   }
   assert.equal(capture.updates.length, 1);
   assert.deepEqual(Object.keys(capture), ["response", "updates"]);
-  assert.throws(
-    () => captureAcpTimelineUpdate(capture, {
-      sessionUpdate: "current_mode_update",
-      currentModeId: "code",
-    }),
-    /ACP timeline exceeds 2500 processed updates/,
-  );
+  capture = captureAcpTimelineUpdate(capture, {
+    sessionUpdate: "current_mode_update",
+    currentModeId: "code",
+  });
+  assert.equal(capture.updates.length, 1);
 });
 
-test("preserves 2000 distinct ACP updates and rejects the 2001st", () => {
+test("rolls the oldest retained update after 2000 distinct ACP updates", () => {
   let capture = { response: "", updates: [] };
   for (let index = 0; index < 2_000; index += 1) {
     capture = captureAcpTimelineUpdate(capture, {
@@ -328,17 +326,17 @@ test("preserves 2000 distinct ACP updates and rejects the 2001st", () => {
   }
   assert.equal(capture.updates.length, 2_000);
   assert.ok(Buffer.byteLength(JSON.stringify(capture.updates)) < 800_000);
-  assert.throws(
-    () => captureAcpTimelineUpdate(capture, {
-      sessionUpdate: "user_message_chunk",
-      messageId: "user-2000",
-      content: { type: "text", text: "x" },
-    }),
-    /ACP timeline exceeds 2000 retained updates/,
-  );
+  capture = captureAcpTimelineUpdate(capture, {
+    sessionUpdate: "user_message_chunk",
+    messageId: "user-2000",
+    content: { type: "text", text: "x" },
+  });
+  assert.equal(capture.updates.length, 2_000);
+  assert.equal(capture.updates[0].messageId, "user-1");
+  assert.equal(capture.updates.at(-1).messageId, "user-2000");
 });
 
-test("rejects high-cardinality tool and plan identities at the retained bound", () => {
+test("rolls high-cardinality tool and plan identities at the retained bound", () => {
   for (const identity of ["tool", "plan"]) {
     let capture = { response: "", updates: [] };
     for (let index = 0; index < 2_000; index += 1) {
@@ -354,23 +352,21 @@ test("rejects high-cardinality tool and plan identities at the retained bound", 
           });
     }
     assert.equal(capture.updates.length, 2_000);
-    assert.throws(
-      () => captureAcpTimelineUpdate(capture, identity === "tool"
-        ? {
-            sessionUpdate: "tool_call_update",
-            toolCallId: "tool-2000",
-            status: "pending",
-          }
-        : {
-            sessionUpdate: "plan_removed",
-            planId: "plan-2000",
-          }),
-      /ACP timeline exceeds 2000 retained updates/,
-    );
+    capture = captureAcpTimelineUpdate(capture, identity === "tool"
+      ? {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-2000",
+          status: "pending",
+        }
+      : {
+          sessionUpdate: "plan_removed",
+          planId: "plan-2000",
+        });
+    assert.equal(capture.updates.length, 2_000);
   }
 });
 
-test("applies the byte ceiling after compacting a near-limit ACP tool update", () => {
+test("bounds tool output and rolls timeline telemetry instead of failing completion", () => {
   let capture = captureAcpTimelineUpdate(
     { response: "", updates: [] },
     { sessionUpdate: "tool_call", toolCallId: "tool-1", title: "Inspect" },
@@ -384,17 +380,39 @@ test("applies the byte ceiling after compacting a near-limit ACP tool update", (
   }
   const retainedBytes = Buffer.byteLength(JSON.stringify(capture.updates));
   assert.ok(retainedBytes > 790_000 && retainedBytes < 800_000);
-  assert.throws(
-    () => captureAcpTimelineUpdate(capture, {
-      sessionUpdate: "tool_call_update",
-      toolCallId: "tool-1",
+  capture = captureAcpTimelineUpdate(capture, {
+    sessionUpdate: "tool_call_update",
+    toolCallId: "tool-1",
+    content: [{
+      type: "content",
+      content: { type: "text", text: "y".repeat(10_000) },
+    }],
+  });
+  assert.ok(Buffer.byteLength(JSON.stringify(capture.updates)) < 800_000);
+  const tool = capture.updates.find(({ kind }) => kind === "tool_call");
+  assert.match(tool.content[0].content.text, /timeline truncated/);
+});
+
+test("retains bounded summaries for many large edit calls", () => {
+  let capture = { response: "", updates: [] };
+  for (let index = 0; index < 40; index += 1) {
+    capture = captureAcpTimelineUpdate(capture, {
+      sessionUpdate: "tool_call",
+      toolCallId: `edit-${index}`,
+      title: "Editing files",
+      kind: "edit",
+      status: "completed",
       content: [{
-        type: "content",
-        content: { type: "text", text: "y".repeat(10_000) },
+        type: "diff",
+        path: `/workspace/file-${index}.ts`,
+        oldText: "a".repeat(100_000),
+        newText: "b".repeat(100_000),
       }],
-    }),
-    /ACP timeline exceeds 800000 retained bytes/,
-  );
+    });
+  }
+  assert.equal(capture.updates.length, 40);
+  assert.ok(Buffer.byteLength(JSON.stringify(capture.updates)) < 200_000);
+  assert.match(capture.updates[0].content[0].newText, /timeline truncated/);
 });
 
 test("replays representative producer and strict-review fixtures deterministically", async () => {

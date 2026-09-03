@@ -16,7 +16,8 @@ import { loadUnknownProviderEffectReconciliation } from
   "../dist/provider-effect-receipts.js";
 import { submitSessionRuntimePermission } from "../dist/session-runtime-permissions.js";
 import { serveSessionRuntime } from "../dist/session-broker-runtime-http.js";
-import { claimSessionRuntimeDispatch } from "../dist/session-broker-runtime-outbox.js";
+import { claimSessionRuntimeDispatch, renewSessionRuntimeDispatchClaim } from
+  "../dist/session-broker-runtime-outbox.js";
 import { admitSessionRuntimeWorkItem, WorkItemAdmissionConflictError } from "../dist/work-item-admission.js";
 import { sessionCapabilitiesFor } from "../dist/session-broker-transitions.js";
 import { acknowledgeWorkItemLifecyclePublication, appendWorkItemLifecycleEvent,
@@ -498,9 +499,20 @@ test("PostgreSQL prioritizes and concurrency-fences the exact admitted initial d
         leaseMs: 60_000, now: () => new Date("2026-08-30T10:02:00.000Z"),
         claimToken: () => token });
       if (ordinal === 0) {
+        const renewalToken = "56565656-5656-4565-8565-565656565656";
         const claimed = await claimSessionRuntimeDispatch(setup,
-          claimInput("runtime-worker:equal", "56565656-5656-4565-8565-565656565656"));
+          claimInput("runtime-worker:equal", renewalToken));
         assert.equal(claimed.dispatch.dispatchId, admitted.dispatchId);
+        const renewed = await renewSessionRuntimeDispatchClaim(setup, {
+          dispatchId: admitted.dispatchId,
+          claimToken: renewalToken,
+          workerId: "runtime-worker:equal",
+          leaseMs: 120_000,
+          now: () => new Date("2026-08-30T10:02:30.000Z"),
+        });
+        assert.equal(renewed.claimToken, renewalToken);
+        assert.equal(renewed.claimCount, claimed.claimCount);
+        assert.equal(renewed.claimExpiresAt, "2026-08-30T10:04:30.000Z");
       } else {
         const claims = await Promise.all([
           claimSessionRuntimeDispatch(first, claimInput("runtime-worker:first",

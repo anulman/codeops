@@ -78,6 +78,7 @@ import {
   ImmutableSessionRuntimeDispatchConflictError,
   SessionRuntimeDispatchNotFoundError,
   claimSessionRuntimeDispatch,
+  renewSessionRuntimeDispatchClaim,
   completeSessionRuntimeDispatch,
   enqueueSessionRuntimeDispatch,
 } from "./session-broker-runtime-outbox.js";
@@ -1314,6 +1315,14 @@ const server = createServer((request, response) => {
               client,
               completionInput,
             );
+          } finally {
+            client.release();
+          }
+        },
+        renewClaim: async (renewalInput) => {
+          const client = await database.connect();
+          try {
+            return await renewSessionRuntimeDispatchClaim(client, renewalInput);
           } finally {
             client.release();
           }

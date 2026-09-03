@@ -4,6 +4,7 @@ import {
   sha256CanonicalJsonDigest,
   sessionCommandResultSchema,
   sessionRuntimeClaimRequestSchema,
+  sessionRuntimeClaimRenewalRequestSchema,
   type SessionCommandResult,
   type SessionSnapshot,
 } from "@codeops/codeops-contracts";
@@ -337,6 +338,72 @@ export async function claimSessionRuntimeDispatch(
     await client.query("ROLLBACK");
     throw error;
   }
+}
+
+export async function renewSessionRuntimeDispatchClaim(
+  client: TransactionClient,
+  input: {
+    readonly dispatchId: string;
+    readonly claimToken: string;
+    readonly workerId: string;
+    readonly leaseMs: number;
+    readonly now?: () => Date;
+  },
+): Promise<SessionRuntimeDispatchClaim> {
+  requireWorkerId(input.workerId);
+  const request = sessionRuntimeClaimRenewalRequestSchema.parse({
+    version: "codeops.session-runtime-claim-renewal-request/v1",
+    claimToken: input.claimToken,
+    leaseMs: input.leaseMs,
+  });
+  const now = (input.now ?? (() => new Date()))();
+  const renewedUntil = new Date(now.getTime() + request.leaseMs).toISOString();
+  const result = await client.query<ClaimedDispatchRow>(
+    `UPDATE codeops.session_runtime_outbox AS outbox
+        SET claim_expires_at = $4::timestamptz
+       FROM codeops.sessions AS session
+      WHERE outbox.dispatch_id = $1::uuid
+        AND outbox.session_id = session.session_id
+        AND outbox.status = 'claimed'
+        AND outbox.claim_token = $2::uuid
+        AND outbox.claimed_by = $3
+        AND outbox.claim_expires_at > $5::timestamptz
+        AND session.owner_principal_id = outbox.principal_id
+        AND session.snapshot_json->'lease'->>'status' = 'active'
+        AND session.snapshot_json->'lease'->>'leaseId' =
+            outbox.dispatch_json->'command'->>'leaseId'
+        AND session.snapshot_json->>'generation' =
+            outbox.dispatch_json->'command'->>'generation'
+        AND session.snapshot_json->'identity' =
+            outbox.dispatch_json->'snapshot'->'identity'
+      RETURNING outbox.dispatch_json, outbox.claim_token,
+                outbox.claim_expires_at, outbox.claim_count,
+                outbox.is_admitted_initial_dispatch`,
+    [input.dispatchId, request.claimToken, input.workerId, renewedUntil, now.toISOString()],
+  );
+  const row = result.rows[0];
+  if (row === undefined) {
+    throw new ImmutableSessionRuntimeDispatchConflictError(
+      "runtime claim renewal requires the exact live dispatch authority",
+    );
+  }
+  const dispatch = sessionRuntimeDispatchSchema.parse(row.dispatch_json);
+  if (
+    row.claim_token !== request.claimToken ||
+    postgresTimestamp(row.claim_expires_at) !== renewedUntil ||
+    !Number.isSafeInteger(row.claim_count) ||
+    Number(row.claim_count) < 1 ||
+    typeof row.is_admitted_initial_dispatch !== "boolean"
+  ) {
+    throw new Error("runtime claim renewal persistence drifted");
+  }
+  return {
+    dispatch,
+    claimToken: request.claimToken,
+    claimExpiresAt: renewedUntil,
+    claimCount: Number(row.claim_count),
+    isAdmittedInitialDispatch: row.is_admitted_initial_dispatch,
+  };
 }
 
 function duplicateRuntimeResult(

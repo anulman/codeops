@@ -103,6 +103,8 @@ export {
   sessionRuntimeClaimRequestV2Schema,
   sessionRuntimeClaimResponseSchema,
   sessionRuntimeClaimResponseV2Schema,
+  sessionRuntimeClaimRenewalRequestSchema,
+  sessionRuntimeClaimRenewalResponseSchema,
   sessionRuntimeCheckpointMaterialSchema,
   legacySessionRuntimeCheckpointMaterialSchema,
   workspaceSessionRuntimeCheckpointMaterialSchema,
