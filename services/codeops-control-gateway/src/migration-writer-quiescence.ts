@@ -139,8 +139,12 @@ export async function quiesceMigrationWriterDeployments(input: {
           }
           const pod = item as Record<string, unknown>;
           const identity = metadata(pod, "Pod");
-          if (pod.apiVersion !== "v1" || pod.kind !== "Pod" ||
-              identity.namespace !== input.namespace) {
+          const labels = identity.labels;
+          if ((pod.apiVersion !== undefined && pod.apiVersion !== "v1") ||
+              (pod.kind !== undefined && pod.kind !== "Pod") ||
+              identity.namespace !== input.namespace || labels === null ||
+              typeof labels !== "object" || Array.isArray(labels) ||
+              (labels as Record<string, unknown>)["app.kubernetes.io/name"] !== name) {
             throw new Error("Kubernetes Pod response identity is invalid");
           }
         }
