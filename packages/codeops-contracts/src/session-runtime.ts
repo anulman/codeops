@@ -297,6 +297,22 @@ export const sessionRuntimeClaimResponseV2Schema = z
   })
   .strict();
 
+export const sessionRuntimeModelAuthorityRequestSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-model-authority-request/v1"),
+    claimToken: uuid,
+  })
+  .strict();
+
+export const sessionRuntimeModelAuthorityResponseSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-model-authority-result/v1"),
+    dispatchId: uuid,
+    modelProxyToken: z.string().regex(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
+    expiresAt: isoDateTime,
+  })
+  .strict();
+
 export const sessionRuntimeCompletionRequestSchema = z
   .object({
     version: z.literal("codeops.session-runtime-completion-request/v1"),
@@ -385,6 +401,12 @@ export type SessionRuntimeDispatchClaim = z.infer<
 >;
 export type SessionRuntimeDispatchClaimV2 = z.infer<
   typeof sessionRuntimeDispatchClaimV2Schema
+>;
+export type SessionRuntimeModelAuthorityRequest = z.infer<
+  typeof sessionRuntimeModelAuthorityRequestSchema
+>;
+export type SessionRuntimeModelAuthorityResponse = z.infer<
+  typeof sessionRuntimeModelAuthorityResponseSchema
 >;
 export type SessionRuntimePermissionSubmission = z.infer<
   typeof sessionRuntimePermissionSubmissionSchema

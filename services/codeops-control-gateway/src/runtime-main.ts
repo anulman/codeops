@@ -70,7 +70,10 @@ import {
   initializeAdmittedChildSessionFromJob,
   serveSessionJobInitialization,
 } from "./session-job-initialization.js";
-import { issueSessionModelAuthority } from "./session-model-authority.js";
+import {
+  issueClaimedSessionModelAuthority,
+  RevokedSessionModelAuthorityError,
+} from "./session-model-authority.js";
 import {
   ImmutableSessionRuntimeDispatchConflictError,
   SessionRuntimeDispatchNotFoundError,
@@ -1222,20 +1225,7 @@ const server = createServer((request, response) => {
                 "codeops.session-job-initialization/v3"
               ? await initializeAdmittedChildSessionFromJob(client, { request: initializationRequest })
               : await initializeSessionFromJob(client, { request: initializationRequest });
-            const issuedAt = new Date();
-            const modelAuthority = issueSessionModelAuthority({
-              snapshot: initialized.snapshot,
-              signingKey: modelAuth.signingKey,
-              issuedAt,
-            });
-            return {
-              ...initialized,
-              ...(modelAuthority.disposition === "disabled"
-                ? {}
-                : {
-                    modelProxyToken: modelAuthority.modelProxyToken,
-                  }),
-            };
+            return initialized;
           } finally {
             client.release();
           }
@@ -1328,6 +1318,23 @@ const server = createServer((request, response) => {
             client.release();
           }
         },
+        issueModelAuthority: async (authorityInput) => {
+          const client = await database.connect();
+          try {
+            const authority = await issueClaimedSessionModelAuthority(client, {
+              ...authorityInput,
+              signingKey: modelAuth.signingKey,
+            });
+            return {
+              version: "codeops.session-runtime-model-authority-result/v1",
+              dispatchId: authorityInput.dispatchId,
+              modelProxyToken: authority.modelProxyToken,
+              expiresAt: authority.expiresAt,
+            };
+          } finally {
+            client.release();
+          }
+        },
         submitPermission: async (permissionInput) => {
           const client = await database.connect();
           try {
@@ -1366,7 +1373,8 @@ const server = createServer((request, response) => {
             ? 404
             : error instanceof ImmutableSessionRuntimeDispatchConflictError ||
                 error instanceof SessionRuntimeClaimConflictError ||
-                error instanceof SessionRuntimePermissionConflictError
+                error instanceof SessionRuntimePermissionConflictError ||
+                error instanceof RevokedSessionModelAuthorityError
               ? 409
               : 503;
       json(response, status, {

@@ -794,7 +794,6 @@ export const sessionJobInitializationResponseSchema = z
     snapshot: sessionSnapshotSchema,
     contextAttachments: workspaceContextAttachmentsSchema.optional(),
     initialDispatchDigest: sha256Digest.optional(),
-    modelProxyToken: z.string().regex(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/).optional(),
   })
   .strict();
 

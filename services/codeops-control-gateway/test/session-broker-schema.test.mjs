@@ -42,6 +42,8 @@ const modelBudgetLedgerUrl = new URL("../sql/session-model-budget-ledger-v2.sql"
 const modelBudgetLedgerRevertUrl = new URL("../sql/session-model-budget-ledger-v2-revert.sql", import.meta.url);
 const modelBudgetFunctionsUrl = new URL("../sql/session-model-budget-ledger-functions-v1.sql", import.meta.url);
 const modelBudgetFunctionsRevertUrl = new URL("../sql/session-model-budget-ledger-functions-v1-revert.sql", import.meta.url);
+const dispatchModelAuthorityUrl = new URL("../sql/session-dispatch-model-authority-v1.sql", import.meta.url);
+const dispatchModelAuthorityRevertUrl = new URL("../sql/session-dispatch-model-authority-v1-revert.sql", import.meta.url);
 const modelBudgetRecoveryUrl = new URL("../sql/session-model-budget-recovery-v1.sql", import.meta.url);
 const modelBudgetRecoveryRevertUrl = new URL("../sql/session-model-budget-recovery-v1-revert.sql", import.meta.url);
 const sessionOwnerUrl = new URL("../sql/session-owner-v1.sql", import.meta.url);
@@ -243,6 +245,24 @@ test("defines immutable digest-bound runtime execution receipts", async () => {
   assert.match(sql, /result_json->>'type' IN/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*DROP TABLE codeops\.session_runtime_execution_receipts;[\s\S]*COMMIT;\n$/);
+});
+
+test("fences provider reservations to one live claimed dispatch authority", async () => {
+  const sql = await readFile(dispatchModelAuthorityUrl, "utf8");
+  const revert = await readFile(dispatchModelAuthorityRevertUrl, "utf8");
+  assert.match(sql, /CREATE FUNCTION codeops\.reserve_session_dispatch_model_budget/);
+  assert.match(sql, /snapshot_json#>>'\{lease,status\}' = 'active'/);
+  assert.match(sql, /snapshot_json#>>'\{lease,generation\}'/);
+  assert.match(sql, /outbox\.dispatch_id = requested_dispatch_id/);
+  assert.match(sql, /outbox\.status = 'claimed'/);
+  assert.match(sql, /outbox\.claim_expires_at > clock_timestamp\(\)/);
+  assert.match(sql, /command,type.*'prompt', 'resume'/s);
+  assert.match(sql, /CODEOPS_MODEL_BUDGET_AUTHORITY_INVALID/);
+  assert.match(sql, /reserve_session_model_budget/);
+  assert.match(sql, /REVOKE ALL ON FUNCTION/);
+  assert.match(revert, /session-dispatch-model-authority-v1/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });
 
 test("admits commandless events only for Job-created session roots", async () => {

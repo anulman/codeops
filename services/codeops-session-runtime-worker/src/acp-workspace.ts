@@ -625,6 +625,34 @@ export type AcpConnectionFactory = <Result>(
   operation: (agent: AcpAgentSessionConnection) => Promise<Result>,
 ) => Promise<Result>;
 
+export type RecoverableModelFailure =
+  | "model_proxy_token_expired"
+  | "provider_model_unavailable";
+
+export function recoverableModelFailure(error: unknown): RecoverableModelFailure | null {
+  const seen = new Set<unknown>();
+  const pending = [error];
+  let inspected = "";
+  while (pending.length > 0 && inspected.length < 16_384) {
+    const value = pending.shift();
+    if (value === null || value === undefined || seen.has(value)) continue;
+    seen.add(value);
+    if (typeof value === "string") inspected += ` ${value}`;
+    else if (typeof value === "object") {
+      for (const field of ["name", "message", "code", "data", "cause"]) {
+        if (field in value) pending.push((value as Record<string, unknown>)[field]);
+      }
+    }
+  }
+  if (/\bmodel_proxy_token_expired\b/u.test(inspected)) {
+    return "model_proxy_token_expired";
+  }
+  if (/\bprovider_model_unavailable\b/u.test(inspected)) {
+    return "provider_model_unavailable";
+  }
+  return null;
+}
+
 export async function forkOrCreateAcpSession(input: {
   readonly fork: () => Promise<string>;
   readonly create: () => Promise<string>;
@@ -1078,6 +1106,9 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   readonly #uuid: () => string;
   readonly #artifacts?: WorkspaceCheckpointArtifactStore;
   readonly #captureRoot: string;
+  readonly #prepareModelAuthority?: () => Promise<void>;
+  readonly #providerCooldownMs: number;
+  readonly #delay: (milliseconds: number) => Promise<void>;
 
   constructor(input: {
     readonly socketPath: string;
@@ -1089,6 +1120,9 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     readonly uuid?: () => string;
     readonly connect?: AcpConnectionFactory;
     readonly artifacts?: WorkspaceCheckpointArtifactStore;
+    readonly prepareModelAuthority?: () => Promise<void>;
+    readonly providerCooldownMs?: number;
+    readonly delay?: (milliseconds: number) => Promise<void>;
   }) {
     this.#socketPath = boundedAbsolutePath("ACP socket path", input.socketPath);
     this.#workspace = boundedAbsolutePath("workspace", input.workspace);
@@ -1100,6 +1134,9 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     this.#now = input.now ?? (() => new Date());
     this.#uuid = input.uuid ?? randomUUID;
     this.#artifacts = input.artifacts;
+    this.#prepareModelAuthority = input.prepareModelAuthority;
+    this.#providerCooldownMs = input.providerCooldownMs ?? 5_000;
+    this.#delay = input.delay ?? ((milliseconds) => delay(milliseconds));
     if (
       !Number.isSafeInteger(this.#socketTimeoutMs) ||
       this.#socketTimeoutMs < 1_000 ||
@@ -1107,8 +1144,37 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     ) {
       throw new Error("ACP socket timeout must be between 1 and 60 seconds");
     }
+    if (
+      !Number.isSafeInteger(this.#providerCooldownMs) ||
+      this.#providerCooldownMs < 1_000 ||
+      this.#providerCooldownMs > 30_000
+    ) {
+      throw new Error("provider cooldown must be between 1 and 30 seconds");
+    }
     this.#connect = input.connect ?? ((dispatch, operation) =>
       this.#connectSocketAgent(dispatch, operation));
+  }
+
+  async #connectWithModelRecovery<Result>(
+    dispatch: SessionRuntimeDispatch,
+    operation: (agent: AcpAgentSessionConnection) => Promise<Result>,
+  ): Promise<Result> {
+    if (this.#prepareModelAuthority === undefined) {
+      return this.#connect(dispatch, operation);
+    }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await this.#prepareModelAuthority();
+      try {
+        return await this.#connect(dispatch, operation);
+      } catch (error) {
+        const failure = recoverableModelFailure(error);
+        if (failure === null || attempt === 1) throw error;
+        if (failure === "provider_model_unavailable") {
+          await this.#delay(this.#providerCooldownMs);
+        }
+      }
+    }
+    throw new Error("model authority recovery exhausted");
   }
 
   async #connectSocketAgent<Result>(
@@ -1238,7 +1304,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   }
 
   async prompt(dispatch: PromptDispatch): Promise<RuntimeExecutionResult> {
-    const material = await this.#connect(dispatch, async (agent) => {
+    const material = await this.#connectWithModelRecovery(dispatch, async (agent) => {
       const sessionId = await this.#activeAcpSession(dispatch, agent);
       return agent.prompt(
         sessionId,
@@ -1345,7 +1411,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   async resume(dispatch: SessionRuntimeDispatch): Promise<RuntimeExecutionResult> {
     const acpSessionId = dispatch.snapshot.checkpoint?.acpSessionId;
     if (!acpSessionId) throw new Error("resume requires an ACP checkpoint");
-    await this.#connect(dispatch, async (agent) => {
+    await this.#connectWithModelRecovery(dispatch, async (agent) => {
       await agent.loadSession(acpSessionId, this.#workspace);
     });
     await this.#state.set(dispatch.command.sessionId, acpSessionId);

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import { createHmac } from "node:crypto";
 import test from "node:test";
 import {
+  createClaimedDispatchModelProxyToken,
   createModelProxyToken,
   createSessionModelProxyToken,
 } from "@codeops/codeops-contracts/model-proxy";
@@ -63,6 +64,25 @@ test("issues a distinct session token with exact durable budget authority", () =
       exp: 1786328100,
     },
   );
+});
+
+test("binds a five-minute token to one claimed dispatch and active lease", () => {
+  const token = createClaimedDispatchModelProxyToken({
+    subject: "ses_agents_control_plane_1",
+    budgetId: "budget_agents_control_plane_1",
+    generation: 3,
+    leaseId: "11111111-1111-4111-8111-111111111111",
+    dispatchId: "22222222-2222-4222-8222-222222222222",
+    signingKey: "m".repeat(64),
+    model: "gpt-5.6-sol",
+    reasoningEffort: "high",
+    issuedAt: new Date("2026-08-10T01:00:00.000Z"),
+    expiresAt: new Date("2026-08-10T01:05:00.000Z"),
+  });
+  const payload = JSON.parse(Buffer.from(token.split(".")[1], "base64url"));
+  assert.equal(payload.leaseId, "11111111-1111-4111-8111-111111111111");
+  assert.equal(payload.dispatchId, "22222222-2222-4222-8222-222222222222");
+  assert.equal(payload.exp - payload.iat, 300);
 });
 
 test("rejects invalid token subjects and reusable signing-key bounds", () => {

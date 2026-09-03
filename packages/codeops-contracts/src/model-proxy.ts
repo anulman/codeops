@@ -15,9 +15,21 @@ interface SessionModelProxyTokenInput extends ModelProxyTokenInput {
   readonly generation: number;
 }
 
+interface ClaimedDispatchModelProxyTokenInput extends SessionModelProxyTokenInput {
+  readonly leaseId: string;
+  readonly dispatchId: string;
+  readonly expiresAt: Date;
+}
+
 function createToken(
   input: ModelProxyTokenInput,
-  budgetAuthority: Readonly<{ budgetId: string; generation: number }> | null,
+  budgetAuthority: Readonly<{
+    budgetId: string;
+    generation: number;
+    leaseId?: string;
+    dispatchId?: string;
+    expiresAt?: Date;
+  }> | null,
 ): string {
   if (!/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(input.subject)) {
     throw new Error("model proxy token subject is invalid");
@@ -25,7 +37,18 @@ function createToken(
   if (budgetAuthority !== null && (
     !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(budgetAuthority.budgetId) ||
     !Number.isSafeInteger(budgetAuthority.generation) ||
-    budgetAuthority.generation < 1
+    budgetAuthority.generation < 1 ||
+    ((budgetAuthority.leaseId !== undefined ||
+      budgetAuthority.dispatchId !== undefined ||
+      budgetAuthority.expiresAt !== undefined) && (
+      budgetAuthority.expiresAt === undefined ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        budgetAuthority.leaseId ?? "",
+      ) ||
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+        budgetAuthority.dispatchId ?? "",
+      )
+    ))
   )) {
     throw new Error("model proxy token budget authority is invalid");
   }
@@ -56,6 +79,17 @@ function createToken(
   if (!Number.isSafeInteger(issuedAt)) {
     throw new Error("model proxy token issue time is invalid");
   }
+  const dispatchAuthority = budgetAuthority?.expiresAt !== undefined;
+  const expiresAt = !dispatchAuthority
+    ? issuedAt + 75 * 60
+    : Math.floor(budgetAuthority.expiresAt!.getTime() / 1_000);
+  if (
+    !Number.isSafeInteger(expiresAt) ||
+    expiresAt <= issuedAt ||
+    expiresAt - issuedAt > (dispatchAuthority ? 5 * 60 : 75 * 60)
+  ) {
+    throw new Error("session model proxy token expiry is invalid");
+  }
   const payloadBody = budgetAuthority === null
     ? {
         aud: "codeops-model-proxy",
@@ -65,7 +99,22 @@ function createToken(
         maximumRequests,
         maximumOutputTokens,
         iat: issuedAt,
-        exp: issuedAt + 75 * 60,
+        exp: expiresAt,
+      }
+    : dispatchAuthority
+    ? {
+        aud: "codeops-model-proxy",
+        sub: input.subject,
+        budgetId: budgetAuthority.budgetId,
+        generation: budgetAuthority.generation,
+        leaseId: budgetAuthority.leaseId!,
+        dispatchId: budgetAuthority.dispatchId!,
+        model: input.model,
+        reasoningEffort: input.reasoningEffort,
+        maximumRequests,
+        maximumOutputTokens,
+        iat: issuedAt,
+        exp: expiresAt,
       }
     : {
         aud: "codeops-model-proxy",
@@ -77,7 +126,7 @@ function createToken(
         maximumRequests,
         maximumOutputTokens,
         iat: issuedAt,
-        exp: issuedAt + 75 * 60,
+        exp: expiresAt,
       };
   const payload = Buffer.from(JSON.stringify(payloadBody)).toString("base64url");
   const signature = createHmac("sha256", input.signingKey)
@@ -96,5 +145,17 @@ export function createSessionModelProxyToken(
   return createToken(input, {
     budgetId: input.budgetId,
     generation: input.generation,
+  });
+}
+
+export function createClaimedDispatchModelProxyToken(
+  input: ClaimedDispatchModelProxyTokenInput,
+): string {
+  return createToken(input, {
+    budgetId: input.budgetId,
+    generation: input.generation,
+    leaseId: input.leaseId,
+    dispatchId: input.dispatchId,
+    expiresAt: input.expiresAt,
   });
 }

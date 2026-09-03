@@ -17,6 +17,7 @@ import {
   forkOrCreateAcpSession,
   mergeAcpPermissionToolCall,
   renderAcpPermissionOperation,
+  recoverableModelFailure,
   SocketAcpWorkspaceLifecycle,
   waitForAcpSocket,
   workspacePromptContentBlocks,
@@ -667,6 +668,73 @@ test("forwards the workspace Plan identity at the lifecycle prompt call site", a
   );
 });
 
+test("renews once and resumes the exact ACP session after typed model failures", async () => {
+  for (const failure of [
+    "model_proxy_token_expired",
+    "provider_model_unavailable",
+  ]) {
+    const root = await workspace();
+    const prepared = [];
+    const cooldowns = [];
+    const calls = [];
+    let attempts = 0;
+    const lifecycle = new SocketAcpWorkspaceLifecycle({
+      socketPath: "/run/codeops/agent.sock",
+      workspace: root,
+      statePath: path.join(root, ".runtime", `sessions-${failure}.json`),
+      permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
+      prepareModelAuthority: async () => prepared.push(failure),
+      providerCooldownMs: 1_000,
+      delay: async (milliseconds) => cooldowns.push(milliseconds),
+      connect: async (_runtimeDispatch, operation) => operation({
+        newSession: async () => { calls.push(["new", "acp-exact"]); return "acp-exact"; },
+        loadSession: async (sessionId) => { calls.push(["load", sessionId]); },
+        prompt: async (sessionId) => {
+          calls.push(["prompt", sessionId]);
+          attempts += 1;
+          if (attempts === 1) throw { code: -32000, data: { code: failure } };
+          return { response: "recovered", stopReason: "end_turn" };
+        },
+        forkSession: async () => "unused",
+      }),
+    });
+    const result = await lifecycle.prompt(dispatch("prompt", { prompt: "Exact prompt." }));
+    assert.equal(result.material.response, "recovered");
+    assert.equal(prepared.length, 2);
+    assert.deepEqual(calls, [
+      ["new", "acp-exact"],
+      ["prompt", "acp-exact"],
+      ["load", "acp-exact"],
+      ["prompt", "acp-exact"],
+    ]);
+    assert.deepEqual(
+      cooldowns,
+      failure === "provider_model_unavailable" ? [1_000] : [],
+    );
+  }
+  assert.equal(recoverableModelFailure(new Error("untyped HTTP 404")), null);
+});
+
+test("stops after one model-authority renewal", async () => {
+  const root = await workspace();
+  let prepared = 0;
+  let connections = 0;
+  const lifecycle = new SocketAcpWorkspaceLifecycle({
+    socketPath: "/run/codeops/agent.sock",
+    workspace: root,
+    statePath: path.join(root, ".runtime", "sessions-once.json"),
+    permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
+    prepareModelAuthority: async () => { prepared += 1; },
+    connect: async () => {
+      connections += 1;
+      throw { message: "model_proxy_token_expired" };
+    },
+  });
+  await assert.rejects(lifecycle.prompt(dispatch("prompt", { prompt: "Exact prompt." })));
+  assert.equal(prepared, 2);
+  assert.equal(connections, 2);
+});
+
 test("persists bounded broker-to-ACP session identity atomically", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-acp-state-"));
   const statePath = path.join(root, "sessions.json");
@@ -954,6 +1022,7 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
   const identity = { ...snapshot().identity, baseSha };
   await writeFile(path.join(root, "README.md"), "after\n");
   const calls = [];
+  let authorityLoads = 0;
   const ids = [
     "44444444-4444-4444-8444-444444444444",
     "55555555-5555-4555-8555-555555555555",
@@ -970,6 +1039,7 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
     permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
     now: () => new Date("2026-08-05T03:20:00.000Z"),
     uuid: () => ids.shift(),
+    prepareModelAuthority: async () => { authorityLoads += 1; },
     connect: async (_runtimeDispatch, operation) => operation({
       newSession: async (cwd) => {
         calls.push(["new", cwd]);
@@ -1085,6 +1155,7 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
     "feat/agents-ui-fork-999999999999",
   );
   assert.equal("workspace" in trustedFork.material, false);
+  assert.equal(authorityLoads, 2);
   assert.deepEqual(calls, [
     ["new", root],
     ["prompt", "acp-session-parent", [{ type: "text", text: "Make one safe edit." }]],

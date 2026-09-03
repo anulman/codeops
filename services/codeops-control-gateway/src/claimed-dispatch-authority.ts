@@ -87,9 +87,12 @@ export function validateClaimedDispatchAuthority(
       "claimed dispatch principal does not own the session",
     );
   }
-  if (dispatch.dispatchId !== input.dispatchId || dispatch.command.type !== "prompt") {
+  if (
+    dispatch.dispatchId !== input.dispatchId ||
+    !["prompt", "resume"].includes(dispatch.command.type)
+  ) {
     throw new ClaimedDispatchAuthorityConflictError(
-      "authority belongs only to the exact claimed prompt dispatch",
+      "authority belongs only to the exact claimed prompt or resume dispatch",
     );
   }
   const snapshot = dispatch.snapshot;

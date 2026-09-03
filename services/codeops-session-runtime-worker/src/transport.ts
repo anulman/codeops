@@ -13,6 +13,8 @@ import {
   sessionRuntimeCompletionSchema,
   sessionRuntimeForkMaterialSchema,
   sessionRuntimeLeaseMaterialSchema,
+  sessionRuntimeModelAuthorityRequestSchema,
+  sessionRuntimeModelAuthorityResponseSchema,
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
@@ -43,6 +45,7 @@ import {
   type SessionRuntimeDispatchClaimV2,
   type SessionRuntimePermissionResult,
   type SessionRuntimePermissionSubmission,
+  type SessionRuntimeModelAuthorityResponse,
   type SessionRuntimeGitHubMutationRequest,
   type SessionRuntimeGitHubReadRequest,
   type WorkItemCommentInput,
@@ -140,6 +143,7 @@ export type RuntimeGitHubMutationRequest =
 
 export interface RuntimeExecutionContext {
   readonly isAdmittedInitialDispatch: boolean;
+  issueModelAuthority(): Promise<SessionRuntimeModelAuthorityResponse>;
   bindGitHubMutationOperationId?(
     operation: GitHubMutationOperation,
     input: unknown,
@@ -507,6 +511,40 @@ export class SessionRuntimeTransport {
     return result.decision;
   }
 
+  async #issueModelAuthority(
+    claim: SessionRuntimeDispatchClaim,
+    now: () => Date,
+  ): Promise<SessionRuntimeModelAuthorityResponse> {
+    if (
+      !["prompt", "resume"].includes(claim.dispatch.command.type) ||
+      now().getTime() >= Date.parse(claim.claimExpiresAt)
+    ) {
+      throw new SessionRuntimeTransportError(
+        "only one live claimed prompt or resume may request model authority",
+      );
+    }
+    const request = sessionRuntimeModelAuthorityRequestSchema.parse({
+      version: "codeops.session-runtime-model-authority-request/v1",
+      claimToken: claim.claimToken,
+    });
+    const result = sessionRuntimeModelAuthorityResponseSchema.parse(
+      await this.#post(
+        `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/model-authority`,
+        request,
+      ),
+    );
+    if (
+      result.dispatchId !== claim.dispatch.dispatchId ||
+      Date.parse(result.expiresAt) <= now().getTime() ||
+      Date.parse(result.expiresAt) > Date.parse(claim.claimExpiresAt)
+    ) {
+      throw new SessionRuntimeTransportError(
+        "session runtime model authority drifted from the exact live claim",
+      );
+    }
+    return result;
+  }
+
   async #createWorkItem(
     claim: SessionRuntimeDispatchClaimV2,
     input: {
@@ -685,6 +723,7 @@ export class SessionRuntimeTransport {
           operation,
           input: mutationInput,
         })).digest("hex")}`,
+      issueModelAuthority: () => this.#issueModelAuthority(claim, now),
       requestPermission: (submission) =>
         this.#requestPermission(claim, submission, now),
       createWorkItem: (workItem) => this.#createWorkItem(claim, workItem, now),

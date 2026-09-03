@@ -1,4 +1,5 @@
 import { constants } from "node:fs";
+import { randomUUID } from "node:crypto";
 import {
   open,
   rename,
@@ -68,7 +69,7 @@ export async function publishModelProxyToken(
     throw new Error("model proxy token is empty");
   }
 
-  const temporaryPath = `${tokenPath}.tmp`;
+  const temporaryPath = `${tokenPath}.${randomUUID()}.tmp`;
   let temporaryCreated = false;
   let published = false;
   try {

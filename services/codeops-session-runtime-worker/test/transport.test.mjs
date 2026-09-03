@@ -220,6 +220,60 @@ test("returns null without invoking the executor when no dispatch is available",
   assert.equal(executed, false);
 });
 
+test("loads fresh model authority only through the hidden live claim", async () => {
+  const requests = [];
+  const transport = new SessionRuntimeTransport({
+    gatewayOrigin: "http://codeops-control-gateway:8080",
+    token,
+    authority,
+    fetch: async (url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push({ url, body });
+      if (url.endsWith("/claims")) return json({
+        version: "codeops.session-runtime-claim-response/v1",
+        claim: claim(),
+      });
+      if (url.endsWith("/model-authority")) return json({
+        version: "codeops.session-runtime-model-authority-result/v1",
+        dispatchId,
+        modelProxyToken: `v1.${"a".repeat(32)}.${"b".repeat(43)}`,
+        expiresAt: "2026-08-04T20:04:00.000Z",
+      });
+      return json({
+        version: "codeops.session-command-result/v1",
+        commandId: "66666666-6666-4666-8666-666666666666",
+        sessionId: "ses_91a4",
+        generation: 3,
+        leaseId,
+        idempotencyKey,
+        type: "prompt",
+        eventCursor: 186,
+        snapshot: { ...claim().dispatch.snapshot, eventCursor: 186 },
+        committedAt: "2026-08-04T20:03:01.000Z",
+        disposition: "committed",
+      });
+    },
+  });
+  await transport.runOne({
+    leaseMs: 300_000,
+    now: () => new Date("2026-08-04T20:03:00.000Z"),
+    execute: async (_dispatch, context) => {
+      assert.equal("claimToken" in context, false);
+      const modelAuthority = await context.issueModelAuthority();
+      assert.equal(modelAuthority.dispatchId, dispatchId);
+      return promptResult;
+    },
+  });
+  assert.equal(
+    requests[1].url,
+    `http://codeops-control-gateway:8080/v1/session-runtime/dispatches/${dispatchId}/model-authority`,
+  );
+  assert.deepEqual(requests[1].body, {
+    version: "codeops.session-runtime-model-authority-request/v1",
+    claimToken,
+  });
+});
+
 test("relays permission through a claim-hidden executor callback", async () => {
   const requests = [];
   const transport = new SessionRuntimeTransport({

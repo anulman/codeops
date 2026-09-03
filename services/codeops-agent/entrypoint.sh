@@ -71,59 +71,9 @@ test -w "$codex_home"
 export CODEX_HOME="$codex_home"
 rm -f "$socket_path" "$done_path"
 
-if [ -n "${CODEOPS_MODEL_PROXY_TOKEN_FILE:-}" ]; then
-  token_wait_seconds="${CODEOPS_MODEL_PROXY_TOKEN_WAIT_SECONDS:-60}"
-  case "$token_wait_seconds" in
-    ''|*[!0-9]*) echo "CODEOPS_MODEL_PROXY_TOKEN_WAIT_SECONDS must be an integer" >&2; exit 1 ;;
-  esac
-  waited=0
-  while [ ! -f "$CODEOPS_MODEL_PROXY_TOKEN_FILE" ]; do
-    if [ "$waited" -ge "$token_wait_seconds" ]; then
-      echo "short-lived model proxy token was not initialized" >&2
-      exit 1
-    fi
-    sleep 1
-    waited=$((waited + 1))
-  done
-  CODEX_API_KEY="$(node --input-type=module - "$CODEOPS_MODEL_PROXY_TOKEN_FILE" <<'NODE'
-import {
-  closeSync,
-  constants,
-  fstatSync,
-  openSync,
-  readFileSync,
-} from "node:fs";
-
-const descriptor = openSync(
-  process.argv[2],
-  constants.O_RDONLY | constants.O_NOFOLLOW,
-);
-try {
-  const stats = fstatSync(descriptor);
-  if (!stats.isFile() || (stats.mode & 0o777) !== 0o600) {
-    throw new Error("published model proxy token must be one mode 0600 regular file");
-  }
-  const token = readFileSync(descriptor);
-  if (token.length === 0) {
-    throw new Error("short-lived model proxy token is empty");
-  }
-  process.stdout.write(token);
-} finally {
-  closeSync(descriptor);
-}
-NODE
-)"
-  export CODEX_API_KEY
-fi
-
-if [ -z "${CODEX_API_KEY:-}" ]; then
-  echo "CODEX_API_KEY is required" >&2
-  exit 1
-fi
-
 socat \
   "UNIX-LISTEN:${socket_path},fork,unlink-early,mode=0600" \
-  "EXEC:/opt/codeops-agent/node_modules/.bin/codex-acp,pipes,stderr" &
+  "EXEC:/usr/local/bin/node /opt/codeops-agent/acp-connection.mjs,pipes,stderr" &
 socat_pid=$!
 
 cleanup() {

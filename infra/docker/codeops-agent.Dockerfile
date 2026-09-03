@@ -57,11 +57,13 @@ RUN apt-get update \
   && rm -rf /var/lib/apt/lists/*
 
 COPY services/codeops-agent/entrypoint.sh /usr/local/bin/codeops-agent-entrypoint
+COPY services/codeops-agent/acp-connection.mjs /opt/codeops-agent/acp-connection.mjs
 COPY services/codeops-agent/prepare-project-context.mjs /opt/codeops-agent/prepare-project-context.mjs
 COPY services/codeops-agent/work-items-mcp.mjs /opt/codeops-agent/work-items-mcp.mjs
 COPY services/codeops-agent/github-reads-mcp.mjs /opt/codeops-agent/github-reads-mcp.mjs
 COPY services/codeops-agent/github-mutations-mcp.mjs /opt/codeops-agent/github-mutations-mcp.mjs
 RUN chmod 0555 /usr/local/bin/codeops-agent-entrypoint \
+  && chmod 0444 /opt/codeops-agent/acp-connection.mjs \
   && chmod 0444 /opt/codeops-agent/prepare-project-context.mjs \
   && chmod 0444 /opt/codeops-agent/work-items-mcp.mjs \
   && chmod 0444 /opt/codeops-agent/github-reads-mcp.mjs \

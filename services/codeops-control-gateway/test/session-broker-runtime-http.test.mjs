@@ -21,6 +21,34 @@ const dispatchId = "44444444-4444-4444-8444-444444444444";
 const claimToken = "55555555-5555-4555-8555-555555555555";
 const requestId = "permission-1";
 
+test("routes dispatch-bound model authority through the exact live claim", async () => {
+  const calls = [];
+  const issued = {
+    version: "codeops.session-runtime-model-authority-result/v1",
+    dispatchId,
+    modelProxyToken: `v1.${"a".repeat(32)}.${"b".repeat(43)}`,
+    expiresAt: "2026-08-15T10:10:00.000Z",
+  };
+  const result = await serveSessionRuntime({
+    method: "POST",
+    url: `/v1/session-runtime/dispatches/${dispatchId}/model-authority`,
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    token,
+    workerId: "runtime-worker:model",
+    readBody: async () => ({
+      version: "codeops.session-runtime-model-authority-request/v1",
+      claimToken,
+    }),
+    claim: async () => null,
+    complete: async () => ({}),
+    issueModelAuthority: async (input) => { calls.push(input); return issued; },
+    submitPermission: async () => ({}),
+    pollPermission: async () => ({}),
+  });
+  assert.deepEqual(calls, [{ dispatchId, claimToken, workerId: "runtime-worker:model" }]);
+  assert.deepEqual(result, { status: 200, body: issued });
+});
+
 function admissionBody() {
   return { version: "codeops.work-item-admission/v1",
     admissionId: "11111111-1111-4111-8111-111111111111", claimToken,

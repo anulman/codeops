@@ -12,6 +12,8 @@ import {
   sessionRuntimePermissionSubmissionSchema,
   sessionRuntimeGitHubMutationRequestSchema,
   sessionRuntimeGitHubReadRequestSchema,
+  sessionRuntimeModelAuthorityRequestSchema,
+  sessionRuntimeModelAuthorityResponseSchema,
   sessionRuntimeWorkItemCommentRequestSchema,
   sessionRuntimeWorkItemCreateRequestSchema,
   sessionRuntimeWorkItemGetRequestSchema,
@@ -29,6 +31,7 @@ import {
   type WorkItemSearchResult,
   type WorkItemUpdateResult,
   type SessionRuntimePermissionResult,
+  type SessionRuntimeModelAuthorityResponse,
   type WorkItemAdmissionResult,
 } from "@codeops/codeops-contracts";
 import { authenticateBearer } from "./bearer-auth.js";
@@ -44,11 +47,18 @@ import {
   GitHubBranchCandidateNotFoundError,
 } from "./github-branch-publish-candidates.js";
 import { SessionRuntimeGitHubMutationConflictError } from "./session-runtime-github-mutations.js";
+import {
+  ExhaustedSessionModelBudgetError,
+  MissingSessionModelBudgetError,
+  RevokedSessionModelAuthorityError,
+} from "./session-model-authority.js";
 
 const dispatchId = z.string().uuid();
 const claimPath = "/v1/session-runtime/claims";
 const completionPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/completions$/i;
+const modelAuthorityPath =
+  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/model-authority$/i;
 const permissionSubmissionPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/permissions$/i;
 const permissionPollPath =
@@ -143,6 +153,11 @@ export async function serveSessionRuntime(input: {
     readonly workerId: string;
     readonly completion: unknown;
   }) => Promise<SessionCommandResult>;
+  readonly issueModelAuthority: (input: {
+    readonly dispatchId: string;
+    readonly claimToken: string;
+    readonly workerId: string;
+  }) => Promise<SessionRuntimeModelAuthorityResponse>;
   readonly submitPermission: (input: {
     readonly dispatchId: string;
     readonly workerId: string;
@@ -209,6 +224,7 @@ export async function serveSessionRuntime(input: {
   const url = new URL(input.url, "http://codeops.internal");
   const isClaim = url.pathname === claimPath;
   const completionMatch = url.pathname.match(completionPath);
+  const modelAuthorityMatch = url.pathname.match(modelAuthorityPath);
   const permissionSubmissionMatch = url.pathname.match(permissionSubmissionPath);
   const permissionPollMatch = url.pathname.match(permissionPollPath);
   const workItemMatch = url.pathname.match(workItemPath);
@@ -220,6 +236,7 @@ export async function serveSessionRuntime(input: {
   if (
     !isClaim &&
     completionMatch === null &&
+    modelAuthorityMatch === null &&
     permissionSubmissionMatch === null &&
     permissionPollMatch === null
     && workItemMatch === null
@@ -273,6 +290,46 @@ export async function serveSessionRuntime(input: {
         },
       },
     };
+  }
+
+  if (modelAuthorityMatch !== null) {
+    const request = sessionRuntimeModelAuthorityRequestSchema.safeParse(
+      await readRequestBody(input.readBody),
+    );
+    if (!request.success) {
+      throw new InvalidSessionRuntimeRequestError(
+        "session runtime model-authority body is invalid",
+      );
+    }
+    try {
+      return {
+        status: 200,
+        body: sessionRuntimeModelAuthorityResponseSchema.parse(
+          await input.issueModelAuthority({
+            dispatchId: dispatchId.parse(modelAuthorityMatch[1]),
+            claimToken: request.data.claimToken,
+            workerId: input.workerId,
+          }),
+        ),
+      };
+    } catch (error) {
+      if (error instanceof ClaimedDispatchAuthorityNotFoundError) {
+        return { status: 404, body: { status: "not-found" } };
+      }
+      if (
+        error instanceof ClaimedDispatchAuthorityConflictError ||
+        error instanceof RevokedSessionModelAuthorityError
+      ) {
+        return { status: 409, body: { status: "model-authority-revoked" } };
+      }
+      if (
+        error instanceof MissingSessionModelBudgetError ||
+        error instanceof ExhaustedSessionModelBudgetError
+      ) {
+        return { status: 409, body: { status: "model-budget-exhausted" } };
+      }
+      throw error;
+    }
   }
 
   if (workItemMatch !== null) {

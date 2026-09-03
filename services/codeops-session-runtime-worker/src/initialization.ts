@@ -123,7 +123,6 @@ export class SessionJobInitializer {
         result.snapshot.sessionId !== request.sessionId ||
         JSON.stringify(result.snapshot.identity) !==
           JSON.stringify(request.identity) ||
-        result.modelProxyToken === undefined ||
         (!exactActiveLease && !duplicateReleasedLease)
       ) {
         throw new SessionRuntimeTransportError(

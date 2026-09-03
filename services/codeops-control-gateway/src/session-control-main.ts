@@ -61,7 +61,10 @@ import {
   initializeAdmittedChildSessionFromJob,
   serveSessionJobInitialization,
 } from "./session-job-initialization.js";
-import { issueSessionModelAuthority } from "./session-model-authority.js";
+import {
+  issueClaimedSessionModelAuthority,
+  RevokedSessionModelAuthorityError,
+} from "./session-model-authority.js";
 import {
   ImmutableSessionRuntimeDispatchConflictError,
   SessionRuntimeDispatchNotFoundError,
@@ -438,20 +441,7 @@ const server = createServer((request, response) => {
                 "codeops.session-job-initialization/v3"
               ? await initializeAdmittedChildSessionFromJob(client, { request: initializationRequest })
               : await initializeSessionFromJob(client, { request: initializationRequest });
-            const issuedAt = new Date();
-            const modelAuthority = issueSessionModelAuthority({
-              snapshot: initialized.snapshot,
-              signingKey: modelProxySigningKey,
-              issuedAt,
-            });
-            return {
-              ...initialized,
-              ...(modelAuthority.disposition === "disabled"
-                ? {}
-                : {
-                    modelProxyToken: modelAuthority.modelProxyToken,
-                  }),
-            };
+            return initialized;
           } finally {
             client.release();
           }
@@ -488,6 +478,23 @@ const server = createServer((request, response) => {
           const client = await database.connect();
           try {
             return await completeSessionRuntimeDispatch(client, input);
+          } finally {
+            client.release();
+          }
+        },
+        issueModelAuthority: async (authorityInput) => {
+          const client = await database.connect();
+          try {
+            const authority = await issueClaimedSessionModelAuthority(client, {
+              ...authorityInput,
+              signingKey: modelProxySigningKey,
+            });
+            return {
+              version: "codeops.session-runtime-model-authority-result/v1",
+              dispatchId: authorityInput.dispatchId,
+              modelProxyToken: authority.modelProxyToken,
+              expiresAt: authority.expiresAt,
+            };
           } finally {
             client.release();
           }
@@ -640,6 +647,7 @@ const server = createServer((request, response) => {
                 || error instanceof SessionRuntimeWorkItemConflictError
                 || error instanceof SessionRuntimeGitHubReadConflictError
                 || error instanceof SessionRuntimeGitHubMutationConflictError
+                || error instanceof RevokedSessionModelAuthorityError
               ? 409
               : 503;
       json(response, status, {

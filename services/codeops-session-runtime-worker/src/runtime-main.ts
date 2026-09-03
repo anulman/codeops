@@ -150,13 +150,6 @@ try {
   if (initialization.snapshot.lease?.status !== "active") {
     throw new Error("session runtime requires an active server-confirmed lease");
   }
-  if (initialization.modelProxyToken === undefined) {
-    throw new Error("session runtime requires a short-lived model proxy token");
-  }
-  await publishModelProxyToken(
-    modelProxyTokenPath,
-    initialization.modelProxyToken,
-  );
   const transport = new SessionRuntimeTransport({
     gatewayOrigin,
     token: workerToken,
@@ -181,6 +174,13 @@ try {
       socketTimeoutMs,
       permissions: createAcpPermissionRelay({ context }),
       artifacts: workspaceArtifacts,
+      prepareModelAuthority: async () => {
+        const authority = await context.issueModelAuthority();
+        await publishModelProxyToken(
+          modelProxyTokenPath,
+          authority.modelProxyToken,
+        );
+      },
     });
     return workItemsBroker.run(dispatch, context, () =>
       githubReadsBroker.run(dispatch, context, () =>

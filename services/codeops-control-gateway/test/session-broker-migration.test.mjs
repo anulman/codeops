@@ -224,6 +224,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "session-notification-key-constraint-v2",
     "session-model-budget-ledger-v2",
     "session-model-budget-ledger-functions-v1",
+    "session-dispatch-model-authority-v1",
     "session-model-budget-recovery-v1",
     "session-owner-v1",
     "session-agent-terminal-progress-v1",
@@ -244,7 +245,7 @@ test("grants the model proxy only fixed ledger function execution", async () => 
   const sql = client.calls.map(({ text }) => text).join("\n");
   assert.match(sql, /CREATE ROLE "codeops_model_proxy" LOGIN PASSWORD/);
   assert.match(sql, /REVOKE ALL ON ALL TABLES IN SCHEMA codeops/);
-  assert.match(sql, /GRANT EXECUTE ON FUNCTION codeops\.reserve_session_model_budget/);
+  assert.match(sql, /GRANT EXECUTE ON FUNCTION codeops\.reserve_session_dispatch_model_budget/);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION codeops\.settle_session_model_budget/);
   assert.match(sql, /GRANT EXECUTE ON FUNCTION codeops\.charge_stale_session_model_budget_reservations/);
   assert.doesNotMatch(sql, /GRANT (SELECT|INSERT|UPDATE|DELETE)/);
