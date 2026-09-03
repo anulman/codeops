@@ -49,6 +49,13 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
     "actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02",
   );
   assert.equal(retainedGoldenSource.with.name, "codeops-golden-source-${{ github.sha }}");
+  assert.equal(retainedGoldenSource.id, "retain_golden_source");
+  assert.equal(retainedGoldenSource["continue-on-error"], true);
+  const retriedGoldenSource = workflow.jobs.validate.steps.find(
+    ({ name }) => name === "Retry exact golden source retention",
+  );
+  assert.equal(retriedGoldenSource.if, "steps.retain_golden_source.outcome == 'failure'");
+  assert.equal(retriedGoldenSource.with.overwrite, true);
   assert.deepEqual(workflow.jobs.images.strategy.matrix.image, expectedImages);
   const build = workflow.jobs.images.steps.find(({ name }) => name === "Build exact image");
   assert.equal(build.with.push, "${{ needs.validate.outputs.publish == 'true' }}");
@@ -74,6 +81,16 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
     ({ name }) => name === "Enforce exact image license policy",
   );
   assert.match(imageLicensePolicy.run, /check-codeops-license-policy\.mjs/);
+  const retainedImageLicense = workflow.jobs.images.steps.find(
+    ({ name }) => name === "Retain exact image license evidence",
+  );
+  assert.equal(retainedImageLicense.id, "retain_image_license_evidence");
+  assert.equal(retainedImageLicense["continue-on-error"], true);
+  const retriedImageLicense = workflow.jobs.images.steps.find(
+    ({ name }) => name === "Retry exact image license evidence retention",
+  );
+  assert.equal(retriedImageLicense.if, "steps.retain_image_license_evidence.outcome == 'failure'");
+  assert.equal(retriedImageLicense.with.overwrite, true);
   assert.equal(workflow.jobs.chart.if, "needs.validate.outputs.publish == 'true'");
   assert.deepEqual(workflow.jobs.chart.needs, ["validate", "images"]);
   assert.equal(workflow.jobs.chart.permissions.actions, "read");
@@ -239,6 +256,16 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(serialized, /sbom-\$\{\{ matrix\.image \}\}\.spdx\.json/);
   assert.match(serialized, /license-policy-\$\{\{ matrix\.image \}\}\.json/);
   assert.match(serialized, /sha256sum/);
+  const retainedRelease = workflow.jobs.chart.steps.find(
+    ({ name }) => name === "Retain exact release evidence",
+  );
+  assert.equal(retainedRelease.id, "retain_release_evidence");
+  assert.equal(retainedRelease["continue-on-error"], true);
+  const retriedRelease = workflow.jobs.chart.steps.find(
+    ({ name }) => name === "Retry exact release evidence retention",
+  );
+  assert.equal(retriedRelease.if, "steps.retain_release_evidence.outcome == 'failure'");
+  assert.equal(retriedRelease.with.overwrite, true);
   const githubRelease = workflow.jobs["github-release"];
   assert.equal(githubRelease.if, "needs.validate.outputs.publish == 'true'");
   assert.deepEqual(githubRelease.needs, ["validate", "registry-install"]);
