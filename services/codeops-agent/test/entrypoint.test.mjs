@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
+import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import {
   assertImmutableProviderRequest,
@@ -9,6 +12,9 @@ import {
 
 const entrypointUrl = new URL("../entrypoint.sh", import.meta.url);
 const entrypoint = await readFile(entrypointUrl, "utf8");
+const connectionUrl = new URL("../acp-connection.mjs", import.meta.url);
+const connection = await readFile(connectionUrl, "utf8");
+const { loadModelProxyAuthority } = await import(connectionUrl);
 const codexAcpUrl = new URL(import.meta.resolve("@agentclientprotocol/codex-acp"));
 const codexAcpSource = await readFile(codexAcpUrl, "utf8");
 const codexAcpPackage = JSON.parse(
@@ -53,13 +59,30 @@ test("entrypoint requires the isolated per-Session Codex home", () => {
   assert.match(entrypoint, /chmod 700 "\$codex_home"/);
   assert.match(entrypoint, /test -w "\$codex_home"/);
   assert.match(entrypoint, /CODEOPS_MODEL_PROXY_TOKEN_FILE/);
-  assert.match(entrypoint, /short-lived model proxy token was not initialized/);
-  assert.match(entrypoint, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/);
-  assert.match(entrypoint, /\(stats\.mode & 0o777\) !== 0o600/);
-  assert.match(entrypoint, /token\.length === 0/);
+  assert.match(entrypoint, /acp-connection\.mjs/);
+  assert.match(connection, /constants\.O_RDONLY \| constants\.O_NOFOLLOW/);
+  assert.match(connection, /\(stats\.mode & 0o777\) !== 0o600/);
   assert.doesNotMatch(entrypoint, /model-proxy-token\.tmp/);
-  assert.match(entrypoint, /export CODEX_API_KEY/);
+  assert.doesNotMatch(entrypoint, /export CODEX_API_KEY/);
   assert.doesNotMatch(entrypoint, /auth\.json/);
+});
+
+test("each ACP connection loads the currently rotated authority file", async () => {
+  const root = await mkdtemp(join(tmpdir(), "codeops-acp-authority-"));
+  const tokenPath = join(root, "model-proxy-token");
+  const first = `v1.${"a".repeat(32)}.${"b".repeat(43)}`;
+  const second = `v1.${"c".repeat(32)}.${"d".repeat(43)}`;
+  try {
+    await writeFile(tokenPath, first, { mode: 0o600 });
+    assert.equal(loadModelProxyAuthority(tokenPath, tokenPath), first);
+    await writeFile(tokenPath, second);
+    await chmod(tokenPath, 0o600);
+    assert.equal(loadModelProxyAuthority(tokenPath, tokenPath), second);
+    await chmod(tokenPath, 0o644);
+    assert.throws(() => loadModelProxyAuthority(tokenPath, tokenPath), /0600/);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("entrypoint rejects every missing or mismatched model proxy route", () => {

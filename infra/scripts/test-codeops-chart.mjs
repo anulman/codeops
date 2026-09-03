@@ -110,7 +110,7 @@ test("renders one portable CodeOps package with immutable images", () => {
     ...(candidate.spec?.template?.spec?.containers ?? []),
     ...(candidate.spec?.template?.spec?.initContainers ?? []),
   ]).map((container) => container.image).filter(Boolean);
-  assert.equal(images.length, 11);
+  assert.equal(images.length, 12);
   assert.equal(new Set(images).size, 7);
   assert.ok(images.every((image) => /@sha256:[0-9a-f]{64}$/.test(image)));
 
@@ -286,8 +286,9 @@ test("isolates subscription auth in the model proxy and keeps API fallback", () 
 });
 
 test("runs migration as an ordinary install Job and a pre-upgrade hook", () => {
+  const resources = renderUpgrade();
   const migration = resource(
-    renderUpgrade(),
+    resources,
     "Job",
     "team-a-codeops-session-migrate",
   );
@@ -297,6 +298,79 @@ test("runs migration as an ordinary install Job and a pre-upgrade hook", () => {
     "before-hook-creation,hook-succeeded",
   );
   assert.equal(migration.metadata.annotations["helm.sh/hook-weight"], "-10");
+  assert.equal(migration.spec.template.spec.serviceAccountName,
+    "team-a-codeops-control-gateway");
+  assert.equal(migration.spec.template.spec.automountServiceAccountToken, true);
+  const env = Object.fromEntries(migration.spec.template.spec.containers[0].env
+    .map(({ name, value }) => [name, value]));
+  assert.equal(env.CODEOPS_MIGRATION_QUIESCE_WRITERS, "true");
+  assert.equal(env.CODEOPS_NAMESPACE, "engineering");
+  assert.deepEqual(JSON.parse(env.CODEOPS_MIGRATION_WRITER_DEPLOYMENTS), [
+    "team-a-codeops-session-gateway",
+  ]);
+  const controlGateway = resource(resources, "Deployment",
+    "team-a-codeops-control-gateway");
+  assert.deepEqual(controlGateway.spec.strategy, {
+    type: "RollingUpdate", rollingUpdate: { maxUnavailable: 0, maxSurge: 1 },
+  });
+  const apiVolumes = controlGateway.spec.template.spec.volumes;
+  assert.equal(apiVolumes.some((volume) => volume.persistentVolumeClaim !== undefined), false,
+    "the rolling DB-backed API must not mount file-backed evidence");
+  const apiEnv = Object.fromEntries(controlGateway.spec.template.spec.containers[0].env
+    .map(({ name, value }) => [name, value]));
+  assert.equal(apiEnv.CODEOPS_CONTROL_GATEWAY_RUNTIME_ROLE, "api");
+  const dispatcher = resource(resources, "Deployment",
+    "team-a-codeops-control-gateway-dispatcher");
+  assert.equal(dispatcher.spec.replicas, 1);
+  assert.deepEqual(dispatcher.spec.strategy, { type: "Recreate" });
+  assert.equal(dispatcher.spec.template.spec.volumes.filter(
+    (volume) => volume.persistentVolumeClaim?.claimName ===
+      "team-a-codeops-control-gateway-evidence").length, 1);
+  const dispatcherEnv = Object.fromEntries(dispatcher.spec.template.spec.containers[0].env
+    .map(({ name, value }) => [name, value]));
+  assert.equal(dispatcherEnv.CODEOPS_CONTROL_GATEWAY_RUNTIME_ROLE, "file-dispatcher");
+  const dispatcherService = resource(resources, "Service",
+    "team-a-codeops-control-gateway-dispatcher");
+  assert.deepEqual(dispatcherService.spec.selector,
+    { "app.kubernetes.io/name": "team-a-codeops-control-gateway-dispatcher" });
+  const orchestrator = resource(resources, "Deployment", "team-a-codeops-orchestrator");
+  const orchestratorEnv = Object.fromEntries(orchestrator.spec.template.spec.containers[0].env
+    .map(({ name, value }) => [name, value]));
+  assert.equal(orchestratorEnv.CODEOPS_AGENT_DISPATCH_ORIGIN,
+    "http://team-a-codeops-control-gateway-dispatcher:8080");
+  assert.ok(!JSON.parse(env.CODEOPS_MIGRATION_WRITER_DEPLOYMENTS)
+    .includes("team-a-codeops-control-gateway"),
+  "an active runtime Job keeps claim, renewal, and completion service during migration");
+  const role = resource(resources, "Role",
+    "team-a-codeops-session-migration-quiesce");
+  assert.equal(role.metadata.annotations["helm.sh/hook-weight"], "-12");
+  assert.deepEqual(role.rules, [
+    { apiGroups: ["apps"], resources: ["deployments", "deployments/scale"],
+      verbs: ["get", "patch"] },
+    { apiGroups: [""], resources: ["pods"], verbs: ["get", "list"] },
+  ]);
+  const binding = resource(resources, "RoleBinding",
+    "team-a-codeops-session-migration-quiesce");
+  assert.equal(binding.metadata.annotations["helm.sh/hook-weight"], "-11");
+  assert.equal(binding.subjects[0].name, "team-a-codeops-control-gateway");
+});
+
+test("keeps a multi-node API rollout off the singleton RWO file dispatcher", () => {
+  const resources = renderUpgrade();
+  const api = resource(resources, "Deployment", "team-a-codeops-control-gateway");
+  const dispatcher = resource(resources, "Deployment",
+    "team-a-codeops-control-gateway-dispatcher");
+  const claim = resource(resources, "PersistentVolumeClaim",
+    "team-a-codeops-control-gateway-evidence");
+  assert.deepEqual(claim.spec.accessModes, ["ReadWriteOnce"]);
+  assert.deepEqual(api.spec.strategy,
+    { type: "RollingUpdate", rollingUpdate: { maxUnavailable: 0, maxSurge: 1 } });
+  assert.equal(api.spec.template.spec.volumes.some(
+    (volume) => volume.persistentVolumeClaim?.claimName === claim.metadata.name), false);
+  assert.equal(dispatcher.spec.replicas, 1);
+  assert.deepEqual(dispatcher.spec.strategy, { type: "Recreate" });
+  assert.equal(dispatcher.spec.template.spec.volumes.some(
+    (volume) => volume.persistentVolumeClaim?.claimName === claim.metadata.name), true);
 });
 
 test("wires Web Push only from an explicit public configuration and private Secret", () => {

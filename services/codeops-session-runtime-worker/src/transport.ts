@@ -5,13 +5,18 @@ import {
   githubBranchPublishCandidateChunkRequestSchema,
   githubReadResultSchema,
   sessionRuntimeClaimRequestSchema,
-  sessionRuntimeClaimResponseSchema,
+  sessionRuntimeClaimRequestV2Schema,
+  sessionRuntimeClaimResponseV2Schema,
+  sessionRuntimeClaimRenewalRequestSchema,
+  sessionRuntimeClaimRenewalResponseSchema,
   sessionRuntimeCheckpointMaterialSchema,
   sessionRuntimeCompletionRequestSchema,
   sessionRuntimeCompletionResponseSchema,
   sessionRuntimeCompletionSchema,
   sessionRuntimeForkMaterialSchema,
   sessionRuntimeLeaseMaterialSchema,
+  sessionRuntimeModelAuthorityRequestSchema,
+  sessionRuntimeModelAuthorityResponseSchema,
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
@@ -39,9 +44,10 @@ import {
   type SessionIdentity,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
-  type SessionRuntimeDispatchClaim,
+  type SessionRuntimeDispatchClaimV2,
   type SessionRuntimePermissionResult,
   type SessionRuntimePermissionSubmission,
+  type SessionRuntimeModelAuthorityResponse,
   type SessionRuntimeGitHubMutationRequest,
   type SessionRuntimeGitHubReadRequest,
   type WorkItemCommentInput,
@@ -138,6 +144,8 @@ export type RuntimeGitHubMutationRequest =
     : never;
 
 export interface RuntimeExecutionContext {
+  readonly isAdmittedInitialDispatch: boolean;
+  issueModelAuthority(): Promise<SessionRuntimeModelAuthorityResponse>;
   bindGitHubMutationOperationId?(
     operation: GitHubMutationOperation,
     input: unknown,
@@ -187,7 +195,7 @@ export type RuntimeExecutor = (
 ) => Promise<RuntimeExecutionResult>;
 
 export function buildSessionRuntimeCompletion(
-  claim: SessionRuntimeDispatchClaim,
+  claim: SessionRuntimeDispatchClaimV2,
   rawExecution: unknown,
   completedAt: Date,
 ): SessionRuntimeCompletion {
@@ -305,7 +313,7 @@ export function requireSuccess(response: Response): void {
 }
 
 function requireCompletionIdentity(
-  claim: SessionRuntimeDispatchClaim,
+  claim: SessionRuntimeDispatchClaimV2,
   completion: SessionRuntimeCompletion,
 ): void {
   const { dispatch, claimExpiresAt } = claim;
@@ -406,20 +414,49 @@ export class SessionRuntimeTransport {
     }
   }
 
-  async claim(leaseMs: number): Promise<SessionRuntimeDispatchClaim | null> {
-    const request = sessionRuntimeClaimRequestSchema.parse({
-      version: "codeops.session-runtime-claim-request/v1",
+  async claim(leaseMs: number): Promise<SessionRuntimeDispatchClaimV2 | null> {
+    const request = sessionRuntimeClaimRequestV2Schema.parse({
+      version: "codeops.session-runtime-claim-request/v2",
       ...this.#authority,
       leaseMs,
     });
-    const response = sessionRuntimeClaimResponseSchema.parse(
+    const response = sessionRuntimeClaimResponseV2Schema.parse(
       await this.#post("/v1/session-runtime/claims", request),
     );
     return response.claim;
   }
 
+  async renewClaim(
+    claim: SessionRuntimeDispatchClaimV2,
+    leaseMs: number,
+  ): Promise<SessionRuntimeDispatchClaimV2> {
+    const request = sessionRuntimeClaimRenewalRequestSchema.parse({
+      version: "codeops.session-runtime-claim-renewal-request/v1",
+      claimToken: claim.claimToken,
+      leaseMs,
+    });
+    const response = sessionRuntimeClaimRenewalResponseSchema.parse(
+      await this.#post(
+        `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/claim-renewal`,
+        request,
+      ),
+    );
+    if (
+      response.claim.dispatch.dispatchId !== claim.dispatch.dispatchId ||
+      response.claim.claimToken !== claim.claimToken ||
+      response.claim.claimCount !== claim.claimCount ||
+      canonicalJsonText(response.claim.dispatch) !== canonicalJsonText(claim.dispatch) ||
+      Date.parse(response.claim.claimExpiresAt) <= Date.parse(claim.claimExpiresAt)
+    ) {
+      throw new SessionRuntimeTransportError(
+        "session runtime claim renewal drifted from the exact claim",
+      );
+    }
+    return response.claim;
+  }
+
   async complete(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     rawCompletion: unknown,
     now: () => Date = () => new Date(),
   ): Promise<SessionCommandResult> {
@@ -444,7 +481,7 @@ export class SessionRuntimeTransport {
   }
 
   async #requestPermission(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     input: RuntimePermissionSubmission,
     now: () => Date,
   ): Promise<NonNullable<SessionRuntimePermissionResult["decision"]>> {
@@ -505,8 +542,42 @@ export class SessionRuntimeTransport {
     return result.decision;
   }
 
+  async #issueModelAuthority(
+    claim: SessionRuntimeDispatchClaimV2,
+    now: () => Date,
+  ): Promise<SessionRuntimeModelAuthorityResponse> {
+    if (
+      !["prompt", "resume"].includes(claim.dispatch.command.type) ||
+      now().getTime() >= Date.parse(claim.claimExpiresAt)
+    ) {
+      throw new SessionRuntimeTransportError(
+        "only one live claimed prompt or resume may request model authority",
+      );
+    }
+    const request = sessionRuntimeModelAuthorityRequestSchema.parse({
+      version: "codeops.session-runtime-model-authority-request/v1",
+      claimToken: claim.claimToken,
+    });
+    const result = sessionRuntimeModelAuthorityResponseSchema.parse(
+      await this.#post(
+        `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/model-authority`,
+        request,
+      ),
+    );
+    if (
+      result.dispatchId !== claim.dispatch.dispatchId ||
+      Date.parse(result.expiresAt) <= now().getTime() ||
+      Date.parse(result.expiresAt) > Date.parse(claim.claimExpiresAt)
+    ) {
+      throw new SessionRuntimeTransportError(
+        "session runtime model authority drifted from the exact live claim",
+      );
+    }
+    return result;
+  }
+
   async #createWorkItem(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     input: {
       readonly operationId: string;
       readonly workItem: WorkItemCreateInput;
@@ -536,7 +607,7 @@ export class SessionRuntimeTransport {
   }
 
   async #operateWorkItem(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     operation: "get" | "search" | "comment" | "update" | "relate",
     input: { readonly operationId: string; readonly workItem: unknown },
     now: () => Date,
@@ -578,7 +649,7 @@ export class SessionRuntimeTransport {
   }
 
   async #readGitHub(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     input: RuntimeGitHubReadRequest,
     now: () => Date,
   ): Promise<GitHubReadResult> {
@@ -604,7 +675,7 @@ export class SessionRuntimeTransport {
   }
 
   async #mutateGitHub(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     input: RuntimeGitHubMutationRequest,
     now: () => Date,
   ): Promise<GitHubMutationResult> {
@@ -630,7 +701,7 @@ export class SessionRuntimeTransport {
   }
 
   async #storeGitHubBranchCandidate(
-    claim: SessionRuntimeDispatchClaim,
+    claim: SessionRuntimeDispatchClaimV2,
     input: Parameters<RuntimeExecutionContext["storeGitHubBranchCandidate"]>[0],
     now: () => Date,
   ): Promise<void> {
@@ -662,8 +733,9 @@ export class SessionRuntimeTransport {
     readonly execute: RuntimeExecutor;
     readonly now?: () => Date;
   }): Promise<SessionCommandResult | null> {
-    const claim = await this.claim(input.leaseMs);
-    if (claim === null) return null;
+    const claimed = await this.claim(input.leaseMs);
+    if (claimed === null) return null;
+    let claim = claimed;
     const now = input.now ?? (() => new Date());
     if (now().getTime() >= Date.parse(claim.claimExpiresAt)) {
       throw new SessionRuntimeTransportError(
@@ -672,7 +744,30 @@ export class SessionRuntimeTransport {
     }
     // The executor owns ACP/workspace side effects, not broker claim authority.
     // Never expose the claim token or its completion lease to that boundary.
-    const execution = await input.execute(claim.dispatch, {
+    const renewalAbort = new AbortController();
+    let renewalError: unknown;
+    const renewalTask = (async () => {
+      const intervalMs = Math.max(1_000, Math.floor(input.leaseMs / 3));
+      while (!renewalAbort.signal.aborted) {
+        try {
+          await delay(intervalMs, undefined, { signal: renewalAbort.signal });
+        } catch (error) {
+          if (renewalAbort.signal.aborted) return;
+          renewalError = error;
+          return;
+        }
+        try {
+          claim = await this.renewClaim(claim, input.leaseMs);
+        } catch (error) {
+          renewalError = error;
+          return;
+        }
+      }
+    })();
+    let execution: RuntimeExecutionResult;
+    try {
+      execution = await input.execute(claim.dispatch, {
+      isAdmittedInitialDispatch: claim.isAdmittedInitialDispatch,
       // Claim authority remains captured inside the transport callback. The
       // ACP/workspace executor receives neither bearer nor claim token.
       bindGitHubMutationOperationId: (operation, mutationInput) =>
@@ -682,6 +777,7 @@ export class SessionRuntimeTransport {
           operation,
           input: mutationInput,
         })).digest("hex")}`,
+      issueModelAuthority: () => this.#issueModelAuthority(claim, now),
       requestPermission: (submission) =>
         this.#requestPermission(claim, submission, now),
       createWorkItem: (workItem) => this.#createWorkItem(claim, workItem, now),
@@ -705,7 +801,16 @@ export class SessionRuntimeTransport {
         this.#mutateGitHub(claim, githubMutation, now),
       storeGitHubBranchCandidate: (candidate) =>
         this.#storeGitHubBranchCandidate(claim, candidate, now),
-    });
+      });
+    } finally {
+      renewalAbort.abort();
+      await renewalTask;
+    }
+    if (renewalError !== undefined) {
+      throw new SessionRuntimeTransportError(
+        `session runtime claim renewal failed: ${renewalError instanceof Error ? renewalError.message : String(renewalError)}`,
+      );
+    }
     const completedAt = now();
     if (completedAt.getTime() >= Date.parse(claim.claimExpiresAt)) {
       throw new SessionRuntimeTransportError(

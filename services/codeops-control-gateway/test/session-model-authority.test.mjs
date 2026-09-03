@@ -14,6 +14,8 @@ import {
 const signingKey = "m".repeat(64);
 const issuedAt = new Date("2026-08-15T12:34:56.789Z");
 const startedAt = "2026-08-15T12:00:00.000Z";
+const dispatchId = "11111111-1111-4111-8111-111111111111";
+const leaseId = "22222222-2222-4222-8222-222222222222";
 
 function snapshot(options = {}) {
   const mode = options.mode ?? "implement";
@@ -37,6 +39,14 @@ function snapshot(options = {}) {
       version: "codeops.session-workspace-identity/v1",
       policy: sessionPolicyForMode(mode),
     },
+    lease: {
+      leaseId,
+      generation: 3,
+      status: "active",
+      holderId: "runtime-worker",
+      acquiredAt: startedAt,
+      expiresAt: "2026-08-15T13:00:00.000Z",
+    },
     ...(budget === undefined ? {} : { budget }),
   };
 }
@@ -46,6 +56,8 @@ function issue(inputSnapshot) {
     snapshot: inputSnapshot,
     signingKey,
     issuedAt,
+    dispatchId,
+    claimExpiresAt: "2026-08-15T12:44:56.789Z",
   });
 }
 
@@ -55,7 +67,7 @@ function payload(token) {
   );
 }
 
-test("both initialization paths issue byte-identical model authority", () => {
+test("issues exact short-lived authority for one claimed dispatch", () => {
   const initialized = snapshot();
   const runtimeAuthority = issue(initialized);
   const sessionControlAuthority = issue(initialized);
@@ -71,22 +83,25 @@ test("both initialization paths issue byte-identical model authority", () => {
     sub: "ses_model_authority_1",
     budgetId: "ses_model_authority_1",
     generation: 3,
+    leaseId,
+    dispatchId,
     model: "gpt-5.6-sol",
     reasoningEffort: "medium",
     maximumRequests: 17,
     maximumOutputTokens: 12_345,
     iat: 1_786_797_296,
-    exp: 1_786_801_796,
+    exp: 1_786_797_596,
   });
+  assert.equal(runtimeAuthority.expiresAt, "2026-08-15T12:39:56.000Z");
 });
 
-test("both initialization entrypoints delegate to the shared issuer", async () => {
+test("initialization entrypoints do not mint immutable Pod-start authority", async () => {
   for (const name of ["runtime-main.ts", "session-control-main.ts"]) {
     const source = await readFile(
       new URL(`../src/${name}`, import.meta.url),
       "utf8",
     );
-    assert.match(source, /issueSessionModelAuthority\(\{/u);
+    assert.doesNotMatch(source, /issueSessionModelAuthority\(\{/u);
     assert.doesNotMatch(source, /createModelProxyToken/u);
   }
 });
@@ -125,4 +140,22 @@ test("enabled model authority rejects exhausted request or token budgets", () =>
       ExhaustedSessionModelBudgetError,
     );
   }
+});
+
+test("rejects stale generations, released leases, and expired claims", () => {
+  assert.throws(
+    () => issue({ ...snapshot(), lease: { ...snapshot().lease, generation: 2 } }),
+    /exact active lease/,
+  );
+  assert.throws(
+    () => issue({ ...snapshot(), lease: { ...snapshot().lease, status: "released", releasedAt: issuedAt.toISOString() } }),
+    /exact active lease/,
+  );
+  assert.throws(
+    () => issueSessionModelAuthority({
+      snapshot: snapshot(), signingKey, issuedAt, dispatchId,
+      claimExpiresAt: issuedAt.toISOString(),
+    }),
+    /expires with its active claim/,
+  );
 });

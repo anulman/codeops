@@ -3,6 +3,8 @@ import { createHash, createHmac } from "node:crypto";
 import { test } from "node:test";
 import {
   adversarialReviewSchema,
+  admittedChildMaterializationInputSchema,
+  admittedChildMaterializationStateSchema,
   agentJobDispatchRequestSchema,
   agentJobDispatchResultSchema,
   canonicalJsonBytes,
@@ -73,6 +75,59 @@ test("binds plan authority to the complete lifecycle work-item identity", () => 
   assert.deepEqual(workItemAdmissionResultSchema.parse(result), result);
   assert.throws(() => workItemAdmissionResultSchema.parse({ ...result,
     lifecycleEventId: `sha256:${"c".repeat(64)}` }));
+});
+
+test("admits only strict forward materialization states", () => {
+  const state = { version: "codeops.admitted-child-materialization-state/v1",
+    admissionId: "44444444-4444-4444-8444-444444444444",
+    inputDigest: `sha256:${"a".repeat(64)}`, state: "queued", attemptCount: 0,
+    resources: {},
+    createdAt: "2026-09-02T10:00:00.000Z", updatedAt: "2026-09-02T10:00:00.000Z" };
+  assert.deepEqual(admittedChildMaterializationStateSchema.parse(state), state);
+  assert.throws(() => admittedChildMaterializationStateSchema.parse({ ...state, state: "pending" }));
+  assert.throws(() => admittedChildMaterializationStateSchema.parse({ ...state, extra: true }));
+  assert.throws(() => admittedChildMaterializationInputSchema.parse({
+    version: "codeops.admitted-child-materialization-input/v1",
+    images: { agent: "registry.example/agent:latest", runtimeWorker: "registry.example/worker:latest" },
+  }));
+  assert.deepEqual(admittedChildMaterializationStateSchema.parse({ ...state,
+    state: "success-finalizing", finalizingAt: "2026-09-02T10:01:00.000Z" }).state,
+  "success-finalizing");
+  assert.throws(() => admittedChildMaterializationStateSchema.parse({ ...state,
+    state: "success-finalizing" }));
+  const failed = { ...state, state: "failed", failureCode: "identity-conflict",
+    failedAt: "2026-09-02T10:01:00.000Z", cleanupResiduals: [{
+      resourceRole: "source-authority", reason: "immutable-identity-drift",
+    }] };
+  assert.deepEqual(admittedChildMaterializationStateSchema.parse(failed), failed);
+  assert.throws(() => admittedChildMaterializationStateSchema.parse({ ...failed,
+    cleanupResiduals: [...failed.cleanupResiduals, ...failed.cleanupResiduals,
+      ...failed.cleanupResiduals, ...failed.cleanupResiduals] }));
+});
+
+test("canonicalizes admission UUID identities to lowercase at the contract boundary", () => {
+  const parsed = workItemAdmissionRequestSchema.parse({
+    version: "codeops.work-item-admission/v1",
+    admissionId: "AAAAAAAA-AAAA-4AAA-8AAA-AAAAAAAAAAAA",
+    claimToken: "BBBBBBBB-BBBB-4BBB-8BBB-BBBBBBBBBBBB",
+    plan: { planId: "plan", planDigest: `sha256:${"c".repeat(64)}`,
+      permissionRequestId: "permission" },
+    workItem: { repository: "example/repository", provider: { kind: "plane",
+      workspaceId: "CCCCCCCC-CCCC-4CCC-8CCC-CCCCCCCCCCCC",
+      projectId: "DDDDDDDD-DDDD-4DDD-8DDD-DDDDDDDDDDDD" },
+      workItemId: "EEEEEEEE-EEEE-4EEE-8EEE-EEEEEEEEEEEE",
+      workflowId: "workflow", runId: "run", sourceSha: "a".repeat(40),
+      title: "Title", prompt: "Implement." },
+    child: { sessionId: "session-child",
+      leaseId: "FFFFFFFF-FFFF-4FFF-8FFF-FFFFFFFFFFFF",
+      holderId: "runtime-worker:child",
+      dispatchId: "99999999-9999-4999-8999-99999999999A",
+      idempotencyKey: "88888888-8888-4888-8888-88888888888A" },
+  });
+  assert.equal(parsed.admissionId, "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa");
+  assert.equal(parsed.workItem.provider.workspaceId,
+    "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  assert.equal(parsed.child.dispatchId, "99999999-9999-4999-8999-99999999999a");
 });
 
 function trustedPlaneBinding(apiOrigin = "https://plane.example.com/") {

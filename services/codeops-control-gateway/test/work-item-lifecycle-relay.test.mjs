@@ -66,6 +66,7 @@ test("publishes canonical event bytes with the immutable event ID and fences the
         claimToken: "55555555-5555-4555-8555-555555555555",
         claimExpiresAt: "2026-08-11T04:20:30.000Z",
         claimCount: 1,
+        isAdmittedInitialDispatch: false,
       };
     },
     async publish(input) {
@@ -131,6 +132,7 @@ test("does not acknowledge when the JetStream publish fails", async () => {
           claimToken: "55555555-5555-4555-8555-555555555555",
           claimExpiresAt: "2026-08-11T04:20:30.000Z",
           claimCount: 1,
+          isAdmittedInitialDispatch: false,
         };
       },
       async publish() { throw new Error("publish unavailable"); },
@@ -154,6 +156,7 @@ test("accepts JetStream deduplication after crash recovery and records the origi
         claimToken: "66666666-6666-4666-8666-666666666666",
         claimExpiresAt: "2026-08-11T04:21:30.000Z",
         claimCount: 2,
+        isAdmittedInitialDispatch: false,
       };
     },
     async publish() {

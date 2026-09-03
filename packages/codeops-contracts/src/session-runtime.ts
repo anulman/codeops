@@ -243,13 +243,24 @@ export const sessionRuntimeCompletionSchema = z.discriminatedUnion("type", [
     .strict(),
 ]);
 
-export const sessionRuntimeDispatchClaimSchema = z
+const sessionRuntimeDispatchClaimBaseSchema = z
   .object({
     dispatch: sessionRuntimeDispatchSchema,
     claimToken: uuid,
     claimExpiresAt: isoDateTime,
     claimCount: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
   })
+  .strict();
+
+export const sessionRuntimeDispatchClaimSchema = sessionRuntimeDispatchClaimBaseSchema
+  .refine(
+    (claim) =>
+      Date.parse(claim.claimExpiresAt) > Date.parse(claim.dispatch.dispatchedAt),
+    "runtime claim must expire after dispatch",
+  );
+
+export const sessionRuntimeDispatchClaimV2Schema = sessionRuntimeDispatchClaimBaseSchema
+  .extend({ isAdmittedInitialDispatch: z.boolean() })
   .strict()
   .refine(
     (claim) =>
@@ -272,6 +283,48 @@ export const sessionRuntimeClaimResponseSchema = z
   .object({
     version: z.literal("codeops.session-runtime-claim-response/v1"),
     claim: sessionRuntimeDispatchClaimSchema.nullable(),
+  })
+  .strict();
+
+export const sessionRuntimeClaimRequestV2Schema = sessionRuntimeClaimRequestSchema
+  .extend({ version: z.literal("codeops.session-runtime-claim-request/v2") })
+  .strict();
+
+export const sessionRuntimeClaimResponseV2Schema = z
+  .object({
+    version: z.literal("codeops.session-runtime-claim-response/v2"),
+    claim: sessionRuntimeDispatchClaimV2Schema.nullable(),
+  })
+  .strict();
+
+export const sessionRuntimeClaimRenewalRequestSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-claim-renewal-request/v1"),
+    claimToken: uuid,
+    leaseMs: z.number().int().min(1_000).max(15 * 60_000),
+  })
+  .strict();
+
+export const sessionRuntimeClaimRenewalResponseSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-claim-renewal-result/v1"),
+    claim: sessionRuntimeDispatchClaimV2Schema,
+  })
+  .strict();
+
+export const sessionRuntimeModelAuthorityRequestSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-model-authority-request/v1"),
+    claimToken: uuid,
+  })
+  .strict();
+
+export const sessionRuntimeModelAuthorityResponseSchema = z
+  .object({
+    version: z.literal("codeops.session-runtime-model-authority-result/v1"),
+    dispatchId: uuid,
+    modelProxyToken: z.string().regex(/^v1\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/),
+    expiresAt: isoDateTime,
   })
   .strict();
 
@@ -360,6 +413,15 @@ export type SessionRuntimeCompletion = z.infer<
 >;
 export type SessionRuntimeDispatchClaim = z.infer<
   typeof sessionRuntimeDispatchClaimSchema
+>;
+export type SessionRuntimeDispatchClaimV2 = z.infer<
+  typeof sessionRuntimeDispatchClaimV2Schema
+>;
+export type SessionRuntimeModelAuthorityRequest = z.infer<
+  typeof sessionRuntimeModelAuthorityRequestSchema
+>;
+export type SessionRuntimeModelAuthorityResponse = z.infer<
+  typeof sessionRuntimeModelAuthorityResponseSchema
 >;
 export type SessionRuntimePermissionSubmission = z.infer<
   typeof sessionRuntimePermissionSubmissionSchema

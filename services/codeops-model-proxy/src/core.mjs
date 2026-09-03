@@ -203,6 +203,37 @@ function unauthorized(response) {
   json(response, 401, { error: "unauthorized" });
 }
 
+function expiredAuthority(response) {
+  json(response, 401, {
+    error: {
+      message: "model proxy token expired",
+      type: "authentication_error",
+      code: "model_proxy_token_expired",
+    },
+  });
+}
+
+function hasExpiredSignedToken(input) {
+  if (typeof input.token !== "string" || input.token.length > 8_192) return false;
+  const match = input.token.match(/^v1\.([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]{43})$/);
+  if (match === null) return false;
+  const expected = createHmac("sha256", input.signingKey)
+    .update(`v1.${match[1]}`)
+    .digest();
+  const supplied = Buffer.from(match[2], "base64url");
+  if (supplied.length !== expected.length || !timingSafeEqual(supplied, expected)) {
+    return false;
+  }
+  try {
+    const payload = JSON.parse(Buffer.from(match[1], "base64url").toString("utf8"));
+    const now = Math.floor((input.now ?? Date.now()) / 1_000);
+    return payload?.aud === "codeops-model-proxy" &&
+      Number.isSafeInteger(payload.exp) && payload.exp <= now;
+  } catch {
+    return false;
+  }
+}
+
 export function validateModelProxyToken(input) {
   if (
     typeof input.signingKey !== "string" ||
@@ -233,7 +264,9 @@ export function validateModelProxyToken(input) {
   const payloadKeys = payload !== null && typeof payload === "object"
     ? Object.keys(payload).sort().join(",")
     : "";
-  const hasSessionBudgetAuthority = payloadKeys ===
+  const hasDispatchAuthority = payloadKeys ===
+    "aud,budgetId,dispatchId,exp,generation,iat,leaseId,maximumOutputTokens,maximumRequests,model,reasoningEffort,sub";
+  const hasSessionBudgetAuthority = hasDispatchAuthority || payloadKeys ===
     "aud,budgetId,exp,generation,iat,maximumOutputTokens,maximumRequests,model,reasoningEffort,sub";
   const hasLegacyAuthority = payloadKeys ===
     "aud,exp,iat,maximumOutputTokens,maximumRequests,model,reasoningEffort,sub";
@@ -248,7 +281,13 @@ export function validateModelProxyToken(input) {
       typeof payload.budgetId !== "string" ||
       !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/.test(payload.budgetId) ||
       !Number.isSafeInteger(payload.generation) ||
-      payload.generation < 1
+      payload.generation < 1 ||
+      (hasDispatchAuthority && (
+        typeof payload.leaseId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.leaseId) ||
+        typeof payload.dispatchId !== "string" ||
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.dispatchId)
+      ))
     )) ||
     typeof payload.model !== "string" ||
     !/^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/.test(payload.model) ||
@@ -265,7 +304,8 @@ export function validateModelProxyToken(input) {
     payload.maximumOutputTokens > 100_000 ||
     payload.iat > now + 60 ||
     payload.exp <= now ||
-    payload.exp - payload.iat > MAX_TOKEN_TTL_SECONDS
+    payload.exp - payload.iat > MAX_TOKEN_TTL_SECONDS ||
+    (hasDispatchAuthority && payload.exp - payload.iat > 5 * 60)
   ) {
     return null;
   }
@@ -273,6 +313,9 @@ export function validateModelProxyToken(input) {
     runId: payload.sub,
     budgetId: hasSessionBudgetAuthority ? payload.budgetId : null,
     generation: hasSessionBudgetAuthority ? payload.generation : null,
+    ...(hasDispatchAuthority
+      ? { leaseId: payload.leaseId, dispatchId: payload.dispatchId }
+      : {}),
     modelTokenId: hasSessionBudgetAuthority
       ? `sha256:${createHash("sha256").update(input.token).digest("hex")}`
       : null,
@@ -578,7 +621,12 @@ export function createModelProxyRequestListener(input) {
         now: input.now?.(),
       });
       if (authority === null) {
-        unauthorized(response);
+        if (hasExpiredSignedToken({
+          token,
+          signingKey: input.signingKey,
+          now: input.now?.(),
+        })) expiredAuthority(response);
+        else unauthorized(response);
         return;
       }
       if (requestsByRun.size >= 1_024) {
@@ -676,6 +724,8 @@ export function createModelProxyRequestListener(input) {
               sessionId: authority.runId,
               budgetId: authority.budgetId,
               generation: authority.generation,
+              leaseId: authority.leaseId,
+              dispatchId: authority.dispatchId,
               provider: "openai",
               model: authority.model,
               reasoningEffort: authority.reasoningEffort,
@@ -839,6 +889,17 @@ export function createModelProxyRequestListener(input) {
             provedTotalTokens: null,
             failureClass: "transport",
           });
+        }
+        if (upstream.status === 404) {
+          status = 503;
+          json(response, status, {
+            error: {
+              message: "provider model is temporarily unavailable",
+              type: "server_error",
+              code: "provider_model_unavailable",
+            },
+          }, { "Retry-After": "5" });
+          return;
         }
         response.writeHead(upstream.status, responseHeaders);
         response.end(providerBody);

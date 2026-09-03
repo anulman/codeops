@@ -51,6 +51,27 @@ test("reserves through only the fixed ledger function", async () => {
   assert.doesNotMatch(database.calls[0].text, /INSERT|UPDATE|FOR UPDATE/);
 });
 
+test("uses the dispatch-fenced ledger function for claimed authority", async () => {
+  const database = databaseWith({
+    reservation_id: reservation.reservationId,
+    reserved_output_tokens: "1500",
+    remaining_provider_requests: "7",
+    remaining_output_tokens: "8500",
+    budget_revision: "4",
+  });
+  await createModelBudgetLedger(database).reserve({
+    ...reservation,
+    leaseId: "11111111-1111-4111-8111-111111111111",
+    dispatchId: "22222222-2222-4222-8222-222222222222",
+  });
+  assert.match(
+    database.calls[0].text,
+    /codeops\.reserve_session_dispatch_model_budget/,
+  );
+  assert.equal(database.calls[0].values[5], "11111111-1111-4111-8111-111111111111");
+  assert.equal(database.calls[0].values[6], "22222222-2222-4222-8222-222222222222");
+});
+
 test("charges stale reservations through only the fixed recovery function", async () => {
   const database = databaseWith({ charged_reservations: "2" });
   assert.deepEqual(await createModelBudgetLedger(database).recover(), {

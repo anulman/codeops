@@ -1,4 +1,4 @@
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 export { authenticateBearer } from "./bearer-auth.js";
 import {
   mkdir,
@@ -982,8 +982,8 @@ export function parseCheckpointLogs(input: {
 
 async function atomicWrite(filePath: string, bytes: string | Uint8Array): Promise<void> {
   await mkdir(path.dirname(filePath), { recursive: true, mode: 0o700 });
-  const temporaryPath = `${filePath}.tmp`;
-  await writeFile(temporaryPath, bytes, { mode: 0o600 });
+  const temporaryPath = `${filePath}.tmp-${process.pid}-${randomUUID()}`;
+  await writeFile(temporaryPath, bytes, { mode: 0o600, flag: "wx" });
   const handle = await open(temporaryPath, "r");
   try {
     await handle.sync();
@@ -1161,6 +1161,225 @@ export async function claimRequest(input: {
       )}\n`,
     );
   }
+}
+
+export interface AgentJobResourceBinding {
+  readonly uid: string;
+  readonly configDigest: string;
+}
+
+export interface AgentJobSecretReplacement extends AgentJobResourceBinding {
+  readonly desiredConfigDigest: string;
+  readonly resourceName?: string;
+}
+
+function parseAgentJobResourceBindings(value: unknown): Record<string, AgentJobResourceBinding> {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("durable Agent Job resource bindings are invalid");
+  }
+  const bindings: Record<string, AgentJobResourceBinding> = {};
+  for (const [key, binding] of Object.entries(value)) {
+    if (!/^[A-Za-z]+\/[A-Za-z0-9.-]{1,253}$/.test(key) || binding === null ||
+        typeof binding !== "object" || Array.isArray(binding) ||
+        Object.keys(binding).some((field) => field !== "uid" && field !== "configDigest")) {
+      throw new Error("durable Agent Job resource binding is invalid");
+    }
+    const candidate = binding as Record<string, unknown>;
+    if (typeof candidate.uid !== "string" || candidate.uid.length < 1 ||
+        candidate.uid.length > 256 || typeof candidate.configDigest !== "string" ||
+        !SHA256.test(candidate.configDigest)) {
+      throw new Error("durable Agent Job resource binding is invalid");
+    }
+    bindings[key] = { uid: candidate.uid, configDigest: candidate.configDigest };
+  }
+  return bindings;
+}
+
+function parseAgentJobSecretReplacements(value: unknown): Record<string, AgentJobSecretReplacement> {
+  if (value === undefined) return {};
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("durable Agent Job Secret replacements are invalid");
+  }
+  const replacements: Record<string, AgentJobSecretReplacement> = {};
+  for (const [key, replacement] of Object.entries(value)) {
+    if (!/^Secret\/[A-Za-z0-9.-]{1,253}$/.test(key) || replacement === null ||
+        typeof replacement !== "object" || Array.isArray(replacement) ||
+        Object.keys(replacement).some((field) => !["uid", "configDigest",
+          "desiredConfigDigest", "resourceName"].includes(field))) {
+      throw new Error("durable Agent Job Secret replacement is invalid");
+    }
+    const candidate = replacement as Record<string, unknown>;
+    if (typeof candidate.uid !== "string" || candidate.uid.length < 1 ||
+        candidate.uid.length > 256 || typeof candidate.configDigest !== "string" ||
+        !SHA256.test(candidate.configDigest) ||
+        typeof candidate.desiredConfigDigest !== "string" ||
+        !SHA256.test(candidate.desiredConfigDigest) ||
+        (candidate.resourceName !== undefined && (typeof candidate.resourceName !== "string" ||
+          candidate.resourceName.length < 1 || candidate.resourceName.length > 253))) {
+      throw new Error("durable Agent Job Secret replacement is invalid");
+    }
+    replacements[key] = {
+      uid: candidate.uid,
+      configDigest: candidate.configDigest,
+      desiredConfigDigest: candidate.desiredConfigDigest,
+      ...(candidate.resourceName === undefined ? {} : { resourceName: candidate.resourceName }),
+    };
+  }
+  return replacements;
+}
+
+export async function readAgentJobResourceBindings(input: {
+  rootDirectory: string;
+  runId: string;
+  requestDigest: string;
+}): Promise<Readonly<Record<string, AgentJobResourceBinding>>> {
+  const requestPath = path.join(input.rootDirectory, "agent-runs", input.runId, "request.json");
+  const retained = JSON.parse(await readFile(requestPath, "utf8")) as {
+    requestDigest?: unknown;
+    resourceBindings?: unknown;
+  };
+  if (retained.requestDigest !== input.requestDigest) {
+    throw new Error("durable Agent Job identity drift");
+  }
+  return parseAgentJobResourceBindings(retained.resourceBindings);
+}
+
+export async function readAgentJobSecretReplacements(input: {
+  rootDirectory: string;
+  runId: string;
+  requestDigest: string;
+}): Promise<Readonly<Record<string, AgentJobSecretReplacement>>> {
+  const requestPath = path.join(input.rootDirectory, "agent-runs", input.runId, "request.json");
+  const retained = JSON.parse(await readFile(requestPath, "utf8")) as {
+    requestDigest?: unknown;
+    resourceReplacements?: unknown;
+  };
+  if (retained.requestDigest !== input.requestDigest) {
+    throw new Error("durable Agent Job identity drift");
+  }
+  return parseAgentJobSecretReplacements(retained.resourceReplacements);
+}
+
+export async function retainAgentJobSecretReplacement(input: {
+  rootDirectory: string;
+  runId: string;
+  requestDigest: string;
+  resourceKey: string;
+  replacement: AgentJobSecretReplacement;
+}): Promise<void> {
+  const requestPath = path.join(input.rootDirectory, "agent-runs", input.runId, "request.json");
+  const retained = JSON.parse(await readFile(requestPath, "utf8")) as Record<string, unknown>;
+  if (retained.requestDigest !== input.requestDigest) throw new Error("durable Agent Job identity drift");
+  const bindings = parseAgentJobResourceBindings(retained.resourceBindings);
+  const replacements = parseAgentJobSecretReplacements(retained.resourceReplacements);
+  const parsed = parseAgentJobSecretReplacements({ [input.resourceKey]: input.replacement });
+  const replacement = parsed[input.resourceKey]!;
+  const binding = bindings[input.resourceKey];
+  if (binding === undefined || binding.uid !== replacement.uid ||
+      binding.configDigest !== replacement.configDigest) {
+    throw new Error("durable Agent Job Secret replacement binding drift");
+  }
+  const existing = replacements[input.resourceKey];
+  if (existing !== undefined && canonicalSerialize(existing) !== canonicalSerialize(replacement)) {
+    throw new Error("durable Agent Job Secret replacement identity drift");
+  }
+  if (existing !== undefined) return;
+  await atomicWrite(requestPath, `${JSON.stringify({ ...retained,
+    resourceReplacements: { ...replacements, [input.resourceKey]: replacement },
+  }, null, 2)}\n`);
+}
+
+export async function completeAgentJobSecretReplacement(input: {
+  rootDirectory: string;
+  runId: string;
+  requestDigest: string;
+  resourceKey: string;
+  replacement: AgentJobSecretReplacement;
+  binding: AgentJobResourceBinding;
+}): Promise<void> {
+  const requestPath = path.join(input.rootDirectory, "agent-runs", input.runId, "request.json");
+  const retained = JSON.parse(await readFile(requestPath, "utf8")) as Record<string, unknown>;
+  if (retained.requestDigest !== input.requestDigest) throw new Error("durable Agent Job identity drift");
+  const bindings = parseAgentJobResourceBindings(retained.resourceBindings);
+  const replacements = parseAgentJobSecretReplacements(retained.resourceReplacements);
+  const expected = parseAgentJobSecretReplacements({ [input.resourceKey]: input.replacement })[
+    input.resourceKey]!;
+  const replacement = replacements[input.resourceKey];
+  if (replacement === undefined || canonicalSerialize(replacement) !== canonicalSerialize(expected)) {
+    throw new Error("durable Agent Job Secret replacement identity drift");
+  }
+  const parsedBinding = parseAgentJobResourceBindings({ [input.resourceKey]: input.binding })[
+    input.resourceKey]!;
+  if (parsedBinding.configDigest !== replacement.desiredConfigDigest) {
+    throw new Error("durable Agent Job Secret replacement configuration drift");
+  }
+  const current = bindings[input.resourceKey];
+  if (current !== undefined && (current.uid !== replacement.uid ||
+      current.configDigest !== replacement.configDigest)) {
+    throw new Error("durable Agent Job Secret replacement binding drift");
+  }
+  delete replacements[input.resourceKey];
+  await atomicWrite(requestPath, `${JSON.stringify({ ...retained,
+    resourceBindings: { ...bindings, [input.resourceKey]: parsedBinding },
+    resourceReplacements: replacements,
+  }, null, 2)}\n`);
+}
+
+export async function retainAgentJobResourceBinding(input: {
+  rootDirectory: string;
+  runId: string;
+  requestDigest: string;
+  resourceKey: string;
+  binding: AgentJobResourceBinding;
+}): Promise<void> {
+  const directory = path.join(input.rootDirectory, "agent-runs", input.runId);
+  const requestPath = path.join(directory, "request.json");
+  const retained = JSON.parse(await readFile(requestPath, "utf8")) as Record<string, unknown>;
+  if (retained.requestDigest !== input.requestDigest) {
+    throw new Error("durable Agent Job identity drift");
+  }
+  const bindings = parseAgentJobResourceBindings(retained.resourceBindings);
+  const parsed = parseAgentJobResourceBindings({ [input.resourceKey]: input.binding });
+  const binding = parsed[input.resourceKey]!;
+  const existing = bindings[input.resourceKey];
+  if (existing !== undefined && (existing.uid !== binding.uid ||
+      existing.configDigest !== binding.configDigest)) {
+    throw new Error("durable Agent Job Kubernetes identity drift");
+  }
+  if (existing !== undefined) return;
+  await atomicWrite(requestPath, `${JSON.stringify({
+    ...retained,
+    resourceBindings: { ...bindings, [input.resourceKey]: binding },
+  }, null, 2)}\n`);
+}
+
+export async function removeAgentJobResourceBinding(input: {
+  rootDirectory: string;
+  runId: string;
+  requestDigest: string;
+  resourceKey: string;
+  binding: AgentJobResourceBinding;
+}): Promise<void> {
+  const directory = path.join(input.rootDirectory, "agent-runs", input.runId);
+  const requestPath = path.join(directory, "request.json");
+  const retained = JSON.parse(await readFile(requestPath, "utf8")) as Record<string, unknown>;
+  if (retained.requestDigest !== input.requestDigest) {
+    throw new Error("durable Agent Job identity drift");
+  }
+  const bindings = parseAgentJobResourceBindings(retained.resourceBindings);
+  const parsed = parseAgentJobResourceBindings({ [input.resourceKey]: input.binding });
+  const binding = parsed[input.resourceKey]!;
+  const existing = bindings[input.resourceKey];
+  if (existing === undefined || existing.uid !== binding.uid ||
+      existing.configDigest !== binding.configDigest) {
+    throw new Error("durable Agent Job Kubernetes identity drift");
+  }
+  delete bindings[input.resourceKey];
+  await atomicWrite(requestPath, `${JSON.stringify({
+    ...retained,
+    resourceBindings: bindings,
+  }, null, 2)}\n`);
 }
 
 export async function readRetainedResult(input: {

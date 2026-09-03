@@ -13,6 +13,9 @@ const request = { version: "codeops.work-item-admission/v1",
   child: { sessionId: "session-child", leaseId: "66666666-6666-4666-8666-666666666666",
     holderId: "runtime-worker:child", dispatchId: "77777777-7777-4777-8777-777777777777",
     idempotencyKey: "88888888-8888-4888-8888-888888888888" } };
+const materialization = { profile: "custom", release: "v0.5.0-alpha.58",
+  agentImage: `registry.example/agent@sha256:${"a".repeat(64)}`,
+  runtimeWorkerImage: `registry.example/worker@sha256:${"b".repeat(64)}` };
 
 for (const code of ["23505", "40001", "40P01", "08006"]) {
   test(`preserves PostgreSQL ${code} without labeling it an admission conflict`, async () => {
@@ -25,6 +28,7 @@ for (const code of ["23505", "40001", "40P01", "08006"]) {
     } };
     await assert.rejects(admitSessionRuntimeWorkItem(client, {
       dispatchId: "99999999-9999-4999-8999-999999999999", workerId: "runtime-worker:parent", request,
+      materialization,
     }), (error) => error === failure && !(error instanceof WorkItemAdmissionConflictError));
     assert.deepEqual(calls.slice(-1), ["ROLLBACK"]);
   });

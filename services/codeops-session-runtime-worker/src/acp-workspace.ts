@@ -58,6 +58,7 @@ const MAX_ASSISTANT_RESPONSE_CHARS = 200_000;
 const MAX_TIMELINE_UPDATES = 2_000;
 const MAX_TIMELINE_UPDATE_BYTES = 800_000;
 const MAX_TIMELINE_PROCESSED_UPDATES = 2_500;
+const MAX_TIMELINE_TOOL_TEXT_CHARS = 2_048;
 const GIT_SHA = /^[0-9a-f]{40}$/;
 
 const PLAN_ARCHITECTURE_GUIDANCE = `Architecture planning default:
@@ -252,18 +253,61 @@ function normalizeAcpContent(content: acp.ContentBlock): SessionContentBlock {
   }
 }
 
+function boundedTimelineToolText(text: string): string {
+  if (text.length <= MAX_TIMELINE_TOOL_TEXT_CHARS) return text;
+  const prefixChars = 1_200;
+  const suffixChars = 600;
+  const digest = createHash("sha256").update(text).digest("hex");
+  return `${text.slice(0, prefixChars)}\n\n[CodeOps timeline truncated ${text.length - prefixChars - suffixChars} characters; sha256:${digest}]\n\n${text.slice(-suffixChars)}`;
+}
+
+function normalizeTimelineToolContentBlock(content: acp.ContentBlock): SessionContentBlock {
+  if (content.type === "text") {
+    return { type: "text", text: boundedTimelineToolText(content.text) };
+  }
+  if (content.type === "resource" && "text" in content.resource) {
+    return {
+      type: "resource",
+      uri: content.resource.uri,
+      text: boundedTimelineToolText(content.resource.text),
+      ...(content.resource.mimeType ? { mimeType: content.resource.mimeType } : {}),
+    };
+  }
+  if (content.type === "image" || content.type === "audio") {
+    return {
+      type: "text",
+      text: `[CodeOps timeline omitted ${content.type} payload; sha256:${createHash("sha256").update(content.data).digest("hex")}]`,
+    };
+  }
+  if (content.type === "resource" && "blob" in content.resource) {
+    return {
+      type: "resource",
+      uri: content.resource.uri,
+      text: `[CodeOps timeline omitted binary resource; sha256:${createHash("sha256").update(content.resource.blob).digest("hex")}]`,
+      ...(content.resource.mimeType ? { mimeType: content.resource.mimeType } : {}),
+    };
+  }
+  return normalizeAcpContent(content);
+}
+
 function normalizeToolContent(
   content: acp.ToolCallContent,
 ): NonNullable<Extract<SessionTimelineUpdate, { kind: "tool_call" }>["content"]>[number] {
   switch (content.type) {
     case "content":
-      return { type: "content", content: normalizeAcpContent(content.content) };
+      return { type: "content", content: normalizeTimelineToolContentBlock(content.content) };
     case "diff":
       return {
         type: "diff",
         path: content.path,
-        newText: content.newText,
-        ...(content.oldText !== undefined ? { oldText: content.oldText } : {}),
+        newText: boundedTimelineToolText(content.newText),
+        ...(content.oldText !== undefined
+          ? {
+              oldText: content.oldText === null
+                ? null
+                : boundedTimelineToolText(content.oldText),
+            }
+          : {}),
       };
     case "terminal":
       return { type: "terminal", terminalId: content.terminalId };
@@ -410,14 +454,14 @@ export function captureAcpTimelineUpdate(
 ): AcpPromptCapture {
   const processedUpdates =
     (current[acpTimelineProcessedUpdates] ?? current.updates.length) + 1;
-  if (processedUpdates > MAX_TIMELINE_PROCESSED_UPDATES) {
-    throw new Error("ACP timeline exceeds 2500 processed updates");
-  }
-  const normalized = normalizeAcpTimelineUpdate(update);
   const response =
     update.sessionUpdate === "agent_message_chunk" && update.content.type === "text"
       ? appendAcpAssistantText(current.response, update.content.text)
       : current.response;
+  if (processedUpdates > MAX_TIMELINE_PROCESSED_UPDATES) {
+    return capturedAcpTimeline(response, current.updates, processedUpdates);
+  }
+  const normalized = normalizeAcpTimelineUpdate(update);
   if (normalized === null) {
     return capturedAcpTimeline(response, current.updates, processedUpdates);
   }
@@ -480,11 +524,14 @@ export function captureAcpTimelineUpdate(
   } else {
     updates.push(normalized);
   }
-  if (updates.length > MAX_TIMELINE_UPDATES) {
-    throw new Error("ACP timeline exceeds 2000 retained updates");
-  }
-  if (Buffer.byteLength(JSON.stringify(updates)) > MAX_TIMELINE_UPDATE_BYTES) {
-    throw new Error("ACP timeline exceeds 800000 retained bytes");
+  while (
+    updates.length > MAX_TIMELINE_UPDATES ||
+    Buffer.byteLength(JSON.stringify(updates)) > MAX_TIMELINE_UPDATE_BYTES
+  ) {
+    const removable = updates.findIndex((candidate) =>
+      candidate.kind !== "user_content" && candidate.kind !== "assistant_content"
+    );
+    updates.splice(removable === -1 ? 0 : removable, 1);
   }
   return capturedAcpTimeline(response, updates, processedUpdates);
 }
@@ -624,6 +671,34 @@ export type AcpConnectionFactory = <Result>(
   dispatch: SessionRuntimeDispatch,
   operation: (agent: AcpAgentSessionConnection) => Promise<Result>,
 ) => Promise<Result>;
+
+export type RecoverableModelFailure =
+  | "model_proxy_token_expired"
+  | "provider_model_unavailable";
+
+export function recoverableModelFailure(error: unknown): RecoverableModelFailure | null {
+  const seen = new Set<unknown>();
+  const pending = [error];
+  let inspected = "";
+  while (pending.length > 0 && inspected.length < 16_384) {
+    const value = pending.shift();
+    if (value === null || value === undefined || seen.has(value)) continue;
+    seen.add(value);
+    if (typeof value === "string") inspected += ` ${value}`;
+    else if (typeof value === "object") {
+      for (const field of ["name", "message", "code", "data", "cause"]) {
+        if (field in value) pending.push((value as Record<string, unknown>)[field]);
+      }
+    }
+  }
+  if (/\bmodel_proxy_token_expired\b/u.test(inspected)) {
+    return "model_proxy_token_expired";
+  }
+  if (/\bprovider_model_unavailable\b/u.test(inspected)) {
+    return "provider_model_unavailable";
+  }
+  return null;
+}
 
 export async function forkOrCreateAcpSession(input: {
   readonly fork: () => Promise<string>;
@@ -1078,6 +1153,9 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   readonly #uuid: () => string;
   readonly #artifacts?: WorkspaceCheckpointArtifactStore;
   readonly #captureRoot: string;
+  readonly #prepareModelAuthority?: () => Promise<void>;
+  readonly #providerCooldownMs: number;
+  readonly #delay: (milliseconds: number) => Promise<void>;
 
   constructor(input: {
     readonly socketPath: string;
@@ -1089,6 +1167,9 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     readonly uuid?: () => string;
     readonly connect?: AcpConnectionFactory;
     readonly artifacts?: WorkspaceCheckpointArtifactStore;
+    readonly prepareModelAuthority?: () => Promise<void>;
+    readonly providerCooldownMs?: number;
+    readonly delay?: (milliseconds: number) => Promise<void>;
   }) {
     this.#socketPath = boundedAbsolutePath("ACP socket path", input.socketPath);
     this.#workspace = boundedAbsolutePath("workspace", input.workspace);
@@ -1100,6 +1181,9 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     this.#now = input.now ?? (() => new Date());
     this.#uuid = input.uuid ?? randomUUID;
     this.#artifacts = input.artifacts;
+    this.#prepareModelAuthority = input.prepareModelAuthority;
+    this.#providerCooldownMs = input.providerCooldownMs ?? 5_000;
+    this.#delay = input.delay ?? ((milliseconds) => delay(milliseconds));
     if (
       !Number.isSafeInteger(this.#socketTimeoutMs) ||
       this.#socketTimeoutMs < 1_000 ||
@@ -1107,8 +1191,37 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     ) {
       throw new Error("ACP socket timeout must be between 1 and 60 seconds");
     }
+    if (
+      !Number.isSafeInteger(this.#providerCooldownMs) ||
+      this.#providerCooldownMs < 1_000 ||
+      this.#providerCooldownMs > 30_000
+    ) {
+      throw new Error("provider cooldown must be between 1 and 30 seconds");
+    }
     this.#connect = input.connect ?? ((dispatch, operation) =>
       this.#connectSocketAgent(dispatch, operation));
+  }
+
+  async #connectWithModelRecovery<Result>(
+    dispatch: SessionRuntimeDispatch,
+    operation: (agent: AcpAgentSessionConnection) => Promise<Result>,
+  ): Promise<Result> {
+    if (this.#prepareModelAuthority === undefined) {
+      return this.#connect(dispatch, operation);
+    }
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      await this.#prepareModelAuthority();
+      try {
+        return await this.#connect(dispatch, operation);
+      } catch (error) {
+        const failure = recoverableModelFailure(error);
+        if (failure === null || attempt === 1) throw error;
+        if (failure === "provider_model_unavailable") {
+          await this.#delay(this.#providerCooldownMs);
+        }
+      }
+    }
+    throw new Error("model authority recovery exhausted");
   }
 
   async #connectSocketAgent<Result>(
@@ -1238,7 +1351,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   }
 
   async prompt(dispatch: PromptDispatch): Promise<RuntimeExecutionResult> {
-    const material = await this.#connect(dispatch, async (agent) => {
+    const material = await this.#connectWithModelRecovery(dispatch, async (agent) => {
       const sessionId = await this.#activeAcpSession(dispatch, agent);
       return agent.prompt(
         sessionId,
@@ -1345,7 +1458,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   async resume(dispatch: SessionRuntimeDispatch): Promise<RuntimeExecutionResult> {
     const acpSessionId = dispatch.snapshot.checkpoint?.acpSessionId;
     if (!acpSessionId) throw new Error("resume requires an ACP checkpoint");
-    await this.#connect(dispatch, async (agent) => {
+    await this.#connectWithModelRecovery(dispatch, async (agent) => {
       await agent.loadSession(acpSessionId, this.#workspace);
     });
     await this.#state.set(dispatch.command.sessionId, acpSessionId);

@@ -6,6 +6,7 @@ import {
   claimSessionRuntimeDispatch,
   completeSessionRuntimeDispatch,
   enqueueSessionRuntimeDispatch,
+  renewSessionRuntimeDispatchClaim,
 } from "../dist/session-broker-runtime-outbox.js";
 
 const leaseId = "11111111-1111-4111-8111-111111111111";
@@ -186,6 +187,16 @@ class ClaimClient {
   }
 }
 
+class RenewClient extends ClaimClient {
+  async query(text, values = []) {
+    this.calls.push({ text, values });
+    if (text.includes("UPDATE codeops.session_runtime_outbox AS outbox")) {
+      return { rowCount: this.row ? 1 : 0, rows: this.row ? [this.row] : [] };
+    }
+    return { rowCount: 0, rows: [] };
+  }
+}
+
 test("claims one pending or expired dispatch with a bounded renewable lease", async () => {
   const dispatch = await enqueue(new EnqueueClient());
   const client = new ClaimClient({
@@ -193,6 +204,7 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
     claim_token: claimToken,
     claim_expires_at: "2026-08-04T18:05:00.000Z",
     claim_count: 2,
+    is_admitted_initial_dispatch: false,
   });
   const claim = await claimSessionRuntimeDispatch(client, {
     workerId: "acp-worker:7",
@@ -204,6 +216,7 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
   assert.equal(claim.dispatch.dispatchId, dispatchId);
   assert.equal(claim.claimToken, claimToken);
   assert.equal(claim.claimCount, 2);
+  assert.equal(claim.isAdmittedInitialDispatch, false);
   assert.equal(client.calls[0].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
   assert.match(client.calls[1].text, /FOR UPDATE OF outbox SKIP LOCKED/);
   assert.match(client.calls[1].text, /status = 'pending'/);
@@ -211,6 +224,12 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
   assert.match(client.calls[1].text, /claim_count = outbox\.claim_count \+ 1/);
   assert.match(client.calls[1].text, /outbox\.session_id = \$5/);
   assert.match(client.calls[1].text, /session\.snapshot_json->'identity' = \$8::jsonb/);
+  assert.match(client.calls[1].text, /LEFT JOIN codeops\.admitted_child_materializations/);
+  assert.match(client.calls[1].text, /initial_dispatch\.status = 'completed'/);
+  assert.match(client.calls[1].text, /outbox\.dispatch_digest = materialization\.initial_dispatch_digest/);
+  assert.match(client.calls[1].text, /outbox\.dispatch_json = materialization\.input_json->'initialDispatch'/);
+  assert.ok(client.calls[1].text.indexOf("CASE WHEN materialization.admission_id") <
+    client.calls[1].text.indexOf("outbox.available_at ASC"));
   assert.deepEqual(client.calls[1].values, [
     "2026-08-04T18:00:00.000Z",
     claimToken,
@@ -237,6 +256,7 @@ test("preserves millisecond precision when pg returns a Date for the claim expir
     claim_token: claimToken,
     claim_expires_at: new Date("2026-08-04T18:05:00.123Z"),
     claim_count: 1,
+    is_admitted_initial_dispatch: false,
   });
   const claim = await claimSessionRuntimeDispatch(client, {
     workerId: "acp-worker:7",
@@ -248,6 +268,50 @@ test("preserves millisecond precision when pg returns a Date for the claim expir
   assert.equal(claim.claimExpiresAt, "2026-08-04T18:05:00.123Z");
 });
 
+test("renews only the exact live dispatch claim without changing its identity", async () => {
+  const dispatch = await enqueue(new EnqueueClient());
+  const client = new RenewClient({
+    dispatch_json: dispatch,
+    claim_token: claimToken,
+    claim_expires_at: "2026-08-04T18:10:00.000Z",
+    claim_count: 2,
+    is_admitted_initial_dispatch: false,
+  });
+  const renewed = await renewSessionRuntimeDispatchClaim(client, {
+    dispatchId,
+    claimToken,
+    workerId: "acp-worker:7",
+    leaseMs: 10 * 60_000,
+    now: () => new Date("2026-08-04T18:00:00.000Z"),
+  });
+  assert.equal(renewed.dispatch.dispatchId, dispatchId);
+  assert.equal(renewed.claimToken, claimToken);
+  assert.equal(renewed.claimCount, 2);
+  assert.equal(renewed.claimExpiresAt, "2026-08-04T18:10:00.000Z");
+  assert.match(client.calls[0].text, /outbox\.claim_expires_at > \$5::timestamptz/);
+  assert.match(client.calls[0].text, /snapshot_json->'lease'->>'status' = 'active'/);
+  assert.match(client.calls[0].text, /snapshot_json->'identity' =/);
+  assert.deepEqual(client.calls[0].values, [
+    dispatchId,
+    claimToken,
+    "acp-worker:7",
+    "2026-08-04T18:10:00.000Z",
+    "2026-08-04T18:00:00.000Z",
+  ]);
+});
+
+test("rejects renewal after exact dispatch authority expires", async () => {
+  await assert.rejects(
+    renewSessionRuntimeDispatchClaim(new RenewClient(null), {
+      dispatchId,
+      claimToken,
+      workerId: "acp-worker:7",
+      leaseMs: 5 * 60_000,
+    }),
+    ImmutableSessionRuntimeDispatchConflictError,
+  );
+});
+
 test("rejects a claim rebound to another session after persistence", async () => {
   const dispatch = structuredClone(await enqueue(new EnqueueClient()));
   dispatch.command.sessionId = "ses_other";
@@ -257,6 +321,7 @@ test("rejects a claim rebound to another session after persistence", async () =>
     claim_token: claimToken,
     claim_expires_at: "2026-08-04T18:05:00.000Z",
     claim_count: 1,
+    is_admitted_initial_dispatch: false,
   });
   await assert.rejects(
     claimSessionRuntimeDispatch(client, {

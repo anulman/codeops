@@ -100,7 +100,11 @@ export {
 } from "./session-broker.js";
 export {
   sessionRuntimeClaimRequestSchema,
+  sessionRuntimeClaimRequestV2Schema,
   sessionRuntimeClaimResponseSchema,
+  sessionRuntimeClaimResponseV2Schema,
+  sessionRuntimeClaimRenewalRequestSchema,
+  sessionRuntimeClaimRenewalResponseSchema,
   sessionRuntimeCheckpointMaterialSchema,
   legacySessionRuntimeCheckpointMaterialSchema,
   workspaceSessionRuntimeCheckpointMaterialSchema,
@@ -110,9 +114,12 @@ export {
   sessionRuntimeCompletionResponseSchema,
   sessionRuntimeCompletionSchema,
   sessionRuntimeDispatchClaimSchema,
+  sessionRuntimeDispatchClaimV2Schema,
   sessionRuntimeDispatchSchema,
   sessionRuntimeForkMaterialSchema,
   sessionRuntimeLeaseMaterialSchema,
+  sessionRuntimeModelAuthorityRequestSchema,
+  sessionRuntimeModelAuthorityResponseSchema,
   sessionRuntimePermissionPollSchema,
   sessionRuntimePermissionResultSchema,
   sessionRuntimePermissionSubmissionSchema,
@@ -121,6 +128,9 @@ export {
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
   type SessionRuntimeDispatchClaim,
+  type SessionRuntimeDispatchClaimV2,
+  type SessionRuntimeModelAuthorityRequest,
+  type SessionRuntimeModelAuthorityResponse,
   type SessionRuntimePermissionPoll,
   type SessionRuntimePermissionResult,
   type SessionRuntimePermissionSubmission,
@@ -133,10 +143,14 @@ export {
   type SessionSupervisionReconciliationResult,
 } from "./session-supervision.js";
 export {
+  admittedChildMaterializationInputSchema,
+  admittedChildMaterializationStateSchema,
   workItemAdmissionRequestSchema,
   workItemAdmissionResultSchema,
   type WorkItemAdmissionRequest,
   type WorkItemAdmissionResult,
+  type AdmittedChildMaterializationInput,
+  type AdmittedChildMaterializationState,
 } from "./work-item-admission.js";
 export {
   DEFAULT_SESSION_BUDGET_LIMITS,

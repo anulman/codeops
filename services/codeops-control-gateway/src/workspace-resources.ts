@@ -3,10 +3,12 @@ import {
   workspaceContextAttachmentDescriptorsSchema,
   workspaceManifestSchema,
   type SessionPolicy,
+  type WorkspaceSessionIdentity,
   type WorkspaceContextAttachmentDescriptor,
   type WorkspaceManifest,
 } from "@codeops/codeops-contracts";
 import { createHash } from "node:crypto";
+import { kubernetesIdentityLabel } from "./kubernetes.js";
 import {
   assertAgentModelProxyRouting,
   assertAgentModelProxySessionVolume,
@@ -21,6 +23,18 @@ export interface WorkspaceSourceAuthority {
   readonly readToken: string;
 }
 
+export interface AdmittedChildResourceOwner {
+  readonly admissionId: string;
+  readonly approvalId: string;
+  readonly parentSessionId: string;
+  readonly childDispatchId: string;
+  readonly repository: string;
+  readonly sourceSha: string;
+  readonly workItemId: string;
+  readonly release: string;
+  readonly profile: string;
+}
+
 export interface WorkspaceResourceConfig {
   readonly namespace: string;
   readonly launchId: string;
@@ -31,6 +45,10 @@ export interface WorkspaceResourceConfig {
   readonly runId: string;
   readonly displayName?: string;
   readonly leaseId: string;
+  readonly generation?: number;
+  readonly holderId?: string;
+  readonly admittedChildOwner?: AdmittedChildResourceOwner;
+  readonly identity?: WorkspaceSessionIdentity;
   readonly policy: SessionPolicy;
   readonly contextAttachments?: readonly WorkspaceContextAttachmentDescriptor[];
   readonly workspace: WorkspaceManifest;
@@ -115,6 +133,43 @@ function runtimeEgressProxyEnvironment(raw: WorkspaceResourceConfig) {
 const codexHomeMountPath = "/var/lib/codeops-agent/codex-home";
 const codexHomeWorkspaceSubPath = ".codeops/codex-home";
 
+export function admittedChildWorkspaceLaunchId(admissionId: string): string {
+  const suffix = admissionId.replaceAll("-", "");
+  if (!/^[0-9a-f]{32}$/.test(suffix)) throw new Error("admitted child UUID is invalid");
+  return `launch-${suffix}`;
+}
+
+export function buildAdmittedChildCleanupResources(input: {
+  readonly namespace: string;
+  readonly admissionId: string;
+  readonly requestDigest: string;
+  readonly owner: AdmittedChildResourceOwner;
+}): readonly Record<string, unknown>[] {
+  if (!dnsLabel.test(input.namespace)) throw new Error("workspace namespace is invalid");
+  const name = `workspace-${admittedChildWorkspaceLaunchId(input.admissionId).slice(7)}`;
+  const metadata = (resourceName: string, role: string, kind: string) => ({
+    apiVersion: kind === "Secret" ? "v1" : "batch/v1",
+    kind,
+    metadata: {
+      name: resourceName,
+      namespace: input.namespace,
+      labels: {
+        "codeops.example/admission-id": input.admissionId,
+        "codeops.example/resource-role": role,
+      },
+      annotations: {
+        "codeops.example/request-digest": input.requestDigest,
+        "codeops.example/materialization-owner": JSON.stringify(input.owner),
+      },
+    },
+  });
+  return [
+    metadata(`${name}-source`, "source-authority", "Secret"),
+    metadata(`${name}-materialize`, "source-materializer", "Job"),
+    metadata(name, "workspace-runtime", "Job"),
+  ];
+}
+
 const materializeScript = String.raw`
 const { chmodSync, readFileSync, mkdirSync } = require("node:fs");
 const { spawnSync } = require("node:child_process");
@@ -151,13 +206,25 @@ export function buildWorkspaceResources(
   const contextAttachments = workspaceContextAttachmentDescriptorsSchema.parse(
     raw.contextAttachments ?? [],
   );
+  if (raw.identity !== undefined) {
+    const identity = raw.identity;
+    if (identity.version !== "codeops.session-workspace-identity/v1" ||
+        JSON.stringify(identity.policy) !== JSON.stringify(policy) ||
+        JSON.stringify(identity.contextAttachments) !== JSON.stringify(contextAttachments) ||
+        JSON.stringify(identity.workspace) !== JSON.stringify(workspace) ||
+        identity.workflowId !== raw.workflowId || identity.runId !== raw.runId) {
+      throw new Error("workspace resources do not match the exact Session identity");
+    }
+  }
   const proxyEnvironment = runtimeEgressProxyEnvironment(raw);
   if (policy.modelPolicy.provider !== "openai") {
     throw new Error("interactive workspace runtime requires one model policy");
   }
   const workspaceReadOnly = policy.workspaceAccess === "read-only";
   const suffix = raw.launchId.replace(/^launch-/, "");
-  if (!/^[0-9a-f]{24}$/.test(suffix)) throw new Error("workspace launch identity is invalid");
+  if (!/^(?:[0-9a-f]{24}|[0-9a-f]{32})$/.test(suffix)) {
+    throw new Error("workspace launch identity is invalid");
+  }
   for (const [name, value] of [
     ["namespace", raw.namespace],
     ["runtime ServiceAccount", raw.runtimeServiceAccountName],
@@ -209,7 +276,9 @@ export function buildWorkspaceResources(
     workspace,
     sources,
   })).digest("hex");
-  const sourceSecretName = `${name}-source-${sourceIdentity.slice(0, 10)}`;
+  // Keep the Kubernetes identity stable across credential rotation. The
+  // source identity remains non-persisted verification metadata only.
+  const sourceSecretName = `${name}-source`;
   if (!/^[1-9][0-9]*(?:Ei|Pi|Ti|Gi|Mi|Ki)$/.test(raw.workspaceStorageSize)) {
     throw new Error("workspace storage size must be one positive binary SI quantity");
   }
@@ -222,17 +291,29 @@ export function buildWorkspaceResources(
   const commonLabels = {
     "app.kubernetes.io/part-of": "codeops",
     "codeops.example/launch-id": raw.launchId,
-    "codeops.example/session-id": raw.sessionId,
+    "codeops.example/session-id": raw.admittedChildOwner === undefined
+      ? raw.sessionId : kubernetesIdentityLabel(raw.sessionId),
+    ...(raw.admittedChildOwner === undefined ? {} : {
+      "codeops.example/admission-id": raw.admittedChildOwner.admissionId,
+      "codeops.example/dispatch-id": raw.admittedChildOwner.childDispatchId,
+    }),
   };
   const annotations = {
     "codeops.example/request-digest": raw.requestDigest,
     "codeops.example/principal-digest": createHash("sha256")
       .update(raw.principalId)
       .digest("hex"),
+    ...(raw.admittedChildOwner === undefined ? {} : {
+      "codeops.example/session-id": raw.sessionId,
+      "codeops.example/run-id": raw.runId,
+    }),
+    ...(raw.admittedChildOwner === undefined ? {} : {
+      "codeops.example/materialization-owner": JSON.stringify(raw.admittedChildOwner),
+    }),
   };
   const runtimeAnnotations = {
     ...annotations,
-    "codeops.example/session-generation": "1",
+    "codeops.example/session-generation": String(raw.generation ?? 1),
     "codeops.example/session-lease-id": raw.leaseId,
     "codeops.example/session-run-id": raw.runId,
   };
@@ -365,7 +446,8 @@ export function buildWorkspaceResources(
           "app.kubernetes.io/name": "codeops-workspace-runtime",
           "app.kubernetes.io/component": "runtime",
           "codeops.example/resource-role": "workspace-runtime",
-          "codeops.example/run-id": raw.runId,
+          "codeops.example/run-id": raw.admittedChildOwner === undefined
+            ? raw.runId : kubernetesIdentityLabel(raw.runId),
         },
         annotations: runtimeAnnotations,
       },
@@ -379,7 +461,8 @@ export function buildWorkspaceResources(
               ...commonLabels,
               "app.kubernetes.io/name": "codeops-workspace-runtime",
               "app.kubernetes.io/component": "runtime",
-              "codeops.example/run-id": raw.runId,
+              "codeops.example/run-id": raw.admittedChildOwner === undefined
+                ? raw.runId : kubernetesIdentityLabel(raw.runId),
             },
           },
           spec: {
@@ -420,7 +503,26 @@ export function buildWorkspaceResources(
                 { name: "CODEOPS_SESSION_RUN_ID", value: raw.runId },
                 ...(raw.displayName === undefined ? [] : [{ name: "CODEOPS_SESSION_DISPLAY_NAME", value: raw.displayName }]),
                 { name: "CODEOPS_SESSION_LEASE_ID", value: raw.leaseId },
-                { name: "CODEOPS_SESSION_HOLDER_ID", value: `session-job:${raw.sessionId}` },
+                { name: "CODEOPS_SESSION_HOLDER_ID", value: raw.holderId ?? `session-job:${raw.sessionId}` },
+                ...(raw.identity === undefined ? [] : [{
+                  name: "CODEOPS_SESSION_IDENTITY_JSON",
+                  value: JSON.stringify(raw.identity),
+                }]),
+                ...(raw.admittedChildOwner === undefined ? [] : [{
+                  name: "CODEOPS_ADMITTED_CHILD_INITIALIZATION_JSON",
+                  value: JSON.stringify({
+                    admissionId: raw.admittedChildOwner.admissionId,
+                    approvalId: raw.admittedChildOwner.approvalId,
+                    parentSessionId: raw.admittedChildOwner.parentSessionId,
+                    dispatchId: raw.admittedChildOwner.childDispatchId,
+                    repository: raw.admittedChildOwner.repository,
+                    sourceSha: raw.admittedChildOwner.sourceSha,
+                    workItemId: raw.admittedChildOwner.workItemId,
+                    release: raw.admittedChildOwner.release,
+                    profile: raw.admittedChildOwner.profile,
+                    inputDigest: raw.requestDigest, generation: raw.generation,
+                    images: { agent: raw.agentImage, runtimeWorker: raw.runtimeWorkerImage } }),
+                }]),
               ],
               readinessProbe: {
                 exec: { command: ["node", "-e", "process.exit(require('node:fs').existsSync('/run/codeops/ready') ? 0 : 1)"] },

@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -8,7 +8,7 @@ import {
   agentJobDispatchRequestSchema,
   createProjectContext,
 } from "@codeops/codeops-contracts";
-import { createRunIdentity } from "../dist/core.js";
+import { claimRequest, createRunIdentity } from "../dist/core.js";
 import { createAgentJobRunner } from "../dist/runtime.js";
 import { createRepositoryRegistry } from "../dist/repository-registry.js";
 
@@ -26,6 +26,13 @@ const modelAuth = {
   origin: "http://codeops-model-proxy:8080",
   signingKey: "m".repeat(64),
 };
+
+function resourceBinding(resource) {
+  return {
+    uid: `uid-${resource.kind}-${resource.metadata.name}`,
+    configDigest: `sha256:${"e".repeat(64)}`,
+  };
+}
 
 const projectContext = createProjectContext({
   version: "codeops.project-context/v1",
@@ -146,6 +153,7 @@ test("creates, retains, cleans, and then returns the durable result idempotently
   const kubernetes = {
     async ensure(resource) {
       ensured.push(`${resource.kind}/${resource.metadata.name}`);
+      return resourceBinding(resource);
     },
     async getJob() {
       return { status: { succeeded: 1 } };
@@ -156,7 +164,11 @@ test("creates, retains, cleans, and then returns the durable result idempotently
     async getPodLogs() {
       return logs(runId);
     },
-    async delete(resource) {
+    async delete(resource, requestDigest, uid, configDigest) {
+      const binding = resourceBinding(resource);
+      assert.equal(requestDigest, createRunIdentity(request).requestDigest);
+      assert.equal(uid, binding.uid);
+      assert.equal(configDigest, binding.configDigest);
       deleted.push(`${resource.kind}/${resource.metadata.name}`);
     },
   };
@@ -175,10 +187,154 @@ test("creates, retains, cleans, and then returns the durable result idempotently
   });
   try {
     const first = await run(request);
+    const retainedRequest = JSON.parse(await readFile(
+      path.join(root, "agent-runs", runId, "request.json"), "utf8"));
+    assert.equal(Object.keys(retainedRequest.resourceBindings).length, 4);
     const second = await run(request);
     assert.deepEqual(second, first);
     assert.equal(ensured.length, 4);
     assert.equal(deleted.length, 8);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("a retained successful Agent Job stays successful when legacy cleanup bindings are absent", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-legacy-cleanup-"));
+  const runId = createRunIdentity(request).runId;
+  let deleteCount = 0;
+  const kubernetes = {
+    async ensure(resource) { return resourceBinding(resource); },
+    async getJob() { return { status: { succeeded: 1 } }; },
+    async listRunPods() { return [{ metadata: { name: "agent-pod" } }]; },
+    async getPodLogs() { return logs(runId); },
+    async delete() { deleteCount += 1; },
+  };
+  const run = createAgentJobRunner({ kubernetes, config: { namespace: "codeops",
+    repositoryRegistry, agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+    sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`, modelAuth,
+    evidenceRoot: root, pollIntervalMs: 1, timeoutMs: 100 } });
+  try {
+    const first = await run(request);
+    const requestPath = path.join(root, "agent-runs", runId, "request.json");
+    const retainedRequest = JSON.parse(await readFile(requestPath, "utf8"));
+    delete retainedRequest.resourceBindings;
+    await writeFile(requestPath, `${JSON.stringify(retainedRequest, null, 2)}\n`);
+    assert.deepEqual(await run(request), first);
+    assert.equal(deleteCount, 4);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("cleans from the exact ensure result when durable binding retention fails", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-binding-fail-"));
+  const runId = createRunIdentity(request).runId;
+  const deleted = [];
+  let ensureCount = 0;
+  const kubernetes = {
+    async ensure(resource) {
+      ensureCount += 1;
+      if (ensureCount === 2) {
+        const requestPath = path.join(root, "agent-runs", runId, "request.json");
+        const retainedRequest = JSON.parse(await readFile(requestPath, "utf8"));
+        retainedRequest.resourceBindings = { invalid: true };
+        await writeFile(requestPath, `${JSON.stringify(retainedRequest, null, 2)}\n`);
+      }
+      return resourceBinding(resource);
+    },
+    async getJob() { return { status: { succeeded: 1 } }; },
+    async listRunPods() { return [{ metadata: { name: "agent-pod" } }]; },
+    async getPodLogs() { return logs(runId); },
+    async delete(resource, requestDigest, uid, configDigest) {
+      assert.equal(requestDigest, createRunIdentity(request).requestDigest);
+      assert.deepEqual({ uid, configDigest }, resourceBinding(resource));
+      deleted.push(resource.kind);
+    },
+  };
+  const run = createAgentJobRunner({ kubernetes, config: { namespace: "codeops",
+    repositoryRegistry, agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+    sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`, modelAuth,
+    evidenceRoot: root, pollIntervalMs: 1, timeoutMs: 100 } });
+  try {
+    await assert.rejects(run(request), /durable Agent Job resource binding is invalid/);
+    assert.deepEqual(deleted.sort(), ["Secret", "ServiceAccount"]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("crash replay replaces only an authenticated unbound Secret after rotation", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-rotated-restart-"));
+  const identity = createRunIdentity(request);
+  const recoveredBinding = { uid: "pre-crash-secret-uid",
+    configDigest: `sha256:${"1".repeat(64)}` };
+  const calls = [];
+  let recoveredSecretPresent = true;
+  let stalePostDeleteRecoveries = 1;
+  let crashAfterDelete = true;
+  const kubernetes = {
+    async recoverOwned(resource) {
+      calls.push(["recover", resource.kind, resource.metadata.name]);
+      if (resource.kind !== "Secret") return null;
+      if (!recoveredSecretPresent && stalePostDeleteRecoveries === 0) return null;
+      if (!recoveredSecretPresent) stalePostDeleteRecoveries -= 1;
+      return { ...recoveredBinding, desiredConfigDigest: `sha256:${"e".repeat(64)}`,
+        matchesExpectedConfiguration: false };
+    },
+    async ensure(resource, _digest, uid, configDigest) {
+      calls.push(["ensure", resource.kind, resource.metadata.name, uid, configDigest]);
+      return resourceBinding(resource);
+    },
+    async getJob() { return { status: { succeeded: 1 } }; },
+    async listRunPods() { return [{ metadata: { name: "agent-pod" } }]; },
+    async getPodLogs() { return logs(identity.runId); },
+    async delete(resource, requestDigest, uid, configDigest) {
+      calls.push(["delete", resource.kind, resource.metadata.name, uid, configDigest,
+        Object.hasOwn(resource, "data")]);
+      assert.equal(requestDigest, identity.requestDigest);
+      if (uid === recoveredBinding.uid) {
+        recoveredSecretPresent = false;
+        const retained = JSON.parse(await readFile(
+          path.join(root, "agent-runs", identity.runId, "request.json"), "utf8"));
+        const key = `Secret/${resource.metadata.name}`;
+        assert.deepEqual(retained.resourceReplacements[key], { ...recoveredBinding,
+          desiredConfigDigest: `sha256:${"e".repeat(64)}` });
+        if (crashAfterDelete) {
+          assert.deepEqual(retained.resourceBindings[key], recoveredBinding);
+          crashAfterDelete = false;
+          throw new Error("crash after authenticated Secret deletion");
+        }
+        if (retained.resourceBindings[key] !== undefined) {
+          assert.deepEqual(retained.resourceBindings[key], recoveredBinding);
+        }
+      }
+    },
+  };
+  const run = createAgentJobRunner({ kubernetes, config: { namespace: "codeops",
+    repositoryRegistry, agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+    sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`, modelAuth,
+    evidenceRoot: root, pollIntervalMs: 1, timeoutMs: 100 } });
+  try {
+    await claimRequest({ rootDirectory: root, request, ...identity });
+    await assert.rejects(run(request), /crash after authenticated Secret deletion/);
+    await assert.rejects(run(request), /recreated Agent Job Secret configuration drifted/);
+    const replacementPending = JSON.parse(await readFile(
+      path.join(root, "agent-runs", identity.runId, "request.json"), "utf8"));
+    const secretName = `codeops-run-${identity.runId}`;
+    assert.equal(replacementPending.resourceBindings[`Secret/${secretName}`], undefined);
+    assert.deepEqual(replacementPending.resourceReplacements[`Secret/${secretName}`], {
+      ...recoveredBinding, desiredConfigDigest: `sha256:${"e".repeat(64)}`,
+    });
+    await run(request);
+    assert.equal(calls.some((call) => call[0] === "ensure" && call[1] === "Secret" &&
+      call[2] === secretName && call[3] === undefined && call[4] ===
+        `sha256:${"e".repeat(64)}`), true);
+    const retained = JSON.parse(await readFile(
+      path.join(root, "agent-runs", identity.runId, "request.json"), "utf8"));
+    assert.deepEqual(retained.resourceReplacements, {});
+    assert.deepEqual(retained.resourceBindings[`Secret/${secretName}`],
+      resourceBinding({ kind: "Secret", metadata: { name: secretName } }));
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -204,6 +360,7 @@ test("binds each admitted dispatch to only its repository-scoped runtime credent
   const kubernetes = {
     async ensure(resource) {
       ensured.push(resource);
+      return resourceBinding(resource);
     },
     async getJob() {
       return { status: { succeeded: 1 } };
@@ -272,7 +429,7 @@ test("retains terminal validation failure and removes credentials/resources", as
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-fail-"));
   const deleted = [];
   const kubernetes = {
-    async ensure() {},
+    async ensure(resource) { return resourceBinding(resource); },
     async getJob() {
       return { status: { failed: 1 } };
     },
@@ -282,7 +439,9 @@ test("retains terminal validation failure and removes credentials/resources", as
     async getPodLogs() {
       return "no checkpoint";
     },
-    async delete(resource) {
+    async delete(resource, requestDigest, uid, configDigest) {
+      assert.equal(requestDigest, createRunIdentity(request).requestDigest);
+      assert.deepEqual({ uid, configDigest }, resourceBinding(resource));
       deleted.push(resource.kind);
     },
   };
@@ -316,7 +475,7 @@ test("removes credentials/resources when an init failure prevents log retrieval"
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-init-fail-"));
   const deleted = [];
   const kubernetes = {
-    async ensure() {},
+    async ensure(resource) { return resourceBinding(resource); },
     async getJob() {
       return { status: { failed: 1 } };
     },
@@ -359,9 +518,11 @@ test("removes credentials/resources when an init failure prevents log retrieval"
 test("cancellation aborts reconciliation and removes every exact run resource", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-cancel-"));
   const deleted = [];
+  const cancellation = new AbortController();
   const kubernetes = {
-    async ensure() {},
+    async ensure(resource) { return resourceBinding(resource); },
     async getJob() {
+      cancellation.abort(new Error("operator cancelled"));
       return { status: {} };
     },
     async listRunPods() {
@@ -387,10 +548,8 @@ test("cancellation aborts reconciliation and removes every exact run resource", 
       timeoutMs: 1_000,
     },
   });
-  const cancellation = new AbortController();
   try {
     const result = run(request, cancellation.signal);
-    setTimeout(() => cancellation.abort(new Error("operator cancelled")), 5);
     await assert.rejects(result, /operator cancelled|aborted/i);
     assert.deepEqual(deleted.sort(), [
       "Job",

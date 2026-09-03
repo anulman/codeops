@@ -8,11 +8,15 @@ import {
   waitForAcpSocket,
 } from "./acp-workspace.js";
 import { createSessionRuntimeLifecycleExecutor } from "./lifecycle.js";
-import { SessionJobInitializer } from "./initialization.js";
+import {
+  admittedChildInitialDispatchExecutor,
+  SessionJobInitializer,
+} from "./initialization.js";
 import { PostgresRuntimeExecutionReceiptStore } from "./postgres-receipts.js";
 import { PostgresWorkspaceCheckpointArtifactStore } from "./workspace-artifacts.js";
 import { runSessionRuntimeWorker } from "./runner.js";
 import { SessionRuntimeTransport } from "./transport.js";
+import type { RuntimeExecutor } from "./transport.js";
 import { loadRuntimeSessionIdentity } from "./session-identity.js";
 import { WorkItemsBroker } from "./work-items-broker.js";
 import { GitHubReadsBroker } from "./github-reads-broker.js";
@@ -131,8 +135,12 @@ process.once("SIGINT", shutdown);
 
 try {
   const identity = await loadRuntimeSessionIdentity({ env: process.env });
+  const admittedChildJson = process.env.CODEOPS_ADMITTED_CHILD_INITIALIZATION_JSON?.trim();
+  const admittedChild = admittedChildJson === undefined ? undefined : JSON.parse(admittedChildJson);
   const initialization = await initializer.initialize(sessionJobInitializationRequestSchema.parse({
-    version: "codeops.session-job-initialization/v1",
+    version: admittedChild === undefined ? "codeops.session-job-initialization/v1" :
+      "codeops.session-job-initialization/v3",
+    ...(admittedChild ?? {}),
     sessionId: required("CODEOPS_SESSION_ID"),
     identity,
     leaseId: required("CODEOPS_SESSION_LEASE_ID"),
@@ -142,13 +150,6 @@ try {
   if (initialization.snapshot.lease?.status !== "active") {
     throw new Error("session runtime requires an active server-confirmed lease");
   }
-  if (initialization.modelProxyToken === undefined) {
-    throw new Error("session runtime requires a short-lived model proxy token");
-  }
-  await publishModelProxyToken(
-    modelProxyTokenPath,
-    initialization.modelProxyToken,
-  );
   const transport = new SessionRuntimeTransport({
     gatewayOrigin,
     token: workerToken,
@@ -165,31 +166,42 @@ try {
   await githubMutationsBroker.listen(githubMutationsBrokerPort);
   await waitForAcpSocket(socketPath, socketTimeoutMs);
   await writeFile(readyPath, "", { mode: 0o600, flag: "wx" });
+  const execute: RuntimeExecutor = async (dispatch, context) => {
+    const lifecycle = new SocketAcpWorkspaceLifecycle({
+      socketPath,
+      workspace,
+      statePath,
+      socketTimeoutMs,
+      permissions: createAcpPermissionRelay({ context }),
+      artifacts: workspaceArtifacts,
+      prepareModelAuthority: async () => {
+        const authority = await context.issueModelAuthority();
+        await publishModelProxyToken(
+          modelProxyTokenPath,
+          authority.modelProxyToken,
+        );
+      },
+    });
+    return workItemsBroker.run(dispatch, context, () =>
+      githubReadsBroker.run(dispatch, context, () =>
+        githubMutationsBroker.run(dispatch, context, () =>
+          createSessionRuntimeLifecycleExecutor({ lifecycle, receipts })(dispatch, context),
+        ),
+      ),
+    );
+  };
+  const admittedExecute = admittedChild === undefined ? execute :
+    admittedChildInitialDispatchExecutor({
+      initialDispatchDigest: initialization.initialDispatchDigest!,
+      contextAttachments: initialization.contextAttachments!,
+      execute,
+    });
   await runSessionRuntimeWorker({
     transport,
     leaseMs: claimLeaseMs,
     idlePollMs,
     signal: cancellation.signal,
-    execute: async (dispatch, context) => {
-      const lifecycle = new SocketAcpWorkspaceLifecycle({
-        socketPath,
-        workspace,
-        statePath,
-        socketTimeoutMs,
-        permissions: createAcpPermissionRelay({ context }),
-        artifacts: workspaceArtifacts,
-      });
-      return workItemsBroker.run(dispatch, context, () =>
-        githubReadsBroker.run(dispatch, context, () =>
-          githubMutationsBroker.run(dispatch, context, () =>
-            createSessionRuntimeLifecycleExecutor({
-              lifecycle,
-              receipts,
-            })(dispatch, context),
-          ),
-        ),
-      );
-    },
+    execute: admittedExecute,
     onCompleted: (result) => {
       process.stdout.write(`${JSON.stringify({
         event: "session_runtime_completed",

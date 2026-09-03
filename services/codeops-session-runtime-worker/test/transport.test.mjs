@@ -101,8 +101,28 @@ function claim() {
     claimToken,
     claimExpiresAt: "2026-08-04T20:05:00.000Z",
     claimCount: 1,
+    isAdmittedInitialDispatch: false,
   };
 }
+
+test("renews an exact claim without changing its authority", async () => {
+  const original = claim();
+  const renewed = { ...original, claimExpiresAt: "2026-08-04T20:10:00.000Z" };
+  const requests = [];
+  const transport = new SessionRuntimeTransport({
+    gatewayOrigin: "http://codeops-control-gateway:8080", token, authority,
+    fetch: async (url, init) => {
+      requests.push({ url, body: JSON.parse(init.body) });
+      return json({ version: "codeops.session-runtime-claim-renewal-result/v1", claim: renewed });
+    },
+  });
+  assert.deepEqual(await transport.renewClaim(original, 600_000), renewed);
+  assert.equal(requests[0].url,
+    `http://codeops-control-gateway:8080/v1/session-runtime/dispatches/${dispatchId}/claim-renewal`);
+  assert.deepEqual(requests[0].body, {
+    version: "codeops.session-runtime-claim-renewal-request/v1", claimToken, leaseMs: 600_000,
+  });
+});
 
 function completion(overrides = {}) {
   return {
@@ -152,7 +172,7 @@ test("claims and completes one exact dispatch through the worker-only boundary",
       requests.push({ url, init, body: JSON.parse(init.body) });
       if (url.endsWith("/claims")) {
         return json({
-          version: "codeops.session-runtime-claim-response/v1",
+          version: "codeops.session-runtime-claim-response/v2",
           claim: claim(),
         });
       }
@@ -186,7 +206,7 @@ test("claims and completes one exact dispatch through the worker-only boundary",
   assert.equal(requests[0].init.redirect, "error");
   assert.equal(requests[0].init.headers.authorization, `Bearer ${token}`);
   assert.deepEqual(requests[0].body, {
-    version: "codeops.session-runtime-claim-request/v1",
+    version: "codeops.session-runtime-claim-request/v2",
     ...authority,
     leaseMs: 300_000,
   });
@@ -205,7 +225,7 @@ test("returns null without invoking the executor when no dispatch is available",
     token,
     authority,
     fetch: async () => json({
-      version: "codeops.session-runtime-claim-response/v1",
+      version: "codeops.session-runtime-claim-response/v2",
       claim: null,
     }),
   });
@@ -219,6 +239,60 @@ test("returns null without invoking the executor when no dispatch is available",
   assert.equal(executed, false);
 });
 
+test("loads fresh model authority only through the hidden live claim", async () => {
+  const requests = [];
+  const transport = new SessionRuntimeTransport({
+    gatewayOrigin: "http://codeops-control-gateway:8080",
+    token,
+    authority,
+    fetch: async (url, init) => {
+      const body = JSON.parse(init.body);
+      requests.push({ url, body });
+      if (url.endsWith("/claims")) return json({
+        version: "codeops.session-runtime-claim-response/v2",
+        claim: claim(),
+      });
+      if (url.endsWith("/model-authority")) return json({
+        version: "codeops.session-runtime-model-authority-result/v1",
+        dispatchId,
+        modelProxyToken: `v1.${"a".repeat(32)}.${"b".repeat(43)}`,
+        expiresAt: "2026-08-04T20:04:00.000Z",
+      });
+      return json({
+        version: "codeops.session-command-result/v1",
+        commandId: "66666666-6666-4666-8666-666666666666",
+        sessionId: "ses_91a4",
+        generation: 3,
+        leaseId,
+        idempotencyKey,
+        type: "prompt",
+        eventCursor: 186,
+        snapshot: { ...claim().dispatch.snapshot, eventCursor: 186 },
+        committedAt: "2026-08-04T20:03:01.000Z",
+        disposition: "committed",
+      });
+    },
+  });
+  await transport.runOne({
+    leaseMs: 300_000,
+    now: () => new Date("2026-08-04T20:03:00.000Z"),
+    execute: async (_dispatch, context) => {
+      assert.equal("claimToken" in context, false);
+      const modelAuthority = await context.issueModelAuthority();
+      assert.equal(modelAuthority.dispatchId, dispatchId);
+      return promptResult;
+    },
+  });
+  assert.equal(
+    requests[1].url,
+    `http://codeops-control-gateway:8080/v1/session-runtime/dispatches/${dispatchId}/model-authority`,
+  );
+  assert.deepEqual(requests[1].body, {
+    version: "codeops.session-runtime-model-authority-request/v1",
+    claimToken,
+  });
+});
+
 test("relays permission through a claim-hidden executor callback", async () => {
   const requests = [];
   const transport = new SessionRuntimeTransport({
@@ -230,7 +304,7 @@ test("relays permission through a claim-hidden executor callback", async () => {
       requests.push({ url, body });
       if (url.endsWith("/claims")) {
         return json({
-          version: "codeops.session-runtime-claim-response/v1",
+          version: "codeops.session-runtime-claim-response/v2",
           claim: claim(),
         });
       }
@@ -315,7 +389,7 @@ test("relays a bounded GitHub read through hidden live-claim authority", async (
       requests.push({ url, body });
       if (url.endsWith("/claims")) {
         return json({
-          version: "codeops.session-runtime-claim-response/v1",
+          version: "codeops.session-runtime-claim-response/v2",
           claim: claim(),
         });
       }
@@ -394,7 +468,7 @@ test("relays a permission-bound GitHub mutation through hidden live-claim author
       requests.push({ url, body });
       if (url.endsWith("/claims")) {
         return json({
-          version: "codeops.session-runtime-claim-response/v1",
+          version: "codeops.session-runtime-claim-response/v2",
           claim: claim(),
         });
       }
@@ -533,7 +607,7 @@ test("rejects identity drift and expired claims before completion crosses the ne
     fetch: async () => {
       claimCalls += 1;
       return json({
-        version: "codeops.session-runtime-claim-response/v1",
+        version: "codeops.session-runtime-claim-response/v2",
         claim: claim(),
       });
     },

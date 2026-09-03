@@ -6,6 +6,7 @@ import {
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
   rm,
   stat,
   symlink,
@@ -40,7 +41,7 @@ test("publishes the complete model proxy token atomically as mode 0600", async (
 
   assert.equal(await readFile(tokenPath, "utf8"), token);
   assert.equal((await stat(tokenPath)).mode & 0o777, 0o600);
-  await assertMissing(`${tokenPath}.tmp`);
+  assert.deepEqual(await readdir(path.dirname(tokenPath)), ["model-proxy-token"]);
 });
 
 test("rejects an empty token without creating either publication path", async (t) => {
@@ -55,32 +56,26 @@ test("rejects an empty token without creating either publication path", async (t
   await assertMissing(`${tokenPath}.tmp`);
 });
 
-test("rejects a preexisting partial temporary file without publishing it", async (t) => {
+test("restart rotation ignores a stale legacy temporary file", async (t) => {
   const { tokenPath } = await fixture(t);
   await writeFile(`${tokenPath}.tmp`, "partial", { mode: 0o600 });
 
-  await assert.rejects(
-    publishModelProxyToken(tokenPath, "complete-token"),
-    { code: "EEXIST" },
-  );
+  await publishModelProxyToken(tokenPath, "complete-token");
 
-  await assertMissing(tokenPath);
+  assert.equal(await readFile(tokenPath, "utf8"), "complete-token");
   assert.equal(await readFile(`${tokenPath}.tmp`, "utf8"), "partial");
 });
 
-test("rejects a symlink temporary path without changing its target", async (t) => {
+test("restart rotation ignores a stale symlink without changing its target", async (t) => {
   const { directory, tokenPath } = await fixture(t);
   const target = path.join(directory, "target");
   await writeFile(target, "unchanged", { mode: 0o600 });
   await symlink(target, `${tokenPath}.tmp`);
 
-  await assert.rejects(
-    publishModelProxyToken(tokenPath, "complete-token"),
-    (error) => error?.code === "EEXIST" || error?.code === "ELOOP",
-  );
+  await publishModelProxyToken(tokenPath, "complete-token");
 
   assert.equal(await readFile(target, "utf8"), "unchanged");
-  await assertMissing(tokenPath);
+  assert.equal(await readFile(tokenPath, "utf8"), "complete-token");
   assert.equal((await lstat(`${tokenPath}.tmp`)).isSymbolicLink(), true);
 });
 

@@ -1,8 +1,10 @@
 import { randomUUID } from "node:crypto";
 import {
   canonicalJsonText,
+  sha256CanonicalJsonDigest,
   sessionCommandResultSchema,
   sessionRuntimeClaimRequestSchema,
+  sessionRuntimeClaimRenewalRequestSchema,
   type SessionCommandResult,
   type SessionSnapshot,
 } from "@codeops/codeops-contracts";
@@ -38,6 +40,7 @@ interface ClaimedDispatchRow extends StoredDispatchRow {
   readonly claim_token: unknown;
   readonly claim_expires_at: unknown;
   readonly claim_count: unknown;
+  readonly is_admitted_initial_dispatch: unknown;
 }
 
 interface CompletedDispatchRow extends StoredDispatchRow {
@@ -146,14 +149,15 @@ export async function enqueueSessionRuntimeDispatch(
     await client.query(
       `INSERT INTO codeops.session_runtime_outbox
          (dispatch_id, session_id, idempotency_key, principal_id,
-          dispatch_json, status, available_at, created_at)
-       VALUES ($1, $2, $3, $4, $5::jsonb, 'pending', $6::timestamptz, $6::timestamptz)`,
+          dispatch_json, dispatch_digest, status, available_at, created_at)
+       VALUES ($1, $2, $3, $4, $5::jsonb, $6, 'pending', $7::timestamptz, $7::timestamptz)`,
       [
         dispatch.dispatchId,
         dispatch.command.sessionId,
         dispatch.command.idempotencyKey,
         dispatch.principalId,
         canonicalJsonText(dispatch),
+        sha256CanonicalJsonDigest(dispatch),
         dispatch.dispatchedAt,
       ],
     );
@@ -170,6 +174,7 @@ export interface SessionRuntimeDispatchClaim {
   readonly claimToken: string;
   readonly claimExpiresAt: string;
   readonly claimCount: number;
+  readonly isAdmittedInitialDispatch: boolean;
 }
 
 export async function claimSessionRuntimeDispatch(
@@ -213,6 +218,10 @@ export async function claimSessionRuntimeDispatch(
          FROM codeops.session_runtime_outbox AS outbox
          JOIN codeops.sessions AS session
            ON session.session_id = outbox.session_id
+         LEFT JOIN codeops.admitted_child_materializations AS materialization
+           ON materialization.child_session_id = outbox.session_id
+         LEFT JOIN codeops.session_runtime_outbox AS initial_dispatch
+           ON initial_dispatch.dispatch_id = materialization.child_dispatch_id
         WHERE outbox.available_at <= $1::timestamptz
           AND outbox.session_id = $5
           AND (outbox.dispatch_json->'command'->>'generation')::bigint = $6
@@ -225,7 +234,31 @@ export async function claimSessionRuntimeDispatch(
             outbox.status = 'pending'
             OR (outbox.status = 'claimed' AND outbox.claim_expires_at <= $1::timestamptz)
           )
-        ORDER BY outbox.available_at ASC, outbox.created_at ASC, outbox.dispatch_id ASC
+          AND (
+            materialization.admission_id IS NULL
+            OR (
+              outbox.dispatch_id = materialization.child_dispatch_id
+              AND outbox.is_admitted_initial_dispatch = true
+              AND outbox.admission_id = materialization.admission_id
+              AND outbox.principal_id = materialization.principal_id
+              AND outbox.dispatch_digest = materialization.initial_dispatch_digest
+              AND outbox.dispatch_json = materialization.input_json->'initialDispatch'
+            )
+            OR (
+              initial_dispatch.status = 'completed'
+              AND initial_dispatch.is_admitted_initial_dispatch = true
+              AND initial_dispatch.admission_id = materialization.admission_id
+              AND initial_dispatch.session_id = materialization.child_session_id
+              AND initial_dispatch.principal_id = materialization.principal_id
+              AND initial_dispatch.dispatch_digest = materialization.initial_dispatch_digest
+              AND initial_dispatch.dispatch_json = materialization.input_json->'initialDispatch'
+            )
+          )
+        ORDER BY
+          CASE WHEN materialization.admission_id IS NOT NULL
+                 AND outbox.dispatch_id = materialization.child_dispatch_id
+               THEN 0 ELSE 1 END ASC,
+          outbox.available_at ASC, outbox.created_at ASC, outbox.dispatch_id ASC
         FOR UPDATE OF outbox SKIP LOCKED
         LIMIT 1
      )
@@ -239,7 +272,8 @@ export async function claimSessionRuntimeDispatch(
        FROM candidate
       WHERE outbox.dispatch_id = candidate.dispatch_id
       RETURNING outbox.dispatch_json, outbox.claim_token,
-                outbox.claim_expires_at, outbox.claim_count`,
+                outbox.claim_expires_at, outbox.claim_count,
+                outbox.is_admitted_initial_dispatch`,
     [
       claimedAt,
       claimToken,
@@ -260,7 +294,8 @@ export async function claimSessionRuntimeDispatch(
     row.claim_token !== claimToken ||
     postgresTimestamp(row.claim_expires_at) !== claimExpiresAt ||
     !Number.isSafeInteger(row.claim_count) ||
-    Number(row.claim_count) < 1
+    Number(row.claim_count) < 1 ||
+    typeof row.is_admitted_initial_dispatch !== "boolean"
   ) {
     throw new Error("runtime claim persistence did not match the requested lease");
   }
@@ -297,11 +332,78 @@ export async function claimSessionRuntimeDispatch(
     claimToken,
     claimExpiresAt,
     claimCount: Number(row.claim_count),
+    isAdmittedInitialDispatch: row.is_admitted_initial_dispatch,
   };
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;
   }
+}
+
+export async function renewSessionRuntimeDispatchClaim(
+  client: TransactionClient,
+  input: {
+    readonly dispatchId: string;
+    readonly claimToken: string;
+    readonly workerId: string;
+    readonly leaseMs: number;
+    readonly now?: () => Date;
+  },
+): Promise<SessionRuntimeDispatchClaim> {
+  requireWorkerId(input.workerId);
+  const request = sessionRuntimeClaimRenewalRequestSchema.parse({
+    version: "codeops.session-runtime-claim-renewal-request/v1",
+    claimToken: input.claimToken,
+    leaseMs: input.leaseMs,
+  });
+  const now = (input.now ?? (() => new Date()))();
+  const renewedUntil = new Date(now.getTime() + request.leaseMs).toISOString();
+  const result = await client.query<ClaimedDispatchRow>(
+    `UPDATE codeops.session_runtime_outbox AS outbox
+        SET claim_expires_at = $4::timestamptz
+       FROM codeops.sessions AS session
+      WHERE outbox.dispatch_id = $1::uuid
+        AND outbox.session_id = session.session_id
+        AND outbox.status = 'claimed'
+        AND outbox.claim_token = $2::uuid
+        AND outbox.claimed_by = $3
+        AND outbox.claim_expires_at > $5::timestamptz
+        AND session.owner_principal_id = outbox.principal_id
+        AND session.snapshot_json->'lease'->>'status' = 'active'
+        AND session.snapshot_json->'lease'->>'leaseId' =
+            outbox.dispatch_json->'command'->>'leaseId'
+        AND session.snapshot_json->>'generation' =
+            outbox.dispatch_json->'command'->>'generation'
+        AND session.snapshot_json->'identity' =
+            outbox.dispatch_json->'snapshot'->'identity'
+      RETURNING outbox.dispatch_json, outbox.claim_token,
+                outbox.claim_expires_at, outbox.claim_count,
+                outbox.is_admitted_initial_dispatch`,
+    [input.dispatchId, request.claimToken, input.workerId, renewedUntil, now.toISOString()],
+  );
+  const row = result.rows[0];
+  if (row === undefined) {
+    throw new ImmutableSessionRuntimeDispatchConflictError(
+      "runtime claim renewal requires the exact live dispatch authority",
+    );
+  }
+  const dispatch = sessionRuntimeDispatchSchema.parse(row.dispatch_json);
+  if (
+    row.claim_token !== request.claimToken ||
+    postgresTimestamp(row.claim_expires_at) !== renewedUntil ||
+    !Number.isSafeInteger(row.claim_count) ||
+    Number(row.claim_count) < 1 ||
+    typeof row.is_admitted_initial_dispatch !== "boolean"
+  ) {
+    throw new Error("runtime claim renewal persistence drifted");
+  }
+  return {
+    dispatch,
+    claimToken: request.claimToken,
+    claimExpiresAt: renewedUntil,
+    claimCount: Number(row.claim_count),
+    isAdmittedInitialDispatch: row.is_admitted_initial_dispatch,
+  };
 }
 
 function duplicateRuntimeResult(

@@ -3,6 +3,7 @@ const MODEL_TOKEN_ID = /^sha256:[0-9a-f]{64}$/;
 const BOUNDED_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/;
 const MODEL = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,99}$/;
 const PROVIDER_REQUEST_ID = /^[A-Za-z0-9][A-Za-z0-9._:-]{0,255}$/;
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const REASONING_EFFORTS = new Set(["none", "low", "medium", "high", "xhigh"]);
 const UNKNOWN_FAILURE_CLASSES = new Set([
   "transport",
@@ -61,6 +62,8 @@ function reservationInput(input) {
     !BOUNDED_ID.test(input.budgetId) ||
     !Number.isSafeInteger(input.generation) ||
     input.generation < 1 ||
+    ((input.leaseId != null || input.dispatchId != null) &&
+      (!UUID.test(input.leaseId) || !UUID.test(input.dispatchId))) ||
     input.provider !== "openai" ||
     !MODEL.test(input.model) ||
     !REASONING_EFFORTS.has(input.reasoningEffort) ||
@@ -146,12 +149,32 @@ export function createModelBudgetLedger(database) {
     async reserve(rawInput) {
       const input = reservationInput(rawInput);
       try {
+        const dispatchBound = input.leaseId != null;
         const result = await database.query(
-          `SELECT * FROM codeops.reserve_session_model_budget(
-            $1::uuid, $2::text, $3::text, $4::text, $5::bigint,
-            $6::text, $7::text, $8::text, $9::bigint, $10::bigint
-          )`,
-          [
+          dispatchBound
+            ? `SELECT * FROM codeops.reserve_session_dispatch_model_budget(
+              $1::uuid, $2::text, $3::text, $4::text, $5::bigint,
+              $6::uuid, $7::uuid, $8::text, $9::text, $10::text,
+              $11::bigint, $12::bigint
+            )`
+            : `SELECT * FROM codeops.reserve_session_model_budget(
+              $1::uuid, $2::text, $3::text, $4::text, $5::bigint,
+              $6::text, $7::text, $8::text, $9::bigint, $10::bigint
+            )`,
+          dispatchBound ? [
+            input.reservationId,
+            input.modelTokenId,
+            input.sessionId,
+            input.budgetId,
+            input.generation,
+            input.leaseId,
+            input.dispatchId,
+            input.provider,
+            input.model,
+            input.reasoningEffort,
+            input.requestedOutputTokens,
+            input.reservedOutputTokens,
+          ] : [
             input.reservationId,
             input.modelTokenId,
             input.sessionId,

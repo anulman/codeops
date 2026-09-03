@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
+import { canonicalJsonText } from "@codeops/codeops-contracts";
 import {
+  admittedChildInitialDispatchExecutor,
   SessionJobInitializer,
 } from "../dist/initialization.js";
 import { SessionRuntimeTransportError } from "../dist/transport.js";
@@ -40,7 +43,6 @@ function response(overrides = {}) {
   return {
     version: "codeops.session-job-initialization-result/v1",
     disposition: "created",
-    modelProxyToken: `v1.${Buffer.from("session-token").toString("base64url")}.${"s".repeat(43)}`,
     snapshot: {
       version: "codeops.session-snapshot/v1",
       sessionId: "ses_video_1",
@@ -191,17 +193,165 @@ test("rejects a created root without the exact requested active lease", async ()
   );
 });
 
-test("rejects initialization without short-lived model authority", async () => {
-  const { modelProxyToken: _removed, ...missingToken } = response();
+test("rejects immutable model authority injected at Job initialization", async () => {
   const initializer = new SessionJobInitializer({
     gatewayOrigin: "https://gateway.example.test",
     token,
-    fetch: async () => json(missingToken),
+    fetch: async () => json({ ...response(), modelProxyToken: "v1.stale.signature" }),
   });
   await assert.rejects(
     initializer.initialize(request()),
     SessionRuntimeTransportError,
   );
+});
+
+function admittedRequest() {
+  const bytes = Buffer.from("exact admitted context\n");
+  const descriptor = { attachmentId: "brief", name: "brief.txt", mimeType: "text/plain",
+    sizeBytes: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}` };
+  return { version: "codeops.session-job-initialization/v3",
+    admissionId: "22222222-2222-4222-8222-222222222222",
+    approvalId: "33333333-3333-4333-8333-333333333333",
+    dispatchId: "44444444-4444-4444-8444-444444444444",
+    inputDigest: `sha256:${"d".repeat(64)}`, sessionId: "session-child", generation: 1,
+    identity: { version: "codeops.session-workspace-identity/v1",
+      policy: { version: "codeops.session-policy/v1", mode: "implement",
+        workspaceAccess: "bounded-writes", modelCalls: "allowed",
+        modelPolicy: { provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "medium" } },
+      contextAttachments: [descriptor], workspace: { version: "codeops.workspace/v1",
+        sources: [{ catalogKey: "codeops", repository: "example-org/example-repository",
+          checkoutPath: "sources/codeops", requestedRef: "main", resolvedSha: "a".repeat(40) }],
+        scratchPath: "scratch" }, workflowId: "workflow-1", runId: "run-1",
+      parentSessionId: "session-parent", forkedAtCursor: 2 },
+    leaseId, holderId: "runtime-worker:child", ownerPrincipalId: "access:aidan@example.com",
+    parentSessionId: "session-parent", repository: "example-org/example-repository",
+    sourceSha: "a".repeat(40), workItemId: "work-item-1", profile: "custom",
+    release: "v0.5.0-alpha.58", images: {
+      agent: `registry.example/agent@sha256:${"a".repeat(64)}`,
+      runtimeWorker: `registry.example/worker@sha256:${"b".repeat(64)}` },
+    attachment: { ...descriptor, content: bytes.toString("base64") } };
+}
+
+test("accepts exact admitted-child bytes and rejects missing or altered bytes", async () => {
+  const { attachment, ...request } = admittedRequest();
+  const initialDispatchDigest = dispatchDigest(admittedDispatch(request));
+  const admittedResponse = { ...response({ sessionId: request.sessionId,
+    identity: request.identity, lease: { leaseId, generation: 1, status: "active",
+      holderId: request.holderId, acquiredAt: "2026-08-05T03:15:00.000Z",
+      expiresAt: "2026-08-05T04:15:00.000Z" } }), disposition: "duplicate",
+    contextAttachments: [attachment], initialDispatchDigest };
+  const exact = new SessionJobInitializer({ gatewayOrigin: "https://gateway.example.test", token,
+    fetch: async () => json(admittedResponse) });
+  assert.equal((await exact.initialize(request)).contextAttachments[0].content, attachment.content);
+  for (const contextAttachments of [undefined,
+    [{ ...attachment, content: Buffer.from("altered").toString("base64") }]]) {
+    const initializer = new SessionJobInitializer({ gatewayOrigin: "https://gateway.example.test", token,
+      fetch: async () => json({ ...admittedResponse, contextAttachments }) });
+    await assert.rejects(initializer.initialize(request), SessionRuntimeTransportError);
+  }
+});
+
+function admittedDispatch(request, dispatchId = request.dispatchId, type = "prompt") {
+  const snapshot = response({ sessionId: request.sessionId, identity: request.identity,
+    lease: { leaseId, generation: 1, status: "active", holderId: request.holderId,
+      acquiredAt: "2026-08-05T03:15:00.000Z", expiresAt: "2026-08-05T04:15:00.000Z" } }).snapshot;
+  return { version: "codeops.session-runtime-dispatch/v1", dispatchId,
+    principalId: request.ownerPrincipalId,
+    command: { version: "codeops.session-command/v1", sessionId: request.sessionId,
+      generation: 1, leaseId, idempotencyKey: "77777777-7777-4777-8777-777777777777",
+      type, ...(type === "prompt" ? { prompt: "Implement it." } : {}) }, snapshot,
+    dispatchedAt: "2026-08-05T03:20:00.000Z" };
+}
+
+function dispatchDigest(dispatch) {
+  return `sha256:${createHash("sha256").update(canonicalJsonText(dispatch)).digest("hex")}`;
+}
+
+test("restores bytes only to the exact initial dispatch and passes later dispatches unchanged", async () => {
+  const { attachment, ...request } = admittedRequest();
+  const seen = []; const seenContexts = []; let permissionContinuations = 0;
+  const initial = admittedDispatch(request);
+  const execute = admittedChildInitialDispatchExecutor({
+    initialDispatchDigest: dispatchDigest(initial), contextAttachments: [attachment],
+    execute: async (dispatch, context) => {
+      seen.push(dispatch); seenContexts.push(context);
+      if (context.requestPermission !== undefined) await context.requestPermission();
+      return { ok: true };
+    } });
+  await execute(initial, { isAdmittedInitialDispatch: true });
+  assert.deepEqual(seen[0].command.contextAttachments, [attachment]);
+  assert.equal(initial.command.contextAttachments, undefined);
+  const laterPrompt = admittedDispatch(request, "99999999-9999-4999-8999-999999999999");
+  const laterContinuation = admittedDispatch(request,
+    "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa", "checkpoint");
+  const permissionContinuation = { isAdmittedInitialDispatch: false,
+    requestPermission: async () => {
+    permissionContinuations += 1; return { outcome: "selected", optionId: "allow" };
+  } };
+  await execute(laterPrompt, { isAdmittedInitialDispatch: false });
+  await execute(laterContinuation, permissionContinuation);
+  assert.equal(seen[1], laterPrompt);
+  assert.equal(seen[2], laterContinuation);
+  assert.equal(seenContexts[2], permissionContinuation);
+  assert.equal(permissionContinuations, 1);
+});
+
+test("rejects a mismatched initial admitted dispatch before execution", async () => {
+  const { attachment, ...request } = admittedRequest();
+  let calls = 0;
+  const initial = admittedDispatch(request);
+  const execute = admittedChildInitialDispatchExecutor({ initialDispatchDigest: dispatchDigest(initial),
+    contextAttachments: [attachment], execute: async () => { calls += 1; } });
+  await assert.rejects(execute(admittedDispatch(request,
+    "99999999-9999-4999-8999-999999999999"),
+  { isAdmittedInitialDispatch: true }), /initial dispatch marker or identity drifted/);
+  assert.equal(calls, 0);
+});
+
+test("rejects a same-ID initial dispatch with an altered prompt", async () => {
+  const { attachment, ...request } = admittedRequest();
+  const initial = admittedDispatch(request); let calls = 0;
+  const execute = admittedChildInitialDispatchExecutor({ initialDispatchDigest: dispatchDigest(initial),
+    contextAttachments: [attachment], execute: async () => { calls += 1; } });
+  await assert.rejects(execute({ ...initial,
+    command: { ...initial.command, prompt: "Altered after admission." } },
+  { isAdmittedInitialDispatch: true }), /initial dispatch marker or identity drifted/);
+  assert.equal(calls, 0);
+});
+
+test("rejects a forged false initial marker", async () => {
+  const { attachment, ...request } = admittedRequest();
+  const initial = admittedDispatch(request); let calls = 0;
+  const execute = admittedChildInitialDispatchExecutor({ initialDispatchDigest: dispatchDigest(initial),
+    contextAttachments: [attachment], execute: async () => { calls += 1; } });
+  await assert.rejects(execute(initial, { isAdmittedInitialDispatch: false }),
+    /initial dispatch marker or identity drifted/);
+  assert.equal(calls, 0);
+});
+
+test("a replacement worker accepts a later dispatch after the initial row completed", async () => {
+  const { attachment, ...request } = admittedRequest();
+  const initial = admittedDispatch(request); let seen;
+  const replacementExecute = admittedChildInitialDispatchExecutor({
+    initialDispatchDigest: dispatchDigest(initial), contextAttachments: [attachment],
+    execute: async (dispatch) => { seen = dispatch; },
+  });
+  const later = admittedDispatch(request, "99999999-9999-4999-8999-999999999999");
+  await replacementExecute(later, { isAdmittedInitialDispatch: false });
+  assert.equal(seen, later);
+  assert.equal(seen.command.contextAttachments, undefined);
+});
+
+test("keeps empty admitted context attachments omitted from the initial command", async () => {
+  const { attachment: _attachment, ...request } = admittedRequest();
+  request.identity.contextAttachments = [];
+  const initial = admittedDispatch(request); let seen;
+  const execute = admittedChildInitialDispatchExecutor({
+    initialDispatchDigest: dispatchDigest(initial), contextAttachments: [],
+    execute: async (dispatch) => { seen = dispatch; },
+  });
+  await execute(initial, { isAdmittedInitialDispatch: true });
+  assert.equal("contextAttachments" in seen.command, false);
 });
 
 test("inherits strict origin, token, status, type, and body bounds", async () => {

@@ -90,6 +90,35 @@ function legacyToken(overrides = {}) {
     .digest("base64url")}`;
 }
 
+function dispatchToken(overrides = {}) {
+  return token({
+    leaseId: "11111111-1111-4111-8111-111111111111",
+    dispatchId: "22222222-2222-4222-8222-222222222222",
+    exp: Math.floor(now / 1_000) + 5 * 60,
+    ...overrides,
+  });
+}
+
+test("accepts exact dispatch, lease, generation, policy, and remaining budget claims", () => {
+  const authority = validateModelProxyToken({
+    token: dispatchToken({ maximumRequests: 7, maximumOutputTokens: 8_500 }),
+    signingKey,
+    now,
+  });
+  assert.equal(authority.runId, "run-159");
+  assert.equal(authority.generation, 1);
+  assert.equal(authority.leaseId, "11111111-1111-4111-8111-111111111111");
+  assert.equal(authority.dispatchId, "22222222-2222-4222-8222-222222222222");
+  assert.equal(authority.model, "gpt-5.6-sol");
+  assert.equal(authority.maximumRequests, 7);
+  assert.equal(authority.maximumOutputTokens, 8_500);
+  assert.equal(validateModelProxyToken({
+    token: dispatchToken({ exp: Math.floor(now / 1_000) + 5 * 60 + 1 }),
+    signingKey,
+    now,
+  }), null);
+});
+
 test("accepts only an exact signed, bounded, unexpired run token", () => {
   assert.deepEqual(validateModelProxyToken({ token: token(), signingKey, now }), {
     runId: "run-159",
@@ -766,6 +795,61 @@ test("does not contact OpenAI for invalid authority or unsupported paths", async
     },
   );
   assert.equal(calls, 0);
+});
+
+test("returns typed local expiry without contacting the provider", async () => {
+  let calls = 0;
+  await withProxy(
+    createModelProxyRequestListener({
+      openAiApiKey: "test-openai-key-never-exposed",
+      signingKey,
+      now: () => now,
+      fetch: async () => { calls += 1; throw new Error("must not run"); },
+    }),
+    async (origin) => {
+      const response = await fetch(`${origin}/v1/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token({ exp: Math.floor(now / 1_000) })}`,
+          "Content-Type": "application/json",
+        },
+        body: '{}',
+      });
+      assert.equal(response.status, 401);
+      assert.equal((await response.json()).error.code, "model_proxy_token_expired");
+    },
+  );
+  assert.equal(calls, 0);
+});
+
+test("maps a transient upstream model 404 to typed unavailability", async () => {
+  const ledger = testLedger();
+  await withProxy(
+    createModelProxyRequestListener({
+      openAiApiKey: "test-openai-key-never-exposed",
+      signingKey,
+      now: () => now,
+      modelBudgetLedger: ledger,
+      fetch: async () => new Response('{"error":{"message":"model unavailable"}}', {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      }),
+    }),
+    async (origin) => {
+      const response = await fetch(`${origin}/v1/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${token()}`,
+          "Content-Type": "application/json",
+        },
+        body: '{"model":"gpt-5.6-sol","input":"hello","reasoning":{"effort":"high"}}',
+      });
+      assert.equal(response.status, 503);
+      assert.equal(response.headers.get("retry-after"), "5");
+      assert.equal((await response.json()).error.code, "provider_model_unavailable");
+    },
+  );
+  assert.equal(ledger.calls.at(-1).input.state, "provider_rejected");
 });
 
 test("warns on large permitted requests without logging request bodies", async () => {

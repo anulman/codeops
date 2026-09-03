@@ -314,8 +314,30 @@ concurrent requests per token, and 16 concurrent requests globally. These
 limits are incident controls, not normal operating targets. Keep the dedicated
 OpenAI project server-side budget as the final spend boundary.
 
-The quickstart runs the forward-compatible schema migration as an ordinary Job
-during the first installation and as a `pre-upgrade` hook for later revisions.
+The quickstart runs the schema migration as an ordinary Job during the first
+installation. On upgrade, the `pre-upgrade` hook first scales the Session
+Gateway Deployment to zero and waits until its Pods no longer exist. It then
+applies the migration. This boundary keeps the expansion
+compatible with the old writers and activates mandatory admitted-child owners
+only after those writers cannot admit more work. The new gateway does not
+process an admission that has no exact materialization owner. The hook is
+idempotent. A failed hook leaves the writers stopped and fails the upgrade
+closed; an explicit `helm rollback` restores the previous Deployment replica
+specifications. If the database migration already committed, its mandatory
+owner trigger rejects admissions from a rolled-back incompatible gateway. Roll
+forward to the owner-aware release; do not bypass the database fence or infer
+owners for legacy admissions. Do not restart an old gateway after this
+migration succeeds.
+The ordinary install path has no old writer and applies the complete contract
+directly.
+
+The Control Gateway uses two ownership boundaries. Its rolling API Deployment
+uses PostgreSQL and does not mount the evidence claim. A separate singleton
+file dispatcher owns the ReadWriteOnce evidence claim, Agent Job dispatch, and
+candidate publication. The dispatcher uses a `Recreate` strategy. This keeps
+the runtime API available during a multi-node rollout without starting two
+file-backed writers.
+
 The install Job can run while Helm waits for workload readiness, so workloads
 that use migrated database roles do not deadlock the `post-install` phase. The
 migration creates or rotates the receipt-only runtime role from the exact

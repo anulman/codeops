@@ -1,5 +1,7 @@
 import { createHash } from "node:crypto";
 import {
+  admittedChildMaterializationInputSchema,
+  admittedChildMaterializationStateSchema,
   canonicalJsonText,
   createEventId,
   createTransitionId,
@@ -19,6 +21,8 @@ import {
   type SessionSnapshot,
   type WorkItemAdmissionResult,
 } from "@codeops/codeops-contracts";
+import { verifyWorkspaceContextAttachments, workspaceContextAttachmentDescriptors } from
+  "@codeops/codeops-contracts/workspace-context-node";
 import {
   ClaimedDispatchAuthorityConflictError,
   selectClaimedWorkspaceSource,
@@ -166,6 +170,7 @@ async function replayResult(client: TransactionClient, input: {
             outbox.idempotency_key AS outbox_idempotency_key,
             outbox.principal_id AS outbox_principal_id,
             outbox.admission_id AS outbox_admission_id,
+            outbox.is_admitted_initial_dispatch,
             budget.budget_id, budget.started_at AS budget_started_at,
             budget.provider_requests_limit, budget.output_tokens_limit,
             lifecycle.event_json AS lifecycle_event_json,
@@ -195,7 +200,11 @@ async function replayResult(client: TransactionClient, input: {
             supervision.generation AS supervision_generation,
             supervision.cursor AS supervision_cursor,
             supervision.event_type AS supervision_event_type,
-            supervision.occurred_at AS supervision_occurred_at
+            supervision.occurred_at AS supervision_occurred_at,
+            materialization.input_digest AS materialization_input_digest,
+            materialization.input_json AS materialization_input_json,
+            materialization.initial_dispatch_digest,
+            outbox.dispatch_digest AS outbox_dispatch_digest
        FROM codeops.work_item_admissions admission
        JOIN codeops.project_plan_approvals approval ON approval.approval_id=admission.approval_id
        JOIN codeops.sessions parent ON parent.session_id=admission.parent_session_id
@@ -216,6 +225,8 @@ async function replayResult(client: TransactionClient, input: {
         AND lifecycle_owner.work_item_id=admission.work_item_id
        JOIN codeops.work_item_lifecycle_publications publication ON publication.event_id=admission.lifecycle_event_id
        JOIN codeops.session_events supervision ON supervision.event_id=admission.supervision_event_id
+       JOIN codeops.admitted_child_materializations materialization
+         ON materialization.admission_id=admission.admission_id
       WHERE admission.admission_id=$1 FOR UPDATE OF admission`,
     [input.admissionId],
   );
@@ -225,11 +236,27 @@ async function replayResult(client: TransactionClient, input: {
     return null;
   }
   const row = stored.rows[0];
+  const parsedMaterialization = admittedChildMaterializationInputSchema.safeParse(row.materialization_input_json);
+  if (!parsedMaterialization.success) {
+    throw new WorkItemAdmissionConflictError("admitted child materialization input is invalid");
+  }
+  const materialization = parsedMaterialization.data;
+  if (row.materialization_input_digest !== sha256CanonicalJsonDigest(materialization)) {
+    throw new WorkItemAdmissionConflictError("admitted child materialization input digest drifted");
+  }
+  if (materialization.admissionDigest !== row.authority_digest ||
+      materialization.approvalDigest !== row.approval_authority_digest) {
+    throw new WorkItemAdmissionConflictError("admitted child materialization authority identity drifted");
+  }
   const authority = row.authority_json as Record<string, unknown>;
   const approval = row.approval_authority_json as Record<string, unknown>;
   if (row.authority_digest !== sha256CanonicalJsonDigest(authority)) throw new WorkItemAdmissionConflictError("work-item admission authority digest drifted");
   if (row.approval_authority_digest !== sha256CanonicalJsonDigest(approval)) throw new WorkItemAdmissionConflictError("project-plan approval authority digest drifted");
   exact(authority.request, input.requestAuthority, "work-item admission request conflicts with immutable authority");
+  exact({ profile: materialization.profile, release: materialization.release,
+    agentImage: materialization.images.agent,
+    runtimeWorkerImage: materialization.images.runtimeWorker }, authority.materialization,
+  "admitted child materialization release identity drifted");
   if (approval.dispatchId !== input.parentDispatchId || approval.approvalId !== row.approval_id ||
       approval.parentSessionId !== row.parent_session_id || approval.parentSessionId !== row.approval_parent_session_id ||
       approval.dispatchId !== row.approval_dispatch_id || approval.permissionRequestId !== row.approval_permission_request_id ||
@@ -305,12 +332,41 @@ async function replayResult(client: TransactionClient, input: {
   const currentChild = sessionSnapshotSchema.parse(row.child_snapshot_json);
   const childEvent = sessionEventSchema.parse(authority.childEvent);
   const dispatch = sessionRuntimeDispatchSchema.parse(authority.dispatch);
+  const initialDispatchDigest = sha256CanonicalJsonDigest(dispatch);
   const lifecycle = workItemLifecycleEventSchema.parse(authority.lifecycleEvent);
   const supervision = sessionEventSchema.parse(authority.supervisionEvent);
+  exact(materialization.initialDispatch, dispatch,
+    "admitted child materialization initial dispatch drifted");
+  if (row.initial_dispatch_digest !== initialDispatchDigest ||
+      row.outbox_dispatch_digest !== initialDispatchDigest) {
+    throw new WorkItemAdmissionConflictError(
+      "admitted child materialization initial dispatch digest drifted",
+    );
+  }
+  exact(materialization.identity, child.identity,
+    "admitted child materialization Session identity drifted");
+  if (materialization.admissionId !== input.admissionId ||
+      materialization.approvalId !== row.approval_id ||
+      materialization.parentSessionId !== row.parent_session_id ||
+      materialization.childSessionId !== row.child_session_id ||
+      materialization.childDispatchId !== row.child_dispatch_id ||
+      materialization.principalId !== row.outbox_principal_id ||
+      materialization.generation !== child.generation ||
+      materialization.lease.leaseId !== child.lease?.leaseId ||
+      materialization.workflowId !== row.workflow_id ||
+      materialization.runId !== row.run_id ||
+      materialization.workItem.repository !== row.repository ||
+      materialization.workItem.workItemId !== row.work_item_id ||
+      materialization.workItem.sourceSha !== row.source_sha) {
+    throw new WorkItemAdmissionConflictError(
+      "admitted child materialization durable linkage drifted",
+    );
+  }
   exact(dispatch.snapshot, child, "child dispatch snapshot drifted from immutable child authority");
   if (row.child_owner_principal_id !== row.parent_owner_principal_id || row.outbox_principal_id !== row.parent_owner_principal_id ||
       currentChild.sessionId !== child.sessionId || canonicalJsonText(currentChild.identity) !== canonicalJsonText(child.identity) ||
       row.outbox_session_id !== child.sessionId || row.outbox_admission_id !== input.admissionId ||
+      row.is_admitted_initial_dispatch !== true ||
       row.outbox_idempotency_key !== dispatch.command.idempotencyKey || dispatch.command.sessionId !== child.sessionId ||
       row.child_event_session_id !== child.sessionId || Number(row.child_event_generation) !== childEvent.generation ||
       Number(row.child_event_cursor) !== childEvent.cursor || row.child_event_type !== childEvent.type ||
@@ -360,10 +416,18 @@ async function persistApproval(client: TransactionClient, approval: Readonly<Rec
   exact(stored.rows[0]?.authority_json, approval, "project-plan approval conflicts with immutable authority");
 }
 
+export interface MaterializationReleaseInput {
+  readonly profile: "full-managed" | "full-external" | "custom";
+  readonly release: string;
+  readonly agentImage: string;
+  readonly runtimeWorkerImage: string;
+}
+
 export async function admitSessionRuntimeWorkItem(client: TransactionClient, input: {
   readonly dispatchId: string;
   readonly workerId: string;
   readonly request: unknown;
+  readonly materialization: MaterializationReleaseInput;
   readonly now?: () => Date;
 }): Promise<WorkItemAdmissionResult> {
   const request = workItemAdmissionRequestSchema.parse(input.request);
@@ -416,6 +480,24 @@ export async function admitSessionRuntimeWorkItem(client: TransactionClient, inp
     if (claimed.dispatch.command.sessionId !== parentSessionId) throw new WorkItemAdmissionConflictError("claimed dispatch does not bind the locked parent session");
     const parent = sessionSnapshotSchema.parse(parentRows.rows[0].snapshot_json);
     if (!isWorkspaceSessionIdentity(parent.identity)) throw new WorkItemAdmissionConflictError("work-item admission requires a workspace parent session");
+    if (claimed.dispatch.command.type !== "prompt") {
+      throw new WorkItemAdmissionConflictError("claimed parent dispatch must be a prompt");
+    }
+    if (!isWorkspaceSessionIdentity(claimed.snapshot.identity)) {
+      throw new WorkItemAdmissionConflictError("claimed parent dispatch does not bind a workspace identity");
+    }
+    let contextAttachments;
+    try {
+      contextAttachments = verifyWorkspaceContextAttachments(
+        claimed.dispatch.command.contextAttachments ?? [],
+      );
+      exact(workspaceContextAttachmentDescriptors(contextAttachments),
+        claimed.snapshot.identity.contextAttachments,
+        "claimed parent dispatch context attachment descriptors drifted");
+    } catch (error) {
+      if (error instanceof WorkItemAdmissionConflictError) throw error;
+      throw new WorkItemAdmissionConflictError("claimed parent dispatch context attachment bytes are invalid", { cause: error });
+    }
     const planRows = await client.query<Row>(
       `SELECT event_id,event_json FROM codeops.session_events WHERE session_id=$1
         AND event_json#>>'{update,kind}'='plan_update' AND event_json#>>'{update,planId}'=$2
@@ -490,6 +572,8 @@ export async function admitSessionRuntimeWorkItem(client: TransactionClient, inp
         observedAt: admittedAt, limits: parentBudget.limits }), eventCursor: 1,
       capabilities: sessionCapabilitiesFor("running", false), updatedAt: admittedAt });
     if (child.budget?.version !== "codeops.session-budget/v2") throw new WorkItemAdmissionConflictError("child session did not retain its durable model budget");
+    if (child.lease?.status !== "active") throw new WorkItemAdmissionConflictError("child session did not retain its active lease");
+    const childLease = child.lease;
     const childEventBody = { sessionId: child.sessionId, generation: 1, cursor: 1, type: "session_created" as const,
       action: { type: "fork" as const, detail: request.workItem.title }, occurredAt: admittedAt };
     const childEvent = sessionEventSchema.parse({ version: "codeops.session-event/v1", eventId: eventId(childEventBody), ...childEventBody });
@@ -552,8 +636,10 @@ export async function admitSessionRuntimeWorkItem(client: TransactionClient, inp
       childEventId: childEvent.eventId, repository: request.workItem.repository, provider: request.workItem.provider,
       workItemId: request.workItem.workItemId, workflowId: request.workItem.workflowId, runId: request.workItem.runId,
       sourceSha: request.workItem.sourceSha, lifecycleEventId: lifecycleEvent.eventId,
-      supervisionEventId: supervisionEvent.eventId, request: requestAuthority, childSnapshot: child,
+      supervisionEventId: supervisionEvent.eventId, request: requestAuthority,
+      materialization: input.materialization, childSnapshot: child,
       childEvent, dispatch, lifecycleEvent, supervisionEvent, admittedAt } as const;
+    const admissionDigest = sha256CanonicalJsonDigest(admissionAuthority);
     const storedAdmission = await client.query(`INSERT INTO codeops.work_item_admissions(admission_id,approval_id,parent_session_id,child_session_id,
       child_dispatch_id,child_event_id,repository,provider,workspace_id,project_id,work_item_id,workflow_id,run_id,source_sha,
       lifecycle_event_id,supervision_event_id,authority_digest,authority_json,admitted_at)
@@ -562,17 +648,78 @@ export async function admitSessionRuntimeWorkItem(client: TransactionClient, inp
       [request.admissionId, approvalId, parentSessionId, child.sessionId, dispatch.dispatchId, childEvent.eventId,
         request.workItem.repository, request.workItem.provider.workspaceId, request.workItem.provider.projectId,
         request.workItem.workItemId, request.workItem.workflowId, request.workItem.runId, request.workItem.sourceSha,
-        lifecycleEvent.eventId, supervisionEvent.eventId, sha256CanonicalJsonDigest(admissionAuthority),
+        lifecycleEvent.eventId, supervisionEvent.eventId, admissionDigest,
         canonicalJsonText(admissionAuthority), admittedAt]);
     if (storedAdmission.rowCount !== 1) {
       throw new WorkItemAdmissionConflictError(
         "work-item admission did not establish one durable authority row",
       );
     }
+    const source = selectClaimedWorkspaceSource(claimed, {
+      repository: request.workItem.repository,
+      resolvedSha: request.workItem.sourceSha,
+    });
+    const materializationInput = admittedChildMaterializationInputSchema.parse({
+      version: "codeops.admitted-child-materialization-input/v1",
+      admissionId: request.admissionId,
+      admissionDigest,
+      approvalId,
+      approvalDigest: sha256CanonicalJsonDigest(approval),
+      parentSessionId,
+      childSessionId: child.sessionId,
+      childDispatchId: dispatch.dispatchId,
+      principalId: dispatch.principalId,
+      workItem: { repository: request.workItem.repository, provider: request.workItem.provider,
+        workItemId: request.workItem.workItemId, workflowId: request.workItem.workflowId,
+        runId: request.workItem.runId, sourceSha: request.workItem.sourceSha },
+      source,
+      policy: parent.identity.policy,
+      profile: input.materialization.profile,
+      release: input.materialization.release,
+      images: { agent: input.materialization.agentImage,
+        runtimeWorker: input.materialization.runtimeWorkerImage },
+      contextAttachments,
+      generation: child.generation,
+      lease: { leaseId: childLease.leaseId, holderId: childLease.holderId,
+        acquiredAt: childLease.acquiredAt, expiresAt: childLease.expiresAt },
+      workflowId: request.workItem.workflowId,
+      runId: request.workItem.runId,
+      initialDispatch: dispatch,
+      identity: child.identity,
+      admittedAt,
+    });
+    const materializationDigest = sha256CanonicalJsonDigest(materializationInput);
+    const initialDispatchDigest = sha256CanonicalJsonDigest(dispatch);
+    const materializationState = admittedChildMaterializationStateSchema.parse({
+      version: "codeops.admitted-child-materialization-state/v1",
+      admissionId: request.admissionId,
+      inputDigest: materializationDigest,
+      state: "queued",
+      resources: {},
+      attemptCount: 0,
+      createdAt: admittedAt,
+      updatedAt: admittedAt,
+    });
+    await client.query(`INSERT INTO codeops.admitted_child_materializations(
+      admission_id,admission_digest,approval_id,approval_digest,parent_session_id,child_session_id,child_dispatch_id,
+      initial_dispatch_digest,principal_id,
+      repository,provider,workspace_id,project_id,work_item_id,workflow_id,run_id,source_sha,
+      generation,lease_id,input_digest,input_json,state,state_json,attempt_count,created_at,updated_at)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'plane',$11,$12,$13,$14,$15,$16,$17,$18,$19,$20::jsonb,
+        'queued',$21::jsonb,0,$22::timestamptz,$22::timestamptz)`,
+      [request.admissionId, admissionDigest, approvalId, sha256CanonicalJsonDigest(approval),
+        parentSessionId, child.sessionId, dispatch.dispatchId, initialDispatchDigest,
+        dispatch.principalId, request.workItem.repository, request.workItem.provider.workspaceId,
+        request.workItem.provider.projectId, request.workItem.workItemId, request.workItem.workflowId,
+        request.workItem.runId, request.workItem.sourceSha, child.generation, childLease.leaseId,
+        materializationDigest, canonicalJsonText(materializationInput), canonicalJsonText(materializationState),
+        admittedAt]);
     await client.query(`INSERT INTO codeops.session_runtime_outbox(dispatch_id,session_id,idempotency_key,principal_id,
-      dispatch_json,status,available_at,created_at,admission_id) VALUES($1,$2,$3,$4,$5::jsonb,'pending',$6::timestamptz,$6::timestamptz,$7)`,
+      dispatch_json,dispatch_digest,status,available_at,created_at,admission_id,
+      is_admitted_initial_dispatch)
+      VALUES($1,$2,$3,$4,$5::jsonb,$6,'pending',$7::timestamptz,$7::timestamptz,$8,true)`,
       [dispatch.dispatchId, child.sessionId, prompt.idempotencyKey, dispatch.principalId,
-        canonicalJsonText(dispatch), admittedAt, request.admissionId]);
+        canonicalJsonText(dispatch), initialDispatchDigest, admittedAt, request.admissionId]);
     const result = workItemAdmissionResultSchema.parse({ version: "codeops.work-item-admission-result/v1",
       admissionId: request.admissionId, disposition: "created", parentSessionId, childSessionId: child.sessionId,
       dispatchId: dispatch.dispatchId, lifecycleEventId: lifecycleEvent.eventId,

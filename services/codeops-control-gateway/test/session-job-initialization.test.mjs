@@ -1,10 +1,14 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import test from "node:test";
+import { canonicalJsonText } from "@codeops/codeops-contracts";
 import {
   InvalidSessionJobInitializationRequestError,
+  initializeAdmittedChildSessionFromJob,
   initializeSessionFromJob,
   serveSessionJobInitialization,
 } from "../dist/session-job-initialization.js";
+import { sessionCapabilitiesFor } from "../dist/session-broker-transitions.js";
 
 const token = "j".repeat(32);
 const request = {
@@ -195,4 +199,106 @@ test("authenticates and validates the exact Job initialization route", async () 
     }),
     InvalidSessionJobInitializationRequestError,
   );
+});
+
+test("replays one exact admitted child and rejects stale authority without creating a Session", async () => {
+  const source = { catalogKey: "codeops", repository: "example-org/example-repository",
+    checkoutPath: "sources/codeops", requestedRef: "main", resolvedSha: "a".repeat(40) };
+  const secondarySource = { catalogKey: "shared", repository: "example-org/shared-library",
+    checkoutPath: "sources/shared", requestedRef: "main", resolvedSha: "c".repeat(40) };
+  const policy = { version: "codeops.session-policy/v1", mode: "implement",
+    workspaceAccess: "bounded-writes", modelCalls: "allowed",
+    modelPolicy: { provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "medium" } };
+  const bytes = Buffer.from("exact server context\n");
+  const attachment = { attachmentId: "brief", name: "brief.txt", mimeType: "text/plain",
+    sizeBytes: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    content: bytes.toString("base64") };
+  const identity = { version: "codeops.session-workspace-identity/v1", policy,
+    contextAttachments: [{ ...attachment, content: undefined }],
+    workspace: { version: "codeops.workspace/v1", sources: [source, secondarySource],
+      scratchPath: "scratch" },
+    workflowId: "workflow-1", runId: "run-1", parentSessionId: "session-parent", forkedAtCursor: 2 };
+  delete identity.contextAttachments[0].content;
+  const seeded = await initializeSessionFromJob(fakeDatabase(), { request, now: () => new Date("2026-08-05T03:00:00.000Z") });
+  const child = { ...seeded.snapshot, sessionId: "session-child", identity,
+    lease: { ...seeded.snapshot.lease, holderId: "runtime-worker:child" } };
+  const admissionId = "22222222-2222-4222-8222-222222222222";
+  const approvalId = "33333333-3333-4333-8333-333333333333";
+  const dispatchId = "44444444-4444-4444-8444-444444444444";
+  const image = `registry.example/image@sha256:${"b".repeat(64)}`;
+  const materialization = { version: "codeops.admitted-child-materialization-input/v1",
+    admissionId, admissionDigest: `sha256:${"1".repeat(64)}`, approvalId,
+    approvalDigest: `sha256:${"2".repeat(64)}`, parentSessionId: "session-parent",
+    childSessionId: child.sessionId, childDispatchId: dispatchId,
+    principalId: request.ownerPrincipalId,
+    workItem: { repository: source.repository, provider: { kind: "plane",
+      workspaceId: "55555555-5555-4555-8555-555555555555",
+      projectId: "66666666-6666-4666-8666-666666666666" }, workItemId: "88888888-8888-4888-8888-888888888888",
+      workflowId: "workflow-1", runId: "run-1", sourceSha: source.resolvedSha },
+    source, policy, profile: "custom", release: "v0.5.0-alpha.58",
+    images: { agent: image, runtimeWorker: image }, contextAttachments: [attachment], generation: 1,
+    lease: { leaseId: child.lease.leaseId, holderId: child.lease.holderId,
+      acquiredAt: child.lease.acquiredAt, expiresAt: child.lease.expiresAt },
+    workflowId: "workflow-1", runId: "run-1", identity, initialDispatch: {
+      version: "codeops.session-runtime-dispatch/v1", dispatchId, principalId: request.ownerPrincipalId,
+      command: { version: "codeops.session-command/v1", sessionId: child.sessionId, generation: 1,
+        leaseId: child.lease.leaseId, idempotencyKey: "77777777-7777-4777-8777-777777777777",
+        type: "prompt", prompt: "Implement it." }, snapshot: child,
+      dispatchedAt: "2026-08-05T03:00:00.000Z" }, admittedAt: "2026-08-05T03:00:00.000Z" };
+  const inputDigest = `sha256:${createHash("sha256").update(canonicalJsonText(materialization)).digest("hex")}`;
+  const v3 = { version: "codeops.session-job-initialization/v3", admissionId, approvalId,
+    dispatchId, inputDigest, sessionId: child.sessionId, generation: 1, identity,
+    leaseId: child.lease.leaseId, holderId: child.lease.holderId,
+    ownerPrincipalId: request.ownerPrincipalId, parentSessionId: "session-parent",
+    repository: source.repository, sourceSha: source.resolvedSha, workItemId: "88888888-8888-4888-8888-888888888888",
+    profile: "custom", release: "v0.5.0-alpha.58", images: materialization.images };
+  const database = (authorityCurrent = true, snapshotJson = child,
+    materializationState = "runtime-authorized") => ({ calls: [], async query(text) {
+    this.calls.push(text);
+    if (text.includes("SELECT materialization.input_json")) return { rowCount: 1, rows: [{
+      input_json: materialization, input_digest: inputDigest,
+      initial_dispatch_digest: `sha256:${createHash("sha256")
+        .update(canonicalJsonText(materialization.initialDispatch)).digest("hex")}`,
+      state: materializationState,
+      snapshot_json: snapshotJson, owner_principal_id: request.ownerPrincipalId,
+      authority_current: authorityCurrent }] };
+    return { rowCount: 1, rows: [] };
+  } });
+  for (let replay = 0; replay < 2; replay += 1) {
+    const db = database();
+    const result = await initializeAdmittedChildSessionFromJob(db, {
+      request: v3, now: () => new Date("2026-08-05T03:10:00.000Z") });
+    assert.equal(result.disposition, "duplicate");
+    assert.deepEqual(result.contextAttachments, [attachment]);
+    assert.equal(result.initialDispatchDigest,
+      `sha256:${createHash("sha256").update(canonicalJsonText(materialization.initialDispatch)).digest("hex")}`);
+    assert.equal(db.calls.some((sql) => sql.includes("INSERT INTO codeops.sessions")), false);
+  }
+  assert.equal((await initializeAdmittedChildSessionFromJob(
+    database(true, child, "success-finalizing"), {
+      request: v3, now: () => new Date("2026-08-05T03:10:00.000Z"),
+    })).disposition, "duplicate");
+  const stale = database(false);
+  await assert.rejects(initializeAdmittedChildSessionFromJob(stale, {
+    request: v3, now: () => new Date("2026-08-05T03:10:00.000Z") }), /authority drifted/);
+  assert.equal(stale.calls.at(-1), "ROLLBACK");
+
+  const replacementLeaseId = "99999999-9999-4999-8999-999999999999";
+  const leaseDrifts = [
+    { ...child, state: "hibernated", capabilities: sessionCapabilitiesFor("hibernated", false),
+      lease: { leaseId: child.lease.leaseId, generation: child.lease.generation,
+        status: "released", releasedAt: "2026-08-05T03:05:00.000Z" } },
+    { ...child, lease: { ...child.lease, leaseId: replacementLeaseId } },
+    { ...child, lease: { ...child.lease, holderId: "runtime-worker:replacement" } },
+    { ...child, generation: 2, lease: { ...child.lease, generation: 2 } },
+    { ...child, lease: { ...child.lease, expiresAt: "2026-08-05T04:16:00.000Z" } },
+  ];
+  for (const drifted of leaseDrifts) {
+    await assert.rejects(initializeAdmittedChildSessionFromJob(database(true, drifted), {
+      request: v3, now: () => new Date("2026-08-05T03:10:00.000Z") }),
+    /authority drifted/);
+  }
+  await assert.rejects(initializeAdmittedChildSessionFromJob(database(), {
+    request: v3, now: () => new Date(materialization.lease.expiresAt) }),
+  /authority drifted/);
 });

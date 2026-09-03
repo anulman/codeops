@@ -60,6 +60,31 @@ test("loads an inline workspace manifest without a credential-bearing volume", a
   assert.deepEqual(identity.workspace.sources, []);
 });
 
+test("parses the exact admitted child identity without reconstructing root lineage", async () => {
+  const exact = {
+    version: "codeops.session-workspace-identity/v1",
+    policy: JSON.parse(policyJson),
+    contextAttachments: [],
+    workspace: { version: "codeops.workspace/v1", sources: [], scratchPath: "scratch" },
+    workflowId: "child-workflow",
+    runId: "child-run",
+    displayName: "Implement admitted item",
+    workItemId: "55555555-5555-4555-8555-555555555555",
+    agentRole: "coding",
+    round: 2,
+    parentSessionId: "session-parent",
+    forkedAtCursor: 17,
+  };
+  const identity = await loadRuntimeSessionIdentity({
+    env: {
+      CODEOPS_SESSION_IDENTITY_JSON: JSON.stringify(exact),
+      CODEOPS_SESSION_WORKFLOW_ID: "wrong-root-workflow",
+      CODEOPS_SESSION_RUN_ID: "wrong-root-run",
+    },
+  });
+  assert.deepEqual(identity, exact);
+});
+
 test("rejects ambiguous inline and file workspace identity", async () => {
   await assert.rejects(loadRuntimeSessionIdentity({
     env: {

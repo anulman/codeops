@@ -1,7 +1,7 @@
 import { readFile } from "node:fs/promises";
-import { createHash } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
-import { Pool } from "pg";
+import { Pool, type PoolClient } from "pg";
 import {
   authenticateBearer,
   loadGitHubReviewComments,
@@ -18,8 +18,11 @@ import {
   githubMutationReconciliationProviderRequestSchema,
   githubReadProviderRequestSchema,
   githubPullRequestStackLinkSchema,
+  type AdmittedChildMaterializationInput,
   type WorkspaceLaunch,
 } from "@codeops/codeops-contracts";
+import { workspaceContextAttachmentDescriptors } from
+  "@codeops/codeops-contracts/workspace-context-node";
 import { createGitHubReadAdapter } from "./github-reads-adapter.js";
 import {
   GitHubMutationPreflightNoEffectError,
@@ -30,6 +33,7 @@ import {
   loadGitHubPullRequestStack,
 } from "./github-stacks.js";
 import {
+  assertKubernetesResourceOwnership,
   KubernetesResourceIdentityDriftError,
   loadInClusterKubernetesClient,
 } from "./kubernetes.js";
@@ -63,13 +67,18 @@ import {
 import {
   InvalidSessionJobInitializationRequestError,
   initializeSessionFromJob,
+  initializeAdmittedChildSessionFromJob,
   serveSessionJobInitialization,
 } from "./session-job-initialization.js";
-import { issueSessionModelAuthority } from "./session-model-authority.js";
+import {
+  issueClaimedSessionModelAuthority,
+  RevokedSessionModelAuthorityError,
+} from "./session-model-authority.js";
 import {
   ImmutableSessionRuntimeDispatchConflictError,
   SessionRuntimeDispatchNotFoundError,
   claimSessionRuntimeDispatch,
+  renewSessionRuntimeDispatchClaim,
   completeSessionRuntimeDispatch,
   enqueueSessionRuntimeDispatch,
 } from "./session-broker-runtime-outbox.js";
@@ -140,8 +149,32 @@ import {
   recordInteractiveRuntimeJobProgress,
   reconcileInteractiveRuntimeTerminal,
 } from "./session-runtime-terminal-reconciler.js";
+import {
+  claimAdmittedChildMaterialization,
+  classifyAdmittedChildKubernetesError,
+  releaseAdmittedChildMaterializationClaim,
+  renewAdmittedChildMaterializationClaim,
+  failAdmittedChildMaterialization,
+  loadAdmittedChildMaterialization,
+  lockAdmittedChildMaterializationAuthority,
+  lockAdmittedChildMaterializationLease,
+  PermanentAdmittedChildMaterializationError,
+  reconcileAdmittedChildMaterialization,
+  updateAdmittedChildMaterialization,
+} from "./admitted-child-materialization-controller.js";
+import {
+  admittedChildWorkspaceLaunchId,
+  buildAdmittedChildCleanupResources,
+} from "./workspace-resources.js";
+import {
+  controlGatewayRuntimeRole,
+  runtimeRoleOwnsRequest,
+} from "./runtime-role.js";
 
 const MAX_BODY_BYTES = 1024 * 1024;
+const runtimeRole = controlGatewayRuntimeRole(
+  process.env.CODEOPS_CONTROL_GATEWAY_RUNTIME_ROLE,
+);
 
 function required(name: string): string {
   const value = process.env[name]?.trim();
@@ -241,6 +274,16 @@ function json(
 }
 
 const namespace = required("CODEOPS_NAMESPACE");
+const materializationProfile = required("CODEOPS_DEPLOYMENT_PROFILE");
+if (!["full-managed", "full-external", "custom"].includes(materializationProfile)) {
+  throw new Error("CODEOPS_DEPLOYMENT_PROFILE is invalid");
+}
+const admittedChildMaterialization = {
+  profile: materializationProfile as "full-managed" | "full-external" | "custom",
+  release: required("CODEOPS_RELEASE"),
+  agentImage: requireDigestImage("CODEOPS_AGENT_IMAGE"),
+  runtimeWorkerImage: requireDigestImage("CODEOPS_SESSION_RUNTIME_WORKER_IMAGE"),
+};
 const token = await secretFile("CODEOPS_DISPATCH_TOKEN_FILE");
 if (token.length < 32 || token.length > 4_096) {
   throw new Error("dispatch token length is invalid");
@@ -262,11 +305,13 @@ if (
 ) {
   throw new Error("GitHub mutation token must be one distinct authority");
 }
-const kubernetes = await loadInClusterKubernetesClient(namespace);
+const modelProxySigningKey = await secretFile("CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE");
+const kubernetes = await loadInClusterKubernetesClient(namespace, modelProxySigningKey);
+
 const modelAuth = {
   mode: "proxy" as const,
   origin: required("CODEOPS_MODEL_PROXY_ORIGIN"),
-  signingKey: await secretFile("CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE"),
+  signingKey: modelProxySigningKey,
 };
 const requiredReviewCheckNames = required(
   "CODEOPS_REQUIRED_REVIEW_CHECK_NAMES",
@@ -496,24 +541,26 @@ const reconcileGitHubMutation = createGitHubMutationReconciler({
   resolve: (repository) => repositoryRegistry.resolve(repository),
   loadBranchCandidate,
 });
-const migrationClient = await database.connect();
-try {
-  const retainedRuntimeJobUids =
-    await listRetainedInteractiveRuntimeJobUids(
-      migrationClient,
-      (name) => kubernetes.getJob(name),
-    );
-  await migrateSessionBroker(migrationClient, {
-    legacySessionOwnerPrincipalId:
-      process.env.CODEOPS_LEGACY_SESSION_OWNER_PRINCIPAL_ID?.trim() || undefined,
-    ...(retainedRuntimeJobUids === undefined
-      ? {}
-      : { retainedRuntimeJobUids }),
-  });
-} finally {
-  migrationClient.release();
+if (runtimeRole === "api") {
+  const migrationClient = await database.connect();
+  try {
+    const retainedRuntimeJobUids =
+      await listRetainedInteractiveRuntimeJobUids(
+        migrationClient,
+        (name) => kubernetes.getJob(name),
+      );
+    await migrateSessionBroker(migrationClient, {
+      legacySessionOwnerPrincipalId:
+        process.env.CODEOPS_LEGACY_SESSION_OWNER_PRINCIPAL_ID?.trim() || undefined,
+      ...(retainedRuntimeJobUids === undefined
+        ? {}
+        : { retainedRuntimeJobUids }),
+    });
+  } finally {
+    migrationClient.release();
+  }
 }
-const run = createAgentJobRunner({
+const run = runtimeRole === "file-dispatcher" ? createAgentJobRunner({
   kubernetes,
   config: {
     namespace,
@@ -557,7 +604,7 @@ const run = createAgentJobRunner({
       },
     },
   },
-});
+}) : null;
 
 const workspaceSourceResolver = createCatalogSourceResolver({
   entries: new Map(
@@ -656,9 +703,11 @@ async function reconcileOneWorkspaceLaunch(launchId: string): Promise<void> {
         client.release();
       }
     },
-    ensureResource: async (resource, requestDigest) => {
+    ensureResource: async (resource, requestDigest, expectedUid, expectedConfigDigest) => {
       try {
-        await kubernetes.ensure(resource as never, requestDigest);
+        return await kubernetes.ensure(
+          resource as never, requestDigest, expectedUid, expectedConfigDigest,
+        );
       } catch (error) {
         if (error instanceof KubernetesResourceIdentityDriftError) {
           throw new PermanentWorkspaceLaunchError(error.message, {
@@ -668,6 +717,16 @@ async function reconcileOneWorkspaceLaunch(launchId: string): Promise<void> {
         throw error;
       }
     },
+    recoverResource: async (resource, requestDigest) => {
+      try { return await kubernetes.recoverOwned(resource as never, requestDigest); }
+      catch (error) {
+        if (error instanceof KubernetesResourceIdentityDriftError) {
+          throw new PermanentWorkspaceLaunchError(error.message, { cause: error });
+        }
+        throw error;
+      }
+    },
+    readResourceUid: (resource) => kubernetes.readResourceUid(resource as never),
     loadSession: async (sessionId, ownerPrincipalId) => {
       const client = await database.connect();
       try {
@@ -686,7 +745,8 @@ async function reconcileOneWorkspaceLaunch(launchId: string): Promise<void> {
         client.release();
       }
     },
-    removeResource: (resource) => kubernetes.delete(resource as never),
+    removeResource: (resource, requestDigest, expectedUid, expectedConfigDigest) =>
+      kubernetes.delete(resource as never, requestDigest, expectedUid, expectedConfigDigest),
     enqueuePrompt: async (input) => {
       const client = await database.connect();
       try {
@@ -732,12 +792,187 @@ function scheduleWorkspaceReconciliation(): void {
     }
   }).catch(() => undefined);
 }
-const workspaceReconciliationTimer = setInterval(
-  scheduleWorkspaceReconciliation,
-  2_000,
-);
-workspaceReconciliationTimer.unref();
-scheduleWorkspaceReconciliation();
+if (runtimeRole === "api") {
+  const workspaceReconciliationTimer = setInterval(
+    scheduleWorkspaceReconciliation,
+    2_000,
+  );
+  workspaceReconciliationTimer.unref();
+  scheduleWorkspaceReconciliation();
+}
+
+function admittedChildResourceConfig(input: AdmittedChildMaterializationInput) {
+  const launchId = admittedChildWorkspaceLaunchId(input.admissionId);
+  const workspace = input.identity.workspace;
+  const base = workspaceResourceConfig({
+    launchId, principalId: input.principalId, requestDigest: input.admissionDigest,
+    policy: input.identity.policy,
+    contextAttachments: input.identity.contextAttachments,
+    workspace,
+  } as WorkspaceLaunch, {
+    sessionId: input.childSessionId, workflowId: input.workflowId, runId: input.runId,
+    leaseId: input.lease.leaseId, promptIdempotencyKey: input.initialDispatch.command.idempotencyKey,
+  });
+  return { ...base, requestDigest: `sha256:${createHash("sha256")
+    .update(canonicalJsonText(input)).digest("hex")}`,
+    generation: input.generation, holderId: input.lease.holderId, identity: input.identity,
+    agentImage: input.images.agent, runtimeWorkerImage: input.images.runtimeWorker,
+    admittedChildOwner: { admissionId: input.admissionId, approvalId: input.approvalId,
+      parentSessionId: input.parentSessionId, childDispatchId: input.childDispatchId,
+      repository: input.workItem.repository, sourceSha: input.workItem.sourceSha,
+      workItemId: input.workItem.workItemId,
+      release: input.release, profile: input.profile } };
+}
+
+async function withAdmittedChildAuthority<T>(admissionId: string, inputDigest: string,
+  allowedStates: readonly string[], claimToken: string,
+  effect: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await database.connect();
+  await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
+    await renewAdmittedChildMaterializationClaim(client, admissionId,
+      admittedChildControllerId, claimToken, 120_000);
+    await lockAdmittedChildMaterializationAuthority(client, admissionId, inputDigest,
+      allowedStates, claimToken);
+    const result = await effect(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+async function withAdmittedChildLease<T>(admissionId: string, inputDigest: string,
+  allowedStates: readonly string[], claimToken: string,
+  effect: (client: PoolClient) => Promise<T>,
+): Promise<T> {
+  const client = await database.connect();
+  await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
+    await renewAdmittedChildMaterializationClaim(client, admissionId,
+      admittedChildControllerId, claimToken, 120_000);
+    await lockAdmittedChildMaterializationLease(client, admissionId, inputDigest,
+      allowedStates, claimToken);
+    const result = await effect(client);
+    await client.query("COMMIT");
+    return result;
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
+  } finally {
+    client.release();
+  }
+}
+
+let admittedChildReconciliation: Promise<void> = Promise.resolve();
+let admittedChildReconciliationRunning = false;
+const admittedChildControllerId = `control-gateway:${randomUUID()}`;
+function scheduleAdmittedChildReconciliation(): void {
+  if (admittedChildReconciliationRunning) return;
+  admittedChildReconciliationRunning = true;
+  admittedChildReconciliation = (async () => {
+    const listClient = await database.connect();
+    let claim: { admissionId: string; token: string } | null;
+    try { claim = await claimAdmittedChildMaterialization(
+      listClient, admittedChildControllerId, randomUUID()); }
+    finally { listClient.release(); }
+    if (claim !== null) {
+      const { admissionId, token: claimToken } = claim;
+      try { await reconcileAdmittedChildMaterialization(admissionId, {
+        load: async (id) => { const client = await database.connect();
+          try { return await loadAdmittedChildMaterialization(client, id, claimToken); }
+          finally { client.release(); } },
+        update: async (state) => { const client = await database.connect();
+          try { return await updateAdmittedChildMaterialization(client, state, claimToken); }
+          finally { client.release(); } },
+        ensureResource: async (resource, identity, expectedUid, allowedStates, expectedConfigDigest) => {
+          try { return await withAdmittedChildAuthority(admissionId, identity, allowedStates,
+            claimToken,
+            async () => kubernetes.ensure(resource as never, identity, expectedUid,
+              expectedConfigDigest)); }
+          catch (error) { throw classifyAdmittedChildKubernetesError(error); }
+        },
+        loadJob: (resource, identity, binding, allowedStates) =>
+          withAdmittedChildAuthority(admissionId, identity, allowedStates, claimToken, async () => {
+            try {
+            const job = await kubernetes.getJob(
+              (resource.metadata as { name: string }).name,
+            );
+            assertKubernetesResourceOwnership(
+              job as never, resource as never, identity, binding.uid, binding.configDigest,
+            );
+            return job;
+            } catch (error) { throw classifyAdmittedChildKubernetesError(error); }
+          }),
+        listRuntimePods: (runId, identity, allowedStates) => withAdmittedChildAuthority(admissionId,
+          identity, allowedStates, claimToken, async () => {
+            try { return await kubernetes.listRunPods(runId, true); }
+            catch (error) { throw classifyAdmittedChildKubernetesError(error); }
+          }),
+        removeResource: async (resource, identity, expectedUid, expectedConfigDigest, allowedStates) => {
+          try {
+            const fenced = allowedStates.includes("cleanup-pending") ||
+                allowedStates.includes("success-finalizing")
+              ? withAdmittedChildLease : withAdmittedChildAuthority;
+            await fenced(admissionId, identity, allowedStates, claimToken, async () =>
+              kubernetes.delete(resource as never, identity, expectedUid, expectedConfigDigest));
+          }
+          catch (error) { throw classifyAdmittedChildKubernetesError(error); }
+        },
+        recoverResource: async (resource, identity, allowedStates) => {
+          try { return await withAdmittedChildLease(admissionId, identity, allowedStates,
+            claimToken, async () => kubernetes.recoverOwned(resource as never, identity)); }
+          catch (error) { throw classifyAdmittedChildKubernetesError(error); }
+        },
+        readResourceUid: async (resource, identity, allowedStates) => {
+          try { return await withAdmittedChildAuthority(admissionId, identity, allowedStates,
+            claimToken, async () => kubernetes.readResourceUid(resource as never)); }
+          catch (error) { throw classifyAdmittedChildKubernetesError(error); }
+        },
+        markReady: async (state) => withAdmittedChildAuthority(admissionId,
+          state.inputDigest, ["success-finalizing"], claimToken,
+          (client) => updateAdmittedChildMaterialization(client, state, claimToken)),
+        markSuccessFinalizing: async (state) => withAdmittedChildAuthority(admissionId,
+          state.inputDigest, ["runtime-authorized"], claimToken,
+          (client) => updateAdmittedChildMaterialization(client, state, claimToken)),
+        markFailed: async (state) => withAdmittedChildLease(admissionId,
+          state.inputDigest, ["cleanup-pending"], claimToken,
+          (client) => failAdmittedChildMaterialization(client, state, claimToken)),
+        resourceConfig: admittedChildResourceConfig,
+        cleanupResources: (input, identity) => buildAdmittedChildCleanupResources({
+          namespace,
+          admissionId: input.admissionId,
+          requestDigest: identity,
+          owner: {
+            admissionId: input.admissionId, approvalId: input.approvalId,
+            parentSessionId: input.parentSessionId, childDispatchId: input.childDispatchId,
+            repository: input.workItem.repository, sourceSha: input.workItem.sourceSha,
+            workItemId: input.workItem.workItemId, release: input.release, profile: input.profile,
+          },
+        }),
+      }); }
+      catch (error) { process.stderr.write(`${JSON.stringify({
+        event: "admitted_child_materialization_reconciliation_failed", admissionId,
+        error: error instanceof Error ? error.message : String(error),
+      })}\n`); }
+      finally {
+        const releaseClient = await database.connect();
+        try { await releaseAdmittedChildMaterializationClaim(
+          releaseClient, admissionId, claimToken); }
+        finally { releaseClient.release(); }
+      }
+    }
+  })().catch(() => undefined).finally(() => { admittedChildReconciliationRunning = false; });
+}
+if (runtimeRole === "api") {
+  const admittedChildReconciliationTimer = setInterval(scheduleAdmittedChildReconciliation, 2_000);
+  admittedChildReconciliationTimer.unref();
+  scheduleAdmittedChildReconciliation();
+}
 
 let runtimeTerminalReconciliation: Promise<void> = Promise.resolve();
 function scheduleRuntimeTerminalReconciliation(): void {
@@ -768,7 +1003,8 @@ function scheduleRuntimeTerminalReconciliation(): void {
         const observation = observeInteractiveRuntimeTerminal({
           candidate,
           job,
-          pods: await kubernetes.listRunPods(candidate.runId),
+          pods: await kubernetes.listRunPods(candidate.runId,
+            candidate.runtimeUid !== undefined),
           observedAt,
         });
         if (observation === null) continue;
@@ -804,12 +1040,14 @@ function scheduleRuntimeTerminalReconciliation(): void {
     }
   }).catch(() => undefined);
 }
-const runtimeTerminalReconciliationTimer = setInterval(
-  scheduleRuntimeTerminalReconciliation,
-  2_000,
-);
-runtimeTerminalReconciliationTimer.unref();
-scheduleRuntimeTerminalReconciliation();
+if (runtimeRole === "api") {
+  const runtimeTerminalReconciliationTimer = setInterval(
+    scheduleRuntimeTerminalReconciliation,
+    2_000,
+  );
+  runtimeTerminalReconciliationTimer.unref();
+  scheduleRuntimeTerminalReconciliation();
+}
 
 let sessionNotificationProjection: Promise<void> = Promise.resolve();
 function scheduleSessionNotificationProjection(): void {
@@ -830,12 +1068,14 @@ function scheduleSessionNotificationProjection(): void {
     })}\n`);
   });
 }
-const sessionNotificationProjectionTimer = setInterval(
-  scheduleSessionNotificationProjection,
-  2_000,
-);
-sessionNotificationProjectionTimer.unref();
-scheduleSessionNotificationProjection();
+if (runtimeRole === "api") {
+  const sessionNotificationProjectionTimer = setInterval(
+    scheduleSessionNotificationProjection,
+    2_000,
+  );
+  sessionNotificationProjectionTimer.unref();
+  scheduleSessionNotificationProjection();
+}
 
 const webPushWorkerId = "control-gateway:web-push";
 let webPushDelivery: Promise<void> = Promise.resolve();
@@ -863,15 +1103,21 @@ function scheduleWebPushDelivery(): void {
     })}\n`);
   });
 }
-const webPushDeliveryTimer = setInterval(scheduleWebPushDelivery, 1_000);
-webPushDeliveryTimer.unref();
-scheduleWebPushDelivery();
+if (runtimeRole === "api") {
+  const webPushDeliveryTimer = setInterval(scheduleWebPushDelivery, 1_000);
+  webPushDeliveryTimer.unref();
+  scheduleWebPushDelivery();
+}
 
 let serial: Promise<unknown> = Promise.resolve();
 const server = createServer((request, response) => {
   void (async () => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
+      return;
+    }
+    if (!runtimeRoleOwnsRequest(runtimeRole, request.method, request.url)) {
+      json(response, 404, { status: "not-found" });
       return;
     }
     try {
@@ -976,23 +1222,11 @@ const server = createServer((request, response) => {
         initialize: async (initializationRequest) => {
           const client = await database.connect();
           try {
-            const initialized = await initializeSessionFromJob(client, {
-              request: initializationRequest,
-            });
-            const issuedAt = new Date();
-            const modelAuthority = issueSessionModelAuthority({
-              snapshot: initialized.snapshot,
-              signingKey: modelAuth.signingKey,
-              issuedAt,
-            });
-            return {
-              ...initialized,
-              ...(modelAuthority.disposition === "disabled"
-                ? {}
-                : {
-                    modelProxyToken: modelAuthority.modelProxyToken,
-                  }),
-            };
+            const initialized = (initializationRequest as { version?: string }).version ===
+                "codeops.session-job-initialization/v3"
+              ? await initializeAdmittedChildSessionFromJob(client, { request: initializationRequest })
+              : await initializeSessionFromJob(client, { request: initializationRequest });
+            return initialized;
           } finally {
             client.release();
           }
@@ -1085,6 +1319,31 @@ const server = createServer((request, response) => {
             client.release();
           }
         },
+        renewClaim: async (renewalInput) => {
+          const client = await database.connect();
+          try {
+            return await renewSessionRuntimeDispatchClaim(client, renewalInput);
+          } finally {
+            client.release();
+          }
+        },
+        issueModelAuthority: async (authorityInput) => {
+          const client = await database.connect();
+          try {
+            const authority = await issueClaimedSessionModelAuthority(client, {
+              ...authorityInput,
+              signingKey: modelAuth.signingKey,
+            });
+            return {
+              version: "codeops.session-runtime-model-authority-result/v1",
+              dispatchId: authorityInput.dispatchId,
+              modelProxyToken: authority.modelProxyToken,
+              expiresAt: authority.expiresAt,
+            };
+          } finally {
+            client.release();
+          }
+        },
         submitPermission: async (permissionInput) => {
           const client = await database.connect();
           try {
@@ -1103,7 +1362,9 @@ const server = createServer((request, response) => {
         },
         admitWorkItem: async (admissionInput) => {
           const client = await database.connect();
-          try { return await admitSessionRuntimeWorkItem(client, admissionInput); }
+          try { return await admitSessionRuntimeWorkItem(client, {
+            ...admissionInput, materialization: admittedChildMaterialization,
+          }); }
           finally { client.release(); }
         },
       });
@@ -1121,7 +1382,8 @@ const server = createServer((request, response) => {
             ? 404
             : error instanceof ImmutableSessionRuntimeDispatchConflictError ||
                 error instanceof SessionRuntimeClaimConflictError ||
-                error instanceof SessionRuntimePermissionConflictError
+                error instanceof SessionRuntimePermissionConflictError ||
+                error instanceof RevokedSessionModelAuthorityError
               ? 409
               : 503;
       json(response, status, {
@@ -1667,7 +1929,7 @@ const server = createServer((request, response) => {
           );
         }
       });
-      const result = serial.then(() => run(dispatch, cancellation.signal));
+      const result = serial.then(() => run!(dispatch, cancellation.signal));
       serial = result.catch(() => undefined);
       json(response, 200, await result);
     } catch {

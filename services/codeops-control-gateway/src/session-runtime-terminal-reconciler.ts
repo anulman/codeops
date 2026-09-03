@@ -11,6 +11,7 @@ import {
 } from "@codeops/codeops-contracts";
 import type { TransactionClient } from "./session-broker-repository.js";
 import { sessionCapabilitiesFor } from "./session-broker-transitions.js";
+import { kubernetesIdentityLabel } from "./kubernetes.js";
 
 export interface InteractiveRuntimeCandidate {
   readonly sessionId: string;
@@ -19,12 +20,16 @@ export interface InteractiveRuntimeCandidate {
   readonly runId: string;
   readonly jobName: string;
   readonly requestDigest: string;
+  readonly runtimeUid?: string;
+  readonly runtimeConfigDigest?: string;
 }
 
 interface CandidateRow extends Record<string, unknown> {
   readonly launch_id: unknown;
   readonly request_digest: unknown;
   readonly snapshot_json: unknown;
+  readonly runtime_uid?: unknown;
+  readonly runtime_config_digest?: unknown;
 }
 
 function isEligibleSnapshot(snapshot: SessionSnapshot): boolean {
@@ -46,11 +51,19 @@ function interactiveRuntimeCandidate(row: CandidateRow): InteractiveRuntimeCandi
     !isWorkspaceSessionIdentity(snapshot.identity) ||
     !isEligibleSnapshot(snapshot) ||
     typeof row.launch_id !== "string" ||
-    !/^launch-[0-9a-f]{24}$/.test(row.launch_id) ||
+    !/^launch-(?:[0-9a-f]{24}|[0-9a-f]{32})$/.test(row.launch_id) ||
     typeof row.request_digest !== "string" ||
     !/^sha256:[0-9a-f]{64}$/.test(row.request_digest)
   ) {
     throw new Error("interactive runtime candidate identity is invalid");
+  }
+  const admitted = row.launch_id.length === "launch-".length + 32;
+  const runtimeUid = string(row.runtime_uid);
+  const runtimeConfigDigest = string(row.runtime_config_digest);
+  if (admitted && (!runtimeUid || !runtimeConfigDigest ||
+      !/^sha256:[0-9a-f]{64}$/.test(runtimeConfigDigest)) ||
+      !admitted && (runtimeUid !== null || runtimeConfigDigest !== null)) {
+    throw new Error("interactive runtime candidate binding is invalid");
   }
   return {
     sessionId: snapshot.sessionId,
@@ -59,6 +72,8 @@ function interactiveRuntimeCandidate(row: CandidateRow): InteractiveRuntimeCandi
     runId: snapshot.identity.runId,
     jobName: `workspace-${row.launch_id.slice("launch-".length)}`,
     requestDigest: row.request_digest,
+    ...(runtimeUid === null ? {} : { runtimeUid }),
+    ...(runtimeConfigDigest === null ? {} : { runtimeConfigDigest }),
   };
 }
 
@@ -82,18 +97,41 @@ export async function listInteractiveRuntimeCandidates(
       throw new Error("runtime terminal reconciliation cursor is missing");
     }
     const result = await client.query<CandidateRow>(
-      `SELECT launch.launch_id, launch.request_digest, session.snapshot_json
-         FROM codeops.workspace_launches AS launch
-         JOIN codeops.sessions AS session
-           ON session.session_id = launch.launch_json->>'sessionId'
-        WHERE session.snapshot_json->>'state' IN
-              ('running', 'waiting_permission', 'checkpointing', 'hibernated')
-          AND session.snapshot_json->'identity'->>'version' =
-              'codeops.session-workspace-identity/v1'
-          AND launch.launch_id =
-              session.snapshot_json->'identity'->>'runId'
-        ORDER BY (session.session_id > $1) DESC, session.session_id ASC
-        LIMIT $2`,
+      `SELECT session.launch_id,session.request_digest,session.snapshot_json,
+              session.runtime_uid,session.runtime_config_digest
+       FROM (
+         SELECT launch.launch_id,launch.request_digest,session.snapshot_json,
+                session.session_id,NULL::text AS runtime_uid,
+                NULL::text AS runtime_config_digest
+         FROM codeops.workspace_launches launch
+         JOIN codeops.sessions session ON session.session_id=launch.launch_json->>'sessionId'
+         WHERE launch.launch_id=session.snapshot_json->'identity'->>'runId'
+         UNION ALL
+         SELECT 'launch-' || replace(materialization.admission_id::text,'-',''),
+                materialization.input_digest,session.snapshot_json,session.session_id,
+                materialization.state_json#>>'{resources,workspaceRuntime,uid}',
+                materialization.state_json#>>'{resources,workspaceRuntime,configDigest}'
+         FROM codeops.admitted_child_materializations materialization
+         JOIN codeops.sessions session ON session.session_id=materialization.child_session_id
+         JOIN codeops.work_item_admissions admission
+           ON admission.admission_id=materialization.admission_id
+          AND admission.authority_digest=materialization.admission_digest
+         JOIN codeops.project_plan_approvals approval
+           ON approval.approval_id=materialization.approval_id
+          AND approval.authority_digest=materialization.approval_digest
+         JOIN codeops.session_runtime_outbox dispatch
+           ON dispatch.dispatch_id=materialization.child_dispatch_id
+          AND dispatch.session_id=materialization.child_session_id
+          AND dispatch.principal_id=materialization.principal_id
+          AND dispatch.admission_id=materialization.admission_id
+         WHERE materialization.state IN ('success-finalizing','ready')
+       ) session
+       WHERE session.snapshot_json->>'state' IN
+             ('running','waiting_permission','checkpointing','hibernated')
+         AND session.snapshot_json->'identity'->>'version'=
+             'codeops.session-workspace-identity/v1'
+       ORDER BY (session.session_id > $1) DESC,session.session_id ASC
+       LIMIT $2`,
       [lastSessionId, limit],
     );
     const candidates = result.rows.map(interactiveRuntimeCandidate);
@@ -189,8 +227,14 @@ function requireJobIdentity(
   if (
     jobIdentity.name !== candidate.jobName ||
     labels?.["codeops.example/resource-role"] !== "workspace-runtime" ||
-    labels?.["codeops.example/session-id"] !== candidate.sessionId ||
-    labels?.["codeops.example/run-id"] !== candidate.runId ||
+    labels?.["codeops.example/session-id"] !== (candidate.runtimeUid === undefined
+      ? candidate.sessionId : kubernetesIdentityLabel(candidate.sessionId)) ||
+    labels?.["codeops.example/run-id"] !== (candidate.runtimeUid === undefined
+      ? candidate.runId : kubernetesIdentityLabel(candidate.runId)) ||
+    (candidate.runtimeUid !== undefined && jobIdentity.uid !== candidate.runtimeUid) ||
+    (candidate.runtimeConfigDigest !== undefined && annotations?.[
+      "codeops.example/resource-configuration-digest"
+    ] !== candidate.runtimeConfigDigest) ||
     (!completePreferredIdentity && !completeLegacyIdentity)
   ) {
     throw new Error("Kubernetes runtime Job identity drifted from the Session");
