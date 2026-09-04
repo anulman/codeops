@@ -628,7 +628,9 @@ export class SessionRuntimeTransport {
     if (
       result.dispatchId !== claim.dispatch.dispatchId ||
       Date.parse(result.expiresAt) <= now().getTime() ||
-      Date.parse(result.expiresAt) > Date.parse(claim.claimExpiresAt)
+      claim.dispatch.snapshot.lease?.status !== "active" ||
+      Date.parse(result.expiresAt) >
+        Date.parse(claim.dispatch.snapshot.lease.expiresAt)
     ) {
       throw new SessionRuntimeTransportError(
         "session runtime model authority drifted from the exact live claim",

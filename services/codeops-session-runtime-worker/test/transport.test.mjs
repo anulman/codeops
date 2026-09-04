@@ -322,7 +322,7 @@ test("loads fresh model authority only through the hidden live claim", async () 
         version: "codeops.session-runtime-model-authority-result/v1",
         dispatchId,
         modelProxyToken: `v1.${"a".repeat(32)}.${"b".repeat(43)}`,
-        expiresAt: "2026-08-04T20:04:00.000Z",
+        expiresAt: "2026-08-04T20:45:00.000Z",
       });
       return json({
         version: "codeops.session-command-result/v1",
