@@ -333,10 +333,6 @@ BEGIN
   RETURN NEW;
 END;
 $$;
-CREATE TRIGGER session_runtime_outbox_bound_claim_protocol
-  BEFORE INSERT OR UPDATE ON codeops.session_runtime_outbox
-  FOR EACH ROW EXECUTE FUNCTION codeops.require_runtime_bound_claim_protocol();
-
 -- Existing claims were issued by the old v1 gateway before this migration.
 -- Convert only claims owned by the bounded active-session snapshot; fail if
 -- any other claimed row cannot be given explicit migration-owned proof.
@@ -348,6 +344,9 @@ UPDATE codeops.session_runtime_outbox AS outbox
       WHERE session.session_id = outbox.session_id
         AND session.legacy_runtime_worker_compatible = true
    );
+CREATE TRIGGER session_runtime_outbox_bound_claim_protocol
+  BEFORE INSERT OR UPDATE ON codeops.session_runtime_outbox
+  FOR EACH ROW EXECUTE FUNCTION codeops.require_runtime_bound_claim_protocol();
 DO $$
 BEGIN
   IF EXISTS (
