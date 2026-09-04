@@ -265,7 +265,7 @@ export function validateModelProxyToken(input) {
     ? Object.keys(payload).sort().join(",")
     : "";
   const hasDispatchAuthority = payloadKeys ===
-    "aud,budgetId,dispatchId,exp,generation,iat,leaseId,maximumOutputTokens,maximumRequests,model,reasoningEffort,sub";
+    "aud,budgetId,claimCount,dispatchId,exp,generation,iat,leaseId,maximumOutputTokens,maximumRequests,model,reasoningEffort,sub";
   const hasSessionBudgetAuthority = hasDispatchAuthority || payloadKeys ===
     "aud,budgetId,exp,generation,iat,maximumOutputTokens,maximumRequests,model,reasoningEffort,sub";
   const hasLegacyAuthority = payloadKeys ===
@@ -286,7 +286,9 @@ export function validateModelProxyToken(input) {
         typeof payload.leaseId !== "string" ||
         !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.leaseId) ||
         typeof payload.dispatchId !== "string" ||
-        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.dispatchId)
+        !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(payload.dispatchId) ||
+        !Number.isSafeInteger(payload.claimCount) ||
+        payload.claimCount < 1
       ))
     )) ||
     typeof payload.model !== "string" ||
@@ -304,8 +306,7 @@ export function validateModelProxyToken(input) {
     payload.maximumOutputTokens > 100_000 ||
     payload.iat > now + 60 ||
     payload.exp <= now ||
-    payload.exp - payload.iat > MAX_TOKEN_TTL_SECONDS ||
-    (hasDispatchAuthority && payload.exp - payload.iat > 5 * 60)
+    payload.exp - payload.iat > MAX_TOKEN_TTL_SECONDS
   ) {
     return null;
   }
@@ -314,7 +315,7 @@ export function validateModelProxyToken(input) {
     budgetId: hasSessionBudgetAuthority ? payload.budgetId : null,
     generation: hasSessionBudgetAuthority ? payload.generation : null,
     ...(hasDispatchAuthority
-      ? { leaseId: payload.leaseId, dispatchId: payload.dispatchId }
+      ? { leaseId: payload.leaseId, dispatchId: payload.dispatchId, claimCount: payload.claimCount }
       : {}),
     modelTokenId: hasSessionBudgetAuthority
       ? `sha256:${createHash("sha256").update(input.token).digest("hex")}`
@@ -726,6 +727,7 @@ export function createModelProxyRequestListener(input) {
               generation: authority.generation,
               leaseId: authority.leaseId,
               dispatchId: authority.dispatchId,
+              claimCount: authority.claimCount,
               provider: "openai",
               model: authority.model,
               reasoningEffort: authority.reasoningEffort,

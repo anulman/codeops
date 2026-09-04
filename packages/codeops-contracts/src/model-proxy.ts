@@ -18,6 +18,7 @@ interface SessionModelProxyTokenInput extends ModelProxyTokenInput {
 interface ClaimedDispatchModelProxyTokenInput extends SessionModelProxyTokenInput {
   readonly leaseId: string;
   readonly dispatchId: string;
+  readonly claimCount: number;
   readonly expiresAt: Date;
 }
 
@@ -28,6 +29,7 @@ function createToken(
     generation: number;
     leaseId?: string;
     dispatchId?: string;
+    claimCount?: number;
     expiresAt?: Date;
   }> | null,
 ): string {
@@ -40,6 +42,7 @@ function createToken(
     budgetAuthority.generation < 1 ||
     ((budgetAuthority.leaseId !== undefined ||
       budgetAuthority.dispatchId !== undefined ||
+      budgetAuthority.claimCount !== undefined ||
       budgetAuthority.expiresAt !== undefined) && (
       budgetAuthority.expiresAt === undefined ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
@@ -47,7 +50,9 @@ function createToken(
       ) ||
       !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
         budgetAuthority.dispatchId ?? "",
-      )
+      ) ||
+      !Number.isSafeInteger(budgetAuthority.claimCount) ||
+      budgetAuthority.claimCount! < 1
     ))
   )) {
     throw new Error("model proxy token budget authority is invalid");
@@ -86,7 +91,7 @@ function createToken(
   if (
     !Number.isSafeInteger(expiresAt) ||
     expiresAt <= issuedAt ||
-    expiresAt - issuedAt > (dispatchAuthority ? 5 * 60 : 75 * 60)
+    expiresAt - issuedAt > 75 * 60
   ) {
     throw new Error("session model proxy token expiry is invalid");
   }
@@ -109,6 +114,7 @@ function createToken(
         generation: budgetAuthority.generation,
         leaseId: budgetAuthority.leaseId!,
         dispatchId: budgetAuthority.dispatchId!,
+        claimCount: budgetAuthority.claimCount!,
         model: input.model,
         reasoningEffort: input.reasoningEffort,
         maximumRequests,
@@ -156,6 +162,7 @@ export function createClaimedDispatchModelProxyToken(
     generation: input.generation,
     leaseId: input.leaseId,
     dispatchId: input.dispatchId,
+    claimCount: input.claimCount,
     expiresAt: input.expiresAt,
   });
 }

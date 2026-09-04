@@ -108,6 +108,13 @@ const migrations = [
     ),
   },
   {
+    name: "session-dispatch-model-authority-v2",
+    url: new URL(
+      "../sql/session-dispatch-model-authority-v2.sql",
+      import.meta.url,
+    ),
+  },
+  {
     name: "session-model-budget-recovery-v1",
     url: new URL(
       "../sql/session-model-budget-recovery-v1.sql",
@@ -398,7 +405,7 @@ export async function grantModelProxyLedgerAccess(
     );
     await client.query(`GRANT USAGE ON SCHEMA codeops TO ${identifier}`);
     await client.query(
-      `GRANT EXECUTE ON FUNCTION codeops.reserve_session_dispatch_model_budget(uuid, text, text, text, bigint, uuid, uuid, text, text, text, bigint, bigint) TO ${identifier}`,
+      `GRANT EXECUTE ON FUNCTION codeops.reserve_session_dispatch_model_budget(uuid, text, text, text, bigint, uuid, uuid, bigint, text, text, text, bigint, bigint) TO ${identifier}`,
     );
     await client.query(
       `GRANT EXECUTE ON FUNCTION codeops.settle_session_model_budget(uuid, text, text, bigint, bigint, bigint, text) TO ${identifier}`,
