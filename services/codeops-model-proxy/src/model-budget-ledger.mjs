@@ -62,8 +62,9 @@ function reservationInput(input) {
     !BOUNDED_ID.test(input.budgetId) ||
     !Number.isSafeInteger(input.generation) ||
     input.generation < 1 ||
-    ((input.leaseId != null || input.dispatchId != null) &&
-      (!UUID.test(input.leaseId) || !UUID.test(input.dispatchId))) ||
+    ((input.leaseId != null || input.dispatchId != null || input.claimCount != null) &&
+      (!UUID.test(input.leaseId) || !UUID.test(input.dispatchId) ||
+        !Number.isSafeInteger(input.claimCount) || input.claimCount < 1)) ||
     input.provider !== "openai" ||
     !MODEL.test(input.model) ||
     !REASONING_EFFORTS.has(input.reasoningEffort) ||
@@ -154,8 +155,8 @@ export function createModelBudgetLedger(database) {
           dispatchBound
             ? `SELECT * FROM codeops.reserve_session_dispatch_model_budget(
               $1::uuid, $2::text, $3::text, $4::text, $5::bigint,
-              $6::uuid, $7::uuid, $8::text, $9::text, $10::text,
-              $11::bigint, $12::bigint
+              $6::uuid, $7::uuid, $8::bigint, $9::text, $10::text, $11::text,
+              $12::bigint, $13::bigint
             )`
             : `SELECT * FROM codeops.reserve_session_model_budget(
               $1::uuid, $2::text, $3::text, $4::text, $5::bigint,
@@ -169,6 +170,7 @@ export function createModelBudgetLedger(database) {
             input.generation,
             input.leaseId,
             input.dispatchId,
+            input.claimCount,
             input.provider,
             input.model,
             input.reasoningEffort,

@@ -17,7 +17,7 @@ export interface SessionModelAuthorityInput {
   readonly signingKey: string;
   readonly issuedAt: Date;
   readonly dispatchId: string;
-  readonly claimExpiresAt: string;
+  readonly claimCount: number;
 }
 
 export type SessionModelAuthorityResult =
@@ -84,8 +84,7 @@ export function issueSessionModelAuthority(
     );
   }
   const expiryMilliseconds = Math.min(
-    input.issuedAt.getTime() + 5 * 60_000,
-    Date.parse(input.claimExpiresAt),
+    input.issuedAt.getTime() + 75 * 60_000,
     Date.parse(lease.expiresAt),
   );
   if (
@@ -110,6 +109,7 @@ export function issueSessionModelAuthority(
       generation: input.snapshot.generation,
       leaseId: lease.leaseId,
       dispatchId: input.dispatchId,
+      claimCount: input.claimCount,
       expiresAt,
       signingKey: input.signingKey,
       model: modelPolicy.model,
@@ -138,6 +138,7 @@ export async function issueClaimedSessionModelAuthority(
     workerId: input.workerId,
     claimToken: input.claimToken,
     now: () => issuedAt,
+    requireClaimCount: true,
   });
   if (!(["prompt", "resume"] as const).includes(
     authority.dispatch.command.type as "prompt" | "resume",
@@ -168,7 +169,7 @@ export async function issueClaimedSessionModelAuthority(
     signingKey: input.signingKey,
     issuedAt,
     dispatchId: authority.dispatch.dispatchId,
-    claimExpiresAt: authority.claimExpiresAt,
+    claimCount: authority.claimCount!,
   });
   if (result.disposition === "disabled") {
     throw new RevokedSessionModelAuthorityError(

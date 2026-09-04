@@ -94,7 +94,8 @@ function dispatchToken(overrides = {}) {
   return token({
     leaseId: "11111111-1111-4111-8111-111111111111",
     dispatchId: "22222222-2222-4222-8222-222222222222",
-    exp: Math.floor(now / 1_000) + 5 * 60,
+    claimCount: 3,
+    exp: Math.floor(now / 1_000) + 75 * 60,
     ...overrides,
   });
 }
@@ -109,11 +110,12 @@ test("accepts exact dispatch, lease, generation, policy, and remaining budget cl
   assert.equal(authority.generation, 1);
   assert.equal(authority.leaseId, "11111111-1111-4111-8111-111111111111");
   assert.equal(authority.dispatchId, "22222222-2222-4222-8222-222222222222");
+  assert.equal(authority.claimCount, 3);
   assert.equal(authority.model, "gpt-5.6-sol");
   assert.equal(authority.maximumRequests, 7);
   assert.equal(authority.maximumOutputTokens, 8_500);
   assert.equal(validateModelProxyToken({
-    token: dispatchToken({ exp: Math.floor(now / 1_000) + 5 * 60 + 1 }),
+    token: dispatchToken({ exp: Math.floor(now / 1_000) + 75 * 60 + 1 }),
     signingKey,
     now,
   }), null);

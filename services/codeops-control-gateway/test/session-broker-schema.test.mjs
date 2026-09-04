@@ -44,6 +44,8 @@ const modelBudgetFunctionsUrl = new URL("../sql/session-model-budget-ledger-func
 const modelBudgetFunctionsRevertUrl = new URL("../sql/session-model-budget-ledger-functions-v1-revert.sql", import.meta.url);
 const dispatchModelAuthorityUrl = new URL("../sql/session-dispatch-model-authority-v1.sql", import.meta.url);
 const dispatchModelAuthorityRevertUrl = new URL("../sql/session-dispatch-model-authority-v1-revert.sql", import.meta.url);
+const dispatchModelAuthorityV2Url = new URL("../sql/session-dispatch-model-authority-v2.sql", import.meta.url);
+const dispatchModelAuthorityV2RevertUrl = new URL("../sql/session-dispatch-model-authority-v2-revert.sql", import.meta.url);
 const modelBudgetRecoveryUrl = new URL("../sql/session-model-budget-recovery-v1.sql", import.meta.url);
 const modelBudgetRecoveryRevertUrl = new URL("../sql/session-model-budget-recovery-v1-revert.sql", import.meta.url);
 const sessionOwnerUrl = new URL("../sql/session-owner-v1.sql", import.meta.url);
@@ -351,6 +353,18 @@ test("fences provider reservations to one live claimed dispatch authority", asyn
   assert.match(sql, /reserve_session_model_budget/);
   assert.match(sql, /REVOKE ALL ON FUNCTION/);
   assert.match(revert, /session-dispatch-model-authority-v1/);
+  assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
+});
+
+test("binds long-lived dispatch tokens to one claim generation", async () => {
+  const sql = await readFile(dispatchModelAuthorityV2Url, "utf8");
+  const revert = await readFile(dispatchModelAuthorityV2RevertUrl, "utf8");
+  assert.match(sql, /requested_claim_count bigint/);
+  assert.match(sql, /outbox\.claim_count = requested_claim_count/);
+  assert.match(sql, /outbox\.claim_expires_at > clock_timestamp\(\)/);
+  assert.match(sql, /DROP FUNCTION codeops\.reserve_session_dispatch_model_budget/);
+  assert.match(revert, /CREATE FUNCTION codeops\.reserve_session_dispatch_model_budget/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
   assert.match(revert, /^BEGIN;[\s\S]*COMMIT;\n$/);
 });

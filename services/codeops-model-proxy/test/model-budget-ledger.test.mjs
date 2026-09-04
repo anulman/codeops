@@ -63,6 +63,7 @@ test("uses the dispatch-fenced ledger function for claimed authority", async () 
     ...reservation,
     leaseId: "11111111-1111-4111-8111-111111111111",
     dispatchId: "22222222-2222-4222-8222-222222222222",
+    claimCount: 1,
   });
   assert.match(
     database.calls[0].text,
@@ -70,6 +71,7 @@ test("uses the dispatch-fenced ledger function for claimed authority", async () 
   );
   assert.equal(database.calls[0].values[5], "11111111-1111-4111-8111-111111111111");
   assert.equal(database.calls[0].values[6], "22222222-2222-4222-8222-222222222222");
+  assert.equal(database.calls[0].values[7], 1);
 });
 
 test("charges stale reservations through only the fixed recovery function", async () => {

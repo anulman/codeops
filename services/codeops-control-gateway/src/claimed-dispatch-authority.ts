@@ -21,6 +21,7 @@ export interface ClaimedDispatchRow extends Record<string, unknown> {
   readonly claim_token: unknown;
   readonly claimed_by: unknown;
   readonly claim_expires_at: unknown;
+  readonly claim_count: unknown;
   readonly owner_principal_id: unknown;
   readonly session_id: unknown;
   readonly session_identity_json: unknown;
@@ -36,6 +37,7 @@ export interface ClaimedDispatchAuthority {
   readonly workerId: string;
   readonly claimToken: string;
   readonly claimExpiresAt: string;
+  readonly claimCount?: number;
   readonly runtimeBinding?: ReturnType<typeof runtimeBindingSchema.parse>;
 }
 
@@ -63,6 +65,7 @@ export function validateClaimedDispatchAuthority(
     readonly claimToken: string;
     readonly now: Date;
     readonly sessionSnapshot?: unknown;
+    readonly requireClaimCount?: boolean;
   },
 ): ClaimedDispatchAuthority {
   if (!workerPattern.test(input.workerId)) {
@@ -72,13 +75,16 @@ export function validateClaimedDispatchAuthority(
   }
   const now = input.now.getTime();
   const claimExpiresAt = String(row.claim_expires_at);
+  const claimCount = Number(row.claim_count);
   const claimExpiry = Date.parse(claimExpiresAt);
   if (
     row.status !== "claimed" ||
     row.claim_token !== input.claimToken ||
     row.claimed_by !== input.workerId ||
     !Number.isFinite(claimExpiry) ||
-    claimExpiry <= now
+    claimExpiry <= now ||
+    (input.requireClaimCount === true &&
+      (!Number.isSafeInteger(claimCount) || claimCount < 1))
   ) {
     throw new ClaimedDispatchAuthorityConflictError(
       "request does not hold the exact live dispatch claim",
@@ -148,6 +154,7 @@ export function validateClaimedDispatchAuthority(
     workerId: input.workerId,
     claimToken: input.claimToken,
     claimExpiresAt,
+    ...(Number.isSafeInteger(claimCount) && claimCount >= 1 ? { claimCount } : {}),
     ...(runtimeBinding.success ? { runtimeBinding: runtimeBinding.data } : {}),
   });
 }
@@ -159,11 +166,12 @@ export async function loadClaimedDispatchAuthority(
     readonly workerId: string;
     readonly claimToken: string;
     readonly now?: () => Date;
+    readonly requireClaimCount?: boolean;
   },
 ): Promise<ClaimedDispatchAuthority> {
   const result = await client.query<ClaimedDispatchRow>(
     `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
-            outbox.claimed_by, outbox.claim_expires_at,
+            outbox.claimed_by, outbox.claim_expires_at, outbox.claim_count,
             outbox.runtime_binding_json, outbox.runtime_claim_protocol,
             codeops.session_runtime_owner_binding(outbox.session_id)
               AS owner_runtime_binding_json,
@@ -187,6 +195,7 @@ export async function loadClaimedDispatchAuthority(
     workerId: input.workerId,
     claimToken: input.claimToken,
     now: (input.now ?? (() => new Date()))(),
+    requireClaimCount: input.requireClaimCount,
   });
 }
 

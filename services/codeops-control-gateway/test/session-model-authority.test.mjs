@@ -16,6 +16,7 @@ const issuedAt = new Date("2026-08-15T12:34:56.789Z");
 const startedAt = "2026-08-15T12:00:00.000Z";
 const dispatchId = "11111111-1111-4111-8111-111111111111";
 const leaseId = "22222222-2222-4222-8222-222222222222";
+const claimCount = 7;
 
 function snapshot(options = {}) {
   const mode = options.mode ?? "implement";
@@ -57,7 +58,7 @@ function issue(inputSnapshot) {
     signingKey,
     issuedAt,
     dispatchId,
-    claimExpiresAt: "2026-08-15T12:44:56.789Z",
+    claimCount,
   });
 }
 
@@ -85,14 +86,15 @@ test("issues exact short-lived authority for one claimed dispatch", () => {
     generation: 3,
     leaseId,
     dispatchId,
+    claimCount,
     model: "gpt-5.6-sol",
     reasoningEffort: "medium",
     maximumRequests: 17,
     maximumOutputTokens: 12_345,
     iat: 1_786_797_296,
-    exp: 1_786_797_596,
+    exp: 1_786_798_800,
   });
-  assert.equal(runtimeAuthority.expiresAt, "2026-08-15T12:39:56.000Z");
+  assert.equal(runtimeAuthority.expiresAt, "2026-08-15T13:00:00.000Z");
 });
 
 test("initialization entrypoints do not mint immutable Pod-start authority", async () => {
@@ -142,7 +144,7 @@ test("enabled model authority rejects exhausted request or token budgets", () =>
   }
 });
 
-test("rejects stale generations, released leases, and expired claims", () => {
+test("rejects stale generations and released leases", () => {
   assert.throws(
     () => issue({ ...snapshot(), lease: { ...snapshot().lease, generation: 2 } }),
     /exact active lease/,
@@ -150,12 +152,5 @@ test("rejects stale generations, released leases, and expired claims", () => {
   assert.throws(
     () => issue({ ...snapshot(), lease: { ...snapshot().lease, status: "released", releasedAt: issuedAt.toISOString() } }),
     /exact active lease/,
-  );
-  assert.throws(
-    () => issueSessionModelAuthority({
-      snapshot: snapshot(), signingKey, issuedAt, dispatchId,
-      claimExpiresAt: issuedAt.toISOString(),
-    }),
-    /expires with its active claim/,
   );
 });
