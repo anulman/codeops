@@ -290,6 +290,15 @@ function canonicalizeServerOwnedFields(existing: Record<string, unknown>,
   const existingPodSpec = record(existingTemplate?.spec);
   const expectedPodSpec = record(expectedTemplate?.spec);
   if (existingPodSpec === undefined) return;
+  // The Kubernetes API omits an explicitly submitted empty imagePullSecrets
+  // list from Job Pod templates. Preserve exact comparison semantics by
+  // reconstructing only that reviewed empty value; a non-empty observed or
+  // submitted list remains identity-bearing configuration.
+  if (existingPodSpec.imagePullSecrets === undefined &&
+      Array.isArray(expectedPodSpec?.imagePullSecrets) &&
+      expectedPodSpec.imagePullSecrets.length === 0) {
+    existingPodSpec.imagePullSecrets = [];
+  }
   for (const [key, value] of [["dnsPolicy", "ClusterFirst"],
     ["schedulerName", "default-scheduler"]] as const) {
     omitIfUnsubmitted(existingPodSpec, expectedPodSpec, key, (item) => item === value);
@@ -327,7 +336,8 @@ function canonicalizeServerOwnedFields(existing: Record<string, unknown>,
   }
 }
 
-function observedResourceConfigurationDigest(resource: KubernetesResource): string {
+function observedResourceConfigurationMatches(resource: KubernetesResource,
+  expectedDigest: string): boolean {
   const configuration = structuredClone(immutableResourceConfiguration(resource));
   const existingSpec = record(configuration.spec);
   const existingTemplate = record(existingSpec?.template);
@@ -344,8 +354,20 @@ function observedResourceConfigurationDigest(resource: KubernetesResource): stri
     } } },
   };
   canonicalizeServerOwnedFields(configuration, comparisonShape, resource.kind);
-  return `sha256:${createHash("sha256")
-    .update(canonicalJsonText(configuration)).digest("hex")}`;
+  const digest = (value: Record<string, unknown>) => `sha256:${createHash("sha256")
+    .update(canonicalJsonText(value)).digest("hex")}`;
+  if (digest(configuration) === expectedDigest) return true;
+  // For an identity-only replay or cleanup request, the desired Job body is
+  // unavailable. Check the one reviewed API-server omission as an alternate
+  // canonical shape without weakening any non-empty registry identity.
+  if (resource.kind === "Job") {
+    const podSpec = record(record(record(configuration.spec)?.template)?.spec);
+    if (podSpec !== undefined && podSpec.imagePullSecrets === undefined) {
+      podSpec.imagePullSecrets = [];
+      return digest(configuration) === expectedDigest;
+    }
+  }
+  return false;
 }
 
 function isExactNormalizedResource(existing: KubernetesResource,
@@ -393,7 +415,7 @@ export function assertKubernetesResourceOwnership(
         !/^[^\s]{1,256}$/.test(existing.metadata.resourceVersion) ||
         kubernetesResourceConfigurationDigest(existing, secretProofKey) !== configDigest)) ||
     (existing.kind !== "Secret" && isOwnershipIdentity(expected) &&
-      observedResourceConfigurationDigest(existing) !== configDigest) ||
+      !observedResourceConfigurationMatches(existing, configDigest)) ||
     !(isOwnershipIdentity(expected)
       ? containsExpected(
         immutableResourceConfiguration(existing),
