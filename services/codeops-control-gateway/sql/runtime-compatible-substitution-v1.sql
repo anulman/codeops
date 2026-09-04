@@ -106,11 +106,18 @@ ALTER TABLE codeops.sessions
       AND runtime_launch_binding_json->>'requirementDigest' = runtime_requirement_digest)
   );
 
--- Only sessions which were already active when this migration was applied may
--- use the bounded legacy-worker claim path. New sessions default fail closed.
-UPDATE codeops.sessions
+-- Only sessions which were already active or owned an already-claimed legacy
+-- dispatch when this migration was applied may use the bounded compatibility
+-- path. Terminal Session state still prevents those stranded claims from
+-- granting execution authority. New sessions default fail closed.
+UPDATE codeops.sessions AS session
    SET legacy_runtime_worker_compatible = true
- WHERE snapshot_json->>'state' IN ('running', 'waiting_permission', 'checkpointing');
+ WHERE session.snapshot_json->>'state' IN ('running', 'waiting_permission', 'checkpointing')
+    OR EXISTS (
+      SELECT 1 FROM codeops.session_runtime_outbox AS outbox
+       WHERE outbox.session_id = session.session_id
+         AND outbox.status = 'claimed'
+    );
 
 CREATE FUNCTION codeops.reject_new_legacy_runtime_session()
 RETURNS trigger LANGUAGE plpgsql AS $$
