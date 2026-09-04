@@ -849,6 +849,7 @@ export async function recordSessionRuntimeGitHubMutationFailure(
   const updated = await client.query(
     `UPDATE codeops.provider_effect_receipts
         SET state = $1,
+            failure_code = CASE WHEN $1 = 'failed' THEN 'provider_no_effect' ELSE NULL END,
             resolution_summary = $2,
             reconciliation_action = $3,
             resolved_at = $4::timestamptz,

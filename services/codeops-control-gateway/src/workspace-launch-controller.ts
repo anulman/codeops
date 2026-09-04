@@ -19,6 +19,7 @@ import {
   type WorkspaceResourceConfig,
 } from "./workspace-resources.js";
 import {
+  RuntimeWorkerImageDriftError,
   workspaceRuntimePodObservations,
   type RuntimeEgressPodObservation,
 } from "./runtime-egress-audit.js";
@@ -35,6 +36,7 @@ export function workspaceLaunchRuntimeIdentity(launch: WorkspaceLaunch): {
   readonly leaseId: string;
   readonly promptIdempotencyKey: string;
 } {
+  if (launch.retryRuntime !== undefined) return launch.retryRuntime;
   const sessionId = workspaceLaunchSessionId(launch.launchId);
   const suffix = sessionId.slice("ses_".length);
   return {
@@ -90,6 +92,21 @@ export interface WorkspaceLaunchControllerDependencies {
 }
 
 export class PermanentWorkspaceLaunchError extends Error {}
+
+export class WorkspaceRuntimeWorkerImageDriftError extends PermanentWorkspaceLaunchError {}
+
+export function workspaceLaunchRuntimeWorkerImage(
+  launch: WorkspaceLaunch,
+  configuredRuntimeWorkerImage: string,
+): string {
+  const stored = launch.retryRuntime?.runtimeWorkerImage;
+  if (stored !== undefined && stored !== configuredRuntimeWorkerImage) {
+    throw new WorkspaceRuntimeWorkerImageDriftError(
+      "workspace retry runtime worker image drifted from live configuration",
+    );
+  }
+  return stored ?? configuredRuntimeWorkerImage;
+}
 
 function resourceRole(resource: Record<string, unknown>): string | undefined {
   return ((resource.metadata as {
@@ -154,9 +171,10 @@ export async function reconcileWorkspaceLaunch(
   let launch = stored.launch;
   if (launch.state === "ready" || launch.state === "failed") return launch;
   const identity = workspaceLaunchRuntimeIdentity(launch);
+  let resourceConfig: WorkspaceResourceConfig;
   let resources: readonly Record<string, unknown>[];
   try {
-    const resourceConfig = dependencies.resourceConfig(launch, identity);
+    resourceConfig = dependencies.resourceConfig(launch, identity);
     resources = buildWorkspaceResources(resourceConfig);
     assertWorkspaceResources(resources, resourceConfig.modelProxyServiceName);
   } catch (error) {
@@ -340,6 +358,10 @@ export async function reconcileWorkspaceLaunch(
   let failureCode: Parameters<typeof failWorkspaceLaunch>[1] =
     launch.state === "queued" ? "identity-conflict" : "provisioning-failed";
   try {
+    workspaceLaunchRuntimeWorkerImage(
+      launch,
+      resourceConfig.configuredRuntimeWorkerImage,
+    );
     if (launch.state === "queued") {
       for (const resource of [sourceSecret, workspaceStorage, materializerJob]) {
         await ensureBound(resource);
@@ -354,7 +376,7 @@ export async function reconcileWorkspaceLaunch(
       identity.sessionId,
       launch.principalId,
     );
-    if (session === null) {
+    if (session === null || launch.retryRuntime !== undefined) {
       if (launch.materializedAt === undefined) {
         for (const resource of [sourceSecret, workspaceStorage, materializerJob]) {
           await ensureBound(resource);
@@ -376,7 +398,7 @@ export async function reconcileWorkspaceLaunch(
       if (jobState(await dependencies.loadJob(runtimeName)) === "failed") {
         return terminate("provisioning-failed");
       }
-      return launch;
+      if (session === null) return launch;
     }
 
     if (
@@ -406,27 +428,32 @@ export async function reconcileWorkspaceLaunch(
         runId: identity.runId,
         jobName: runtimeName,
         observedAt,
+        ...(launch.retryRuntime === undefined ? {} : {
+          expectedRuntimeWorkerImage: launch.retryRuntime.runtimeWorkerImage,
+        }),
       }),
     );
     await removeBound(sourceSecret);
     failureCode = "initial-prompt-failed";
-    const dispatch = await dependencies.enqueuePrompt({
-      principalId: launch.principalId,
-      dispatchId: () => deterministicUuid(`${launch.launchId}:dispatch`),
-      command: {
-        version: "codeops.session-command/v1",
-        sessionId: session.sessionId,
-        generation: session.generation,
-        leaseId: session.lease.leaseId,
-        idempotencyKey: identity.promptIdempotencyKey,
-        type: "prompt",
-        prompt: stored.request.prompt,
-        ...(stored.request.contextAttachments === undefined
-          ? {}
-          : { contextAttachments: stored.request.contextAttachments }),
-      },
-    });
-    if (dispatch.command.idempotencyKey !== identity.promptIdempotencyKey) {
+    const promptIdempotencyKey = launch.retryRuntime === undefined
+      ? (await dependencies.enqueuePrompt({
+          principalId: launch.principalId,
+          dispatchId: () => deterministicUuid(`${launch.launchId}:dispatch`),
+          command: {
+            version: "codeops.session-command/v1",
+            sessionId: session.sessionId,
+            generation: session.generation,
+            leaseId: session.lease.leaseId,
+            idempotencyKey: identity.promptIdempotencyKey,
+            type: "prompt",
+            prompt: stored.request.prompt,
+            ...(stored.request.contextAttachments === undefined
+              ? {}
+              : { contextAttachments: stored.request.contextAttachments }),
+          },
+        })).command.idempotencyKey
+      : identity.promptIdempotencyKey;
+    if (promptIdempotencyKey !== identity.promptIdempotencyKey) {
       throw new PermanentWorkspaceLaunchError(
         "workspace initial prompt dispatch identity drifted",
       );
@@ -439,7 +466,8 @@ export async function reconcileWorkspaceLaunch(
       }),
     );
   } catch (error) {
-    return error instanceof PermanentWorkspaceLaunchError
+    return error instanceof PermanentWorkspaceLaunchError ||
+        error instanceof RuntimeWorkerImageDriftError
       ? terminate(failureCode)
       : retry();
   }

@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   listInteractiveRuntimeCandidates,
+  attestInteractiveRuntimeRelease,
   listRetainedInteractiveRuntimeJobUids,
   observeInteractiveRuntimeTerminal,
   recordInteractiveRuntimeJobProgress,
@@ -18,6 +19,7 @@ const jobUid = "22222222-2222-4222-8222-222222222222";
 const podUid = "33333333-3333-4333-8333-333333333333";
 const observedAt = "2026-08-27T12:05:00.000Z";
 const requestDigest = `sha256:${"a".repeat(64)}`;
+const runtimeRelease = `ghcr.io/example/runtime-worker@sha256:${"c".repeat(64)}`;
 const candidate = { sessionId, generation, leaseId, runId, jobName,
   requestDigest };
 
@@ -86,11 +88,25 @@ function pod({ phase = "Failed", reason, uid = podUid, exitCode = 1 } = {}) {
   return { metadata: { name: `${jobName}-${uid.slice(0, 4)}`, uid,
     resourceVersion: "41",
     ownerReferences: [{ kind: "Job", uid: jobUid, controller: true }] },
+    spec: { containers: [{ name: "runtime-worker", image: runtimeRelease }] },
     status: { phase, ...(reason ? { reason } : {}),
-      containerStatuses: [{ name: "runtime-worker", state: { terminated: {
+      containerStatuses: [{ name: "runtime-worker", imageID: `docker-pullable://${runtimeRelease}`, state: { terminated: {
         exitCode, reason: exitCode === 0 ? "Completed" : "Error",
         message: exitCode === 0 ? "done" : "HTTP 409" } } }] } };
 }
+
+test("attests the configured immutable runtime against the observed Pod image digest", () => {
+  assert.equal(attestInteractiveRuntimeRelease({ pods: [pod()], jobUid,
+    configuredRuntimeRelease: runtimeRelease }), runtimeRelease);
+  const forged = pod();
+  forged.spec.containers[0].image = `ghcr.io/example/runtime-worker@sha256:${"d".repeat(64)}`;
+  assert.equal(attestInteractiveRuntimeRelease({ pods: [forged], jobUid,
+    configuredRuntimeRelease: runtimeRelease }), null);
+  const drifted = pod();
+  drifted.status.containerStatuses[0].imageID = `docker-pullable://ghcr.io/example/runtime-worker@sha256:${"e".repeat(64)}`;
+  assert.equal(attestInteractiveRuntimeRelease({ pods: [drifted], jobUid,
+    configuredRuntimeRelease: runtimeRelease }), null);
+});
 
 function observation(type = "failed") {
   const complete = type === "completed";

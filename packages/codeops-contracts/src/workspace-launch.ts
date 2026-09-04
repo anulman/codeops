@@ -221,6 +221,16 @@ const launchBaseSchema = z
         desiredConfigDigest: sha256Digest,
       }).strict().optional(),
     }).strict().optional(),
+    retryRuntime: z.object({
+      dispositionId: z.string().uuid(),
+      sessionId: identifier,
+      workflowId: identifier,
+      runId: identifier,
+      leaseId: z.string().uuid(),
+      promptIdempotencyKey: z.string().uuid(),
+      runtimeWorkerImage: z.string().min(1).max(500)
+        .regex(/^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$/),
+    }).strict().optional(),
   })
   .strict();
 

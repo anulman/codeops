@@ -213,7 +213,7 @@ export async function claimSessionRuntimeDispatch(
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
   const result = await client.query<ClaimedDispatchRow>(
-    `WITH candidate AS (
+     `WITH candidate AS (
        SELECT outbox.dispatch_id
          FROM codeops.session_runtime_outbox AS outbox
          JOIN codeops.sessions AS session
@@ -222,6 +222,14 @@ export async function claimSessionRuntimeDispatch(
            ON materialization.child_session_id = outbox.session_id
          LEFT JOIN codeops.session_runtime_outbox AS initial_dispatch
            ON initial_dispatch.dispatch_id = materialization.child_dispatch_id
+         LEFT JOIN codeops.work_item_retry_dispositions AS retry
+           ON retry.disposition_id = outbox.retry_disposition_id
+         LEFT JOIN codeops.work_item_admissions AS retry_admission
+           ON retry_admission.admission_id = outbox.admission_id
+         LEFT JOIN codeops.work_item_admissions AS retry_root
+           ON retry_root.admission_id = retry.root_admission_id
+         LEFT JOIN codeops.workspace_launches AS retry_launch
+           ON retry_launch.retry_disposition_id = retry.disposition_id
         WHERE outbox.available_at <= $1::timestamptz
           AND outbox.session_id = $5
           AND (outbox.dispatch_json->'command'->>'generation')::bigint = $6
@@ -230,6 +238,84 @@ export async function claimSessionRuntimeDispatch(
           AND session.snapshot_json->'lease'->>'status' = 'active'
           AND session.snapshot_json->'lease'->>'leaseId' = $7
           AND session.snapshot_json->'identity' = $8::jsonb
+          AND (
+            outbox.retry_disposition_id IS NULL
+            OR (
+              retry.successor_admission_id = outbox.admission_id
+              AND retry.successor_session_id = outbox.session_id
+              AND retry.successor_dispatch_id = outbox.dispatch_id
+              AND retry.successor_launch_id = retry_launch.launch_id
+              AND retry_launch.state = 'ready'
+              AND retry_launch.launch_json#>>'{retryRuntime,sessionId}' = outbox.session_id
+              AND retry_launch.launch_json#>>'{retryRuntime,dispositionId}' = retry.disposition_id::text
+              AND retry.attempt = retry_admission.attempt
+              AND retry.root_admission_id = retry_admission.root_admission_id
+              AND retry_admission.root_admission_id = retry_root.admission_id
+              AND retry_admission.repository = retry_root.repository
+              AND retry_admission.provider = retry_root.provider
+              AND retry_admission.workspace_id = retry_root.workspace_id
+              AND retry_admission.project_id = retry_root.project_id
+              AND retry_admission.work_item_id = retry_root.work_item_id
+              AND retry_admission.workflow_id = retry_root.workflow_id
+              AND retry_admission.run_id = retry_root.run_id
+              AND retry_admission.source_sha = retry_root.source_sha
+              AND retry.authority_expires_at > clock_timestamp()
+              AND retry.authority_expires_at = retry_root.admitted_at + interval '24 hours'
+              AND retry.runtime_capability_digest =
+                    outbox.dispatch_json#>>'{retryAuthority,runtimeCapabilityDigest}'
+              AND retry.runtime_release = outbox.dispatch_json#>>'{retryAuthority,runtimeRelease}'
+              AND retry.input_digest = outbox.dispatch_json#>>'{retryAuthority,inputDigest}'
+              AND retry.candidate_digest = outbox.dispatch_json#>>'{retryAuthority,candidateDigest}'
+              AND retry.disposition_id::text =
+                    outbox.dispatch_json#>>'{retryAuthority,dispositionId}'
+              AND retry.root_admission_id::text =
+                    outbox.dispatch_json#>>'{retryAuthority,rootAdmissionId}'
+              AND retry.attempt::text = outbox.dispatch_json#>>'{retryAuthority,attempt}'
+              AND retry.authority_expires_at =
+                    (outbox.dispatch_json#>>'{retryAuthority,expiresAt}')::timestamptz
+              AND outbox.dispatch_json#>'{snapshot,capabilities}' =
+                    session.snapshot_json->'capabilities'
+              AND outbox.principal_id = session.owner_principal_id
+              AND NOT EXISTS (
+                SELECT 1 FROM codeops.work_item_retry_dispositions newer
+                 WHERE newer.root_admission_id = retry.root_admission_id
+                   AND newer.lineage_revision > retry.lineage_revision
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM codeops.work_item_admissions newer_attempt
+                 WHERE newer_attempt.root_admission_id = retry.root_admission_id
+                   AND newer_attempt.attempt > retry.attempt
+              )
+              AND (
+                (retry.effect_state = 'none' AND NOT EXISTS (
+                  SELECT 1 FROM codeops.provider_effect_receipts effect
+                   WHERE effect.admission_id = retry.predecessor_admission_id
+                ))
+                OR
+                (retry.effect_state = 'failed' AND EXISTS (
+                  SELECT 1 FROM codeops.provider_effect_receipts effect
+                   WHERE effect.effect_id = retry.effect_id
+                     AND effect.admission_id = retry.predecessor_admission_id
+                     AND effect.state = 'failed'
+                     AND effect.failure_code = retry.transient_failure_code
+                ))
+              )
+              AND retry.provider_requests_consumed = (
+                SELECT COALESCE(sum(b.committed_provider_requests),0)
+                 FROM codeops.work_item_admissions a
+                  JOIN codeops.session_model_budgets b ON b.session_id=a.child_session_id
+                 WHERE a.root_admission_id=retry.root_admission_id
+                   AND a.attempt < retry.attempt
+              )
+              AND retry.output_tokens_consumed = (
+                SELECT COALESCE(sum(b.settled_output_tokens+b.reserved_output_tokens),0)
+                 FROM codeops.work_item_admissions a
+                  JOIN codeops.session_model_budgets b ON b.session_id=a.child_session_id
+                 WHERE a.root_admission_id=retry.root_admission_id
+                   AND a.attempt < retry.attempt
+              )
+            )
+          )
           AND (
             outbox.status = 'pending'
             OR (outbox.status = 'claimed' AND outbox.claim_expires_at <= $1::timestamptz)

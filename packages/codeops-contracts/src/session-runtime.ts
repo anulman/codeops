@@ -67,6 +67,17 @@ export const sessionRuntimeDispatchSchema = z
     command: sessionRuntimeCommandSchema,
     snapshot: sessionSnapshotSchema,
     dispatchedAt: isoDateTime,
+    retryAuthority: z.object({
+      dispositionId: uuid,
+      rootAdmissionId: uuid,
+      attempt: z.number().int().min(2).max(4),
+      expiresAt: isoDateTime,
+      inputDigest: sha256Digest,
+      candidateDigest: sha256Digest,
+      runtimeCapabilityDigest: sha256Digest,
+      runtimeRelease: z.string().min(1).max(500)
+        .regex(/^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$/),
+    }).strict().optional(),
   })
   .strict()
   .superRefine((dispatch, context) => {

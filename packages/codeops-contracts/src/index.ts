@@ -153,6 +153,15 @@ export {
   type AdmittedChildMaterializationState,
 } from "./work-item-admission.js";
 export {
+  retryTransientFailureCodeSchema,
+  workItemRetryDispositionKindSchema,
+  workItemRetryDispositionRequestSchema,
+  workItemRetryDispositionResultSchema,
+  workItemRetryEffectFenceSchema,
+  type WorkItemRetryDispositionRequest,
+  type WorkItemRetryDispositionResult,
+} from "./work-item-retry.js";
+export {
   DEFAULT_SESSION_BUDGET_LIMITS,
   projectSessionBudget,
   sessionBudgetLimitsSchema,

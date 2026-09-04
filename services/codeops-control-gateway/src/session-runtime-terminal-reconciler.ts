@@ -12,6 +12,7 @@ import {
 import type { TransactionClient } from "./session-broker-repository.js";
 import { sessionCapabilitiesFor } from "./session-broker-transitions.js";
 import { kubernetesIdentityLabel } from "./kubernetes.js";
+import { reconcileFailedWorkItemAttempt } from "./work-item-retry.js";
 
 export interface InteractiveRuntimeCandidate {
   readonly sessionId: string;
@@ -423,6 +424,35 @@ function terminalContainer(pod: Record<string, unknown>): {
   };
 }
 
+export function attestInteractiveRuntimeRelease(input: {
+  readonly pods: readonly Record<string, unknown>[];
+  readonly jobUid: string;
+  readonly configuredRuntimeRelease: string;
+}): string | null {
+  if (!/^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$/.test(input.configuredRuntimeRelease)) {
+    throw new Error("configured workspace runtime release is not immutable");
+  }
+  const owned = input.pods.filter((pod) => {
+    const owners = record(pod.metadata)?.ownerReferences;
+    return Array.isArray(owners) && owners.some((raw) => {
+      const owner = record(raw);
+      return owner?.kind === "Job" && owner.uid === input.jobUid && owner.controller === true;
+    });
+  });
+  if (owned.length !== 1) return null;
+  const pod = owned[0]!;
+  const containers = Array.isArray(record(pod.spec)?.containers)
+    ? record(pod.spec)!.containers as unknown[] : [];
+  const runtime = containers.map(record).find((container) => container?.name === "runtime-worker");
+  const statuses = Array.isArray(record(pod.status)?.containerStatuses)
+    ? record(pod.status)!.containerStatuses as unknown[] : [];
+  const status = statuses.map(record).find((container) => container?.name === "runtime-worker");
+  const digest = input.configuredRuntimeRelease.slice(input.configuredRuntimeRelease.indexOf("@") + 1);
+  const imageId = string(status?.imageID);
+  return runtime?.image === input.configuredRuntimeRelease && imageId?.endsWith(`@${digest}`)
+    ? input.configuredRuntimeRelease : null;
+}
+
 export function observeInteractiveRuntimeTerminal(input: {
   readonly candidate: InteractiveRuntimeCandidate;
   readonly job: Record<string, unknown>;
@@ -544,8 +574,13 @@ interface StoredObservationRow extends Record<string, unknown> {
 export async function reconcileInteractiveRuntimeTerminal(
   client: TransactionClient,
   rawObservation: unknown,
+  runtimeAttestation?: { readonly configured: string; readonly observed: string | null },
 ): Promise<"committed" | "duplicate" | "stale" | "already_terminal"> {
   const observation = sessionRuntimeTerminalObservationSchema.parse(rawObservation);
+  if (observation.cause.type === "failed" && runtimeAttestation !== undefined) {
+    const retry = await reconcileFailedWorkItemAttempt(client, observation, runtimeAttestation);
+    if (retry !== null) return retry.disposition === "created" ? "committed" : "duplicate";
+  }
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
     const locked = await client.query<{ readonly snapshot_json: unknown }>(

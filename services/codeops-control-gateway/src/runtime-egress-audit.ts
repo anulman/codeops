@@ -2,6 +2,10 @@ import { isIP } from "node:net";
 
 import type { TransactionClient } from "./session-broker-repository.js";
 
+export class RuntimeWorkerImageDriftError extends Error {}
+
+export class RuntimeWorkerImagePendingError extends Error {}
+
 export interface RuntimeEgressPodObservation {
   readonly sessionId: string;
   readonly generation: number;
@@ -28,6 +32,7 @@ export function workspaceRuntimePodObservations(input: {
   readonly runId: string;
   readonly jobName: string;
   readonly observedAt: string;
+  readonly expectedRuntimeWorkerImage?: string;
 }): readonly RuntimeEgressPodObservation[] {
   if (
     !/^ses_[0-9a-f]{24}$/.test(input.sessionId) ||
@@ -56,6 +61,42 @@ export function workspaceRuntimePodObservations(input: {
       throw new Error("workspace runtime Pod owner identity drifted");
     }
     if (status?.podIP === undefined) continue;
+    if (input.expectedRuntimeWorkerImage !== undefined) {
+      if (!/^[A-Za-z0-9._:/-]+@sha256:[0-9a-f]{64}$/.test(input.expectedRuntimeWorkerImage)) {
+        throw new Error("workspace retry runtime worker image is not immutable");
+      }
+      const containers = Array.isArray((pod.spec as { readonly containers?: unknown } | undefined)?.containers)
+        ? (pod.spec as { readonly containers: unknown[] }).containers : [];
+      const runtime = containers.find((raw) =>
+        (raw as { readonly name?: unknown }).name === "runtime-worker"
+      ) as { readonly image?: unknown } | undefined;
+      const statuses = Array.isArray((pod.status as { readonly containerStatuses?: unknown } | undefined)?.containerStatuses)
+        ? (pod.status as { readonly containerStatuses: unknown[] }).containerStatuses : [];
+      const status = statuses.find((raw) =>
+        (raw as { readonly name?: unknown }).name === "runtime-worker"
+      ) as {
+        readonly imageID?: unknown;
+        readonly state?: { readonly terminated?: unknown };
+      } | undefined;
+      const digest = input.expectedRuntimeWorkerImage.slice(
+        input.expectedRuntimeWorkerImage.indexOf("@") + 1,
+      );
+      if (runtime?.image !== input.expectedRuntimeWorkerImage) {
+        throw new RuntimeWorkerImageDriftError("workspace retry runtime Pod image drifted");
+      }
+      if (typeof status?.imageID !== "string") {
+        const phase = (pod.status as { readonly phase?: unknown } | undefined)?.phase;
+        if (phase === "Pending" && status?.state?.terminated === undefined) {
+          throw new RuntimeWorkerImagePendingError(
+            "workspace retry runtime Pod image is not yet attestable",
+          );
+        }
+        throw new RuntimeWorkerImageDriftError("workspace retry runtime Pod image drifted");
+      }
+      if (!status.imageID.endsWith(`@${digest}`)) {
+        throw new RuntimeWorkerImageDriftError("workspace retry runtime Pod image drifted");
+      }
+    }
     if (
       typeof metadata.uid !== "string" ||
       metadata.uid.length < 1 ||
