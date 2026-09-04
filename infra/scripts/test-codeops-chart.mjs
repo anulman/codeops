@@ -354,6 +354,16 @@ test("runs migration as an ordinary install Job and a pre-upgrade hook", () => {
   const dispatcherEnv = Object.fromEntries(dispatcher.spec.template.spec.containers[0].env
     .map(({ name, value }) => [name, value]));
   assert.equal(dispatcherEnv.CODEOPS_CONTROL_GATEWAY_RUNTIME_ROLE, "file-dispatcher");
+  assert.equal(dispatcherEnv.CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE,
+    "/var/run/codeops-runtime/profile-registry.json");
+  assert.equal(dispatcherEnv.CODEOPS_RUNTIME_COMPATIBILITY_POLICY_REVISION,
+    "compatible-substitution-v1");
+  assert.match(dispatcher.spec.template.spec.volumes.find(
+    ({ name }) => name === "runtime-profile-registry").configMap.name,
+  /^team-a-codeops-runtime-images-[0-9a-f]{12}$/);
+  assert.equal(dispatcher.spec.template.spec.containers[0].volumeMounts.some(
+    ({ name, mountPath, readOnly }) => name === "runtime-profile-registry" &&
+      mountPath === "/var/run/codeops-runtime" && readOnly === true), true);
   const dispatcherService = resource(resources, "Service",
     "team-a-codeops-control-gateway-dispatcher");
   assert.deepEqual(dispatcherService.spec.selector,
