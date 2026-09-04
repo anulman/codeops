@@ -66,6 +66,8 @@ const runtimeTerminalReconciliationRevertUrl = new URL(
 );
 const workItemAdmissionUrl = new URL("../sql/work-item-admission-v1.sql", import.meta.url);
 const workItemAdmissionRevertUrl = new URL("../sql/work-item-admission-v1-revert.sql", import.meta.url);
+const runtimeBindingUrl = new URL("../sql/runtime-compatible-substitution-v1.sql", import.meta.url);
+const runtimeBindingRevertUrl = new URL("../sql/runtime-compatible-substitution-v1-revert.sql", import.meta.url);
 const runtimePermissionConsumptionUrl = new URL(
   "../sql/runtime-permission-consumption-v1.sql",
   import.meta.url,
@@ -170,6 +172,61 @@ test("defines immutable admitted-child input and fails closed across old/new gat
   assert.match(revert, /cannot revert admitted child materializations with durable rows/);
   assert.match(revert, /DROP TRIGGER work_item_admissions_require_materialization_owner/);
   assert.match(revert, /admitted-child-materializations-v1/);
+});
+
+test("keeps runtime owners and claim evidence complete, non-null, immutable, and rollback guarded", async () => {
+  const migration = await readFile(runtimeBindingUrl, "utf8");
+  const revert = await readFile(runtimeBindingRevertUrl, "utf8");
+  assert.match(migration, /launch_json \? 'runtimeLaunchBinding'/);
+  assert.match(migration, /jsonb_typeof\(launch_json->'runtimeLaunchBinding'\) = 'object'/);
+  assert.match(migration, /IS NOT DISTINCT FROM runtime_launch_binding_json/);
+  assert.match(migration, /NEW\.launch_json->'runtimeLaunchBinding' IS DISTINCT FROM/);
+  assert.match(migration, /session_runtime_owner_binding_complete/);
+  assert.match(migration, /legacy_runtime_worker_compatible = true/);
+  assert.match(migration, /legacy_runtime_compatible = true/);
+  assert.match(migration, /workspace legacy runtime compatibility is migration-owned/);
+  assert.match(migration, /new workspace launches cannot use legacy runtime compatibility/);
+  assert.match(migration, /new workspace launches require complete runtime admission/);
+  assert.match(migration, /workspace provisioning requires a complete runtime launch binding/);
+  assert.match(migration, /legacy runtime worker compatibility cannot be enabled after migration/);
+  assert.match(migration, /new sessions cannot use legacy runtime worker compatibility/);
+  assert.match(migration, /new root sessions require a complete runtime launch binding/);
+  assert.match(migration, /session_runtime_outbox_binding_complete/);
+  assert.match(migration, /admitted runtime binding evidence is immutable/);
+  assert.match(migration, /claimed runtime dispatch requires one complete bound claim transition/);
+  assert.match(migration, /BEFORE INSERT OR UPDATE ON codeops\.session_runtime_outbox/);
+  assert.match(migration, /claimed runtime dispatch requires bound-v2 or migration-owned legacy proof/);
+  assert.match(migration, /NEW\.runtime_claim_protocol := 'legacy-unproven-v1'/);
+  assert.match(migration, /legacy-unproven-v1/);
+  assert.match(migration, /legacy v1 claim requires migration-retained session compatibility/);
+  assert.match(migration, /bound-v2 runtime claim does not match immutable root owner/);
+  assert.match(revert, /cannot revert runtime compatible substitution while runtime-binding evidence exists/);
+  for (const table of [
+    "workspace_launches",
+    "sessions",
+    "session_runtime_outbox",
+  ]) {
+    assert.match(revert, new RegExp(
+      `LOCK TABLE codeops\\.${table} IN ACCESS EXCLUSIVE MODE`,
+    ));
+  }
+  assert.ok(
+    revert.indexOf("LOCK TABLE codeops.workspace_launches") <
+      revert.indexOf("LOCK TABLE codeops.sessions") &&
+      revert.indexOf("LOCK TABLE codeops.sessions") <
+        revert.indexOf("LOCK TABLE codeops.session_runtime_outbox") &&
+      revert.indexOf("LOCK TABLE codeops.session_runtime_outbox") <
+        revert.indexOf("IF EXISTS"),
+  );
+  for (const field of [
+    "legacyRuntimeCompatible",
+    "runtimeRequirements",
+    "runtimeRequirementDigest",
+    "runtimeLaunchBinding",
+  ]) {
+    assert.match(revert, new RegExp(`- '${field}'`));
+  }
+  assert.doesNotMatch(revert, /DELETE FROM codeops\.session_runtime_outbox|DELETE FROM codeops\.workspace_launches/);
 });
 
 test("consumes one admitted GitHub permission and retains its exact receipt", async () => {
@@ -455,6 +512,10 @@ test("persists idempotent principal-bound workspace launches", async () => {
   assert.match(sql, /terminal workspace launch is immutable/);
   assert.match(sql, /workspace_launch_active_principal_idx/);
   assert.match(sql, /^BEGIN;[\s\S]*COMMIT;\n$/);
+  assert.ok(
+    revert.indexOf("LOCK TABLE codeops.workspace_launches IN ACCESS EXCLUSIVE MODE") <
+      revert.indexOf("IF EXISTS"),
+  );
   assert.match(revert, /^BEGIN;[\s\S]*DROP TABLE IF EXISTS codeops\.workspace_launches;[\s\S]*COMMIT;\n$/);
 });
 

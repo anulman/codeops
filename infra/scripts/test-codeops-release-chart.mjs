@@ -23,6 +23,7 @@ function releaseValues() {
     },
     postgresql: { image: { repository: "postgres", digest: digest("2") } },
     runtime: {
+      releaseDigest: digest("7"),
       workerImage: { repository: "ghcr.io/anulman/codeops/session-runtime-worker", digest: digest("3") },
       agentImage: { repository: "ghcr.io/anulman/codeops/agent", digest: digest("4") },
       sessionGatewayImage: { repository: "ghcr.io/anulman/codeops/session-gateway", digest: digest("5") },
@@ -43,7 +44,7 @@ test("stages a release chart with the exact immutable image identity embedded", 
     releaseValuesPath,
     outputRoot,
   });
-  assert.equal(result.embeddedPaths.length, 23);
+  assert.equal(result.embeddedPaths.length, 24);
   const staged = parse(await readFile(path.join(outputRoot, "values.yaml"), "utf8"));
   assert.equal(staged.agentsUi.image.digest, digest("a"));
   assert.equal(staged.githubController.controlPlaneSha, "1".repeat(40));

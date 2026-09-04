@@ -1,11 +1,15 @@
 import { setTimeout as delay } from "node:timers/promises";
 import type { SessionCommandResult } from "@codeops/codeops-contracts";
-import type { RuntimeExecutor } from "./transport.js";
+import {
+  SessionRuntimeClaimUnavailableError,
+  type RuntimeExecutor,
+} from "./transport.js";
 
 export interface RuntimeWorkerTransport {
   runOne(input: {
     readonly leaseMs: number;
     readonly execute: RuntimeExecutor;
+    readonly onClaimAuthenticated?: () => void | Promise<void>;
   }): Promise<SessionCommandResult | null>;
 }
 
@@ -16,6 +20,7 @@ export interface RuntimeWorkerLoopOptions {
   readonly idlePollMs: number;
   readonly signal: AbortSignal;
   readonly onCompleted?: (result: SessionCommandResult) => void | Promise<void>;
+  readonly onClaimAuthenticated?: () => void | Promise<void>;
 }
 
 function boundedMilliseconds(
@@ -56,10 +61,23 @@ export async function runSessionRuntimeWorker(
   );
 
   while (!input.signal.aborted) {
-    const result = await input.transport.runOne({
-      leaseMs,
-      execute: input.execute,
-    });
+    let result: SessionCommandResult | null;
+    try {
+      result = await input.transport.runOne({
+        leaseMs,
+        execute: input.execute,
+        onClaimAuthenticated: input.onClaimAuthenticated,
+      });
+    } catch (error) {
+      if (!(error instanceof SessionRuntimeClaimUnavailableError)) throw error;
+      try {
+        await delay(idlePollMs, undefined, { signal: input.signal });
+      } catch (delayError) {
+        if (input.signal.aborted) return;
+        throw delayError;
+      }
+      continue;
+    }
     if (result !== null) {
       await input.onCompleted?.(result);
       continue;

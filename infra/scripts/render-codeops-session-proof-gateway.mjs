@@ -8,5 +8,10 @@ const template = await readFile(
 
 process.stdout.write(renderSessionProofGatewayManifest(
   template,
-  process.env.CODEOPS_SESSION_CONTROL_GATEWAY_DIGEST ?? "",
+  {
+    gatewayDigest: process.env.CODEOPS_SESSION_CONTROL_GATEWAY_DIGEST ?? "",
+    agentDigest: process.env.CODEOPS_AGENT_DIGEST ?? "",
+    workerDigest: process.env.CODEOPS_SESSION_RUNTIME_WORKER_DIGEST ?? "",
+    runtimeReleaseDigest: process.env.CODEOPS_RUNTIME_RELEASE_DIGEST ?? "",
+  },
 ));

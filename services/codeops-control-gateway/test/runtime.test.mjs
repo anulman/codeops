@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
   agentJobDispatchRequestSchema,
   createProjectContext,
+  sha256CanonicalJsonDigest,
 } from "@codeops/codeops-contracts";
 import { claimRequest, createRunIdentity } from "../dist/core.js";
 import { createAgentJobRunner } from "../dist/runtime.js";
@@ -25,6 +26,35 @@ const modelAuth = {
   mode: "proxy",
   origin: "http://codeops-model-proxy:8080",
   signingKey: "m".repeat(64),
+};
+const runtimeProfile = {
+  version: "codeops.runtime-profile/v1",
+  profileId: "standard-v1",
+  releaseDigest: `sha256:${"7".repeat(64)}`,
+  capabilities: ["acp"],
+  capabilityDigest: sha256CanonicalJsonDigest(["acp"]),
+  resources: { cpuMillis: 3_000, memoryMiB: 7_168, ephemeralStorageMiB: 5_120 },
+  authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "compatible-substitution-v1",
+  images: {
+    agent: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+    worker: `ghcr.io/a/worker@sha256:${"e".repeat(64)}`,
+    sessionGateway: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+  },
+};
+const runtimeRequirements = {
+  version: "codeops.runtime-requirements/v1",
+  capabilities: ["acp"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1_280, ephemeralStorageMiB: 1_280 },
+  requiredAuthority: runtimeProfile.authority,
+  maximumAuthority: runtimeProfile.authority,
+  compatibilityPolicyRevision: runtimeProfile.compatibilityPolicyRevision,
+};
+const runtimeLaunchBinding = {
+  version: "codeops.runtime-launch-binding/v1",
+  requirementDigest: sha256CanonicalJsonDigest(runtimeRequirements),
+  profile: runtimeProfile,
+  selectedAt: "2026-08-31T08:00:00.000Z",
 };
 
 function resourceBinding(resource) {
@@ -150,9 +180,11 @@ test("creates, retains, cleans, and then returns the durable result idempotently
   const runId = createRunIdentity(request).runId;
   const ensured = [];
   const deleted = [];
+  const ensuredResources = [];
   const kubernetes = {
     async ensure(resource) {
       ensured.push(`${resource.kind}/${resource.metadata.name}`);
+      ensuredResources.push(resource);
       return resourceBinding(resource);
     },
     async getJob() {
@@ -178,7 +210,9 @@ test("creates, retains, cleans, and then returns the durable result idempotently
       namespace: "codeops",
       repositoryRegistry,
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
-      sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"f".repeat(64)}`,
+      runtimeRequirements,
+      runtimeLaunchBinding,
       modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 1,
@@ -190,10 +224,53 @@ test("creates, retains, cleans, and then returns the durable result idempotently
     const retainedRequest = JSON.parse(await readFile(
       path.join(root, "agent-runs", runId, "request.json"), "utf8"));
     assert.equal(Object.keys(retainedRequest.resourceBindings).length, 4);
+    const job = ensuredResources.find((resource) => resource.kind === "Job");
+    assert.equal(
+      job.spec.template.spec.containers.find(({ name }) => name === "session-gateway").image,
+      runtimeLaunchBinding.profile.images.sessionGateway,
+    );
+    ensured.length = 0;
+    deleted.length = 0;
     const second = await run(request);
     assert.deepEqual(second, first);
-    assert.equal(ensured.length, 4);
-    assert.equal(deleted.length, 8);
+    assert.equal(ensured.length, 0);
+    assert.deepEqual(deleted, [
+      `NetworkPolicy/codeops-agent-${runId}`,
+      `Job/codeops-agent-${runId}`,
+      `ServiceAccount/codeops-agent-${runId}`,
+      `Secret/codeops-run-${runId}`,
+    ]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("fails closed before effects for unfinished legacy Agent Job evidence without a runtime binding", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-unbound-"));
+  const identity = createRunIdentity(request);
+  const directory = path.join(root, "agent-runs", identity.runId);
+  let effects = 0;
+  const run = createAgentJobRunner({
+    kubernetes: {
+      async ensure() { effects += 1; }, async delete() { effects += 1; },
+      async getJob() { effects += 1; return {}; }, async listRunPods() { effects += 1; return []; },
+      async getPodLogs() { effects += 1; return ""; },
+    },
+    config: {
+      namespace: "codeops", repositoryRegistry,
+      agentImage: runtimeProfile.images.agent,
+      runtimeRequirements, runtimeLaunchBinding, modelAuth,
+      evidenceRoot: root, pollIntervalMs: 1, timeoutMs: 1,
+    },
+  });
+  try {
+    await mkdir(directory, { recursive: true });
+    await writeFile(path.join(directory, "request.json"), `${JSON.stringify({
+      requestDigest: identity.requestDigest,
+      request,
+    }, null, 2)}\n`);
+    await assert.rejects(run(request), /no durable runtime binding/);
+    assert.equal(effects, 0);
   } finally {
     await rm(root, { recursive: true, force: true });
   }
@@ -213,6 +290,7 @@ test("a retained successful Agent Job stays successful when legacy cleanup bindi
   const run = createAgentJobRunner({ kubernetes, config: { namespace: "codeops",
     repositoryRegistry, agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
     sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`, modelAuth,
+    runtimeRequirements, runtimeLaunchBinding,
     evidenceRoot: root, pollIntervalMs: 1, timeoutMs: 100 } });
   try {
     const first = await run(request);
@@ -255,6 +333,7 @@ test("cleans from the exact ensure result when durable binding retention fails",
   const run = createAgentJobRunner({ kubernetes, config: { namespace: "codeops",
     repositoryRegistry, agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
     sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`, modelAuth,
+    runtimeRequirements, runtimeLaunchBinding,
     evidenceRoot: root, pollIntervalMs: 1, timeoutMs: 100 } });
   try {
     await assert.rejects(run(request), /durable Agent Job resource binding is invalid/);
@@ -314,9 +393,10 @@ test("crash replay replaces only an authenticated unbound Secret after rotation"
   const run = createAgentJobRunner({ kubernetes, config: { namespace: "codeops",
     repositoryRegistry, agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
     sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`, modelAuth,
+    runtimeRequirements, runtimeLaunchBinding,
     evidenceRoot: root, pollIntervalMs: 1, timeoutMs: 100 } });
   try {
-    await claimRequest({ rootDirectory: root, request, ...identity });
+    await claimRequest({ rootDirectory: root, request, ...identity, runtimeLaunchBinding });
     await assert.rejects(run(request), /crash after authenticated Secret deletion/);
     await assert.rejects(run(request), /recreated Agent Job Secret configuration drifted/);
     const replacementPending = JSON.parse(await readFile(
@@ -382,6 +462,8 @@ test("binds each admitted dispatch to only its repository-scoped runtime credent
       repositoryRegistry: registry,
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      runtimeRequirements,
+      runtimeLaunchBinding,
       modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 1,
@@ -452,6 +534,8 @@ test("retains terminal validation failure and removes credentials/resources", as
       repositoryRegistry,
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      runtimeRequirements,
+      runtimeLaunchBinding,
       modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 1,
@@ -496,6 +580,8 @@ test("removes credentials/resources when an init failure prevents log retrieval"
       repositoryRegistry,
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      runtimeRequirements,
+      runtimeLaunchBinding,
       modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 1,
@@ -542,6 +628,8 @@ test("cancellation aborts reconciliation and removes every exact run resource", 
       repositoryRegistry,
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      runtimeRequirements,
+      runtimeLaunchBinding,
       modelAuth,
       evidenceRoot: root,
       pollIntervalMs: 100,

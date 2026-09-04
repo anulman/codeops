@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { parseDocument } from "yaml";
 import { renderAgentsSystemRootSession } from "./agents-system-root-session-render.mjs";
 
 const template = await readFile(new URL("../k8s/codeops/agents-system-root-session-template.yaml", import.meta.url), "utf8");
+const capabilities = ["acp"];
+const capabilityDigest = `sha256:${createHash("sha256").update(JSON.stringify(capabilities)).digest("hex")}`;
 const input = {
   agentDigest: `sha256:${"a".repeat(64)}`,
   workerDigest: `sha256:${"b".repeat(64)}`,
@@ -12,6 +15,24 @@ const input = {
   branch: "feat/agents-ui",
   leaseId: "11111111-1111-4111-8111-111111111111",
   runId: "agents-control-plane-1",
+  runtimeProfileId: "standard-v1",
+  runtimeReleaseDigest: `sha256:${"7".repeat(64)}`,
+  runtimeCapabilityDigest: capabilityDigest,
+  runtimeProfile: {
+    version: "codeops.runtime-profile/v1",
+    profileId: "standard-v1",
+    releaseDigest: `sha256:${"7".repeat(64)}`,
+    capabilities,
+    capabilityDigest,
+    resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 },
+    authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+    compatibilityPolicyRevision: "compatible-substitution-v1",
+    images: {
+      agent: `ghcr.io/anulman/codeops/agent@sha256:${"a".repeat(64)}`,
+      worker: `ghcr.io/anulman/codeops/session-runtime-worker@sha256:${"b".repeat(64)}`,
+      sessionGateway: `ghcr.io/anulman/codeops/session-gateway@sha256:${"c".repeat(64)}`,
+    },
+  },
   sessionId: "ses_agents_control_plane_1",
   ownerPrincipalId: "codeops:agents-ui",
   sessionSuffix: "agents-control-plane-1",
@@ -20,6 +41,22 @@ const input = {
 
 function render(patch = {}) {
   return parseDocument(renderAgentsSystemRootSession(template, { ...input, ...patch })).toJS();
+}
+
+function effectiveResources(pod, key) {
+  const quantity = (value) => value.endsWith("m")
+    ? Number(value.slice(0, -1))
+    : Number(value.slice(0, -2)) * (value.endsWith("Gi") ? 1_024 : 1);
+  const names = ["cpu", "memory", "ephemeral-storage"];
+  const application = Object.fromEntries(names.map((name) => [
+    name,
+    pod.containers.reduce((total, container) => total + quantity(container.resources[key][name]), 0),
+  ]));
+  return Object.fromEntries(names.map((name) => [
+    name,
+    Math.max(application[name], ...pod.initContainers.map((container) =>
+      quantity(container.resources[key][name]))),
+  ]));
 }
 
 test("renders one trusted idempotent root-session runtime Job", () => {
@@ -39,6 +76,12 @@ test("renders one trusted idempotent root-session runtime Job", () => {
   );
   const pod = job.spec.template.spec;
   const builder = pod.initContainers.find(({ name }) => name === "workspace-builder");
+  const worker = pod.containers.find(({ name }) => name === "runtime-worker");
+  const runtimeIdentity = Object.fromEntries(worker.env.map((entry) => [entry.name, entry.value]));
+  assert.equal(runtimeIdentity.CODEOPS_RUNTIME_PROFILE_ID, input.runtimeProfileId);
+  assert.equal(runtimeIdentity.CODEOPS_RUNTIME_RELEASE_DIGEST, input.runtimeReleaseDigest);
+  assert.equal(runtimeIdentity.CODEOPS_RUNTIME_CAPABILITY_DIGEST, input.runtimeCapabilityDigest);
+  assert.equal(job.metadata.annotations["codeops.example/runtime-release-digest"], input.runtimeReleaseDigest);
   const agent = pod.containers.find(({ name }) => name === "coding-agent");
   assert.match(builder.args[0], /mkdir -p \/workspace\/\.codeops\/codex-home/);
   assert.equal(
@@ -78,6 +121,55 @@ test("gives the root Job only source, initialization, worker, and receipt author
   assert.equal(env.MODEL_PROVIDER, "codeops_proxy");
 });
 
+test("renders exact profile resource bounds including ephemeral storage", () => {
+  const job = render();
+  const pod = job.spec.template.spec;
+  const builder = pod.initContainers.find(({ name }) => name === "workspace-builder");
+  const containers = [...pod.initContainers, ...pod.containers];
+  for (const container of containers) {
+    for (const key of ["cpu", "memory", "ephemeral-storage"]) {
+      assert.ok(container.resources.requests[key]);
+      assert.ok(container.resources.limits[key]);
+    }
+  }
+  assert.deepEqual(
+    pod.containers.find(({ name }) => name === "coding-agent").resources.limits,
+    { cpu: "2000m", memory: "6144Mi", "ephemeral-storage": "4096Mi" },
+  );
+  assert.deepEqual(effectiveResources(pod, "requests"), {
+    cpu: 600,
+    memory: 1_280,
+    "ephemeral-storage": 1_280,
+  });
+  assert.deepEqual(effectiveResources(pod, "limits"), {
+    cpu: input.runtimeProfile.resources.cpuMillis,
+    memory: input.runtimeProfile.resources.memoryMiB,
+    "ephemeral-storage": input.runtimeProfile.resources.ephemeralStorageMiB,
+  });
+  assert.equal(builder.resources.requests["ephemeral-storage"], "1280Mi");
+  assert.equal(builder.resources.limits["ephemeral-storage"], "5120Mi");
+  assert.equal(pod.volumes.find(({ name }) => name === "workspace").emptyDir.sizeLimit, "5120Mi");
+  assert.equal(pod.volumes.find(({ name }) => name === "temp").emptyDir.sizeLimit, "2Gi");
+});
+
+test("rejects incomplete, unbounded, and restricted runtime profiles", () => {
+  assert.throws(() => render({ runtimeProfile: { ...input.runtimeProfile, extra: true } }), /complete trusted schema/);
+  assert.throws(() => render({ runtimeProfile: {
+    ...input.runtimeProfile,
+    resources: { cpuMillis: 1200, memoryMiB: 1800, ephemeralStorageMiB: 1800 },
+  } }), /cannot bound coding-agent/);
+  for (const authority of [
+    { workspaceAccess: "read-only" },
+    { publicNetwork: false },
+    { brokeredProviderEffects: false },
+  ]) {
+    assert.throws(() => render({ runtimeProfile: {
+      ...input.runtimeProfile,
+      authority: { ...input.runtimeProfile.authority, ...authority },
+    } }), /does not render authority denied/);
+  }
+});
+
 test("rejects mutable images and unsafe root identities", () => {
   for (const patch of [
     { agentDigest: "latest" },
@@ -87,6 +179,9 @@ test("rejects mutable images and unsafe root identities", () => {
     { leaseId: "not-a-uuid" },
     { sessionId: "unsafe:value" },
     { sessionSuffix: "UPPER" },
+    { runtimeProfileId: " unsafe" },
+    { runtimeReleaseDigest: `sha256:${"A".repeat(64)}` },
+    { agentDigest: `sha256:${"d".repeat(64)}` },
   ]) {
     assert.throws(() => render(patch));
   }

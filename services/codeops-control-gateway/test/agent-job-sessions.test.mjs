@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
 import {
   agentJobSessionId,
   describeAgentJobSession,
-  projectAgentJobSessionStarted,
+  projectAgentJobSessionStarted as projectAgentJobSessionStartedBase,
   projectAgentJobSessionTerminal,
 } from "../dist/agent-job-sessions.js";
 import { agentJobModelBudgetAuthority } from "../dist/agent-job-identity.js";
@@ -22,6 +23,33 @@ const adoptedPullRequest = {
   sessionOwnerPrincipalId: "access:aidan@example.com",
   rationale: "Run the exact PR head through the existing critic loop.",
 };
+const runtimeRequirements = {
+  version: "codeops.runtime-requirements/v1", capabilities: ["acp"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1280, ephemeralStorageMiB: 1280 },
+  requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "compatible-substitution-v1",
+};
+const runtimeOwner = {
+  requirements: runtimeRequirements,
+  launchBinding: {
+    version: "codeops.runtime-launch-binding/v1",
+    requirementDigest: sha256CanonicalJsonDigest(runtimeRequirements),
+    selectedAt: "2026-08-18T08:30:00.000Z",
+    profile: {
+      version: "codeops.runtime-profile/v1", profileId: "standard-v1",
+      releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"],
+      capabilityDigest: sha256CanonicalJsonDigest(["acp"]),
+      resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 },
+      authority: runtimeRequirements.maximumAuthority,
+      compatibilityPolicyRevision: "compatible-substitution-v1",
+      images: { agent: `example/agent@sha256:${"8".repeat(64)}`, worker: `example/worker@sha256:${"9".repeat(64)}`,
+        sessionGateway: `example/gateway@sha256:${"a".repeat(64)}` },
+    },
+  },
+};
+const projectAgentJobSessionStarted = (input) =>
+  projectAgentJobSessionStartedBase({ ...input, runtimeOwner });
 
 function request(role, round) {
   return {
@@ -149,7 +177,7 @@ test("persists adopted Agent terminal output as bounded commandless progress", a
       if (sql.includes("SELECT snapshot_json FROM codeops.sessions")) {
         return { rowCount: 1, rows: [{ snapshot_json: snapshot }] };
       }
-      if (sql.includes("UPDATE codeops.sessions")) {
+      if (sql.includes("UPDATE codeops.sessions") && sql.includes("snapshot_json")) {
         snapshot = JSON.parse(values[1]);
       }
       return { rowCount: 1, rows: [] };
@@ -196,7 +224,7 @@ function inMemorySessionClient() {
         if (sql.includes("SELECT snapshot_json FROM codeops.sessions")) {
           return { rowCount: 1, rows: [{ snapshot_json: state.snapshot }] };
         }
-        if (sql.includes("UPDATE codeops.sessions")) {
+        if (sql.includes("UPDATE codeops.sessions") && sql.includes("snapshot_json")) {
           state.snapshot = JSON.parse(values[1]);
         }
         return { rowCount: 1, rows: [] };

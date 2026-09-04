@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { projectSessionBudget } from "@codeops/codeops-contracts";
+import { projectSessionBudget, sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
 import {
   ImmutableSessionRuntimeDispatchConflictError,
   claimSessionRuntimeDispatch,
@@ -13,6 +13,30 @@ const leaseId = "11111111-1111-4111-8111-111111111111";
 const idempotencyKey = "33333333-3333-4333-8333-333333333333";
 const dispatchId = "44444444-4444-4444-8444-444444444444";
 const claimToken = "55555555-5555-4555-8555-555555555555";
+const runtimeRequirements = {
+  version: "codeops.runtime-requirements/v1", capabilities: ["acp"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1280, ephemeralStorageMiB: 1280 },
+  requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "compatible-substitution-v1",
+};
+const runtimeRequirementDigest = sha256CanonicalJsonDigest(runtimeRequirements);
+const runtimeProfile = {
+  version: "codeops.runtime-profile/v1", profileId: "standard-v1",
+  releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"],
+  capabilityDigest: sha256CanonicalJsonDigest(["acp"]),
+  resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 },
+  authority: runtimeRequirements.maximumAuthority,
+  compatibilityPolicyRevision: "compatible-substitution-v1",
+  images: { agent: `example/agent@sha256:${"8".repeat(64)}`, worker: `example/worker@sha256:${"9".repeat(64)}`,
+    sessionGateway: `example/gateway@sha256:${"a".repeat(64)}` },
+};
+const runtimeLaunchBinding = {
+  version: "codeops.runtime-launch-binding/v1",
+  requirementDigest: runtimeRequirementDigest,
+  profile: runtimeProfile,
+  selectedAt: "2026-08-04T17:00:00.000Z",
+};
 const promptMaterial = {
   response: "I updated the focused implementation and verified the result.",
   stopReason: "end_turn",
@@ -23,6 +47,10 @@ const claimAuthority = () => ({
   generation: snapshot().generation,
   leaseId: snapshot().lease.leaseId,
   identity: snapshot().identity,
+  runtimeProfileId: runtimeProfile.profileId,
+  runtimeReleaseDigest: runtimeProfile.releaseDigest,
+  runtimeCapabilityDigest: runtimeProfile.capabilityDigest,
+  runtimeProfile,
 });
 
 function snapshot(overrides = {}) {
@@ -174,14 +202,45 @@ test("fails before enqueue when the exact generation, lease, or capability drift
 });
 
 class ClaimClient {
-  constructor(row) {
+  constructor(row, owner = undefined) {
     this.row = row;
+    this.owner = owner;
     this.calls = [];
   }
   async query(text, values = []) {
     this.calls.push({ text, values });
+    if (text.includes("AS workspace_launch_id")) {
+      return { rowCount: 1, rows: [{
+        root_session_id: this.owner?.root_session_id ?? snapshot().sessionId,
+        workspace_launch_id: snapshot().identity.runId,
+      }] };
+    }
+    if (text.includes("WITH RECURSIVE lineage")) {
+      return { rowCount: 1, rows: [this.owner ?? {
+        root_session_id: snapshot().sessionId,
+        claimant_legacy_runtime_worker_compatible: false,
+        session_runtime_requirements_json: null,
+        session_runtime_requirement_digest: null,
+        session_runtime_launch_binding_json: null,
+        legacy_runtime_worker_compatible: false,
+        workspace_state: "ready",
+        workspace_runtime_requirements_json: runtimeRequirements,
+        workspace_runtime_requirement_digest: runtimeRequirementDigest,
+        workspace_runtime_launch_binding_json: runtimeLaunchBinding,
+      }] };
+    }
     if (text.includes("WITH candidate AS")) {
-      return { rowCount: this.row ? 1 : 0, rows: this.row ? [this.row] : [] };
+      const legacy = values[13] === true;
+      return {
+        rowCount: this.row ? 1 : 0,
+        rows: this.row ? [{
+          ...this.row,
+          is_admitted_initial_dispatch:
+            this.row.is_admitted_initial_dispatch ?? false,
+          runtime_binding_json: legacy ? null : JSON.parse(values[8]),
+          runtime_claim_protocol: legacy ? "legacy-unproven-v1" : "bound-v2",
+        }] : [],
+      };
     }
     return { rowCount: 0, rows: [] };
   }
@@ -196,6 +255,126 @@ class RenewClient extends ClaimClient {
     return { rowCount: 0, rows: [] };
   }
 }
+
+test("upgrades only pre-migration active roots for older running workers", async () => {
+  const dispatch = await enqueue(new EnqueueClient());
+  const row = {
+    dispatch_json: dispatch,
+    claim_token: claimToken,
+    claim_expires_at: "2026-08-04T18:05:00.000Z",
+    claim_count: 1,
+  };
+  const legacyOwner = {
+    root_session_id: snapshot().sessionId,
+    claimant_legacy_runtime_worker_compatible: true,
+    session_runtime_requirements_json: null,
+    session_runtime_requirement_digest: null,
+    session_runtime_launch_binding_json: null,
+    legacy_runtime_worker_compatible: true,
+    workspace_state: null,
+    workspace_runtime_requirements_json: null,
+    workspace_runtime_requirement_digest: null,
+    workspace_runtime_launch_binding_json: null,
+  };
+  const client = new ClaimClient(row, legacyOwner);
+  const claim = await claimSessionRuntimeDispatch(client, {
+    workerId: "acp-worker:legacy",
+    sessionId: snapshot().sessionId,
+    generation: snapshot().generation,
+    leaseId: snapshot().lease.leaseId,
+    identity: snapshot().identity,
+    fallbackRuntimeOwner: {
+      requirements: runtimeRequirements,
+      launchBinding: runtimeLaunchBinding,
+    },
+    leaseMs: 5 * 60_000,
+    now: () => new Date("2026-08-04T18:00:00.000Z"),
+    claimToken: () => claimToken,
+  });
+  assert.equal(claim.runtimeBinding, undefined);
+  assert.equal(client.calls[4].values[13], true);
+  assert.match(client.calls[4].text, /SET runtime_requirements_json/);
+  assert.equal(client.calls[4].values[15], true);
+  assert.equal(client.calls[5].text, "COMMIT");
+
+  await assert.rejects(
+    claimSessionRuntimeDispatch(new ClaimClient(row, {
+      ...legacyOwner,
+      claimant_legacy_runtime_worker_compatible: false,
+      legacy_runtime_worker_compatible: false,
+    }), {
+      workerId: "acp-worker:new-unbound",
+      sessionId: snapshot().sessionId,
+      generation: snapshot().generation,
+      leaseId: snapshot().lease.leaseId,
+      identity: snapshot().identity,
+      fallbackRuntimeOwner: {
+        requirements: runtimeRequirements,
+        launchBinding: runtimeLaunchBinding,
+      },
+      leaseMs: 5 * 60_000,
+    }),
+    /legacy-runtime-unbound/,
+  );
+});
+
+test("rejects ambiguous workspace and session root ownership", async () => {
+  const dispatch = await enqueue(new EnqueueClient());
+  const client = new ClaimClient({
+    dispatch_json: dispatch,
+    claim_token: claimToken,
+    claim_expires_at: "2026-08-04T18:05:00.000Z",
+    claim_count: 1,
+  }, {
+    root_session_id: snapshot().sessionId,
+    claimant_legacy_runtime_worker_compatible: false,
+    session_runtime_requirements_json: runtimeRequirements,
+    session_runtime_requirement_digest: runtimeRequirementDigest,
+    session_runtime_launch_binding_json: runtimeLaunchBinding,
+    legacy_runtime_worker_compatible: false,
+    workspace_state: "ready",
+    workspace_runtime_requirements_json: runtimeRequirements,
+    workspace_runtime_requirement_digest: runtimeRequirementDigest,
+    workspace_runtime_launch_binding_json: runtimeLaunchBinding,
+  });
+  await assert.rejects(
+    claimSessionRuntimeDispatch(client, {
+      workerId: "acp-worker:ambiguous",
+      ...claimAuthority(),
+      leaseMs: 5 * 60_000,
+    }),
+    /ambiguous durable owners/,
+  );
+});
+
+test("does not inherit tuple-less migration compatibility into a new child", async () => {
+  const dispatch = await enqueue(new EnqueueClient());
+  const client = new ClaimClient({
+    dispatch_json: dispatch,
+    claim_token: claimToken,
+    claim_expires_at: "2026-08-04T18:05:00.000Z",
+    claim_count: 1,
+  }, {
+    root_session_id: "migration-active-root",
+    claimant_legacy_runtime_worker_compatible: false,
+    session_runtime_requirements_json: runtimeRequirements,
+    session_runtime_requirement_digest: runtimeRequirementDigest,
+    session_runtime_launch_binding_json: runtimeLaunchBinding,
+    legacy_runtime_worker_compatible: true,
+    workspace_state: null,
+    workspace_runtime_requirements_json: null,
+    workspace_runtime_requirement_digest: null,
+    workspace_runtime_launch_binding_json: null,
+  });
+  await assert.rejects(claimSessionRuntimeDispatch(client, {
+    workerId: "acp-worker:new-child",
+    sessionId: snapshot().sessionId,
+    generation: snapshot().generation,
+    leaseId: snapshot().lease.leaseId,
+    identity: snapshot().identity,
+    leaseMs: 5 * 60_000,
+  }), /runtime-release-mismatch/);
+});
 
 test("claims one pending or expired dispatch with a bounded renewable lease", async () => {
   const dispatch = await enqueue(new EnqueueClient());
@@ -218,19 +397,22 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
   assert.equal(claim.claimCount, 2);
   assert.equal(claim.isAdmittedInitialDispatch, false);
   assert.equal(client.calls[0].text, "BEGIN ISOLATION LEVEL SERIALIZABLE");
-  assert.match(client.calls[1].text, /FOR UPDATE OF outbox SKIP LOCKED/);
-  assert.match(client.calls[1].text, /status = 'pending'/);
-  assert.match(client.calls[1].text, /claim_expires_at <= \$1/);
-  assert.match(client.calls[1].text, /claim_count = outbox\.claim_count \+ 1/);
-  assert.match(client.calls[1].text, /outbox\.session_id = \$5/);
-  assert.match(client.calls[1].text, /session\.snapshot_json->'identity' = \$8::jsonb/);
-  assert.match(client.calls[1].text, /LEFT JOIN codeops\.admitted_child_materializations/);
-  assert.match(client.calls[1].text, /initial_dispatch\.status = 'completed'/);
-  assert.match(client.calls[1].text, /outbox\.dispatch_digest = materialization\.initial_dispatch_digest/);
-  assert.match(client.calls[1].text, /outbox\.dispatch_json = materialization\.input_json->'initialDispatch'/);
-  assert.ok(client.calls[1].text.indexOf("CASE WHEN materialization.admission_id") <
-    client.calls[1].text.indexOf("outbox.available_at ASC"));
-  assert.deepEqual(client.calls[1].values, [
+  assert.match(client.calls[1].text, /WITH RECURSIVE lineage/);
+  assert.match(client.calls[2].text, /workspace_launches[\s\S]*FOR UPDATE/);
+  assert.match(client.calls[3].text, /FOR UPDATE OF root/);
+  assert.match(client.calls[4].text, /FOR UPDATE OF outbox SKIP LOCKED/);
+  assert.match(client.calls[4].text, /status = 'pending'/);
+  assert.match(client.calls[4].text, /claim_expires_at <= \$1/);
+  assert.match(client.calls[4].text, /claim_count = outbox\.claim_count \+ 1/);
+  assert.match(client.calls[4].text, /outbox\.session_id = \$5/);
+  assert.match(client.calls[4].text, /session\.snapshot_json->'identity' = \$8::jsonb/);
+  assert.match(client.calls[4].text, /LEFT JOIN codeops\.admitted_child_materializations/);
+  assert.match(client.calls[4].text, /initial_dispatch\.status = 'completed'/);
+  assert.match(client.calls[4].text, /outbox\.dispatch_digest = materialization\.initial_dispatch_digest/);
+  assert.match(client.calls[4].text, /outbox\.dispatch_json = materialization\.input_json->'initialDispatch'/);
+  assert.ok(client.calls[4].text.indexOf("CASE WHEN materialization.admission_id") <
+    client.calls[4].text.indexOf("outbox.available_at ASC"));
+  assert.deepEqual(client.calls[4].values.slice(0, 8), [
     "2026-08-04T18:00:00.000Z",
     claimToken,
     "acp-worker:7",
@@ -240,12 +422,13 @@ test("claims one pending or expired dispatch with a bounded renewable lease", as
     leaseId,
     JSON.stringify(Object.fromEntries(Object.entries(snapshot().identity).sort())),
   ]);
-  assert.match(client.calls[2].text, /SET state = 'not_attempted'/);
-  assert.match(client.calls[2].text, /attempted_at IS NULL/);
-  assert.deepEqual(client.calls[2].values, [
+  assert.equal(claim.runtimeBinding.selectedReleaseDigest, runtimeProfile.releaseDigest);
+  assert.match(client.calls[5].text, /SET state = 'not_attempted'/);
+  assert.match(client.calls[5].text, /attempted_at IS NULL/);
+  assert.deepEqual(client.calls[5].values, [
     "2026-08-04T18:00:00.000Z", dispatchId, claimToken,
   ]);
-  assert.match(client.calls[3].text, /FOR UPDATE OF manifest/);
+  assert.match(client.calls[6].text, /FOR UPDATE OF manifest/);
   assert.equal(client.calls.at(-1).text, "COMMIT");
 });
 

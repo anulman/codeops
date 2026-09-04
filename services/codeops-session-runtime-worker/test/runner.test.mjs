@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { runSessionRuntimeWorker } from "../dist/runner.js";
+import { SessionRuntimeClaimUnavailableError } from "../dist/transport.js";
 
 const promptResult = {
   type: "prompt",
@@ -67,6 +68,35 @@ test("propagates execution errors without automatically claiming again", async (
     /ambiguous ACP operation/,
   );
   assert.equal(calls, 1);
+});
+
+test("keeps an existing Session worker alive across a mixed-version gateway rollout", async () => {
+  const controller = new AbortController();
+  let calls = 0;
+  const completed = [];
+  await runSessionRuntimeWorker({
+    transport: {
+      async runOne() {
+        calls += 1;
+        if (calls === 1) {
+          throw new SessionRuntimeClaimUnavailableError(
+            "old gateway does not accept the v2 claim yet",
+          );
+        }
+        return committed;
+      },
+    },
+    execute: async () => promptResult,
+    leaseMs: 1_000,
+    idlePollMs: 100,
+    signal: controller.signal,
+    onCompleted: (result) => {
+      completed.push(result);
+      controller.abort();
+    },
+  });
+  assert.equal(calls, 2);
+  assert.deepEqual(completed, [committed]);
 });
 
 test("rejects poll and lease bounds before claiming", async () => {

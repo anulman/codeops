@@ -10,6 +10,7 @@ import {
 } from "@codeops/codeops-contracts";
 import { verifyWorkspaceContextAttachments, workspaceContextAttachmentDescriptors } from
   "@codeops/codeops-contracts/workspace-context-node";
+import { setTimeout as delay } from "node:timers/promises";
 import {
   boundedJson,
   exactGatewayOrigin,
@@ -52,12 +53,14 @@ export class SessionJobInitializer {
   readonly #token: string;
   readonly #fetch: typeof fetch;
   readonly #requestTimeoutMs: number;
+  readonly #retryDelaysMs: readonly number[];
 
   constructor(input: {
     readonly gatewayOrigin: string;
     readonly token: string;
     readonly fetch?: typeof fetch;
     readonly requestTimeoutMs?: number;
+    readonly retryDelaysMs?: readonly number[];
   }) {
     this.#origin = exactGatewayOrigin(input.gatewayOrigin);
     this.#token = exactToken(input.token);
@@ -72,31 +75,71 @@ export class SessionJobInitializer {
         "session Job initialization timeout must be between 1 and 30 seconds",
       );
     }
+    this.#retryDelaysMs = input.retryDelaysMs ?? [100, 250, 1_000];
+    if (
+      this.#retryDelaysMs.length > 8 ||
+      this.#retryDelaysMs.some((value) =>
+        !Number.isSafeInteger(value) || value < 0 || value > 10_000
+      )
+    ) {
+      throw new SessionRuntimeTransportError(
+        "session Job initialization retry delays must contain at most 8 values between 0 and 10 seconds",
+      );
+    }
   }
 
   async initialize(
     rawRequest: SessionJobInitializationRequest,
   ): Promise<SessionJobInitializationResponse> {
     const request = sessionJobInitializationRequestSchema.parse(rawRequest);
-    const controller = new AbortController();
-    const timeout = setTimeout(
-      () => controller.abort(),
-      this.#requestTimeoutMs,
-    );
+    const boundBoundary = request.version ===
+      "codeops.session-job-initialization/v3";
+    const path = boundBoundary
+      ? "/v2/session-jobs/initializations"
+      : "/v1/session-jobs/initializations";
+    const body = JSON.stringify(request);
+    const retryDelays = boundBoundary ? this.#retryDelaysMs : [];
     try {
-      const response = await this.#fetch(
-        `${this.#origin}/v1/session-jobs/initializations`,
-        {
-          method: "POST",
-          redirect: "error",
-          signal: controller.signal,
-          headers: {
-            authorization: `Bearer ${this.#token}`,
-            "content-type": "application/json; charset=utf-8",
-          },
-          body: JSON.stringify(request),
-        },
-      );
+      let response: Response | undefined;
+      for (let attempt = 0; attempt <= retryDelays.length; attempt += 1) {
+        const controller = new AbortController();
+        const timeout = setTimeout(
+          () => controller.abort(),
+          this.#requestTimeoutMs,
+        );
+        try {
+          response = await this.#fetch(`${this.#origin}${path}`, {
+            method: "POST",
+            redirect: "error",
+            signal: controller.signal,
+            headers: {
+              authorization: `Bearer ${this.#token}`,
+              "content-type": "application/json; charset=utf-8",
+            },
+            body,
+          });
+        } catch (error) {
+          if (attempt === retryDelays.length) throw error;
+          await delay(retryDelays[attempt]);
+          continue;
+        } finally {
+          clearTimeout(timeout);
+        }
+        if (
+          attempt < retryDelays.length &&
+          [404, 408, 425, 429, 502, 503, 504].includes(response.status)
+        ) {
+          await response.body?.cancel();
+          await delay(retryDelays[attempt]);
+          continue;
+        }
+        break;
+      }
+      if (response === undefined) {
+        throw new SessionRuntimeTransportError(
+          "session Job initialization produced no gateway response",
+        );
+      }
       requireSuccess(response);
       const result = sessionJobInitializationResponseSchema.parse(
         await boundedJson(response),
@@ -108,7 +151,7 @@ export class SessionJobInitializer {
       const duplicateReleasedLease =
         result.disposition === "duplicate" &&
         result.snapshot.lease?.status === "released";
-      if (request.version === "codeops.session-job-initialization/v3") {
+      if ("admissionId" in request) {
         if (result.disposition !== "duplicate" || result.contextAttachments === undefined ||
             result.initialDispatchDigest === undefined) {
           throw new SessionRuntimeTransportError("admitted child initialization response is incomplete");
@@ -135,8 +178,6 @@ export class SessionJobInitializer {
       throw new SessionRuntimeTransportError(
         `session Job initialization failed: ${error instanceof Error ? error.message : String(error)}`,
       );
-    } finally {
-      clearTimeout(timeout);
     }
   }
 }

@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { parseAllDocuments } from "yaml";
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
@@ -8,7 +9,9 @@ export function renderControlGatewayManifest(template, input) {
     "controlGatewayDigest",
     "modelProxyDigest",
     "agentDigest",
+    "workerDigest",
     "sessionGatewayDigest",
+    "runtimeReleaseDigest",
   ]) {
     if (!DIGEST.test(input[key] ?? "")) {
       throw new Error(`${key} must be a lowercase SHA-256 digest`);
@@ -23,6 +26,26 @@ export function renderControlGatewayManifest(template, input) {
     __CODEOPS_AGENT_DIGEST__: input.agentDigest,
     __CODEOPS_SESSION_GATEWAY_DIGEST__: input.sessionGatewayDigest,
     __CODEOPS_KUBERNETES_API_CIDR__: input.kubernetesApiCidr,
+    __CODEOPS_RUNTIME_PROFILE_REGISTRY_JSON__: JSON.stringify({
+      version: "codeops.runtime-profile-registry/v1",
+      profiles: [{
+        version: "codeops.runtime-profile/v1",
+        profileId: "standard-v1",
+        releaseDigest: input.runtimeReleaseDigest,
+        capabilities: ["acp", "checkpoint", "github-broker", "model-proxy", "work-items-broker"],
+        capabilityDigest: `sha256:${createHash("sha256").update(JSON.stringify(
+          ["acp", "checkpoint", "github-broker", "model-proxy", "work-items-broker"],
+        )).digest("hex")}`,
+        resources: { cpuMillis: 3_000, memoryMiB: 7_168, ephemeralStorageMiB: 5_120 },
+        authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+        compatibilityPolicyRevision: "compatible-substitution-v1",
+        images: {
+          agent: `ghcr.io/anulman/codeops/agent@${input.agentDigest}`,
+          worker: `ghcr.io/anulman/codeops/session-runtime-worker@${input.workerDigest}`,
+          sessionGateway: `ghcr.io/anulman/codeops/session-gateway@${input.sessionGatewayDigest}`,
+        },
+      }],
+    }),
   };
   let rendered = template;
   for (const [token, value] of Object.entries(replacements)) {
@@ -46,6 +69,7 @@ export function renderControlGatewayManifest(template, input) {
     "NetworkPolicy/codeops-control-gateway",
     "NetworkPolicy/codeops-model-proxy",
     "PersistentVolumeClaim/codeops-control-gateway-evidence",
+    "ConfigMap/codeops-runtime-profile-registry",
     "Role/codeops-control-gateway",
     "RoleBinding/codeops-control-gateway",
     "Service/codeops-control-gateway",
@@ -64,6 +88,21 @@ export function renderControlGatewayManifest(template, input) {
   const deployment = resources.find(
     (resource) => resource.kind === "Deployment",
   );
+  const runtimeRegistry = resources.find(
+    (resource) => resource.kind === "ConfigMap" &&
+      resource.metadata.name === "codeops-runtime-profile-registry",
+  );
+  const registryProfile = JSON.parse(runtimeRegistry?.data?.["profile-registry.json"] ?? "null")
+    ?.profiles?.[0];
+  if (
+    runtimeRegistry?.immutable !== true ||
+    registryProfile?.releaseDigest !== input.runtimeReleaseDigest ||
+    registryProfile?.images?.agent !== `ghcr.io/anulman/codeops/agent@${input.agentDigest}` ||
+    registryProfile?.images?.worker !== `ghcr.io/anulman/codeops/session-runtime-worker@${input.workerDigest}` ||
+    registryProfile?.images?.sessionGateway !== `ghcr.io/anulman/codeops/session-gateway@${input.sessionGatewayDigest}`
+  ) {
+    throw new Error("control gateway runtime profile registry drifted");
+  }
   const runtimeCredentials = deployment.spec.template.spec.volumes.find(
     (volume) => volume.name === "runtime-credentials",
   );
@@ -221,7 +260,11 @@ export function renderControlGatewayManifest(template, input) {
     )?.value !== "/var/run/secrets/codeops-session-job-initialization/token" ||
     env.find(
       (item) => item.name === "CODEOPS_SESSION_RUNTIME_WORKER_ID",
-    )?.value !== "acp-worker:primary"
+    )?.value !== "acp-worker:primary" ||
+    env.find((item) => item.name === "CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE")?.value !==
+      "/var/run/codeops-runtime-profile/profile-registry.json" ||
+    env.find((item) => item.name === "CODEOPS_RUNTIME_COMPATIBILITY_POLICY_REVISION")?.value !==
+      "compatible-substitution-v1"
   ) {
     throw new Error("control gateway session secret paths drifted");
   }

@@ -7,6 +7,7 @@ import type {
 } from "@codeops/codeops-contracts";
 import { workspaceLaunchSessionId } from "@codeops/codeops-contracts/workspace-launch";
 import {
+  bindWorkspaceLaunchRuntime,
   failWorkspaceLaunch,
   materializedWorkspaceLaunch,
   provisioningWorkspaceLaunch,
@@ -175,6 +176,12 @@ export async function reconcileWorkspaceLaunch(
   let resources: readonly Record<string, unknown>[];
   try {
     resourceConfig = dependencies.resourceConfig(launch, identity);
+    launch = await dependencies.update(bindWorkspaceLaunchRuntime(
+      launch,
+      resourceConfig.runtimeLaunchBinding,
+      dependencies.now,
+      resourceConfig.runtimeRequirements,
+    ));
     resources = buildWorkspaceResources(resourceConfig);
     assertWorkspaceResources(resources, resourceConfig.modelProxyServiceName);
   } catch (error) {

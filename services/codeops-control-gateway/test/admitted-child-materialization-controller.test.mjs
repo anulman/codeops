@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
-import { canonicalJsonText } from "@codeops/codeops-contracts";
+import { canonicalJsonText, sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
 import {
   claimAdmittedChildMaterialization,
   releaseAdmittedChildMaterializationClaim,
@@ -31,6 +31,29 @@ const policy = { version: "codeops.session-policy/v1", mode: "implement",
   workspaceAccess: "bounded-writes", modelCalls: "allowed",
   modelPolicy: { provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "medium" } };
 const image = `registry.example/image@sha256:${"a".repeat(64)}`;
+const runtimeRequirements = {
+  version: "codeops.runtime-requirements/v1", capabilities: ["acp"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1_280, ephemeralStorageMiB: 1_280 },
+  requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true,
+    brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true,
+    brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "compatible-substitution-v1",
+};
+const runtimeLaunchBinding = {
+  version: "codeops.runtime-launch-binding/v1",
+  requirementDigest: sha256CanonicalJsonDigest(runtimeRequirements),
+  selectedAt: "2026-09-02T10:00:00.000Z",
+  profile: {
+    version: "codeops.runtime-profile/v1", profileId: "standard-v1",
+    releaseDigest: `sha256:${"b".repeat(64)}`, capabilities: ["acp"],
+    capabilityDigest: sha256CanonicalJsonDigest(["acp"]),
+    resources: { cpuMillis: 3_000, memoryMiB: 7_168, ephemeralStorageMiB: 5_120 },
+    authority: runtimeRequirements.maximumAuthority,
+    compatibilityPolicyRevision: runtimeRequirements.compatibilityPolicyRevision,
+    images: { agent: image, worker: image, sessionGateway: image },
+  },
+};
 const snapshot = { version: "codeops.session-snapshot/v1", sessionId: childSessionId,
   generation: 1, state: "running", identity: { version: "codeops.session-workspace-identity/v1",
     policy, contextAttachments: [], workspace: { version: "codeops.workspace/v1", sources: [{
@@ -81,6 +104,7 @@ function config() { return { namespace: "agents-system",
   contextAttachments: [], identity: snapshot.identity, workspace: snapshot.identity.workspace,
   sources: [{ catalogKey: "codeops", repositoryUrl: "https://github.com/anulman/codeops",
     readToken: "token-long-enough" }], agentImage: image, runtimeWorkerImage: image,
+  runtimeRequirements, runtimeLaunchBinding,
   imagePullSecrets: [], nodeSelector: {}, runtimeServiceAccountName: "runtime",
   sessionSecretsName: "session-secrets", sessionGatewayOrigin: "http://session-gateway:8080",
   modelProxyOrigin: "http://model-proxy:8080", modelProxyServiceName: "model-proxy",

@@ -38,6 +38,11 @@ eligible for terminal completion or failure under their durable released lease
 identity. Reconciliation is fair across polls and does not replace the runtime
 or release scheduler capacity.
 
+Interactive workspace admission binds immutable runtime requirements before
+effects. Root, fork, and admitted work-item execution resolves one durable
+launch profile. Claims prove the exact release and capability identities, and
+same-profile release rollover replays the stored Kubernetes launch identity.
+
 The Session Broker projects pre-policy 0.4.2 workspace snapshots into the
 immutable `implement` policy at the read boundary. It does not rewrite the
 stored snapshot, checkpoint, cursor, or evidence. This preserves the existing

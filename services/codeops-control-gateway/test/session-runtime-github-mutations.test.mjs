@@ -25,6 +25,22 @@ const workerId = "acp-worker:primary";
 const repository = "anulman/codeops";
 const leaseId = "33333333-3333-4333-8333-333333333333";
 const admissionId = "77777777-7777-4777-8777-777777777777";
+const runtimeBinding = {
+    version: "codeops.runtime-binding/v1", requirementDigest: `sha256:${"6".repeat(64)}`,
+    compatibilityPolicyRevision: "policy-7", selectedProfileId: "standard-v1",
+    selectedReleaseDigest: `sha256:${"7".repeat(64)}`,
+   selectedCapabilityDigest: `sha256:${"8".repeat(64)}`,
+    selectedProfile: { version: "codeops.runtime-profile/v1", profileId: "standard-v1", releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"], capabilityDigest: `sha256:${"8".repeat(64)}`, resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 }, authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true }, compatibilityPolicyRevision: "policy-7", images: { agent: `example/agent@sha256:${"a".repeat(64)}`, worker: `example/worker@sha256:${"b".repeat(64)}`, sessionGateway: `example/gateway@sha256:${"c".repeat(64)}` } },
+    selectedAt: "2026-08-14T15:00:00.000Z",
+};
+const runtimeProof = {
+  session_id: dispatch().command.sessionId,
+  session_identity_json: dispatch().snapshot.identity,
+  runtime_binding_json: runtimeBinding,
+  owner_runtime_binding_json: runtimeBinding,
+  runtime_claim_protocol: "bound-v2",
+  legacy_runtime_worker_compatible: false,
+};
 
 function canonical(value) {
   const normalize = (entry) => {
@@ -247,6 +263,9 @@ class Client {
           claim_expires_at: "2026-08-14T15:30:00.000Z",
           owner_principal_id: "access:aidan@example.com",
           admission_id: admissionId,
+          ...runtimeProof,
+          session_id: this.dispatchValue.command.sessionId,
+          session_identity_json: this.dispatchValue.snapshot.identity,
         }],
       };
     }
@@ -697,6 +716,12 @@ test("consumes one exact durable permission before returning provider authority"
     text.includes("session_runtime_permission_requests AS permission"));
   assert.match(authorizationQuery.text, /permission\.request_id = \$2/);
   assert.equal(authorizationQuery.values[1], permission().request.requestId);
+  const lockedDispatchQuery = client.calls.find(({ text }) =>
+    text.includes("FOR UPDATE OF outbox"));
+  assert.match(lockedDispatchQuery.text, /outbox\.runtime_binding_json/);
+  assert.match(lockedDispatchQuery.text, /session_runtime_owner_binding/);
+  assert.match(lockedDispatchQuery.text, /session_identity_json/);
+  assert.match(lockedDispatchQuery.text, /legacy_runtime_worker_compatible/);
 
   const result = {
     version: "codeops.github-check-rerun-result/v1",

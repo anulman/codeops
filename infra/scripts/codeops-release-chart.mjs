@@ -29,6 +29,7 @@ const allowedLeafPaths = new Set([
   "runtime.agentImage.digest",
   "runtime.sessionGatewayImage.repository",
   "runtime.sessionGatewayImage.digest",
+  "runtime.releaseDigest",
 ]);
 
 function leaves(value, prefix = "") {

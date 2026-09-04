@@ -40,6 +40,7 @@ import {
   ClaimedDispatchAuthorityConflictError,
   ClaimedDispatchAuthorityNotFoundError,
   loadClaimedDispatchAuthority,
+  assertBrokeredProviderEffects,
   selectClaimedWorkspaceSource,
   type ClaimedDispatchAuthority,
 } from "./claimed-dispatch-authority.js";
@@ -100,6 +101,7 @@ async function loadWorkItemAuthority(
       claimToken: input.claimToken,
       now: () => input.now,
     });
+    assertBrokeredProviderEffects(authority);
     selectClaimedWorkspaceSource(authority, { repository: input.repository });
     return authority;
   } catch (error) {

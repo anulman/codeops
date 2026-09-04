@@ -230,6 +230,7 @@ test("release stays explicit and publishes one exact immutable bundle", async ()
   assert.match(serialized, /oci:\/\/ghcr\.io\/anulman\/codeops\/charts/);
   assert.match(serialized, /codeops-release-images\.mjs/);
   assert.match(serialized, /codeops-release-chart\.mjs/);
+  assert.match(serialized, /codeops-release-images\.mjs image-plan\.json release-manifest\.json values\.release\.yaml/);
   assert.match(serialized, /nub run prepare:chart/);
   const dependencyResolver = await readFile(
     new URL("./prepare-codeops-chart-dependencies.mjs", import.meta.url),

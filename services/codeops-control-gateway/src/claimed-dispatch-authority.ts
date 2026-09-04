@@ -1,6 +1,8 @@
 import {
   canonicalJsonText,
   isWorkspaceSessionIdentity,
+  runtimeBindingSchema,
+  sessionIdentitySchema,
   sessionRuntimeDispatchSchema,
   sessionSnapshotSchema,
   type SessionRuntimeDispatch,
@@ -20,6 +22,12 @@ export interface ClaimedDispatchRow extends Record<string, unknown> {
   readonly claimed_by: unknown;
   readonly claim_expires_at: unknown;
   readonly owner_principal_id: unknown;
+  readonly session_id: unknown;
+  readonly session_identity_json: unknown;
+  readonly runtime_binding_json: unknown;
+  readonly owner_runtime_binding_json: unknown;
+  readonly runtime_claim_protocol: unknown;
+  readonly legacy_runtime_worker_compatible: unknown;
 }
 
 export interface ClaimedDispatchAuthority {
@@ -28,6 +36,7 @@ export interface ClaimedDispatchAuthority {
   readonly workerId: string;
   readonly claimToken: string;
   readonly claimExpiresAt: string;
+  readonly runtimeBinding?: ReturnType<typeof runtimeBindingSchema.parse>;
 }
 
 export interface ClaimedWorkspaceSourceAuthority {
@@ -75,6 +84,23 @@ export function validateClaimedDispatchAuthority(
       "request does not hold the exact live dispatch claim",
     );
   }
+  const runtimeBinding = runtimeBindingSchema.safeParse(row.runtime_binding_json);
+  const ownerRuntimeBinding = runtimeBindingSchema.safeParse(
+    row.owner_runtime_binding_json,
+  );
+  const boundV2 = row.runtime_claim_protocol === "bound-v2" &&
+    runtimeBinding.success && ownerRuntimeBinding.success &&
+    canonicalJsonText(runtimeBinding.data) ===
+      canonicalJsonText(ownerRuntimeBinding.data);
+  const migrationOwnedLegacy =
+    row.runtime_claim_protocol === "legacy-unproven-v1" &&
+    row.runtime_binding_json == null &&
+    row.legacy_runtime_worker_compatible === true;
+  if (!boundV2 && !migrationOwnedLegacy) {
+    throw new ClaimedDispatchAuthorityConflictError(
+      "claimed dispatch lacks bound-v2 or migration-owned legacy proof",
+    );
+  }
   const parsedDispatch = sessionRuntimeDispatchSchema.safeParse(row.dispatch_json);
   if (!parsedDispatch.success) {
     throw new ClaimedDispatchAuthorityConflictError(
@@ -82,6 +108,17 @@ export function validateClaimedDispatchAuthority(
     );
   }
   const dispatch = deepFreeze(parsedDispatch.data);
+  const sessionIdentity = sessionIdentitySchema.safeParse(row.session_identity_json);
+  if (
+    row.session_id !== dispatch.command.sessionId ||
+    !sessionIdentity.success ||
+    canonicalJsonText(sessionIdentity.data) !==
+      canonicalJsonText(dispatch.snapshot.identity)
+  ) {
+    throw new ClaimedDispatchAuthorityConflictError(
+      "claimed dispatch no longer belongs to the immutable session lineage",
+    );
+  }
   if (row.owner_principal_id !== dispatch.principalId) {
     throw new ClaimedDispatchAuthorityConflictError(
       "claimed dispatch principal does not own the session",
@@ -111,6 +148,7 @@ export function validateClaimedDispatchAuthority(
     workerId: input.workerId,
     claimToken: input.claimToken,
     claimExpiresAt,
+    ...(runtimeBinding.success ? { runtimeBinding: runtimeBinding.data } : {}),
   });
 }
 
@@ -126,7 +164,12 @@ export async function loadClaimedDispatchAuthority(
   const result = await client.query<ClaimedDispatchRow>(
     `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
             outbox.claimed_by, outbox.claim_expires_at,
-            session.owner_principal_id
+            outbox.runtime_binding_json, outbox.runtime_claim_protocol,
+            codeops.session_runtime_owner_binding(outbox.session_id)
+              AS owner_runtime_binding_json,
+            session.session_id, session.snapshot_json->'identity'
+              AS session_identity_json, session.owner_principal_id,
+            session.legacy_runtime_worker_compatible
        FROM codeops.session_runtime_outbox AS outbox
        JOIN codeops.sessions AS session
          ON session.session_id = outbox.session_id
@@ -169,4 +212,17 @@ export function selectClaimedWorkspaceSource(
     );
   }
   return Object.freeze({ ...source });
+}
+
+export function assertBrokeredProviderEffects(
+  authority: ClaimedDispatchAuthority,
+): void {
+  if (
+    authority.runtimeBinding !== undefined &&
+    !authority.runtimeBinding.selectedProfile.authority.brokeredProviderEffects
+  ) {
+    throw new ClaimedDispatchAuthorityConflictError(
+      "selected runtime profile denies brokered provider effects",
+    );
+  }
 }

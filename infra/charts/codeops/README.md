@@ -28,6 +28,13 @@ The chart contains:
   JetStream, and Plane workload, and the Plane MinIO setup Job, plus explicit
   same-namespace and external paths.
 
+## Runtime profile
+
+Set `runtime.releaseDigest` to the immutable CodeOps release digest. The chart
+binds it to the profile ID, compatibility-policy revision, capabilities, and
+exact worker and agent images. The production release pipeline writes this
+value from the complete resolved image manifest.
+
 ## Quickstart
 
 The released OCI chart contains the exact immutable image digests and
@@ -357,14 +364,19 @@ one immutable, non-retrying runtime Job with exact session identity:
 ```sh
 CODEOPS_AGENT_DIGEST=sha256:<digest> \
 CODEOPS_SESSION_RUNTIME_WORKER_DIGEST=sha256:<digest> \
+CODEOPS_RUNTIME_PROFILE_ID=standard-v1 \
+CODEOPS_RUNTIME_RELEASE_DIGEST=sha256:<digest> \
+CODEOPS_RUNTIME_CAPABILITY_DIGEST=sha256:<digest> \
+CODEOPS_RUNTIME_PROFILE_JSON='<exact codeops.runtime-profile/v1 JSON matching the profile, release, capability, agent, and worker inputs>' \
 CODEOPS_BASE_SHA=<40-character-sha> \
 CODEOPS_BRANCH=<branch> \
 CODEOPS_LEASE_ID=<uuid> \
 CODEOPS_RUN_ID=<dns-safe-run> \
 CODEOPS_SESSION_ID=<session-id> \
+CODEOPS_SESSION_OWNER_PRINCIPAL_ID=<owner-principal-id> \
 CODEOPS_SESSION_SUFFIX=<dns-safe-suffix> \
 CODEOPS_WORKFLOW_ID=<dns-safe-workflow> \
-  node infra/scripts/render-codeops-root-session.mjs > /tmp/root-session.yaml
+  node infra/scripts/render-agents-system-root-session.mjs > /tmp/root-session.yaml
 ```
 
 Review the manifest, then apply it through the trusted Kubernetes operator.
@@ -384,6 +396,7 @@ helm template codeops infra/charts/codeops \
   --set orchestrator.image.digest=sha256:<digest> \
   --set githubController.controlPlaneSha=<git-sha> \
   --set postgresql.image.digest=sha256:<digest> \
+  --set runtime.releaseDigest=sha256:<digest> \
   --set runtime.workerImage.digest=sha256:<digest> \
   --set runtime.agentImage.digest=sha256:<digest> \
   --set runtime.sessionGatewayImage.digest=sha256:<digest> \

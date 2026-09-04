@@ -19,6 +19,8 @@ import {
   githubReadProviderRequestSchema,
   githubPullRequestStackLinkSchema,
   type AdmittedChildMaterializationInput,
+  runtimeRequirementsSchema,
+  sha256CanonicalJsonDigest,
   type WorkspaceLaunch,
 } from "@codeops/codeops-contracts";
 import { workspaceContextAttachmentDescriptors } from
@@ -50,6 +52,7 @@ import {
   loadRepositoryRegistryFile,
   resolveRepositoryRoute,
 } from "./repository-registry.js";
+import { loadRuntimeProfileRegistryFile, resolveWorkspaceRuntimeLaunchBinding } from "./runtime-profile-registry.js";
 import { migrateSessionBroker } from "./session-broker-migration.js";
 import {
   InvalidSessionCommandRequestError,
@@ -141,6 +144,7 @@ import {
   PermanentWorkspaceLaunchError,
   reconcileWorkspaceLaunch,
   workspaceLaunchRuntimeIdentity,
+  workspaceLaunchRuntimeWorkerImage,
 } from "./workspace-launch-controller.js";
 import {
   listInteractiveRuntimeCandidates,
@@ -507,6 +511,29 @@ const repositoryRegistry = await loadConfiguredRepositoryRegistry({
     ]);
   },
 });
+const runtimeProfileRegistry = await loadRuntimeProfileRegistryFile(
+  required("CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE"),
+);
+const workspaceRuntimeRequirements = runtimeRequirementsSchema.parse({
+  version: "codeops.runtime-requirements/v1",
+  capabilities: ["acp", "checkpoint", "github-broker", "model-proxy", "work-items-broker"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1_280, ephemeralStorageMiB: 1_280 },
+  requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: required("CODEOPS_RUNTIME_COMPATIBILITY_POLICY_REVISION"),
+});
+const selectedRuntimeProfile = runtimeProfileRegistry.selectCompatible(
+  workspaceRuntimeRequirements,
+);
+const runtimeOwnerBinding = (selectedAt = new Date().toISOString()) => ({
+  requirements: workspaceRuntimeRequirements,
+  launchBinding: {
+    version: "codeops.runtime-launch-binding/v1" as const,
+    requirementDigest: sha256CanonicalJsonDigest(workspaceRuntimeRequirements),
+    profile: selectedRuntimeProfile,
+    selectedAt,
+  },
+});
 const database = new Pool({
   connectionString: await secretFile("CODEOPS_DATABASE_URL_FILE"),
   max: 4,
@@ -567,8 +594,9 @@ const run = runtimeRole === "file-dispatcher" ? createAgentJobRunner({
   config: {
     namespace,
     repositoryRegistry,
-    agentImage: requireDigestImage("CODEOPS_AGENT_IMAGE"),
-    sessionGatewayImage: requireDigestImage("CODEOPS_SESSION_GATEWAY_IMAGE"),
+    agentImage: selectedRuntimeProfile.images.agent,
+    runtimeRequirements: workspaceRuntimeRequirements,
+    runtimeLaunchBinding: runtimeOwnerBinding().launchBinding,
     imagePullSecrets: imagePullSecrets("CODEOPS_AGENT_IMAGE_PULL_SECRETS"),
     nodeSelector: stringMap("CODEOPS_AGENT_NODE_SELECTOR"),
     evidenceClaimName: kubernetesObjectName("CODEOPS_AGENT_EVIDENCE_CLAIM_NAME"),
@@ -581,10 +609,15 @@ const run = runtimeRole === "file-dispatcher" ? createAgentJobRunner({
     modelAuth,
     evidenceRoot: required("CODEOPS_EVIDENCE_ROOT"),
     sessionProjection: {
-      started: async (request, runId) => {
+      started: async (request, runId, runtimeOwner) => {
         const client = await database.connect();
         try {
-          await projectAgentJobSessionStarted({ client, request, runId });
+          await projectAgentJobSessionStarted({
+            client,
+            request,
+            runId,
+            runtimeOwner,
+          });
         } finally {
           client.release();
         }
@@ -632,6 +665,11 @@ function workspaceResourceConfig(
   launch: WorkspaceLaunch,
   identity: ReturnType<typeof workspaceLaunchRuntimeIdentity>,
 ) {
+  const runtimeRequirements = launch.runtimeRequirements ?? workspaceRuntimeRequirements;
+  const runtimeLaunchBinding = resolveWorkspaceRuntimeLaunchBinding(
+    launch, runtimeProfileRegistry, new Date().toISOString(), workspaceRuntimeRequirements,
+  );
+  const runtimeProfile = runtimeLaunchBinding.profile;
   return {
     namespace,
     launchId: launch.launchId,
@@ -653,10 +691,14 @@ function workspaceResourceConfig(
         readToken: authority.readToken,
       };
     }),
-    agentImage: requireDigestImage("CODEOPS_AGENT_IMAGE"),
-    runtimeWorkerImage: launch.retryRuntime?.runtimeWorkerImage ??
-      configuredSessionRuntimeWorkerImage,
-    configuredRuntimeWorkerImage: configuredSessionRuntimeWorkerImage,
+    agentImage: runtimeProfile.images.agent,
+    runtimeWorkerImage: workspaceLaunchRuntimeWorkerImage(
+      launch,
+      runtimeProfile.images.worker,
+    ),
+    configuredRuntimeWorkerImage: runtimeProfile.images.worker,
+    runtimeLaunchBinding,
+    runtimeRequirements,
     imagePullSecrets: imagePullSecrets("CODEOPS_AGENT_IMAGE_PULL_SECRETS"),
     nodeSelector: stringMap("CODEOPS_AGENT_NODE_SELECTOR"),
     runtimeServiceAccountName: kubernetesObjectName(
@@ -1193,6 +1235,7 @@ const server = createServer((request, response) => {
               principalId,
               resolver: workspaceSourceResolver,
               store: createPostgresWorkspaceLaunchStore(client),
+              runtimeRequirements: workspaceRuntimeRequirements,
             });
             scheduleWorkspaceReconciliation();
             return launch;
@@ -1235,10 +1278,12 @@ const server = createServer((request, response) => {
         initialize: async (initializationRequest) => {
           const client = await database.connect();
           try {
-            const initialized = (initializationRequest as { version?: string }).version ===
-                "codeops.session-job-initialization/v3"
+            const initialized = (initializationRequest as { admissionId?: string }).admissionId !== undefined
               ? await initializeAdmittedChildSessionFromJob(client, { request: initializationRequest })
-              : await initializeSessionFromJob(client, { request: initializationRequest });
+              : await initializeSessionFromJob(client, {
+                  request: initializationRequest,
+                  runtimeOwner: runtimeOwnerBinding(),
+                });
             return initialized;
           } finally {
             client.release();
@@ -1316,7 +1361,10 @@ const server = createServer((request, response) => {
         claim: async (claimInput) => {
           const client = await database.connect();
           try {
-            return await claimSessionRuntimeDispatch(client, claimInput);
+            return await claimSessionRuntimeDispatch(client, {
+              ...claimInput,
+              fallbackRuntimeOwner: runtimeOwnerBinding(),
+            });
           } finally {
             client.release();
           }

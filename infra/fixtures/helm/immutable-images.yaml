@@ -10,6 +10,7 @@ githubController:
   controlPlaneSha: "1111111111111111111111111111111111111111"
 postgresql: { image: { digest: "sha256:cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" } }
 runtime:
+  releaseDigest: sha256:7878787878787878787878787878787878787878787878787878787878787878
   workerImage: { digest: "sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd" }
   agentImage: { digest: "sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee" }
   sessionGatewayImage: { digest: "sha256:5656565656565656565656565656565656565656565656565656565656565656" }

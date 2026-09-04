@@ -1,14 +1,44 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
-import { canonicalJsonText } from "@codeops/codeops-contracts";
+import { canonicalJsonText, sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
 import {
   InvalidSessionJobInitializationRequestError,
   initializeAdmittedChildSessionFromJob,
-  initializeSessionFromJob,
+  initializeSessionFromJob as initializeSessionFromJobBase,
   serveSessionJobInitialization,
 } from "../dist/session-job-initialization.js";
 import { sessionCapabilitiesFor } from "../dist/session-broker-transitions.js";
+
+const runtimeRequirements = {
+  version: "codeops.runtime-requirements/v1", capabilities: ["acp"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1280, ephemeralStorageMiB: 1280 },
+  requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "compatible-substitution-v1",
+};
+const requirementDigest = sha256CanonicalJsonDigest(runtimeRequirements);
+const runtimeOwner = {
+  requirements: runtimeRequirements,
+  launchBinding: {
+    version: "codeops.runtime-launch-binding/v1", requirementDigest,
+    selectedAt: "2026-08-05T03:00:00.000Z",
+    profile: {
+      version: "codeops.runtime-profile/v1", profileId: "standard-v1",
+      releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"],
+      capabilityDigest: sha256CanonicalJsonDigest(["acp"]),
+      resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 },
+      authority: runtimeRequirements.maximumAuthority,
+      compatibilityPolicyRevision: "compatible-substitution-v1",
+      images: { agent: `example/agent@sha256:${"8".repeat(64)}`, worker: `example/worker@sha256:${"9".repeat(64)}`,
+        sessionGateway: `example/gateway@sha256:${"a".repeat(64)}` },
+    },
+  },
+};
+const initializeSessionFromJob = (client, input) => initializeSessionFromJobBase(
+  client,
+  { ...input, runtimeOwner },
+);
 
 const token = "j".repeat(32);
 const request = {
@@ -26,27 +56,54 @@ const request = {
   leaseId: "11111111-1111-4111-8111-111111111111",
   holderId: "job:agents-video-proof",
   ownerPrincipalId: "access:aidan@example.com",
+  runtimeProfileId: runtimeOwner.launchBinding.profile.profileId,
+  runtimeReleaseDigest: runtimeOwner.launchBinding.profile.releaseDigest,
+  runtimeCapabilityDigest: runtimeOwner.launchBinding.profile.capabilityDigest,
+  runtimeProfile: runtimeOwner.launchBinding.profile,
 };
 
-function fakeDatabase(existing = null) {
+function fakeDatabase(existing = null, { workspace = null, legacy = false } = {}) {
   const calls = [];
-  const state = { snapshot: existing };
+  const state = {
+    snapshot: existing,
+    ...(existing === null || legacy ? {} : {
+      runtimeRequirements: runtimeOwner.requirements,
+      runtimeRequirementDigest: runtimeOwner.launchBinding.requirementDigest,
+      runtimeLaunchBinding: runtimeOwner.launchBinding,
+    }),
+  };
   return {
     calls,
     state,
     async query(text, values = []) {
       calls.push({ text, values });
+      if (text.includes("FROM codeops.workspace_launches")) {
+        return { rowCount: workspace === null ? 0 : 1, rows: workspace === null ? [] : [workspace] };
+      }
       if (text.startsWith("INSERT INTO codeops.sessions")) {
         if (state.snapshot !== null) return { rowCount: 0, rows: [] };
         state.snapshot = JSON.parse(values[3]);
         state.ownerPrincipalId = values[5];
+        state.runtimeRequirements = values[6] === null ? null : JSON.parse(values[6]);
+        state.runtimeRequirementDigest = values[7];
+        state.runtimeLaunchBinding = values[8] === null ? null : JSON.parse(values[8]);
         return { rowCount: 1, rows: [] };
       }
       if (text.includes("SELECT snapshot_json")) {
         return { rowCount: 1, rows: [{
           snapshot_json: state.snapshot,
           owner_principal_id: state.ownerPrincipalId ?? request.ownerPrincipalId,
+          runtime_requirements_json: state.runtimeRequirements,
+          runtime_requirement_digest: state.runtimeRequirementDigest,
+          runtime_launch_binding_json: state.runtimeLaunchBinding,
+          legacy_runtime_worker_compatible: legacy,
         }] };
+      }
+      if (text.includes("SET runtime_requirements_json")) {
+        state.runtimeRequirements = JSON.parse(values[1]);
+        state.runtimeRequirementDigest = values[2];
+        state.runtimeLaunchBinding = JSON.parse(values[3]);
+        return { rowCount: 1, rows: [] };
       }
       return { rowCount: null, rows: [] };
     },
@@ -74,6 +131,7 @@ test("creates one running root session and one commandless creation event", asyn
     activeChildren: 0,
   });
   assert.equal(result.snapshot.budget.exhaustedLimit, null);
+  assert.deepEqual(database.state.runtimeLaunchBinding, runtimeOwner.launchBinding);
   const budget = database.calls.find(({ text }) =>
     text.includes("INSERT INTO codeops.session_model_budgets"),
   );
@@ -97,6 +155,42 @@ test("creates one running root session and one commandless creation event", asyn
   assert.match(event.text, /NULL/);
   assert.equal(event.values[1], request.sessionId);
   assert.equal(database.calls.at(-1).text, "COMMIT");
+});
+
+test("ignores null workspace ownership and persists only a migration-guarded legacy root binding", async () => {
+  const created = await initializeSessionFromJob(fakeDatabase(), {
+    request,
+    now: () => new Date("2026-08-05T03:00:00.000Z"),
+  });
+  const legacyWorkspace = {
+    runtime_requirements_json: null,
+    runtime_requirement_digest: null,
+    runtime_launch_binding_json: null,
+    legacy_runtime_compatible: true,
+  };
+  const database = fakeDatabase(created.snapshot, {
+    workspace: legacyWorkspace,
+    legacy: true,
+  });
+  const duplicate = await initializeSessionFromJob(database, {
+    request: {
+      ...request,
+      runtimeProfileId: undefined,
+      runtimeReleaseDigest: undefined,
+      runtimeCapabilityDigest: undefined,
+      runtimeProfile: undefined,
+    },
+  });
+  assert.equal(duplicate.disposition, "duplicate");
+  assert.deepEqual(database.state.runtimeLaunchBinding, runtimeOwner.launchBinding);
+  assert.ok(database.calls.some(({ text }) => text.includes("SET runtime_requirements_json")));
+
+  const newSession = fakeDatabase(null, { workspace: legacyWorkspace, legacy: false });
+  await assert.rejects(
+    initializeSessionFromJob(newSession, { request }),
+    /new workspace session requires a complete runtime launch binding/,
+  );
+  assert.equal(newSession.calls.at(-1).text, "ROLLBACK");
 });
 
 test("replays the current session for an exact root identity and rejects drift", async () => {
@@ -153,9 +247,36 @@ test("replays the current session for an exact root identity and rejects drift",
     /different Job identity/,
   );
   assert.equal(drift.calls.at(-1).text, "ROLLBACK");
+
+  const tupleDrift = fakeDatabase(created.snapshot);
+  await assert.rejects(
+    initializeSessionFromJob(tupleDrift, {
+      request: {
+        ...request,
+        runtimeReleaseDigest: `sha256:${"4".repeat(64)}`,
+        runtimeProfile: {
+          ...request.runtimeProfile,
+          releaseDigest: `sha256:${"4".repeat(64)}`,
+        },
+      },
+    }),
+    /runtime identity does not match its durable owner/,
+  );
+  assert.equal(tupleDrift.calls.at(-1).text, "ROLLBACK");
 });
 
-test("authenticates and validates the exact Job initialization route", async () => {
+test("keeps the old boundary compatible and reserves version 2 for bound initialization", async () => {
+  const {
+    runtimeProfileId: _runtimeProfileId,
+    runtimeReleaseDigest: _runtimeReleaseDigest,
+    runtimeCapabilityDigest: _runtimeCapabilityDigest,
+    runtimeProfile: _runtimeProfile,
+    ...legacyRequest
+  } = request;
+  const boundRequest = {
+    ...request,
+    version: "codeops.session-job-initialization/v3",
+  };
   const response = await serveSessionJobInitialization({
     method: "POST",
     url: "/v1/session-jobs/initializations",
@@ -164,7 +285,7 @@ test("authenticates and validates the exact Job initialization route", async () 
       "content-type": "application/json; charset=utf-8",
     },
     token,
-    readBody: async () => request,
+    readBody: async () => legacyRequest,
     initialize: async () => ({
       version: "codeops.session-job-initialization-result/v1",
       disposition: "created",
@@ -174,13 +295,52 @@ test("authenticates and validates the exact Job initialization route", async () 
   assert.equal(response.status, 200);
   assert.equal(response.body.disposition, "created");
 
+  const boundResponse = await serveSessionJobInitialization({
+    method: "POST",
+    url: "/v2/session-jobs/initializations",
+    headers: {
+      authorization: `Bearer ${token}`,
+      "content-type": "application/json; charset=utf-8",
+    },
+    token,
+    readBody: async () => boundRequest,
+    initialize: async (received) => {
+      assert.deepEqual(received, boundRequest);
+      return {
+        version: "codeops.session-job-initialization-result/v1",
+        disposition: "created",
+        snapshot: (await initializeSessionFromJob(fakeDatabase(), { request })).snapshot,
+      };
+    },
+  });
+  assert.equal(boundResponse.status, 200);
+
+  for (const [url, body] of [
+    ["/v1/session-jobs/initializations", boundRequest],
+    ["/v2/session-jobs/initializations", legacyRequest],
+  ]) {
+    await assert.rejects(
+      serveSessionJobInitialization({
+        method: "POST", url,
+        headers: {
+          authorization: `Bearer ${token}`,
+          "content-type": "application/json; charset=utf-8",
+        },
+        token,
+        readBody: async () => body,
+        initialize: async () => assert.fail("must not initialize"),
+      }),
+      InvalidSessionJobInitializationRequestError,
+    );
+  }
+
   assert.deepEqual(
     await serveSessionJobInitialization({
       method: "POST",
       url: "/v1/session-jobs/initializations",
       headers: {},
       token,
-      readBody: async () => request,
+      readBody: async () => legacyRequest,
       initialize: async () => assert.fail("must not initialize"),
     }),
     { status: 401, body: { status: "unauthorized" } },
@@ -194,7 +354,7 @@ test("authenticates and validates the exact Job initialization route", async () 
         "content-type": "text/plain",
       },
       token,
-      readBody: async () => request,
+      readBody: async () => legacyRequest,
       initialize: async () => assert.fail("must not initialize"),
     }),
     InvalidSessionJobInitializationRequestError,
@@ -251,7 +411,11 @@ test("replays one exact admitted child and rejects stale authority without creat
     leaseId: child.lease.leaseId, holderId: child.lease.holderId,
     ownerPrincipalId: request.ownerPrincipalId, parentSessionId: "session-parent",
     repository: source.repository, sourceSha: source.resolvedSha, workItemId: "88888888-8888-4888-8888-888888888888",
-    profile: "custom", release: "v0.5.0-alpha.58", images: materialization.images };
+    profile: "custom", release: "v0.5.0-alpha.58", images: materialization.images,
+    runtimeProfileId: runtimeOwner.launchBinding.profile.profileId,
+    runtimeReleaseDigest: runtimeOwner.launchBinding.profile.releaseDigest,
+    runtimeCapabilityDigest: runtimeOwner.launchBinding.profile.capabilityDigest,
+    runtimeProfile: runtimeOwner.launchBinding.profile };
   const database = (authorityCurrent = true, snapshotJson = child,
     materializationState = "runtime-authorized") => ({ calls: [], async query(text) {
     this.calls.push(text);

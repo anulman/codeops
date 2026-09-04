@@ -10,6 +10,7 @@ import {
   workspaceManifestSchema,
   workspaceSessionLaunchId,
 } from "../dist/workspace-launch.js";
+import { sha256CanonicalJsonDigest } from "../dist/canonical-json.js";
 
 const sha = "a".repeat(40);
 const digest = `sha256:${"b".repeat(64)}`;
@@ -148,6 +149,16 @@ test("records durable launch state without the prompt body", () => {
   });
   assert.equal("prompt" in launch, false);
   assert.equal("content" in launch.contextAttachments[0], false);
+  const runtimeRequirements = { version: "codeops.runtime-requirements/v1", capabilities: ["acp"],
+    minimumResources: { cpuMillis: 600, memoryMiB: 1280, ephemeralStorageMiB: 1280 },
+    requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+    maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+    compatibilityPolicyRevision: "policy-7" };
+  assert.throws(() => workspaceLaunchSchema.parse({ ...launch, runtimeRequirements }), /present together/);
+  assert.throws(() => workspaceLaunchSchema.parse({ ...launch, runtimeRequirements,
+    runtimeRequirementDigest: `sha256:${"f".repeat(64)}` }), /digest must match/);
+  assert.doesNotThrow(() => workspaceLaunchSchema.parse({ ...launch, runtimeRequirements,
+    runtimeRequirementDigest: sha256CanonicalJsonDigest(runtimeRequirements) }));
   const detail = workspaceLaunchDetailSchema.parse({
     version: "codeops.workspace-launch-detail/v1",
     launch,

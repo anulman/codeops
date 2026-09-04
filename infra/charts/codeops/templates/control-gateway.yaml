@@ -117,6 +117,8 @@ spec:
             - { name: CODEOPS_AGENT_IMAGE, value: {{ include "codeops.image" .Values.runtime.agentImage | quote }} }
             - { name: CODEOPS_SESSION_GATEWAY_IMAGE, value: {{ include "codeops.image" .Values.runtime.sessionGatewayImage | quote }} }
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_IMAGE, value: {{ include "codeops.image" .Values.runtime.workerImage | quote }} }
+            - { name: CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE, value: /var/run/codeops-runtime/profile-registry.json }
+            - { name: CODEOPS_RUNTIME_COMPATIBILITY_POLICY_REVISION, value: {{ .Values.runtime.compatibilityPolicyRevision | quote }} }
             - { name: CODEOPS_AGENT_IMAGE_PULL_SECRETS, value: {{ include "codeops.imagePullSecretsJson" . | quote }} }
             - { name: CODEOPS_AGENT_NODE_SELECTOR, value: {{ .Values.nodeSelector | toJson | quote }} }
             - { name: CODEOPS_AGENT_EVIDENCE_CLAIM_NAME, value: {{ printf "%s-control-gateway-evidence" (include "codeops.fullname" .) | quote }} }
@@ -176,6 +178,7 @@ spec:
             - { name: control-gateway-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway, readOnly: true }
             - { name: session-secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
             - { name: repository-registry, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-runtime-repositories, readOnly: true }
+            - { name: runtime-profile-registry, mountPath: /var/run/codeops-runtime, readOnly: true }
             - { name: model-proxy-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-model-proxy, readOnly: true }
             {{- if .Values.controlGateway.webPush.enabled }}
             - { name: web-push-auth, mountPath: /var/run/secrets/codeops-web-push, readOnly: true }
@@ -209,6 +212,11 @@ spec:
           secret:
             secretName: {{ .Values.controlGateway.repositoryAuthoritySecretName }}
             defaultMode: 256
+        - name: runtime-profile-registry
+          configMap:
+            name: {{ include "codeops.runtimeImagesConfigMapName" . }}
+            items:
+              - { key: profile-registry.json, path: profile-registry.json }
         - name: model-proxy-auth
           secret:
             secretName: {{ .Values.modelProxy.secretName }}

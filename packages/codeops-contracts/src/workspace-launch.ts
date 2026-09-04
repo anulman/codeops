@@ -1,8 +1,10 @@
 import { z } from "zod";
+import { sha256CanonicalJsonDigest } from "./canonical-json.js";
 import {
   interactiveSessionModeSchema,
   sessionPolicySchema,
 } from "./session-policy.js";
+import { runtimeLaunchBindingSchema, runtimeRequirementsSchema } from "./runtime-profile.js";
 
 const repositoryIdentity = z
   .string()
@@ -192,6 +194,10 @@ const launchBaseSchema = z
     idempotencyKey: z.string().uuid(),
     principalId: safeText(320),
     requestDigest: sha256Digest,
+    runtimeRequirements: runtimeRequirementsSchema.optional(),
+    runtimeRequirementDigest: sha256Digest.optional(),
+    runtimeLaunchBinding: runtimeLaunchBindingSchema.optional(),
+    legacyRuntimeCompatible: z.boolean().optional(),
     policy: sessionPolicySchema,
     contextAttachments: workspaceContextAttachmentDescriptorsSchema.default([]),
     title: safeText(200).optional(),
@@ -258,7 +264,18 @@ export const workspaceLaunchSchema = z.discriminatedUnion("state", [
       ]),
     })
     .strict(),
-]);
+]).superRefine((launch, context) => {
+  if ((launch.runtimeRequirements === undefined) !== (launch.runtimeRequirementDigest === undefined)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "runtime requirements and digest must be present together" });
+  }
+  if (launch.runtimeRequirements !== undefined &&
+      launch.runtimeRequirementDigest !== sha256CanonicalJsonDigest(launch.runtimeRequirements)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "runtime requirement digest must match the canonical requirements" });
+  }
+  if (launch.runtimeLaunchBinding !== undefined && launch.runtimeRequirementDigest !== launch.runtimeLaunchBinding.requirementDigest) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "runtime launch binding must match the admitted requirement digest" });
+  }
+});
 
 export const workspaceLaunchDetailSchema = z
   .object({

@@ -3,14 +3,21 @@ import type { IncomingHttpHeaders } from "node:http";
 import {
   canonicalJsonText,
   admittedChildMaterializationInputSchema,
+  runtimeLaunchBindingSchema,
+  runtimeRequirementsSchema,
   SESSION_BROKER_VERSION,
   projectSessionBudgetV2,
   sessionEventSchema,
+  sessionJobAdmittedInitializationRequestSchema,
+  sessionJobBoundInitializationRequestSchema,
   sessionJobInitializationRequestSchema,
   sessionJobInitializationResponseSchema,
   sessionSnapshotSchema,
+  sha256CanonicalJsonDigest,
   type SessionJobInitializationResponse,
   type SessionSnapshot,
+  type RuntimeLaunchBinding,
+  type RuntimeRequirements,
 } from "@codeops/codeops-contracts";
 import { verifyWorkspaceContextAttachments, workspaceContextAttachmentDescriptors } from
   "@codeops/codeops-contracts/workspace-context-node";
@@ -21,6 +28,60 @@ import { sessionCapabilitiesFor } from "./session-broker-transitions.js";
 interface StoredSessionRow extends Record<string, unknown> {
   readonly snapshot_json: unknown;
   readonly owner_principal_id: unknown;
+  readonly runtime_requirements_json: unknown;
+  readonly runtime_requirement_digest: unknown;
+  readonly runtime_launch_binding_json: unknown;
+  readonly legacy_runtime_worker_compatible: unknown;
+}
+
+interface WorkspaceRuntimeOwnerRow extends Record<string, unknown> {
+  readonly state: unknown;
+  readonly runtime_requirements_json: unknown;
+  readonly runtime_requirement_digest: unknown;
+  readonly runtime_launch_binding_json: unknown;
+  readonly legacy_runtime_compatible: unknown;
+}
+
+export interface SessionRuntimeOwnerBinding {
+  readonly requirements: RuntimeRequirements;
+  readonly launchBinding: RuntimeLaunchBinding;
+}
+
+function assertRequestedRuntimeIdentity(
+  request: ReturnType<typeof sessionJobInitializationRequestSchema.parse>,
+  binding: RuntimeLaunchBinding,
+  allowTupleless = false,
+): void {
+  const supplied = request.runtimeProfileId !== undefined;
+  if (!supplied) {
+    if (allowTupleless) return;
+    throw new Error("session Job runtime identity is required");
+  }
+  if (
+    request.runtimeProfileId !== binding.profile.profileId ||
+    request.runtimeReleaseDigest !== binding.profile.releaseDigest ||
+    request.runtimeCapabilityDigest !== binding.profile.capabilityDigest ||
+    request.runtimeProfile === undefined ||
+    canonicalJsonText(request.runtimeProfile) !== canonicalJsonText(binding.profile)
+  ) {
+    throw new Error("session Job runtime identity does not match its durable owner");
+  }
+}
+
+function durableRuntimeOwner(
+  requirementsValue: unknown,
+  requirementDigest: unknown,
+  bindingValue: unknown,
+): SessionRuntimeOwnerBinding {
+  const requirements = runtimeRequirementsSchema.parse(requirementsValue);
+  const launchBinding = runtimeLaunchBindingSchema.parse(bindingValue);
+  if (
+    requirementDigest !== launchBinding.requirementDigest ||
+    launchBinding.requirementDigest !== sha256CanonicalJsonDigest(requirements)
+  ) {
+    throw new Error("durable runtime owner evidence is invalid");
+  }
+  return { requirements, launchBinding };
 }
 
 function eventId(body: Readonly<Record<string, unknown>>): string {
@@ -77,11 +138,25 @@ export async function initializeSessionFromJob(
   client: TransactionClient,
   input: {
     readonly request: unknown;
+    readonly runtimeOwner?: SessionRuntimeOwnerBinding;
     readonly now?: () => Date;
     readonly leaseMs?: number;
   },
 ): Promise<SessionJobInitializationResponse> {
   const request = sessionJobInitializationRequestSchema.parse(input.request);
+  const configuredOwner = input.runtimeOwner === undefined
+    ? undefined
+    : {
+        requirements: runtimeRequirementsSchema.parse(input.runtimeOwner.requirements),
+        launchBinding: runtimeLaunchBindingSchema.parse(input.runtimeOwner.launchBinding),
+      };
+  if (configuredOwner !== undefined) {
+    durableRuntimeOwner(
+      configuredOwner.requirements,
+      configuredOwner.launchBinding.requirementDigest,
+      configuredOwner.launchBinding,
+    );
+  }
   const now = (input.now ?? (() => new Date()))();
   const leaseMs = input.leaseMs ?? 60 * 60_000;
   if (
@@ -133,11 +208,42 @@ export async function initializeSessionFromJob(
 
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
+    const workspaceOwner = await client.query<WorkspaceRuntimeOwnerRow>(
+      `SELECT state, runtime_requirements_json, runtime_requirement_digest,
+              runtime_launch_binding_json, legacy_runtime_compatible
+         FROM codeops.workspace_launches
+        WHERE launch_id = $1
+        FOR UPDATE`,
+      [request.identity.runId],
+    );
+    if (workspaceOwner.rows.length > 1) {
+      throw new Error("session Job resolved more than one workspace runtime owner");
+    }
+    const workspaceRow = workspaceOwner.rows[0];
+    const workspaceIsBound = workspaceRow?.runtime_launch_binding_json != null;
+    const workspaceCanOwnBinding = workspaceRow?.state === "queued" ||
+      workspaceRow?.state === "provisioning";
+    const selectedOwner = workspaceIsBound
+      ? durableRuntimeOwner(
+          workspaceRow.runtime_requirements_json,
+          workspaceRow.runtime_requirement_digest,
+          workspaceRow.runtime_launch_binding_json,
+        )
+      : workspaceCanOwnBinding ? undefined : configuredOwner;
+    if (selectedOwner === undefined) {
+      throw new Error("session Job has no durable runtime owner");
+    }
+    if (workspaceRow !== undefined && !workspaceIsBound &&
+        workspaceRow.legacy_runtime_compatible !== true) {
+      throw new Error("workspace session has no complete runtime launch binding");
+    }
     const inserted = await client.query(
       `INSERT INTO codeops.sessions
          (session_id, generation, lease_id, snapshot_json, updated_at,
-          owner_principal_id)
-       VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6)
+          owner_principal_id, runtime_requirements_json,
+          runtime_requirement_digest, runtime_launch_binding_json)
+       VALUES ($1, $2, $3, $4::jsonb, $5::timestamptz, $6,
+               $7::jsonb, $8, $9::jsonb)
        ON CONFLICT (session_id) DO NOTHING`,
       [
         proposed.sessionId,
@@ -146,9 +252,16 @@ export async function initializeSessionFromJob(
         canonicalJsonText(proposed),
         proposed.updatedAt,
         request.ownerPrincipalId,
+        workspaceIsBound ? null : canonicalJsonText(selectedOwner.requirements),
+        workspaceIsBound ? null : selectedOwner.launchBinding.requirementDigest,
+        workspaceIsBound ? null : canonicalJsonText(selectedOwner.launchBinding),
       ],
     );
     if (inserted.rowCount === 1) {
+      if (workspaceRow !== undefined && !workspaceIsBound) {
+        throw new Error("new workspace session requires a complete runtime launch binding");
+      }
+      assertRequestedRuntimeIdentity(request, selectedOwner.launchBinding);
       await ensureSessionModelBudget(client, proposed);
       await client.query(
         `INSERT INTO codeops.session_events
@@ -174,7 +287,9 @@ export async function initializeSessionFromJob(
     }
 
     const stored = await client.query<StoredSessionRow>(
-      `SELECT snapshot_json, owner_principal_id
+      `SELECT snapshot_json, owner_principal_id, runtime_requirements_json,
+              runtime_requirement_digest, runtime_launch_binding_json,
+              legacy_runtime_worker_compatible
          FROM codeops.sessions
         WHERE session_id = $1
         FOR UPDATE`,
@@ -189,6 +304,45 @@ export async function initializeSessionFromJob(
         `session ${request.sessionId} already belongs to a different Job identity`,
       );
     }
+    if (workspaceIsBound &&
+        stored.rows[0]?.runtime_launch_binding_json != null) {
+      throw new Error("session Job resolved ambiguous durable runtime owners");
+    }
+    let storedOwner: SessionRuntimeOwnerBinding;
+    if (workspaceIsBound) {
+      storedOwner = selectedOwner;
+    } else if (stored.rows[0]?.runtime_launch_binding_json != null) {
+      storedOwner = durableRuntimeOwner(
+        stored.rows[0].runtime_requirements_json,
+        stored.rows[0].runtime_requirement_digest,
+        stored.rows[0].runtime_launch_binding_json,
+      );
+    } else if (
+      stored.rows[0]?.legacy_runtime_worker_compatible === true &&
+      configuredOwner !== undefined
+    ) {
+      storedOwner = configuredOwner;
+      await client.query(
+        `UPDATE codeops.sessions
+            SET runtime_requirements_json = $2::jsonb,
+                runtime_requirement_digest = $3,
+                runtime_launch_binding_json = $4::jsonb
+          WHERE session_id = $1`,
+        [
+          existing.sessionId,
+          canonicalJsonText(storedOwner.requirements),
+          storedOwner.launchBinding.requirementDigest,
+          canonicalJsonText(storedOwner.launchBinding),
+        ],
+      );
+    } else {
+      throw new Error("session Job has no durable runtime owner");
+    }
+    assertRequestedRuntimeIdentity(
+      request,
+      storedOwner.launchBinding,
+      stored.rows[0]?.legacy_runtime_worker_compatible === true,
+    );
     await ensureSessionModelBudget(client, existing);
     await client.query("COMMIT");
     return sessionJobInitializationResponseSchema.parse({
@@ -206,10 +360,7 @@ export async function initializeAdmittedChildSessionFromJob(
   client: TransactionClient,
   input: { readonly request: unknown; readonly now?: () => Date },
 ): Promise<SessionJobInitializationResponse> {
-  const request = sessionJobInitializationRequestSchema.parse(input.request);
-  if (request.version !== "codeops.session-job-initialization/v3") {
-    throw new Error("admitted child initialization requires version 3");
-  }
+  const request = sessionJobAdmittedInitializationRequestSchema.parse(input.request);
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
     const result = await client.query<StoredSessionRow & {
@@ -311,9 +462,11 @@ export async function serveSessionJobInitialization(input: {
   readonly status: number;
   readonly body: Readonly<Record<string, unknown>>;
 } | null> {
+  const legacyBoundary = input.url === "/v1/session-jobs/initializations";
+  const boundBoundary = input.url === "/v2/session-jobs/initializations";
   if (
     input.method !== "POST" ||
-    input.url !== "/v1/session-jobs/initializations"
+    (!legacyBoundary && !boundBoundary)
   ) {
     return null;
   }
@@ -337,7 +490,15 @@ export async function serveSessionJobInitialization(input: {
   }
   let request: unknown;
   try {
-    request = sessionJobInitializationRequestSchema.parse(await input.readBody());
+    const body = await input.readBody();
+    request = boundBoundary
+      ? sessionJobBoundInitializationRequestSchema.parse(body)
+      : sessionJobInitializationRequestSchema.parse(body);
+    if (legacyBoundary &&
+        (request as { readonly version?: unknown }).version ===
+          "codeops.session-job-initialization/v3") {
+      throw new Error("bound initialization requires version 2 boundary");
+    }
   } catch {
     throw new InvalidSessionJobInitializationRequestError(
       "session Job initialization body is invalid",

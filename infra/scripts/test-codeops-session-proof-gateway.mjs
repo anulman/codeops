@@ -6,9 +6,15 @@ import { renderSessionProofGatewayManifest } from "./codeops-session-proof-gatew
 
 const template = await readFile(new URL("../k8s/codeops/trial0/session-proof-gateway-template.yaml", import.meta.url), "utf8");
 const digest = `sha256:${"a".repeat(64)}`;
+const input = {
+  gatewayDigest: digest,
+  agentDigest: `sha256:${"b".repeat(64)}`,
+  workerDigest: `sha256:${"c".repeat(64)}`,
+  runtimeReleaseDigest: `sha256:${"d".repeat(64)}`,
+};
 
 function resources(source = template) {
-  return parseAllDocuments(renderSessionProofGatewayManifest(source, digest)).map((document) => document.toJS());
+  return parseAllDocuments(renderSessionProofGatewayManifest(source, input)).map((document) => document.toJS());
 }
 
 test("packages only the standalone session control gateway", () => {
@@ -19,13 +25,14 @@ test("packages only the standalone session control gateway", () => {
   assert.equal(values.some((resource) => resource.kind === "Role" || resource.kind === "RoleBinding"), false);
 });
 
-test("mounts five distinct proof-only authorities", () => {
+test("mounts five distinct proof-only authorities and the runtime registry", () => {
   const pod = resources().find((resource) => resource.kind === "Deployment").spec.template.spec;
   const secrets = pod.volumes.filter((volume) => volume.secret).map((volume) => volume.secret.secretName);
   assert.equal(secrets.length, 5);
   assert.equal(new Set(secrets).size, 5);
   assert.equal(JSON.stringify(pod).includes("repository-read-token"), false);
   assert.equal(JSON.stringify(pod).includes("kubeconfig"), false);
+  assert.equal(pod.volumes.some((volume) => volume.name === "runtime-profile-registry"), true);
 });
 
 test("admits only the UI and runtime worker and reaches only proof database plus DNS", () => {
@@ -37,12 +44,12 @@ test("admits only the UI and runtime worker and reaches only proof database plus
 
 test("rejects mutable images and authority or exposure drift", () => {
   for (const invalid of ["", "latest", "sha256:abc", `sha256:${"A".repeat(64)}`]) {
-    assert.throws(() => renderSessionProofGatewayManifest(template, invalid));
+    assert.throws(() => renderSessionProofGatewayManifest(template, { ...input, gatewayDigest: invalid }));
   }
   for (const drifted of [
     template.replace("automountServiceAccountToken: false", "automountServiceAccountToken: true"),
     template.replace("secretName: codeops-session-broker-write-auth", "secretName: codeops-session-broker-read-auth"),
     template.replace("app.kubernetes.io/name: codeops-session-proof-database", "app.kubernetes.io/name: codeops-control-gateway"),
     `${template}\n---\napiVersion: rbac.authorization.k8s.io/v1\nkind: Role\nmetadata: { name: broader }\n`,
-  ]) assert.throws(() => renderSessionProofGatewayManifest(drifted, digest));
+  ]) assert.throws(() => renderSessionProofGatewayManifest(drifted, input));
 });

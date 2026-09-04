@@ -79,6 +79,32 @@ const workItems = [
     workspaceId: "44444444-4444-4444-8444-444444444444", projectId: "55555555-5555-4555-8555-555555555555" },
     workItemId: "77777777-7777-4777-8777-777777777777" },
 ];
+const runtimeRequirements = {
+  version: "codeops.runtime-requirements/v1", capabilities: ["acp"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1280, ephemeralStorageMiB: 1280 },
+  requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "policy-7",
+};
+const runtimeRequirementDigest = sha256CanonicalJsonDigest(runtimeRequirements);
+const runtimeProfile = {
+  version: "codeops.runtime-profile/v1", profileId: "standard-v1",
+  releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"],
+  capabilityDigest: sha256CanonicalJsonDigest(["acp"]),
+  resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 },
+  authority: runtimeRequirements.maximumAuthority, compatibilityPolicyRevision: "policy-7",
+  images: { agent: `example/agent@sha256:${"8".repeat(64)}`,
+    worker: `example/worker@sha256:${"9".repeat(64)}`,
+    sessionGateway: `example/gateway@sha256:${"a".repeat(64)}` },
+};
+const runtimeLaunchBinding = { version: "codeops.runtime-launch-binding/v1",
+  requirementDigest: runtimeRequirementDigest, profile: runtimeProfile,
+  selectedAt: "2026-08-30T09:00:00.000Z" };
+const runtimeBinding = { version: "codeops.runtime-binding/v1",
+  requirementDigest: runtimeRequirementDigest, compatibilityPolicyRevision: "policy-7",
+  selectedProfileId: runtimeProfile.profileId, selectedReleaseDigest: runtimeProfile.releaseDigest,
+  selectedCapabilityDigest: runtimeProfile.capabilityDigest, selectedProfile: runtimeProfile,
+  selectedAt: runtimeLaunchBinding.selectedAt };
 
 function digest(value) { return `sha256:${createHash("sha256").update(JSON.stringify(value)).digest("hex")}`; }
 
@@ -114,7 +140,7 @@ function admissionRequest(index = 0) {
       idempotencyKey: index === 0 ? "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" : "ffffffff-ffff-4fff-8fff-ffffffffffff" } };
 }
 
-async function resetAndSeed(connection, activeChildren = 4) {
+async function resetAndSeed(connection, activeChildren = 4, workspaceOwned = false) {
   await connection.query("DROP SCHEMA IF EXISTS codeops CASCADE");
   await migrateSessionBroker(connection);
   const dispatchSnapshot = parentSnapshot(2, activeChildren);
@@ -143,17 +169,56 @@ async function resetAndSeed(connection, activeChildren = 4) {
   const planEvent = { version: "codeops.session-event/v1", eventId: digest(planBody), ...planBody };
   await connection.query("BEGIN");
   try {
-    await connection.query(`INSERT INTO codeops.sessions(session_id,generation,lease_id,snapshot_json,updated_at,owner_principal_id)
-      VALUES($1,1,$2,$3::jsonb,$4::timestamptz,$5)`, [parentSessionId, parentLeaseId, canonicalJsonText(currentSnapshot), admittedAt, owner]);
+    if (workspaceOwned) {
+      const launchRequest = { version: "codeops.workspace-launch-request/v1",
+        idempotencyKey: "31313131-3131-4313-8313-313131313131", mode: "review",
+        prompt: "Parent workspace", sources: [{ catalogKey: "repository" }] };
+      const launch = { version: "codeops.workspace-launch/v1", launchId: "launch-parent",
+        idempotencyKey: launchRequest.idempotencyKey, principalId: owner,
+        requestDigest: sha256CanonicalJsonDigest(launchRequest), policy: currentSnapshot.identity.policy,
+        runtimeRequirements, runtimeRequirementDigest, runtimeLaunchBinding,
+        contextAttachments: [], promptDigest: sha256CanonicalJsonDigest(launchRequest.prompt),
+        workspace: currentSnapshot.identity.workspace, state: "ready", sessionId: parentSessionId,
+        initialPromptCommandId: launchRequest.idempotencyKey,
+        deadlineAt: "2026-08-30T16:00:00.000Z", attemptCount: 0,
+        createdAt: admittedAt, updatedAt: admittedAt };
+      await connection.query(`INSERT INTO codeops.workspace_launches
+        (launch_id,principal_id,idempotency_key,request_digest,request_json,launch_json,state,
+          runtime_requirements_json,runtime_requirement_digest,runtime_launch_binding_json,
+          created_at,updated_at)
+        VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,'ready',$7::jsonb,$8,$9::jsonb,
+          $10::timestamptz,$10::timestamptz)`,
+        [launch.launchId,owner,launch.idempotencyKey,launch.requestDigest,
+          canonicalJsonText(launchRequest),canonicalJsonText(launch),
+          canonicalJsonText(runtimeRequirements),runtimeRequirementDigest,
+          canonicalJsonText(runtimeLaunchBinding),admittedAt]);
+      await connection.query(`INSERT INTO codeops.sessions
+        (session_id,generation,lease_id,snapshot_json,updated_at,owner_principal_id)
+        VALUES($1,1,$2,$3::jsonb,$4::timestamptz,$5)`,
+        [parentSessionId, parentLeaseId, canonicalJsonText(currentSnapshot), admittedAt, owner]);
+    } else {
+      await connection.query(`INSERT INTO codeops.sessions(session_id,generation,lease_id,snapshot_json,updated_at,owner_principal_id,
+        runtime_requirements_json,runtime_requirement_digest,runtime_launch_binding_json)
+        VALUES($1,1,$2,$3::jsonb,$4::timestamptz,$5,$6::jsonb,$7,$8::jsonb)`,
+        [parentSessionId, parentLeaseId, canonicalJsonText(currentSnapshot), admittedAt, owner,
+          canonicalJsonText(runtimeRequirements), runtimeRequirementDigest, canonicalJsonText(runtimeLaunchBinding)]);
+    }
     const driftSnapshot = { ...currentSnapshot, sessionId: driftSessionId };
-    await connection.query(`INSERT INTO codeops.sessions(session_id,generation,lease_id,snapshot_json,updated_at,owner_principal_id)
-      VALUES($1,1,$2,$3::jsonb,$4::timestamptz,$5)`,
-      [driftSessionId, parentLeaseId, canonicalJsonText(driftSnapshot), admittedAt, owner]);
+    await connection.query(`INSERT INTO codeops.sessions(session_id,generation,lease_id,snapshot_json,updated_at,owner_principal_id,
+      runtime_requirements_json,runtime_requirement_digest,runtime_launch_binding_json)
+      VALUES($1,1,$2,$3::jsonb,$4::timestamptz,$5,$6::jsonb,$7,$8::jsonb)`,
+      [driftSessionId, parentLeaseId, canonicalJsonText(driftSnapshot), admittedAt, owner,
+        canonicalJsonText(runtimeRequirements), runtimeRequirementDigest, canonicalJsonText(runtimeLaunchBinding)]);
     await connection.query(`INSERT INTO codeops.session_runtime_outbox(dispatch_id,session_id,idempotency_key,principal_id,
-      dispatch_json,status,available_at,created_at,claim_token,claimed_by,claimed_at,claim_expires_at,claim_count)
-      VALUES($1,$2,$3,$4,$5::jsonb,'claimed',$6::timestamptz,$6::timestamptz,$7,$8,$9::timestamptz,$10::timestamptz,1)`,
+      dispatch_json,status,available_at,created_at,claim_token,claimed_by,claimed_at,claim_expires_at,claim_count,
+      runtime_binding_json,runtime_binding_revision,runtime_claim_protocol,runtime_requirement_digest,
+      runtime_profile_id,runtime_release_digest,runtime_capability_digest)
+      VALUES($1,$2,$3,$4,$5::jsonb,'claimed',$6::timestamptz,$6::timestamptz,$7,$8,$9::timestamptz,$10::timestamptz,1,
+        $11::jsonb,1,'bound-v2',$12,$13,$14,$15)`,
       [parentDispatchId, parentSessionId, dispatch.command.idempotencyKey, owner, canonicalJsonText(dispatch),
-        dispatch.dispatchedAt, claimToken, workerId, "2026-08-30T09:55:00.000Z", "2026-08-30T11:00:00.000Z"]);
+        dispatch.dispatchedAt, claimToken, workerId, "2026-08-30T09:55:00.000Z", "2026-08-30T11:00:00.000Z",
+        canonicalJsonText(runtimeBinding), runtimeRequirementDigest, runtimeProfile.profileId,
+        runtimeProfile.releaseDigest, runtimeProfile.capabilityDigest]);
     await connection.query(`INSERT INTO codeops.session_runtime_permission_requests(dispatch_id,request_id,session_id,request_json,created_at)
       VALUES($1,'approve-plan',$2,$3::jsonb,$4::timestamptz)`,
       [parentDispatchId, parentSessionId, canonicalJsonText(permission), permission.request.requestedAt]);
@@ -173,7 +238,7 @@ async function admit(connection, request = admissionRequest(0), time = admittedA
 }
 
 async function seedRetryRoot(connection, admitted = new Date()) {
-  await resetAndSeed(connection);
+  await resetAndSeed(connection, 4, true);
   const admittedIso = admitted.toISOString();
   await connection.query(`UPDATE codeops.sessions
     SET snapshot_json=jsonb_set(snapshot_json,'{lease,expiresAt}',to_jsonb($2::text))
@@ -207,25 +272,14 @@ async function seedRetryRoot(connection, admitted = new Date()) {
   const retryClaimToken = "30303030-3030-4303-8303-303030303030";
   await connection.query(`UPDATE codeops.session_runtime_outbox
     SET status='claimed',claim_token=$2,claimed_by='runtime-worker:predecessor',
-        claimed_at=$3::timestamptz,claim_expires_at=$4::timestamptz,claim_count=1
+        claimed_at=$3::timestamptz,claim_expires_at=$4::timestamptz,claim_count=1,
+        runtime_binding_json=$5::jsonb,runtime_binding_revision=1,
+        runtime_claim_protocol='bound-v2',runtime_requirement_digest=$6,
+        runtime_profile_id=$7,runtime_release_digest=$8,runtime_capability_digest=$9
     WHERE dispatch_id=$1`, [admission.child_dispatch_id,retryClaimToken,admitted.toISOString(),
-    new Date(admitted.getTime()+15*60_000).toISOString()]);
-  const launchRequest = { version: "codeops.workspace-launch-request/v1",
-    idempotencyKey: "31313131-3131-4313-8313-313131313131", mode: "review",
-    prompt: "Parent workspace", sources: [{ catalogKey: "repository" }] };
-  const launch = { version: "codeops.workspace-launch/v1", launchId: "launch-parent",
-    idempotencyKey: launchRequest.idempotencyKey, principalId: owner,
-    requestDigest: sha256CanonicalJsonDigest(launchRequest), policy: snapshot.identity.policy,
-    contextAttachments: [], promptDigest: sha256CanonicalJsonDigest(launchRequest.prompt),
-    workspace: snapshot.identity.workspace, state: "ready", sessionId: parentSessionId,
-    initialPromptCommandId: launchRequest.idempotencyKey,
-    deadlineAt: new Date(admitted.getTime()+6*60*60_000).toISOString(), attemptCount: 0,
-    createdAt: admitted.toISOString(), updatedAt: admitted.toISOString() };
-  await connection.query(`INSERT INTO codeops.workspace_launches
-    (launch_id,principal_id,idempotency_key,request_digest,request_json,launch_json,state,created_at,updated_at)
-    VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,'ready',$7::timestamptz,$7::timestamptz)`,
-    [launch.launchId,owner,launch.idempotencyKey,launch.requestDigest,canonicalJsonText(launchRequest),
-      canonicalJsonText(launch),admitted.toISOString()]);
+    new Date(admitted.getTime()+15*60_000).toISOString(),canonicalJsonText(runtimeBinding),
+    runtimeRequirementDigest,runtimeProfile.profileId,runtimeProfile.releaseDigest,
+    runtimeProfile.capabilityDigest]);
   return { admission, snapshot, observation, admitted,
     rootAdmissionId: admission.admission_id, rootAdmittedAt: admission.admitted_at,
     rootBudgetId: admission.child_session_id };
@@ -630,6 +684,10 @@ test("PostgreSQL prioritizes and concurrency-fences the exact admitted initial d
         generation: later.command.generation, leaseId: later.command.leaseId,
         identity: stored.snapshot_json.identity };
       const claimInput = (worker, token) => ({ workerId: worker, ...authority,
+        runtimeProfileId: runtimeProfile.profileId,
+        runtimeReleaseDigest: runtimeProfile.releaseDigest,
+        runtimeCapabilityDigest: runtimeProfile.capabilityDigest,
+        runtimeProfile,
         leaseMs: 60_000, now: () => new Date("2026-08-30T10:02:00.000Z"),
         claimToken: () => token });
       if (ordinal === 0) {
@@ -648,14 +706,20 @@ test("PostgreSQL prioritizes and concurrency-fences the exact admitted initial d
         assert.equal(renewed.claimCount, claimed.claimCount);
         assert.equal(renewed.claimExpiresAt, "2026-08-30T10:04:30.000Z");
       } else {
-        const claims = await Promise.all([
+        const attempts = await Promise.allSettled([
           claimSessionRuntimeDispatch(first, claimInput("runtime-worker:first",
             "57575757-5757-4575-8575-575757575757")),
           claimSessionRuntimeDispatch(second, claimInput("runtime-worker:second",
             "58585858-5858-4585-8585-585858585858")),
         ]);
-        assert.deepEqual(claims.map((claim) => claim?.dispatch.dispatchId ?? null).sort(),
-          [null, admitted.dispatchId].sort());
+        const claims = attempts
+          .filter((attempt) => attempt.status === "fulfilled")
+          .map((attempt) => attempt.value?.dispatch.dispatchId ?? null);
+        assert.deepEqual(claims.filter((dispatchId) => dispatchId !== null),
+          [admitted.dispatchId]);
+        for (const attempt of attempts.filter((value) => value.status === "rejected")) {
+          assert.equal(attempt.reason.code, "40001");
+        }
         assert.equal((await setup.query(`SELECT status FROM codeops.session_runtime_outbox
           WHERE dispatch_id=$1`, [laterDispatchId])).rows[0].status, "pending");
       }
@@ -736,9 +800,14 @@ test("PostgreSQL consumes one admitted runtime permission under concurrency and 
     const runtimeWorker = "runtime-worker:child-0";
     await setup.query(`UPDATE codeops.session_runtime_outbox
       SET status='claimed',claim_token=$2,claimed_by=$3,claimed_at=$4::timestamptz,
-          claim_expires_at=$5::timestamptz,claim_count=1
+          claim_expires_at=$5::timestamptz,claim_count=1,
+          runtime_binding_json=$6::jsonb,runtime_binding_revision=1,
+          runtime_claim_protocol='bound-v2',runtime_requirement_digest=$7,
+          runtime_profile_id=$8,runtime_release_digest=$9,runtime_capability_digest=$10
       WHERE dispatch_id=$1`, [admitted.dispatchId, runtimeClaim, runtimeWorker,
-      "2026-08-30T10:05:00.000Z", "2026-08-30T11:00:00.000Z"]);
+      "2026-08-30T10:05:00.000Z", "2026-08-30T11:00:00.000Z",
+      canonicalJsonText(runtimeBinding), runtimeRequirementDigest, runtimeProfile.profileId,
+      runtimeProfile.releaseDigest, runtimeProfile.capabilityDigest]);
     const input = { repository: workItems[0].repository, pullRequestNumber: 27,
       expectedHeadSha: sourceSha, expectedBaseSha: "b".repeat(40),
       body: "Apply the exact admitted update." };
@@ -1360,9 +1429,9 @@ test("PostgreSQL classifies before terminal state and deduplicates one dispositi
     assert.equal(launch.launch_json.retryRuntime.runtimeWorkerImage, retryRuntimeRelease);
     const successor = (await connection.query("SELECT snapshot_json FROM codeops.sessions WHERE session_id=$1",
       [retry.successor_session_id])).rows[0].snapshot_json;
-    assert.equal(await claimSessionRuntimeDispatch(connection, { workerId: "wrong-runtime",
+    await assert.rejects(claimSessionRuntimeDispatch(connection, { workerId: "wrong-runtime",
       sessionId: successor.sessionId, generation: 1, leaseId: successor.lease.leaseId,
-      identity: successor.identity, leaseMs: 1_000 }), null);
+      identity: successor.identity, leaseMs: 1_000 }), /runtime-release-mismatch/);
     assert.equal(await reconcileInteractiveRuntimeTerminal(
       connection, seed.observation, retryAttestation), "duplicate");
     assert.deepEqual((await connection.query(`SELECT

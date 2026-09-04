@@ -465,7 +465,12 @@ export async function admitSessionRuntimeWorkItem(client: TransactionClient, inp
     if (parentRows.rows[0] === undefined) throw new WorkItemAdmissionNotFoundError("parent session was not found");
     const dispatchRows = await client.query<Row>(
       `SELECT outbox.dispatch_json,outbox.status,outbox.claim_token,outbox.claimed_by,outbox.claim_expires_at,
-              session.owner_principal_id FROM codeops.session_runtime_outbox outbox
+              outbox.runtime_binding_json,outbox.runtime_claim_protocol,
+              codeops.session_runtime_owner_binding(outbox.session_id)
+                AS owner_runtime_binding_json,
+              session.session_id,session.snapshot_json->'identity' AS session_identity_json,
+              session.owner_principal_id,session.legacy_runtime_worker_compatible
+         FROM codeops.session_runtime_outbox outbox
          JOIN codeops.sessions session ON session.session_id=outbox.session_id
         WHERE outbox.dispatch_id=$1 FOR UPDATE OF outbox`, [input.dispatchId]);
     let claimed;

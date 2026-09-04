@@ -5,6 +5,10 @@ metadata:
   labels:
     app.kubernetes.io/name: codeops-session-runtime-worker
     codeops.example/session-id: __CODEOPS_SESSION_ID__
+  annotations:
+    codeops.example/runtime-profile-id: __CODEOPS_RUNTIME_PROFILE_ID__
+    codeops.example/runtime-release-digest: __CODEOPS_RUNTIME_RELEASE_DIGEST__
+    codeops.example/runtime-capability-digest: __CODEOPS_RUNTIME_CAPABILITY_DIGEST__
 automountServiceAccountToken: false
 ---
 apiVersion: batch/v1
@@ -15,6 +19,10 @@ metadata:
     app.kubernetes.io/name: codeops-session-runtime-worker
     app.kubernetes.io/part-of: codeops-trial0
     codeops.example/session-id: __CODEOPS_SESSION_ID__
+  annotations:
+    codeops.example/runtime-profile-id: __CODEOPS_RUNTIME_PROFILE_ID__
+    codeops.example/runtime-release-digest: __CODEOPS_RUNTIME_RELEASE_DIGEST__
+    codeops.example/runtime-capability-digest: __CODEOPS_RUNTIME_CAPABILITY_DIGEST__
 spec:
   backoffLimit: 0
   activeDeadlineSeconds: 3600
@@ -25,6 +33,10 @@ spec:
         app.kubernetes.io/name: codeops-session-runtime-worker
         app.kubernetes.io/part-of: codeops-trial0
         codeops.example/session-id: __CODEOPS_SESSION_ID__
+      annotations:
+        codeops.example/runtime-profile-id: __CODEOPS_RUNTIME_PROFILE_ID__
+        codeops.example/runtime-release-digest: __CODEOPS_RUNTIME_RELEASE_DIGEST__
+        codeops.example/runtime-capability-digest: __CODEOPS_RUNTIME_CAPABILITY_DIGEST__
     spec:
       restartPolicy: Never
       terminationGracePeriodSeconds: 960
@@ -96,6 +108,10 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_WORKSPACE, value: "/workspace" }
             - { name: CODEOPS_SESSION_RUNTIME_ACP_STATE_PATH, value: "/var/lib/codeops-session/state.json" }
             - { name: CODEOPS_SESSION_ID, value: "__CODEOPS_SESSION_ID__" }
+            - { name: CODEOPS_RUNTIME_PROFILE_ID, value: "__CODEOPS_RUNTIME_PROFILE_ID__" }
+            - { name: CODEOPS_RUNTIME_RELEASE_DIGEST, value: "__CODEOPS_RUNTIME_RELEASE_DIGEST__" }
+            - { name: CODEOPS_RUNTIME_CAPABILITY_DIGEST, value: "__CODEOPS_RUNTIME_CAPABILITY_DIGEST__" }
+            - { name: CODEOPS_RUNTIME_PROFILE_JSON, value: '__CODEOPS_RUNTIME_PROFILE_JSON__' }
             - { name: CODEOPS_SESSION_OWNER_PRINCIPAL_ID, value: "__CODEOPS_SESSION_OWNER_PRINCIPAL_ID__" }
             - { name: CODEOPS_SESSION_REPOSITORY, value: "example-org/example-repository" }
             - { name: CODEOPS_SESSION_BRANCH, value: "__CODEOPS_BRANCH__" }

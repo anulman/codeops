@@ -309,6 +309,14 @@
 {{- fail "controlGateway.webPush.privateKeyKey must be one Secret data key" -}}
 {{- end -}}
 {{- end -}}
+{{- if not (regexMatch "^sha256:[0-9a-f]{64}$" .Values.runtime.releaseDigest) -}}
+{{- fail "runtime.releaseDigest must be one lowercase SHA-256 digest" -}}
+{{- end -}}
+{{- range (list .Values.runtime.profileId .Values.runtime.compatibilityPolicyRevision) -}}
+{{- if not (regexMatch "^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$" .) -}}
+{{- fail "runtime profile and compatibility-policy identities are invalid" -}}
+{{- end -}}
+{{- end -}}
 {{- if eq (len .Values.controlGateway.kubernetesApiCidrs) 0 -}}
 {{- fail "controlGateway.kubernetesApiCidrs must contain the exact Kubernetes API endpoint CIDR" -}}
 {{- end -}}

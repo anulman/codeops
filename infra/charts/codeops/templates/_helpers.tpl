@@ -36,7 +36,8 @@ helm.sh/chart: {{ printf "%s-%s" .Chart.Name .Chart.Version | replace "+" "_" }}
 {{- $worker := include "codeops.image" .Values.runtime.workerImage -}}
 {{- $agent := include "codeops.image" .Values.runtime.agentImage -}}
 {{- $gateway := include "codeops.image" .Values.runtime.sessionGatewayImage -}}
-{{- $identity := printf "%s\n%s\n%s" $worker $agent $gateway -}}
+{{- $release := required "runtime release digest is required" .Values.runtime.releaseDigest -}}
+{{- $identity := printf "%s\n%s\n%s\n%s\n%s\n%s" $worker $agent $gateway .Values.runtime.profileId $release .Values.runtime.compatibilityPolicyRevision -}}
 {{- $prefix := include "codeops.fullname" . | trunc 35 | trimSuffix "-" -}}
 {{- printf "%s-runtime-images-%s" $prefix ($identity | sha256sum | trunc 12) -}}
 {{- end -}}

@@ -22,7 +22,9 @@ const input = {
   controlGatewayDigest: `sha256:${"a".repeat(64)}`,
   modelProxyDigest: `sha256:${"d".repeat(64)}`,
   agentDigest: `sha256:${"b".repeat(64)}`,
+  workerDigest: `sha256:${"e".repeat(64)}`,
   sessionGatewayDigest: `sha256:${"c".repeat(64)}`,
+  runtimeReleaseDigest: `sha256:${"f".repeat(64)}`,
   kubernetesApiCidr: "10.3.0.1/32",
 };
 
@@ -48,6 +50,22 @@ test("renders one namespace-scoped authenticated gateway", () => {
   assert.equal(
     deployment.spec.template.spec.containers[0].image,
     `ghcr.io/anulman/codeops/control-gateway@${input.controlGatewayDigest}`,
+  );
+  const profileRegistry = values.find(
+    (resource) => resource.kind === "ConfigMap" &&
+      resource.metadata.name === "codeops-runtime-profile-registry",
+  );
+  const profile = JSON.parse(profileRegistry.data["profile-registry.json"]).profiles[0];
+  assert.equal(profileRegistry.immutable, true);
+  assert.equal(profile.releaseDigest, input.runtimeReleaseDigest);
+  assert.equal(profile.images.agent, `ghcr.io/anulman/codeops/agent@${input.agentDigest}`);
+  assert.equal(profile.images.worker, `ghcr.io/anulman/codeops/session-runtime-worker@${input.workerDigest}`);
+  assert.equal(profile.images.sessionGateway, `ghcr.io/anulman/codeops/session-gateway@${input.sessionGatewayDigest}`);
+  assert.equal(
+    deployment.spec.template.spec.containers[0].env.find(
+      (entry) => entry.name === "CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE",
+    ).value,
+    "/var/run/codeops-runtime-profile/profile-registry.json",
   );
   assert.equal(
     JSON.stringify(deployment).includes("codeops-agent-source-credentials"),
@@ -299,6 +317,8 @@ test("fails closed on mutable images, broad API CIDRs, or template drift", () =>
     { controlGatewayDigest: "latest" },
     { modelProxyDigest: "latest" },
     { agentDigest: `sha256:${"B".repeat(64)}` },
+    { workerDigest: "latest" },
+    { runtimeReleaseDigest: `sha256:${"F".repeat(64)}` },
     { kubernetesApiCidr: "10.3.0.0/24" },
   ]) {
     assert.throws(() =>

@@ -106,7 +106,10 @@ async function deriveDispositionRequest(
             predecessor.claim_token AS predecessor_claim_token,
             predecessor.claimed_by AS predecessor_claimed_by,
             predecessor.claim_expires_at AS predecessor_claim_expires_at,
-            launch.request_json AS parent_launch_request_json
+            launch.request_json AS parent_launch_request_json,
+            launch.runtime_requirements_json AS parent_runtime_requirements_json,
+            launch.runtime_requirement_digest AS parent_runtime_requirement_digest,
+            launch.runtime_launch_binding_json AS parent_runtime_launch_binding_json
        FROM codeops.work_item_admissions admission
        JOIN codeops.work_item_admissions root ON root.admission_id=admission.root_admission_id
        JOIN codeops.sessions session ON session.session_id=admission.child_session_id
@@ -250,7 +253,11 @@ async function deriveDispositionRequest(
     successor,
   });
   return { request, predecessorClaim, runtimeAttestation, parentIdentity,
-    parentLaunchRequest: row.parent_launch_request_json, successorLaunchId: successor === null ? null : launchId };
+    parentLaunchRequest: row.parent_launch_request_json,
+    parentRuntimeRequirements: row.parent_runtime_requirements_json,
+    parentRuntimeRequirementDigest: row.parent_runtime_requirement_digest,
+    parentRuntimeLaunchBinding: row.parent_runtime_launch_binding_json,
+    successorLaunchId: successor === null ? null : launchId };
 }
 
 export async function reconcileFailedWorkItemAttempt(
@@ -661,6 +668,9 @@ export async function reconcileFailedWorkItemAttempt(
         idempotencyKey: successor.idempotencyKey, principalId: authority.ownerPrincipalId,
         requestDigest: sha256CanonicalJsonDigest(retryLaunchRequest),
         policy: derived.parentIdentity.policy,
+        runtimeRequirements: derived.parentRuntimeRequirements,
+        runtimeRequirementDigest: derived.parentRuntimeRequirementDigest,
+        runtimeLaunchBinding: derived.parentRuntimeLaunchBinding,
         contextAttachments: derived.parentIdentity.contextAttachments ?? [],
         ...(priorSnapshot.identity.displayName === undefined ? {} : { title: priorSnapshot.identity.displayName }),
         promptDigest: sha256CanonicalJsonDigest(successor.prompt),
@@ -673,11 +683,14 @@ export async function reconcileFailedWorkItemAttempt(
       });
       await client.query(`INSERT INTO codeops.workspace_launches
         (launch_id,principal_id,idempotency_key,request_digest,request_json,launch_json,state,
+         runtime_requirements_json,runtime_requirement_digest,runtime_launch_binding_json,
          created_at,updated_at,retry_disposition_id,retry_runtime_release)
-        VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,'queued',$7::timestamptz,$7::timestamptz,$8,$9)`,
+        VALUES($1,$2,$3,$4,$5::jsonb,$6::jsonb,'queued',$10::jsonb,$11,$12::jsonb,
+          $7::timestamptz,$7::timestamptz,$8,$9)`,
         [launch.launchId,launch.principalId,launch.idempotencyKey,launch.requestDigest,
           canonicalJsonText(retryLaunchRequest),canonicalJsonText(launch),createdAt,request.dispositionId,
-          successor.runtimeRelease]);
+          successor.runtimeRelease,canonicalJsonText(launch.runtimeRequirements),
+          launch.runtimeRequirementDigest,canonicalJsonText(launch.runtimeLaunchBinding)]);
     }
     const updated = await client.query(`UPDATE codeops.sessions SET snapshot_json=$1::jsonb,
       updated_at=$2::timestamptz WHERE session_id=$3 AND generation=$4 AND lease_id=$5`,

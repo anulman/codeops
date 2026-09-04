@@ -137,6 +137,10 @@ const migrations = [
     url: new URL("../sql/work-item-admission-v1.sql", import.meta.url),
   },
   {
+    name: "runtime-compatible-substitution-v1",
+    url: new URL("../sql/runtime-compatible-substitution-v1.sql", import.meta.url),
+  },
+  {
     name: "runtime-permission-consumption-v1",
     url: new URL(
       "../sql/runtime-permission-consumption-v1.sql",

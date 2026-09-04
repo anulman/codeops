@@ -12,6 +12,18 @@ export {
   canonicalSerialize,
   sha256CanonicalJsonDigest,
 } from "./canonical-json.js";
+export {
+  runtimeAuthoritySchema,
+  runtimeBindingSchema,
+  runtimeLaunchBindingSchema,
+  runtimeProfileSchema,
+  runtimeRequirementsSchema,
+  runtimeResourceBoundsSchema,
+  type RuntimeBinding,
+  type RuntimeLaunchBinding,
+  type RuntimeProfile,
+  type RuntimeRequirements,
+} from "./runtime-profile.js";
 import {
   adversarialReviewSchema,
   candidateCheckpointSchema,
@@ -62,6 +74,8 @@ export {
   temporalCodeOpsSessionIdentitySchema,
   trustedTemporalCodeOpsSessionIdentitySchema,
   trustedPlaneWorkItemReferenceSchema,
+  sessionJobAdmittedInitializationRequestSchema,
+  sessionJobBoundInitializationRequestSchema,
   sessionJobInitializationRequestSchema,
   sessionJobInitializationResponseSchema,
   sessionLeaseSchema,

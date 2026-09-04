@@ -50,6 +50,14 @@ spec:
     requests:
       storage: 2Gi
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: codeops-runtime-profile-registry
+immutable: true
+data:
+  profile-registry.json: '__CODEOPS_RUNTIME_PROFILE_REGISTRY_JSON__'
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -94,6 +102,10 @@ spec:
               value: https://github.com/example-org/example-repository
             - name: CODEOPS_AGENT_IMAGE
               value: ghcr.io/anulman/codeops/agent@__CODEOPS_AGENT_DIGEST__
+            - name: CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE
+              value: /var/run/codeops-runtime-profile/profile-registry.json
+            - name: CODEOPS_RUNTIME_COMPATIBILITY_POLICY_REVISION
+              value: compatible-substitution-v1
             - name: CODEOPS_SESSION_GATEWAY_IMAGE
               value: ghcr.io/anulman/codeops/session-gateway@__CODEOPS_SESSION_GATEWAY_DIGEST__
             - name: CODEOPS_DISPATCH_TOKEN_FILE
@@ -198,6 +210,9 @@ spec:
             - name: session-job-initialization-auth
               mountPath: /var/run/secrets/codeops-session-job-initialization
               readOnly: true
+            - name: runtime-profile-registry
+              mountPath: /var/run/codeops-runtime-profile
+              readOnly: true
             - name: temp
               mountPath: /tmp
       volumes:
@@ -281,6 +296,12 @@ spec:
             items:
               - key: token
                 path: token
+        - name: runtime-profile-registry
+          configMap:
+            name: codeops-runtime-profile-registry
+            items:
+              - key: profile-registry.json
+                path: profile-registry.json
         - name: temp
           emptyDir:
             sizeLimit: 64Mi

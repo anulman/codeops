@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   ClaimedDispatchAuthorityConflictError,
+  assertBrokeredProviderEffects,
   loadClaimedDispatchAuthority,
   selectClaimedWorkspaceSource,
   validateClaimedDispatchAuthority,
@@ -13,6 +14,16 @@ const leaseId = "33333333-3333-4333-8333-333333333333";
 const workerId = "acp-worker:primary";
 const repository = "anulman/codeops";
 const resolvedSha = "a".repeat(40);
+const runtimeBinding = {
+  version: "codeops.runtime-binding/v1",
+  requirementDigest: `sha256:${"6".repeat(64)}`,
+  compatibilityPolicyRevision: "policy-7",
+  selectedProfileId: "standard-v1",
+  selectedReleaseDigest: `sha256:${"7".repeat(64)}`,
+ selectedCapabilityDigest: `sha256:${"8".repeat(64)}`,
+  selectedProfile: { version: "codeops.runtime-profile/v1", profileId: "standard-v1", releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"], capabilityDigest: `sha256:${"8".repeat(64)}`, resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 }, authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true }, compatibilityPolicyRevision: "policy-7", images: { agent: `example/agent@sha256:${"a".repeat(64)}`, worker: `example/worker@sha256:${"b".repeat(64)}`, sessionGateway: `example/gateway@sha256:${"c".repeat(64)}` } },
+  selectedAt: "2026-08-15T10:00:00.000Z",
+};
 
 function capabilities() {
   return [
@@ -100,6 +111,12 @@ function row(overrides = {}) {
     claimed_by: workerId,
     claim_expires_at: "2026-08-15T11:00:00.000Z",
     owner_principal_id: "access:aidan@example.com",
+    session_id: "session-authority",
+    session_identity_json: snapshot().identity,
+    runtime_binding_json: runtimeBinding,
+    owner_runtime_binding_json: runtimeBinding,
+    runtime_claim_protocol: "bound-v2",
+    legacy_runtime_worker_compatible: false,
     ...overrides,
   };
 }
@@ -129,6 +146,7 @@ test("loads one immutable authority and selects the exact workspace source", asy
   assert.equal(Object.isFrozen(authority.dispatch), true);
   assert.equal(Object.isFrozen(authority.snapshot.identity), true);
   assert.equal(authority.dispatch.command.sessionId, "session-authority");
+  assert.deepEqual(authority.runtimeBinding, runtimeBinding);
   assert.equal(calls[0].values[0], dispatchId);
   assert.match(calls[0].text, /FROM codeops\.session_runtime_outbox/);
   const source = selectClaimedWorkspaceSource(authority, { repository, resolvedSha });
@@ -144,6 +162,17 @@ test("fails closed on claim and immutable authority drift", () => {
     { row: { claim_expires_at: "not-a-time" } },
     { row: { claim_expires_at: "2026-08-15T10:05:00.000Z" } },
     { row: { owner_principal_id: "access:mallory@example.com" } },
+    { row: { session_id: "session-other" } },
+    { row: { session_identity_json: {
+      ...snapshot().identity,
+      runId: "substituted-root",
+    } } },
+    { row: { owner_runtime_binding_json: {
+      ...runtimeBinding,
+      selectedReleaseDigest: `sha256:${"9".repeat(64)}`,
+    } } },
+    { row: { runtime_claim_protocol: null, runtime_binding_json: null } },
+    { row: { runtime_claim_protocol: "legacy-unproven-v1", runtime_binding_json: null } },
     { dispatchId: "55555555-5555-4555-8555-555555555555" },
     { row: { dispatch_json: dispatch({
       command: { ...dispatch().command, type: "cancel", reason: "drift" },
@@ -171,6 +200,16 @@ test("fails closed on claim and immutable authority drift", () => {
   }
 });
 
+test("accepts only explicit migration-owned legacy claimed authority", () => {
+  const authority = validateClaimedDispatchAuthority(row({
+    runtime_claim_protocol: "legacy-unproven-v1",
+    runtime_binding_json: null,
+    owner_runtime_binding_json: null,
+    legacy_runtime_worker_compatible: true,
+  }), input);
+  assert.equal(authority.runtimeBinding, undefined);
+});
+
 test("fails closed on repository and source SHA drift", () => {
   const authority = validateClaimedDispatchAuthority(row(), input);
   assert.throws(
@@ -180,5 +219,23 @@ test("fails closed on repository and source SHA drift", () => {
   assert.throws(
     () => selectClaimedWorkspaceSource(authority, { repository, resolvedSha: "b".repeat(40) }),
     ClaimedDispatchAuthorityConflictError,
+  );
+});
+
+test("denies every provider endpoint for a bound restricted profile", () => {
+  const restricted = structuredClone(runtimeBinding);
+  restricted.selectedProfile.authority.brokeredProviderEffects = false;
+  const authority = validateClaimedDispatchAuthority(row({
+    runtime_binding_json: restricted,
+    owner_runtime_binding_json: restricted,
+  }), {
+    dispatchId,
+    workerId,
+    claimToken,
+    now: new Date("2026-08-15T10:01:00.000Z"),
+  });
+  assert.throws(
+    () => assertBrokeredProviderEffects(authority),
+    /denies brokered provider effects/,
   );
 });

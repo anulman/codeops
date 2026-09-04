@@ -5,6 +5,12 @@ import {
   sessionCommandResultSchema,
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeClaimRenewalRequestSchema,
+  runtimeBindingSchema,
+  runtimeLaunchBindingSchema,
+  runtimeRequirementsSchema,
+  type RuntimeLaunchBinding,
+  type RuntimeProfile,
+  type RuntimeRequirements,
   type SessionCommandResult,
   type SessionSnapshot,
 } from "@codeops/codeops-contracts";
@@ -21,6 +27,7 @@ import {
 } from "./session-broker-runtime.js";
 import { resolveSessionRuntimeCompletionSnapshot } from "./session-runtime-permissions.js";
 import { cleanupNoReceiptGitHubBranchCandidatesForDispatch } from "./github-branch-publish-candidates.js";
+import { RuntimeCompatibilityError } from "./runtime-profile-registry.js";
 
 const workerPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 
@@ -41,6 +48,25 @@ interface ClaimedDispatchRow extends StoredDispatchRow {
   readonly claim_expires_at: unknown;
   readonly claim_count: unknown;
   readonly is_admitted_initial_dispatch: unknown;
+  readonly runtime_binding_json: unknown;
+  readonly runtime_claim_protocol: unknown;
+}
+
+interface RuntimeOwnerRow extends Record<string, unknown> {
+  readonly root_session_id: unknown;
+  readonly claimant_legacy_runtime_worker_compatible: unknown;
+  readonly session_runtime_requirements_json: unknown;
+  readonly session_runtime_requirement_digest: unknown;
+  readonly session_runtime_launch_binding_json: unknown;
+  readonly workspace_state: unknown;
+  readonly workspace_runtime_requirements_json: unknown;
+  readonly workspace_runtime_requirement_digest: unknown;
+  readonly workspace_runtime_launch_binding_json: unknown;
+}
+
+interface RuntimeRootIdentityRow extends Record<string, unknown> {
+  readonly root_session_id: unknown;
+  readonly workspace_launch_id: unknown;
 }
 
 interface CompletedDispatchRow extends StoredDispatchRow {
@@ -175,6 +201,7 @@ export interface SessionRuntimeDispatchClaim {
   readonly claimExpiresAt: string;
   readonly claimCount: number;
   readonly isAdmittedInitialDispatch: boolean;
+  readonly runtimeBinding?: ReturnType<typeof runtimeBindingSchema.parse>;
 }
 
 export async function claimSessionRuntimeDispatch(
@@ -185,6 +212,14 @@ export async function claimSessionRuntimeDispatch(
     readonly generation: number;
     readonly leaseId: string;
     readonly identity: unknown;
+    readonly runtimeProfileId?: string;
+    readonly runtimeReleaseDigest?: string;
+    readonly runtimeCapabilityDigest?: string;
+    readonly runtimeProfile?: RuntimeProfile;
+    readonly fallbackRuntimeOwner?: {
+      readonly requirements: RuntimeRequirements;
+      readonly launchBinding: RuntimeLaunchBinding;
+    };
     readonly leaseMs: number;
     readonly now?: () => Date;
     readonly claimToken?: () => string;
@@ -199,11 +234,19 @@ export async function claimSessionRuntimeDispatch(
     throw new Error("runtime claim lease must be between 1 second and 15 minutes");
   }
   const authority = sessionRuntimeClaimRequestSchema.parse({
-    version: "codeops.session-runtime-claim-request/v1",
+    version: input.runtimeProfileId === undefined
+      ? "codeops.session-runtime-claim-request/v1"
+      : "codeops.session-runtime-claim-request/v2",
     sessionId: input.sessionId,
     generation: input.generation,
     leaseId: input.leaseId,
     identity: input.identity,
+    ...(input.runtimeProfileId === undefined ? {} : {
+      runtimeProfileId: input.runtimeProfileId,
+      runtimeReleaseDigest: input.runtimeReleaseDigest,
+      runtimeCapabilityDigest: input.runtimeCapabilityDigest,
+      runtimeProfile: input.runtimeProfile,
+    }),
     leaseMs: input.leaseMs,
   });
   const now = (input.now ?? (() => new Date()))();
@@ -212,8 +255,157 @@ export async function claimSessionRuntimeDispatch(
   const claimToken = (input.claimToken ?? randomUUID)();
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
+  const rootIdentityResult = await client.query<RuntimeRootIdentityRow>(
+    `WITH RECURSIVE lineage(session_id, parent_session_id, path, depth) AS (
+       SELECT session_id, snapshot_json->'identity'->>'parentSessionId',
+              ARRAY[session_id], 0
+         FROM codeops.sessions
+        WHERE session_id = $1
+       UNION ALL
+       SELECT parent.session_id,
+              parent.snapshot_json->'identity'->>'parentSessionId',
+              child.path || parent.session_id, child.depth + 1
+         FROM codeops.sessions parent
+         JOIN lineage child ON parent.session_id = child.parent_session_id
+        WHERE child.depth < 64
+          AND NOT parent.session_id = ANY(child.path)
+     )
+     SELECT root.session_id AS root_session_id,
+            root.snapshot_json#>>'{identity,runId}' AS workspace_launch_id
+       FROM lineage resolved
+       JOIN codeops.sessions root ON root.session_id = resolved.session_id
+      WHERE resolved.parent_session_id IS NULL`,
+    [authority.sessionId],
+  );
+  const rootIdentity = rootIdentityResult.rows[0];
+  if (
+    rootIdentityResult.rows.length !== 1 ||
+    typeof rootIdentity?.root_session_id !== "string" ||
+    typeof rootIdentity.workspace_launch_id !== "string"
+  ) {
+    throw new RuntimeCompatibilityError("legacy-runtime-unbound");
+  }
+  await client.query(
+    `SELECT launch_id
+       FROM codeops.workspace_launches
+      WHERE launch_id = $1
+      FOR UPDATE`,
+    [rootIdentity.workspace_launch_id],
+  );
+  const ownerResult = await client.query<RuntimeOwnerRow>(
+    `WITH RECURSIVE lineage(session_id, parent_session_id, path, depth) AS (
+       SELECT session_id, snapshot_json->'identity'->>'parentSessionId',
+              ARRAY[session_id], 0
+         FROM codeops.sessions
+        WHERE session_id = $1
+       UNION ALL
+       SELECT parent.session_id,
+              parent.snapshot_json->'identity'->>'parentSessionId',
+              child.path || parent.session_id, child.depth + 1
+         FROM codeops.sessions parent
+         JOIN lineage child ON parent.session_id = child.parent_session_id
+        WHERE child.depth < 64
+          AND NOT parent.session_id = ANY(child.path)
+     )
+     SELECT root.session_id AS root_session_id,
+            target.legacy_runtime_worker_compatible AS claimant_legacy_runtime_worker_compatible,
+            root.runtime_requirements_json AS session_runtime_requirements_json,
+            root.runtime_requirement_digest AS session_runtime_requirement_digest,
+            root.runtime_launch_binding_json AS session_runtime_launch_binding_json,
+            launch.state AS workspace_state,
+            launch.runtime_requirements_json AS workspace_runtime_requirements_json,
+            launch.runtime_requirement_digest AS workspace_runtime_requirement_digest,
+            launch.runtime_launch_binding_json AS workspace_runtime_launch_binding_json
+       FROM lineage resolved
+       JOIN codeops.sessions root ON root.session_id = resolved.session_id
+       JOIN codeops.sessions target ON target.session_id = $1
+       LEFT JOIN codeops.workspace_launches launch
+         ON launch.launch_id = root.snapshot_json#>>'{identity,runId}'
+      WHERE resolved.parent_session_id IS NULL
+        AND root.session_id = $2
+        AND root.snapshot_json#>>'{identity,runId}' = $3
+      FOR UPDATE OF root`,
+    [authority.sessionId, rootIdentity.root_session_id,
+      rootIdentity.workspace_launch_id],
+  );
+  if (ownerResult.rows.length !== 1) {
+    throw new RuntimeCompatibilityError("legacy-runtime-unbound");
+  }
+  const owner = ownerResult.rows[0]!;
+  const workspaceBound = owner.workspace_runtime_launch_binding_json != null;
+  const sessionBound = owner.session_runtime_launch_binding_json != null;
+  if (workspaceBound && sessionBound) {
+    throw new Error("session runtime lineage resolved ambiguous durable owners");
+  }
+
+  let requirements: RuntimeRequirements;
+  let launchBinding: RuntimeLaunchBinding;
+  let persistLegacyRootBinding = false;
+  if (workspaceBound || sessionBound) {
+    requirements = runtimeRequirementsSchema.parse(
+      workspaceBound
+        ? owner.workspace_runtime_requirements_json
+        : owner.session_runtime_requirements_json,
+    );
+    launchBinding = runtimeLaunchBindingSchema.parse(
+      workspaceBound
+        ? owner.workspace_runtime_launch_binding_json
+        : owner.session_runtime_launch_binding_json,
+    );
+    const storedDigest = workspaceBound
+      ? owner.workspace_runtime_requirement_digest
+      : owner.session_runtime_requirement_digest;
+    if (
+      storedDigest !== launchBinding.requirementDigest ||
+      launchBinding.requirementDigest !== sha256CanonicalJsonDigest(requirements)
+    ) {
+      throw new Error("durable runtime owner evidence is invalid");
+    }
+  } else {
+    if (
+      owner.claimant_legacy_runtime_worker_compatible !== true ||
+      input.fallbackRuntimeOwner === undefined ||
+      (owner.workspace_state !== null && owner.workspace_state !== "ready")
+    ) {
+      throw new RuntimeCompatibilityError("legacy-runtime-unbound");
+    }
+    requirements = runtimeRequirementsSchema.parse(
+      input.fallbackRuntimeOwner.requirements,
+    );
+    launchBinding = runtimeLaunchBindingSchema.parse(
+      input.fallbackRuntimeOwner.launchBinding,
+    );
+    if (launchBinding.requirementDigest !== sha256CanonicalJsonDigest(requirements)) {
+      throw new Error("legacy runtime upgrade owner evidence is invalid");
+    }
+    persistLegacyRootBinding = true;
+  }
+
+  const profile = launchBinding.profile;
+  const legacyWorker = authority.version === "codeops.session-runtime-claim-request/v1";
+  if (
+    (legacyWorker && owner.claimant_legacy_runtime_worker_compatible !== true) ||
+    (!legacyWorker && (
+      authority.runtimeProfileId !== profile.profileId ||
+      authority.runtimeReleaseDigest !== profile.releaseDigest ||
+      authority.runtimeCapabilityDigest !== profile.capabilityDigest ||
+      canonicalJsonText(authority.runtimeProfile) !== canonicalJsonText(profile)
+    ))
+  ) {
+    throw new RuntimeCompatibilityError("runtime-release-mismatch");
+  }
+  const runtimeBinding = runtimeBindingSchema.parse({
+    version: "codeops.runtime-binding/v1",
+    requirementDigest: launchBinding.requirementDigest,
+    compatibilityPolicyRevision: requirements.compatibilityPolicyRevision,
+    selectedProfileId: profile.profileId,
+    selectedReleaseDigest: profile.releaseDigest,
+    selectedCapabilityDigest: profile.capabilityDigest,
+    selectedProfile: profile,
+    selectedAt: launchBinding.selectedAt,
+  });
   const result = await client.query<ClaimedDispatchRow>(
-     `WITH candidate AS (
+    `WITH candidate AS MATERIALIZED (
        SELECT outbox.dispatch_id
          FROM codeops.session_runtime_outbox AS outbox
          JOIN codeops.sessions AS session
@@ -238,6 +430,11 @@ export async function claimSessionRuntimeDispatch(
           AND session.snapshot_json->'lease'->>'status' = 'active'
           AND session.snapshot_json->'lease'->>'leaseId' = $7
           AND session.snapshot_json->'identity' = $8::jsonb
+          AND (($14::boolean AND outbox.runtime_binding_json IS NULL
+                AND (outbox.runtime_claim_protocol IS NULL OR
+                     outbox.runtime_claim_protocol = 'legacy-unproven-v1'))
+            OR (NOT $14::boolean AND
+                (outbox.runtime_binding_json IS NULL OR outbox.runtime_binding_json = $9::jsonb)))
           AND (
             outbox.retry_disposition_id IS NULL
             OR (
@@ -346,7 +543,17 @@ export async function claimSessionRuntimeDispatch(
                THEN 0 ELSE 1 END ASC,
           outbox.available_at ASC, outbox.created_at ASC, outbox.dispatch_id ASC
         FOR UPDATE OF outbox SKIP LOCKED
-        LIMIT 1
+         LIMIT 1
+     ), persisted_owner AS (
+       UPDATE codeops.sessions AS root
+          SET runtime_requirements_json = $17::jsonb,
+              runtime_requirement_digest = $18,
+              runtime_launch_binding_json = $19::jsonb
+        WHERE root.session_id = $15
+          AND $16::boolean
+          AND root.runtime_launch_binding_json IS NULL
+          AND EXISTS (SELECT 1 FROM candidate)
+       RETURNING root.session_id
      )
      UPDATE codeops.session_runtime_outbox AS outbox
         SET status = 'claimed',
@@ -354,12 +561,29 @@ export async function claimSessionRuntimeDispatch(
             claimed_by = $3,
             claimed_at = $1::timestamptz,
             claim_expires_at = $4::timestamptz,
-            claim_count = outbox.claim_count + 1
+            claim_count = outbox.claim_count + 1,
+            runtime_binding_revision = CASE WHEN $14::boolean
+              THEN outbox.runtime_binding_revision
+              ELSE outbox.runtime_binding_revision + 1 END,
+            runtime_binding_json = CASE WHEN $14::boolean THEN NULL
+              ELSE COALESCE(outbox.runtime_binding_json, $9::jsonb) END,
+            runtime_requirement_digest = CASE WHEN $14::boolean THEN NULL
+              ELSE COALESCE(outbox.runtime_requirement_digest, $10) END,
+            runtime_profile_id = CASE WHEN $14::boolean THEN NULL
+              ELSE COALESCE(outbox.runtime_profile_id, $11) END,
+            runtime_release_digest = CASE WHEN $14::boolean THEN NULL
+              ELSE COALESCE(outbox.runtime_release_digest, $12) END,
+            runtime_capability_digest = CASE WHEN $14::boolean THEN NULL
+              ELSE COALESCE(outbox.runtime_capability_digest, $13) END,
+            runtime_claim_protocol = CASE WHEN $14::boolean
+              THEN 'legacy-unproven-v1' ELSE 'bound-v2' END
        FROM candidate
       WHERE outbox.dispatch_id = candidate.dispatch_id
+        AND (NOT $16::boolean OR EXISTS (SELECT 1 FROM persisted_owner))
       RETURNING outbox.dispatch_json, outbox.claim_token,
                 outbox.claim_expires_at, outbox.claim_count,
-                outbox.is_admitted_initial_dispatch`,
+                outbox.is_admitted_initial_dispatch,
+                outbox.runtime_binding_json, outbox.runtime_claim_protocol`,
     [
       claimedAt,
       claimToken,
@@ -369,6 +593,17 @@ export async function claimSessionRuntimeDispatch(
       authority.generation,
       authority.leaseId,
       canonicalJsonText(authority.identity),
+      canonicalJsonText(runtimeBinding),
+      launchBinding.requirementDigest,
+      profile.profileId,
+      profile.releaseDigest,
+      profile.capabilityDigest,
+      legacyWorker,
+      owner.root_session_id,
+      persistLegacyRootBinding,
+      canonicalJsonText(requirements),
+      launchBinding.requirementDigest,
+      canonicalJsonText(launchBinding),
     ],
   );
   if (!result.rows[0]) {
@@ -386,6 +621,15 @@ export async function claimSessionRuntimeDispatch(
     throw new Error("runtime claim persistence did not match the requested lease");
   }
   const dispatch = sessionRuntimeDispatchSchema.parse(row.dispatch_json);
+  const persistedRuntimeBinding = legacyWorker
+    ? undefined
+    : runtimeBindingSchema.parse(row.runtime_binding_json);
+  if (
+    (legacyWorker && row.runtime_claim_protocol !== "legacy-unproven-v1") ||
+    (!legacyWorker && row.runtime_claim_protocol !== "bound-v2")
+  ) {
+    throw new Error("runtime claim protocol persistence drifted");
+  }
   if (
     dispatch.command.sessionId !== authority.sessionId ||
     dispatch.command.generation !== authority.generation ||
@@ -419,6 +663,7 @@ export async function claimSessionRuntimeDispatch(
     claimExpiresAt,
     claimCount: Number(row.claim_count),
     isAdmittedInitialDispatch: row.is_admitted_initial_dispatch,
+    ...(persistedRuntimeBinding === undefined ? {} : { runtimeBinding: persistedRuntimeBinding }),
   };
   } catch (error) {
     await client.query("ROLLBACK");
@@ -464,7 +709,8 @@ export async function renewSessionRuntimeDispatchClaim(
             outbox.dispatch_json->'snapshot'->'identity'
       RETURNING outbox.dispatch_json, outbox.claim_token,
                 outbox.claim_expires_at, outbox.claim_count,
-                outbox.is_admitted_initial_dispatch`,
+                outbox.is_admitted_initial_dispatch,
+                outbox.runtime_binding_json, outbox.runtime_claim_protocol`,
     [input.dispatchId, request.claimToken, input.workerId, renewedUntil, now.toISOString()],
   );
   const row = result.rows[0];
@@ -474,6 +720,9 @@ export async function renewSessionRuntimeDispatchClaim(
     );
   }
   const dispatch = sessionRuntimeDispatchSchema.parse(row.dispatch_json);
+  const persistedRuntimeBinding = row.runtime_claim_protocol === "bound-v2"
+    ? runtimeBindingSchema.parse(row.runtime_binding_json)
+    : undefined;
   if (
     row.claim_token !== request.claimToken ||
     postgresTimestamp(row.claim_expires_at) !== renewedUntil ||
@@ -489,6 +738,7 @@ export async function renewSessionRuntimeDispatchClaim(
     claimExpiresAt: renewedUntil,
     claimCount: Number(row.claim_count),
     isAdmittedInitialDispatch: row.is_admitted_initial_dispatch,
+    ...(persistedRuntimeBinding === undefined ? {} : { runtimeBinding: persistedRuntimeBinding }),
   };
 }
 
