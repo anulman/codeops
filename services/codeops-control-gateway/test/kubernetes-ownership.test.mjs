@@ -250,7 +250,9 @@ test("accepts reviewed API-server Job defaults but rejects other added configura
     spec: { backoffLimit: 0, template: { metadata: { labels: { app: "worker" } }, spec: {
       restartPolicy: "Never", serviceAccountName: "runtime", imagePullSecrets: [],
       containers: [{ name: "worker",
-        image: `registry/worker@sha256:${"1".repeat(64)}` }], volumes: [{ name: "workspace",
+        image: `registry/worker@sha256:${"1".repeat(64)}`,
+        readinessProbe: { exec: { command: ["true"] }, periodSeconds: 2,
+          timeoutSeconds: 1 } }], volumes: [{ name: "workspace",
         persistentVolumeClaim: { claimName: "workspace" } }] } } } };
   const response = existingResource(job, "created-job-uid");
   delete response.spec.template.spec.imagePullSecrets;
@@ -268,6 +270,9 @@ test("accepts reviewed API-server Job defaults but rejects other added configura
     schedulerName: "default-scheduler", serviceAccount: "runtime" });
   Object.assign(response.spec.template.spec.containers[0], {
     terminationMessagePath: "/dev/termination-log", terminationMessagePolicy: "File",
+  });
+  Object.assign(response.spec.template.spec.containers[0].readinessProbe, {
+    failureThreshold: 3, successThreshold: 1,
   });
   response.spec.template.spec.volumes[0].persistentVolumeClaim.readOnly = false;
   const client = createInClusterKubernetesClient({ namespace: "agents-system", host: "unused",
@@ -290,6 +295,9 @@ test("accepts reviewed API-server Job defaults but rejects other added configura
   await assert.rejects(client.ensure(job, digest), KubernetesResourceIdentityDriftError);
   delete response.spec.template.spec.hostNetwork;
   response.spec.template.spec.imagePullSecrets = [{ name: "foreign-registry" }];
+  await assert.rejects(client.ensure(job, digest), KubernetesResourceIdentityDriftError);
+  response.spec.template.spec.imagePullSecrets = [];
+  response.spec.template.spec.containers[0].readinessProbe.failureThreshold = 4;
   await assert.rejects(client.ensure(job, digest), KubernetesResourceIdentityDriftError);
 });
 
