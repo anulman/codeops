@@ -301,6 +301,55 @@ test("accepts reviewed API-server Job defaults but rejects other added configura
   await assert.rejects(client.ensure(job, digest), KubernetesResourceIdentityDriftError);
 });
 
+test("normalizes exact Kubernetes container resource quantities and rejects resource drift",
+  async () => {
+    const job = { apiVersion: "batch/v1", kind: "Job", metadata: expected.metadata,
+      spec: { backoffLimit: 0, template: { spec: { restartPolicy: "Never", containers: [{
+        name: "runtime-worker", image: `registry/worker@sha256:${"1".repeat(64)}`,
+        resources: { requests: { cpu: "100m", memory: "256Mi",
+          "ephemeral-storage": "256Mi" }, limits: { cpu: "1000m", memory: "1024Mi",
+          "ephemeral-storage": "1024Mi" } },
+      }, {
+        name: "agent", image: `registry/agent@sha256:${"2".repeat(64)}`,
+        resources: { requests: { cpu: "500m", memory: "1024Mi",
+          "ephemeral-storage": "1024Mi" }, limits: { cpu: "2000m", memory: "6144Mi",
+          "ephemeral-storage": "4096Mi" } }, volumeMounts: [{ name: "workspace",
+            mountPath: "/var/lib/agent", subPath: ".agent", readOnly: false }],
+      }] } } } };
+    const response = existingResource(job, "quantity-normalized-job-uid");
+    Object.assign(response.spec.template.spec.containers[0].resources.limits,
+      { cpu: "1", memory: "1Gi", "ephemeral-storage": "1Gi" });
+    Object.assign(response.spec.template.spec.containers[1].resources.requests,
+      { memory: "1Gi", "ephemeral-storage": "1Gi" });
+    Object.assign(response.spec.template.spec.containers[1].resources.limits,
+      { cpu: "2", memory: "6Gi", "ephemeral-storage": "4Gi" });
+    delete response.spec.template.spec.containers[1].volumeMounts[0].readOnly;
+    const client = createInClusterKubernetesClient({ namespace: "agents-system", host: "unused",
+      port: 443, token: "unused", ca: Buffer.alloc(0), request: async () =>
+        ({ status: 201, text: JSON.stringify(response) }) });
+    assert.equal((await client.ensure(job, digest)).uid, "quantity-normalized-job-uid");
+
+    const cleanupMethods = [];
+    const cleanupClient = createInClusterKubernetesClient({ namespace: "agents-system",
+      host: "unused", port: 443, token: "unused", ca: Buffer.alloc(0),
+      request: async (method) => { cleanupMethods.push(method); return method === "GET"
+        ? { status: 200, text: JSON.stringify(response) } : { status: 202,
+          text: JSON.stringify({ apiVersion: "v1", kind: "Status", status: "Success",
+            details: { group: "batch", kind: "jobs", name: job.metadata.name,
+              uid: "quantity-normalized-job-uid" } }) }; } });
+    await cleanupClient.delete({ apiVersion: job.apiVersion, kind: job.kind,
+      metadata: job.metadata }, digest, "quantity-normalized-job-uid",
+    kubernetesResourceConfigurationDigest(job));
+    assert.deepEqual(cleanupMethods, ["GET", "DELETE"]);
+
+    const drifted = structuredClone(response);
+    drifted.spec.template.spec.containers[0].resources.limits.memory = "2Gi";
+    const driftClient = createInClusterKubernetesClient({ namespace: "agents-system",
+      host: "unused", port: 443, token: "unused", ca: Buffer.alloc(0), request: async () =>
+        ({ status: 200, text: JSON.stringify(drifted) }) });
+    await assert.rejects(driftClient.ensure(job, digest), KubernetesResourceIdentityDriftError);
+  });
+
 test("accepts a bound PVC shape but rejects claim and storage drift", async () => {
   const pvc = { apiVersion: "v1", kind: "PersistentVolumeClaim", metadata: expected.metadata,
     spec: { accessModes: ["ReadWriteOnce"], storageClassName: "fast",
