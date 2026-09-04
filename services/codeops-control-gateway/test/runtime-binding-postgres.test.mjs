@@ -788,6 +788,37 @@ test("normal-role PostgreSQL binds every root and lineage producer and rejects r
        VALUES($1,1,$2,$3::jsonb,$4::timestamptz,'access:user@example.com')`,
       [idleLegacy.sessionId, leaseId, canonicalJsonText(idleLegacy), idleLegacy.updatedAt],
     );
+    const preclaimedLegacy = snapshot("older-preclaimed-root", "older-preclaimed-run");
+    const preclaimedCommand = {
+      version: "codeops.session-command/v1", sessionId: preclaimedLegacy.sessionId,
+      generation: 1, leaseId,
+      idempotencyKey: "41414141-4141-4141-8141-414141414141",
+      type: "prompt", prompt: "Continue the already claimed legacy dispatch.",
+    };
+    const preclaimedDispatch = buildSessionRuntimeDispatch({
+      dispatchId: "42424242-4242-4242-8242-424242424242",
+      principalId: "access:user@example.com", command: preclaimedCommand,
+      snapshot: preclaimedLegacy, dispatchedAt: "2026-08-31T08:01:00.000Z",
+    });
+    await connection.query(
+      `INSERT INTO codeops.sessions
+         (session_id,generation,lease_id,snapshot_json,updated_at,owner_principal_id)
+       VALUES($1,1,$2,$3::jsonb,$4::timestamptz,'access:user@example.com')`,
+      [preclaimedLegacy.sessionId, leaseId, canonicalJsonText(preclaimedLegacy),
+        preclaimedLegacy.updatedAt],
+    );
+    await connection.query(
+      `INSERT INTO codeops.session_runtime_outbox
+         (dispatch_id,session_id,idempotency_key,principal_id,dispatch_json,status,
+          available_at,created_at,claim_token,claimed_by,claimed_at,
+          claim_expires_at,claim_count)
+       VALUES($1,$2,$3,'access:user@example.com',$4::jsonb,'claimed',
+         $5::timestamptz,$5::timestamptz,$6,'old-gateway-v1',$5::timestamptz,
+         $5::timestamptz + interval '1 minute',1)`,
+      [preclaimedDispatch.dispatchId, preclaimedLegacy.sessionId,
+        preclaimedCommand.idempotencyKey, canonicalJsonText(preclaimedDispatch),
+        preclaimedDispatch.dispatchedAt, "43434343-4343-4343-8343-434343434343"],
+    );
     await connection.query(
       `INSERT INTO codeops.session_runtime_outbox
          (dispatch_id,session_id,idempotency_key,principal_id,dispatch_json,status,available_at,created_at)
@@ -817,6 +848,17 @@ test("normal-role PostgreSQL binds every root and lineage producer and rejects r
       ),
       "applied",
     );
+    const migratedPreclaimed = await connection.query(
+      `SELECT status,claim_count,runtime_claim_protocol,runtime_binding_revision
+         FROM codeops.session_runtime_outbox WHERE dispatch_id=$1`,
+      [preclaimedDispatch.dispatchId],
+    );
+    assert.deepEqual(migratedPreclaimed.rows[0], {
+      status: "claimed",
+      claim_count: 1,
+      runtime_claim_protocol: "legacy-unproven-v1",
+      runtime_binding_revision: "0",
+    });
     const markedLaunch = await connection.query(
       `SELECT launch_json->>'legacyRuntimeCompatible' AS marker
          FROM codeops.workspace_launches WHERE launch_id=$1`,
