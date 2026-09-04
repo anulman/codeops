@@ -1,16 +1,43 @@
+import { createHash } from "node:crypto";
 import { parseAllDocuments } from "yaml";
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const TOKEN = "__CODEOPS_SESSION_CONTROL_GATEWAY_DIGEST__";
+const REGISTRY_TOKEN = "__CODEOPS_RUNTIME_PROFILE_REGISTRY_JSON__";
 
-export function renderSessionProofGatewayManifest(template, digest) {
-  if (!DIGEST.test(digest)) throw new Error("proof gateway image must use one lowercase SHA-256 digest");
+export function renderSessionProofGatewayManifest(template, input) {
+  for (const key of ["gatewayDigest", "agentDigest", "workerDigest", "runtimeReleaseDigest"]) {
+    if (!DIGEST.test(input[key] ?? "")) throw new Error(`${key} must use one lowercase SHA-256 digest`);
+  }
+  const digest = input.gatewayDigest;
   if (template.split(TOKEN).length !== 2) throw new Error(`expected exactly one ${TOKEN}`);
-  const rendered = template.replace(TOKEN, digest);
+  if (template.split(REGISTRY_TOKEN).length !== 2) throw new Error(`expected exactly one ${REGISTRY_TOKEN}`);
+  const capabilities = ["acp", "checkpoint", "github-broker", "model-proxy", "work-items-broker"];
+  const capabilityDigest = `sha256:${createHash("sha256").update(JSON.stringify(capabilities)).digest("hex")}`;
+  const registry = {
+    version: "codeops.runtime-profile-registry/v1",
+    profiles: [{
+      version: "codeops.runtime-profile/v1",
+      profileId: "standard-v1",
+      releaseDigest: input.runtimeReleaseDigest,
+      capabilities,
+      capabilityDigest,
+      resources: { cpuMillis: 3_000, memoryMiB: 7_168, ephemeralStorageMiB: 5_120 },
+      authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+      compatibilityPolicyRevision: "compatible-substitution-v1",
+      images: {
+        agent: `ghcr.io/anulman/codeops/agent@${input.agentDigest}`,
+        worker: `ghcr.io/anulman/codeops/session-runtime-worker@${input.workerDigest}`,
+        sessionGateway: `ghcr.io/anulman/codeops/session-control-gateway@${input.gatewayDigest}`,
+      },
+    }],
+  };
+  const rendered = template.replace(TOKEN, digest).replace(REGISTRY_TOKEN, JSON.stringify(registry));
   const resources = parseAllDocuments(rendered).map((document) => document.toJS());
   const identities = resources.map((resource) => `${resource.kind}/${resource.metadata.name}`).sort();
   const expected = [
     "Deployment/codeops-control-gateway",
+    "ConfigMap/codeops-runtime-profile-registry",
     "NetworkPolicy/codeops-control-gateway",
     "Service/codeops-control-gateway",
     "ServiceAccount/codeops-control-gateway",
@@ -19,6 +46,7 @@ export function renderSessionProofGatewayManifest(template, digest) {
 
   const account = resources.find((resource) => resource.kind === "ServiceAccount");
   const deployment = resources.find((resource) => resource.kind === "Deployment");
+  const runtimeRegistry = resources.find((resource) => resource.kind === "ConfigMap");
   const service = resources.find((resource) => resource.kind === "Service");
   const policy = resources.find((resource) => resource.kind === "NetworkPolicy");
   const pod = deployment.spec.template.spec;
@@ -30,6 +58,8 @@ export function renderSessionProofGatewayManifest(template, digest) {
     pod.serviceAccountName !== "codeops-control-gateway" ||
     pod.containers.length !== 1 ||
     container.image !== `ghcr.io/anulman/codeops/session-control-gateway@${digest}` ||
+    runtimeRegistry.immutable !== true ||
+    JSON.parse(runtimeRegistry.data["profile-registry.json"]).profiles[0].releaseDigest !== input.runtimeReleaseDigest ||
     container.securityContext?.readOnlyRootFilesystem !== true ||
     JSON.stringify(container.securityContext?.capabilities?.drop) !== JSON.stringify(["ALL"]) ||
     JSON.stringify(deployment.spec.selector.matchLabels) !== JSON.stringify(selector) ||
@@ -46,6 +76,8 @@ export function renderSessionProofGatewayManifest(template, digest) {
     CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE: "/var/run/secrets/codeops-session-runtime-worker/token",
     CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE: "/var/run/secrets/codeops-session-job-initialization/token",
     CODEOPS_SESSION_RUNTIME_WORKER_ID: "acp-worker:video-proof",
+    CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE: "/var/run/codeops-runtime/profile-registry.json",
+    CODEOPS_RUNTIME_COMPATIBILITY_POLICY_REVISION: "compatible-substitution-v1",
     CODEOPS_HTTP_HOST: "0.0.0.0",
     CODEOPS_HTTP_PORT: "8080",
   };

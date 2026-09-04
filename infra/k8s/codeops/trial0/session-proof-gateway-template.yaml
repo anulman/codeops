@@ -4,6 +4,14 @@ metadata:
   name: codeops-control-gateway
 automountServiceAccountToken: false
 ---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: codeops-runtime-profile-registry
+immutable: true
+data:
+  profile-registry.json: '__CODEOPS_RUNTIME_PROFILE_REGISTRY_JSON__'
+---
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -42,6 +50,8 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/codeops-session-runtime-worker/token }
             - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/codeops-session-job-initialization/token }
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_ID, value: acp-worker:video-proof }
+            - { name: CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE, value: /var/run/codeops-runtime/profile-registry.json }
+            - { name: CODEOPS_RUNTIME_COMPATIBILITY_POLICY_REVISION, value: compatible-substitution-v1 }
             - { name: CODEOPS_HTTP_HOST, value: 0.0.0.0 }
             - { name: CODEOPS_HTTP_PORT, value: "8080" }
           ports: [{ name: http, containerPort: 8080 }]
@@ -61,8 +71,13 @@ spec:
             - { name: write-auth, mountPath: /var/run/secrets/codeops-session-write, readOnly: true }
             - { name: worker-auth, mountPath: /var/run/secrets/codeops-session-runtime-worker, readOnly: true }
             - { name: initialization-auth, mountPath: /var/run/secrets/codeops-session-job-initialization, readOnly: true }
+            - { name: runtime-profile-registry, mountPath: /var/run/codeops-runtime, readOnly: true }
             - { name: temp, mountPath: /tmp }
       volumes:
+        - name: runtime-profile-registry
+          configMap:
+            name: codeops-runtime-profile-registry
+            items: [{ key: profile-registry.json, path: profile-registry.json }]
         - name: database
           secret: { secretName: codeops-session-broker-database, defaultMode: 256, items: [{ key: database-url, path: database-url }] }
         - name: read-auth

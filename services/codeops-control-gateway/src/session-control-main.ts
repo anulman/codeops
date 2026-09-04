@@ -1,6 +1,10 @@
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
+import {
+  runtimeRequirementsSchema,
+  sha256CanonicalJsonDigest,
+} from "@codeops/codeops-contracts";
 import { validateSessionControlSecrets } from "./session-control-config.js";
 import {
   authorizeSessionRuntimeGitHubRead,
@@ -42,6 +46,7 @@ import {
   servePlaneSessionSteering,
 } from "./plane-session-steering.js";
 import { migrateSessionBroker } from "./session-broker-migration.js";
+import { loadRuntimeProfileRegistryFile } from "./runtime-profile-registry.js";
 import {
   InvalidSessionCommandRequestError,
   executeLocalSessionCommandTransaction,
@@ -184,6 +189,27 @@ const admittedChildMaterialization = {
   agentImage: requireDigestImage("CODEOPS_AGENT_IMAGE"),
   runtimeWorkerImage: requireDigestImage("CODEOPS_SESSION_RUNTIME_WORKER_IMAGE"),
 };
+const runtimeProfileRegistry = await loadRuntimeProfileRegistryFile(
+  required("CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE"),
+);
+const runtimeRequirements = runtimeRequirementsSchema.parse({
+  version: "codeops.runtime-requirements/v1",
+  capabilities: ["acp", "checkpoint", "github-broker", "model-proxy", "work-items-broker"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1_280, ephemeralStorageMiB: 1_280 },
+  requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: required("CODEOPS_RUNTIME_COMPATIBILITY_POLICY_REVISION"),
+});
+const runtimeProfile = runtimeProfileRegistry.selectCompatible(runtimeRequirements);
+const runtimeOwnerBinding = (selectedAt = new Date().toISOString()) => ({
+  requirements: runtimeRequirements,
+  launchBinding: {
+    version: "codeops.runtime-launch-binding/v1" as const,
+    requirementDigest: sha256CanonicalJsonDigest(runtimeRequirements),
+    profile: runtimeProfile,
+    selectedAt,
+  },
+});
 const modelProxySigningKey = await secretFile(
   "CODEOPS_MODEL_PROXY_SIGNING_KEY_FILE",
 );
@@ -438,10 +464,12 @@ const server = createServer((request, response) => {
         initialize: async (initializationRequest) => {
           const client = await database.connect();
           try {
-            const initialized = (initializationRequest as { version?: string }).version ===
-                "codeops.session-job-initialization/v3"
+            const initialized = (initializationRequest as { admissionId?: string }).admissionId !== undefined
               ? await initializeAdmittedChildSessionFromJob(client, { request: initializationRequest })
-              : await initializeSessionFromJob(client, { request: initializationRequest });
+              : await initializeSessionFromJob(client, {
+                  request: initializationRequest,
+                  runtimeOwner: runtimeOwnerBinding(),
+                });
             return initialized;
           } finally {
             client.release();
@@ -470,7 +498,10 @@ const server = createServer((request, response) => {
         claim: async (input) => {
           const client = await database.connect();
           try {
-            return await claimSessionRuntimeDispatch(client, input);
+            return await claimSessionRuntimeDispatch(client, {
+              ...input,
+              fallbackRuntimeOwner: runtimeOwnerBinding(),
+            });
           } finally {
             client.release();
           }

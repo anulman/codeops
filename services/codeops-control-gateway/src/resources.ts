@@ -1,6 +1,12 @@
 import type {
   AgentJobDispatchRequest,
   CandidateCheckpoint,
+  RuntimeProfile,
+  RuntimeRequirements,
+} from "@codeops/codeops-contracts";
+import {
+  runtimeProfileSchema,
+  runtimeRequirementsSchema,
 } from "@codeops/codeops-contracts";
 import { buildAgentPrompt } from "./core.js";
 import {
@@ -13,6 +19,7 @@ import {
   assertAgentModelProxyRouting,
   assertAgentModelProxySessionVolume,
 } from "./model-proxy-routing.js";
+import { createRuntimeProfileRegistry } from "./runtime-profile-registry.js";
 
 interface ResourceConfig {
   readonly namespace: string;
@@ -20,7 +27,8 @@ interface ResourceConfig {
   readonly requestDigest: string;
   readonly repositoryUrl: string;
   readonly agentImage: string;
-  readonly sessionGatewayImage: string;
+  readonly runtimeProfile: RuntimeProfile;
+  readonly runtimeRequirements: RuntimeRequirements;
   readonly repositoryReadToken: string;
   readonly imagePullSecrets?: readonly { readonly name: string }[];
   readonly nodeSelector?: Readonly<Record<string, string>>;
@@ -34,6 +42,121 @@ interface ResourceConfig {
     readonly issuedAt?: Date;
   };
   readonly candidate?: CandidateCheckpoint;
+}
+
+type RuntimeResources = {
+  readonly cpuMillis: number;
+  readonly memoryMiB: number;
+  readonly ephemeralStorageMiB: number;
+};
+
+const sessionGatewayRequests: RuntimeResources = {
+  cpuMillis: 100,
+  memoryMiB: 256,
+  ephemeralStorageMiB: 256,
+};
+const sessionGatewayLimits: RuntimeResources = {
+  cpuMillis: 1_000,
+  memoryMiB: 1_024,
+  ephemeralStorageMiB: 1_024,
+};
+
+function subtractRuntimeResources(
+  total: RuntimeResources,
+  reserved: RuntimeResources,
+  label: string,
+): RuntimeResources {
+  const remainder = {
+    cpuMillis: total.cpuMillis - reserved.cpuMillis,
+    memoryMiB: total.memoryMiB - reserved.memoryMiB,
+    ephemeralStorageMiB:
+      total.ephemeralStorageMiB - reserved.ephemeralStorageMiB,
+  };
+  if (Object.values(remainder).some((value) => value <= 0)) {
+    throw new Error(`selected runtime ${label} cannot supply the session gateway`);
+  }
+  return remainder;
+}
+
+function kubernetesRuntimeResources(resources: RuntimeResources) {
+  return {
+    cpu: `${resources.cpuMillis}m`,
+    memory: `${resources.memoryMiB}Mi`,
+    "ephemeral-storage": `${resources.ephemeralStorageMiB}Mi`,
+  };
+}
+
+function parseCpuMillis(value: unknown): number {
+  if (typeof value !== "string") throw new Error("Agent Job CPU resource is invalid");
+  const millicpu = /^(\d+)m$/.exec(value);
+  if (millicpu !== null) return Number(millicpu[1]);
+  if (/^\d+$/.test(value)) return Number(value) * 1_000;
+  throw new Error("Agent Job CPU resource is invalid");
+}
+
+function parseMiB(value: unknown, name: string): number {
+  if (typeof value !== "string") throw new Error(`Agent Job ${name} resource is invalid`);
+  const quantity = /^(\d+)(Mi|Gi)$/.exec(value);
+  if (quantity === null) throw new Error(`Agent Job ${name} resource is invalid`);
+  return Number(quantity[1]) * (quantity[2] === "Gi" ? 1_024 : 1);
+}
+
+function assertRenderedRuntimeResources(
+  resources: readonly Record<string, unknown>[],
+  requirements: RuntimeRequirements,
+  profile: RuntimeProfile,
+): void {
+  const job = resources.find((resource) => resource.kind === "Job") as {
+    spec?: { template?: { spec?: {
+      containers?: { resources?: {
+        requests?: Record<string, unknown>;
+        limits?: Record<string, unknown>;
+      } }[];
+      initContainers?: { name?: string; resources?: {
+        requests?: Record<string, unknown>;
+        limits?: Record<string, unknown>;
+      } }[];
+    } } };
+  } | undefined;
+  const containers = job?.spec?.template?.spec?.containers;
+  if (!Array.isArray(containers) || containers.length === 0) {
+    throw new Error("Agent Job runtime containers are missing");
+  }
+  const aggregate = (key: "requests" | "limits"): RuntimeResources =>
+    containers.reduce<RuntimeResources>((total, container) => {
+      const values = container.resources?.[key];
+      return {
+        cpuMillis: total.cpuMillis + parseCpuMillis(values?.cpu),
+        memoryMiB: total.memoryMiB + parseMiB(values?.memory, "memory"),
+        ephemeralStorageMiB: total.ephemeralStorageMiB +
+          parseMiB(values?.["ephemeral-storage"], "ephemeral storage"),
+      };
+    }, { cpuMillis: 0, memoryMiB: 0, ephemeralStorageMiB: 0 });
+  const renderedRequests = aggregate("requests");
+  const renderedLimits = aggregate("limits");
+  if (JSON.stringify(renderedRequests) !== JSON.stringify(requirements.minimumResources)) {
+    throw new Error("Agent Job requests do not match runtime requirements");
+  }
+  if (JSON.stringify(renderedLimits) !== JSON.stringify(profile.resources)) {
+    throw new Error("Agent Job limits do not match the selected runtime profile");
+  }
+  const builder = job?.spec?.template?.spec?.initContainers?.find(
+    (container) => container.name === "workspace-builder",
+  );
+  if (
+    parseMiB(
+      builder?.resources?.requests?.["ephemeral-storage"],
+      "workspace-builder ephemeral storage",
+    ) !== requirements.minimumResources.ephemeralStorageMiB ||
+    parseMiB(
+      builder?.resources?.limits?.["ephemeral-storage"],
+      "workspace-builder ephemeral storage",
+    ) !== profile.resources.ephemeralStorageMiB
+  ) {
+    throw new Error(
+      "Agent Job workspace-builder ephemeral storage does not match the selected runtime profile",
+    );
+  }
 }
 
 function canonicalMountPath(value: string | undefined): string | undefined {
@@ -67,6 +190,41 @@ export function buildRunResources(
   input: ResourceConfig,
   request: AgentJobDispatchRequest,
 ): readonly Record<string, unknown>[] {
+  const runtimeRequirements = runtimeRequirementsSchema.parse(input.runtimeRequirements);
+  const parsedRuntimeProfile = runtimeProfileSchema.parse(input.runtimeProfile);
+  if (parsedRuntimeProfile.resources.cpuMillis < runtimeRequirements.minimumResources.cpuMillis ||
+      parsedRuntimeProfile.resources.memoryMiB < runtimeRequirements.minimumResources.memoryMiB ||
+      parsedRuntimeProfile.resources.ephemeralStorageMiB < runtimeRequirements.minimumResources.ephemeralStorageMiB) {
+    throw new Error("selected runtime profile does not supply runtime requirements");
+  }
+  if (!parsedRuntimeProfile.authority.publicNetwork) {
+    throw new Error("selected runtime profile does not authorize Agent Job public network");
+  }
+  if (!parsedRuntimeProfile.authority.brokeredProviderEffects) {
+    throw new Error("selected runtime profile does not authorize Agent Job provider effects");
+  }
+  const runtimeProfile = createRuntimeProfileRegistry({
+    version: "codeops.runtime-profile-registry/v1",
+    profiles: [parsedRuntimeProfile],
+  }).resolveCompatible(input.runtimeProfile.profileId, runtimeRequirements);
+  const agentRequests = subtractRuntimeResources(
+    runtimeRequirements.minimumResources,
+    sessionGatewayRequests,
+    "requirements",
+  );
+  const agentLimits = subtractRuntimeResources(
+    runtimeProfile.resources,
+    sessionGatewayLimits,
+    "profile",
+  );
+  if (agentRequests.cpuMillis > agentLimits.cpuMillis ||
+      agentRequests.memoryMiB > agentLimits.memoryMiB ||
+      agentRequests.ephemeralStorageMiB > agentLimits.ephemeralStorageMiB) {
+    throw new Error("selected runtime produces Agent Job requests above limits");
+  }
+  if (runtimeProfile.images.agent !== input.agentImage) {
+    throw new Error("Agent Job image must match the selected runtime profile");
+  }
   const requestedCandidate =
     request.role === "critic-agent"
       ? request.candidate
@@ -123,7 +281,8 @@ export function buildRunResources(
         ...modelBudgetAuthority,
       });
   const prompt = buildAgentPrompt(request);
-  const workspaceReadOnly = request.role === "qa-contract-researcher";
+  const workspaceReadOnly = request.role === "qa-contract-researcher" ||
+    runtimeProfile.authority.workspaceAccess === "read-only";
   const projectContext =
     request.role === "coding-agent" || request.role === "critic-agent"
       ? request.codingRequest.projectContext
@@ -145,6 +304,10 @@ export function buildRunResources(
   };
   const commonIdentity = [
     { name: "CODEOPS_RUN_ID", value: input.runId },
+    { name: "CODEOPS_RUNTIME_PROFILE_ID", value: runtimeProfile.profileId },
+    { name: "CODEOPS_RUNTIME_RELEASE_DIGEST", value: runtimeProfile.releaseDigest },
+    { name: "CODEOPS_RUNTIME_CAPABILITY_DIGEST", value: runtimeProfile.capabilityDigest },
+    { name: "CODEOPS_RUNTIME_PROFILE_JSON", value: JSON.stringify(runtimeProfile) },
     { name: "CODEOPS_BASE_SHA", value: request.baseSha },
     {
       name: "CODEOPS_CONTROL_PLANE_SHA",
@@ -167,7 +330,7 @@ export function buildRunResources(
         ]
       : []),
   ];
-  return [
+  const resources = [
     {
       apiVersion: "v1",
       kind: "Secret",
@@ -333,8 +496,18 @@ export function buildRunResources(
                       ]),
                 ],
                 resources: {
-                  requests: { cpu: "100m", memory: "128Mi" },
-                  limits: { cpu: "500m", memory: "512Mi" },
+                  requests: {
+                    cpu: "100m",
+                    memory: "128Mi",
+                    "ephemeral-storage":
+                      `${runtimeRequirements.minimumResources.ephemeralStorageMiB}Mi`,
+                  },
+                  limits: {
+                    cpu: "500m",
+                    memory: "512Mi",
+                    "ephemeral-storage":
+                      `${runtimeProfile.resources.ephemeralStorageMiB}Mi`,
+                  },
                 },
                 securityContext: commonSecurity,
                 volumeMounts: [
@@ -361,7 +534,7 @@ export function buildRunResources(
             containers: [
               {
                 name: "session-gateway",
-                image: input.sessionGatewayImage,
+                image: runtimeProfile.images.sessionGateway,
                 imagePullPolicy: "IfNotPresent",
                 lifecycle: {
                   postStart: {
@@ -386,8 +559,8 @@ export function buildRunResources(
                   },
                 ],
                 resources: {
-                  requests: { cpu: "100m", memory: "128Mi" },
-                  limits: { cpu: "500m", memory: "512Mi" },
+                  requests: kubernetesRuntimeResources(sessionGatewayRequests),
+                  limits: kubernetesRuntimeResources(sessionGatewayLimits),
                 },
                 securityContext: commonSecurity,
                 volumeMounts: [
@@ -469,8 +642,8 @@ export function buildRunResources(
                   { name: "CODEOPS_ACP_SOCKET", value: "/run/codeops/agent.sock" },
                 ],
                 resources: {
-                  requests: { cpu: "500m", memory: "1Gi" },
-                  limits: { cpu: "2", memory: "6Gi" },
+                  requests: kubernetesRuntimeResources(agentRequests),
+                  limits: kubernetesRuntimeResources(agentLimits),
                 },
                 securityContext: commonSecurity,
                 volumeMounts: [
@@ -497,7 +670,12 @@ export function buildRunResources(
               },
             ],
             volumes: [
-              { name: "workspace", emptyDir: {} },
+              {
+                name: "workspace",
+                emptyDir: {
+                  sizeLimit: `${runtimeProfile.resources.ephemeralStorageMiB}Mi`,
+                },
+              },
               {
                 name: "session",
                 emptyDir: { medium: "Memory", sizeLimit: "16Mi" },
@@ -550,7 +728,14 @@ export function buildRunResources(
                   ],
                 },
               },
-              { name: "temp", emptyDir: { sizeLimit: "2Gi" } },
+              {
+                name: "temp",
+                emptyDir: {
+                  sizeLimit: runtimeProfile.resources.ephemeralStorageMiB >= 2_048
+                    ? "2Gi"
+                    : `${runtimeProfile.resources.ephemeralStorageMiB}Mi`,
+                },
+              },
               ...(input.candidate
                 ? [
                     {
@@ -634,6 +819,8 @@ export function buildRunResources(
       },
     },
   ];
+  assertRenderedRuntimeResources(resources, runtimeRequirements, runtimeProfile);
+  return resources;
 }
 
 export function assertRunResources(

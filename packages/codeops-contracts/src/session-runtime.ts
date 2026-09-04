@@ -9,6 +9,7 @@ import {
   sessionRuntimeTerminalObservationSchema,
   type SessionCommand,
 } from "./session-broker.js";
+import { runtimeBindingSchema, runtimeProfileSchema } from "./runtime-profile.js";
 export { sessionRuntimeTerminalObservationSchema } from "./session-broker.js";
 
 const uuid = z.string().uuid();
@@ -254,12 +255,27 @@ export const sessionRuntimeCompletionSchema = z.discriminatedUnion("type", [
     .strict(),
 ]);
 
+const sessionRuntimeDispatchClaimV1Schema = z
+  .object({
+    dispatch: sessionRuntimeDispatchSchema,
+    claimToken: uuid,
+    claimExpiresAt: isoDateTime,
+    claimCount: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+  })
+  .strict()
+  .refine(
+    (claim) =>
+      Date.parse(claim.claimExpiresAt) > Date.parse(claim.dispatch.dispatchedAt),
+    "runtime claim must expire after dispatch",
+  );
+
 const sessionRuntimeDispatchClaimBaseSchema = z
   .object({
     dispatch: sessionRuntimeDispatchSchema,
     claimToken: uuid,
     claimExpiresAt: isoDateTime,
     claimCount: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    runtimeBinding: runtimeBindingSchema,
   })
   .strict();
 
@@ -279,7 +295,7 @@ export const sessionRuntimeDispatchClaimV2Schema = sessionRuntimeDispatchClaimBa
     "runtime claim must expire after dispatch",
   );
 
-export const sessionRuntimeClaimRequestSchema = z
+const sessionRuntimeClaimRequestV1Schema = z
   .object({
     version: z.literal("codeops.session-runtime-claim-request/v1"),
     sessionId: identifier,
@@ -290,15 +306,35 @@ export const sessionRuntimeClaimRequestSchema = z
   })
   .strict();
 
-export const sessionRuntimeClaimResponseSchema = z
+export const sessionRuntimeClaimRequestV2Schema = z
   .object({
-    version: z.literal("codeops.session-runtime-claim-response/v1"),
-    claim: sessionRuntimeDispatchClaimSchema.nullable(),
+    version: z.literal("codeops.session-runtime-claim-request/v2"),
+    sessionId: identifier,
+    generation: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
+    leaseId: uuid,
+    identity: sessionIdentitySchema,
+    runtimeProfileId: identifier,
+    runtimeReleaseDigest: sha256Digest,
+    runtimeCapabilityDigest: sha256Digest,
+    runtimeProfile: runtimeProfileSchema,
+    leaseMs: z.number().int().min(1_000).max(15 * 60_000),
   })
   .strict();
 
-export const sessionRuntimeClaimRequestV2Schema = sessionRuntimeClaimRequestSchema
-  .extend({ version: z.literal("codeops.session-runtime-claim-request/v2") })
+export const sessionRuntimeClaimRequestSchema = z.discriminatedUnion("version", [
+  sessionRuntimeClaimRequestV1Schema,
+  sessionRuntimeClaimRequestV2Schema,
+]).refine((value) => value.version === "codeops.session-runtime-claim-request/v1" || (
+  value.runtimeProfile.profileId === value.runtimeProfileId &&
+  value.runtimeProfile.releaseDigest === value.runtimeReleaseDigest &&
+  value.runtimeProfile.capabilityDigest === value.runtimeCapabilityDigest
+), "runtime claim profile must match its selected identity");
+
+const sessionRuntimeClaimResponseV1Schema = z
+  .object({
+    version: z.literal("codeops.session-runtime-claim-response/v1"),
+    claim: sessionRuntimeDispatchClaimV1Schema.nullable(),
+  })
   .strict();
 
 export const sessionRuntimeClaimResponseV2Schema = z
@@ -338,6 +374,11 @@ export const sessionRuntimeModelAuthorityResponseSchema = z
     expiresAt: isoDateTime,
   })
   .strict();
+
+export const sessionRuntimeClaimResponseSchema = z.discriminatedUnion("version", [
+  sessionRuntimeClaimResponseV1Schema,
+  sessionRuntimeClaimResponseV2Schema,
+]);
 
 export const sessionRuntimeCompletionRequestSchema = z
   .object({

@@ -20,18 +20,13 @@ import {
   ClaimedDispatchAuthorityConflictError,
   validateClaimedDispatchAuthority,
   type ClaimedDispatchAuthority,
+  type ClaimedDispatchRow,
 } from "./claimed-dispatch-authority.js";
 
 export class SessionRuntimePermissionNotFoundError extends Error {}
 export class SessionRuntimePermissionConflictError extends Error {}
 
-interface StoredDispatchRow extends Record<string, unknown> {
-  readonly dispatch_json: unknown;
-  readonly status: unknown;
-  readonly claim_token: unknown;
-  readonly claimed_by: unknown;
-  readonly claim_expires_at: unknown;
-  readonly owner_principal_id: unknown;
+interface StoredDispatchRow extends ClaimedDispatchRow {
   readonly admission_id: unknown;
 }
 
@@ -285,7 +280,12 @@ export async function submitSessionRuntimePermission(
   const discovered = await client.query<StoredDispatchRow>(
     `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
             outbox.claimed_by, outbox.claim_expires_at,
-            session.owner_principal_id, outbox.admission_id
+            outbox.runtime_binding_json, outbox.runtime_claim_protocol,
+            codeops.session_runtime_owner_binding(outbox.session_id)
+              AS owner_runtime_binding_json,
+            session.session_id, session.snapshot_json->'identity'
+              AS session_identity_json, session.owner_principal_id,
+            session.legacy_runtime_worker_compatible, outbox.admission_id
        FROM codeops.session_runtime_outbox AS outbox
        JOIN codeops.sessions AS session
          ON session.session_id = outbox.session_id
@@ -322,7 +322,12 @@ export async function submitSessionRuntimePermission(
     const dispatchRows = await client.query<StoredDispatchRow>(
       `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
               outbox.claimed_by, outbox.claim_expires_at,
-              session.owner_principal_id, outbox.admission_id
+              outbox.runtime_binding_json, outbox.runtime_claim_protocol,
+              codeops.session_runtime_owner_binding(outbox.session_id)
+                AS owner_runtime_binding_json,
+              session.session_id, session.snapshot_json->'identity'
+                AS session_identity_json, session.owner_principal_id,
+              session.legacy_runtime_worker_compatible, outbox.admission_id
          FROM codeops.session_runtime_outbox AS outbox
          JOIN codeops.sessions AS session
            ON session.session_id = outbox.session_id
@@ -547,8 +552,12 @@ export async function pollSessionRuntimePermission(
     `SELECT request.request_json,
             outbox.dispatch_json, outbox.status, outbox.claim_token,
             outbox.claimed_by, outbox.claim_expires_at,
-            session.snapshot_json,
-            session.owner_principal_id,
+            outbox.runtime_binding_json, outbox.runtime_claim_protocol,
+            codeops.session_runtime_owner_binding(outbox.session_id)
+              AS owner_runtime_binding_json,
+            session.session_id, session.snapshot_json,
+            session.snapshot_json->'identity' AS session_identity_json,
+            session.owner_principal_id, session.legacy_runtime_worker_compatible,
             decision.command_json, decision.result_json
        FROM codeops.session_runtime_permission_requests AS request
        JOIN codeops.session_runtime_outbox AS outbox

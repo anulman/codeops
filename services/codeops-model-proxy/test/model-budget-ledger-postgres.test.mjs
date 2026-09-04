@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
 import pg from "pg";
 import {
@@ -10,6 +10,57 @@ import {
 const ledgerDatabaseUrl = process.env.CODEOPS_TEST_MODEL_BUDGET_DATABASE_URL;
 const ownerDatabaseUrl =
   process.env.CODEOPS_TEST_MODEL_BUDGET_OWNER_DATABASE_URL;
+const canonical = (value) => JSON.stringify(value, (_, nested) =>
+  nested !== null && typeof nested === "object" && !Array.isArray(nested)
+    ? Object.fromEntries(Object.entries(nested).sort(([left], [right]) => left.localeCompare(right)))
+    : nested);
+const runtimeRequirements = { version: "codeops.runtime-requirements/v1", capabilities: ["model-proxy"],
+  minimumResources: { cpuMillis: 100, memoryMiB: 128, ephemeralStorageMiB: 128 },
+  requiredAuthority: { workspaceAccess: "read-only", publicNetwork: true, brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "read-only", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "policy-7" };
+const runtimeRequirementDigest = `sha256:${createHash("sha256").update(canonical(runtimeRequirements)).digest("hex")}`;
+const runtimeLaunchBinding = { version: "codeops.runtime-launch-binding/v1", requirementDigest: runtimeRequirementDigest,
+  selectedAt: "2026-08-15T18:25:00.000Z", profile: { version: "codeops.runtime-profile/v1",
+    profileId: "model-proxy-test-v1", releaseDigest: `sha256:${"7".repeat(64)}`,
+    capabilities: ["model-proxy"], capabilityDigest: `sha256:${createHash("sha256").update(canonical(["model-proxy"])).digest("hex")}`,
+    resources: { cpuMillis: 100, memoryMiB: 128, ephemeralStorageMiB: 128 },
+    authority: runtimeRequirements.maximumAuthority, compatibilityPolicyRevision: "policy-7",
+    images: { agent: `example/agent@sha256:${"8".repeat(64)}`, worker: `example/worker@sha256:${"9".repeat(64)}`,
+      sessionGateway: `example/gateway@sha256:${"a".repeat(64)}` } } };
+const runtimeProfile = runtimeLaunchBinding.profile;
+const runtimeBinding = { version: "codeops.runtime-binding/v1",
+  requirementDigest: runtimeRequirementDigest,
+  compatibilityPolicyRevision: runtimeProfile.compatibilityPolicyRevision,
+  selectedProfileId: runtimeProfile.profileId,
+  selectedReleaseDigest: runtimeProfile.releaseDigest,
+  selectedCapabilityDigest: runtimeProfile.capabilityDigest,
+  selectedProfile: runtimeProfile, selectedAt: runtimeLaunchBinding.selectedAt };
+const runtimeOwnerValues = [canonical(runtimeRequirements), runtimeRequirementDigest, canonical(runtimeLaunchBinding)];
+
+async function insertClaimedDispatch(pool, { sessionId, generation, leaseId, dispatchId }) {
+  const dispatch = {
+    version: "codeops.session-runtime-dispatch/v1", dispatchId,
+    principalId: "codeops:model-proxy-test",
+    command: { version: "codeops.session-command/v1", sessionId, generation, leaseId,
+      idempotencyKey: dispatchId, type: "prompt", prompt: "Exercise the model budget." },
+    snapshot: { version: "codeops.session-snapshot/v1", sessionId, generation,
+      state: "running", lease: { leaseId, generation, status: "active" },
+      pendingPermission: null, updatedAt: "2026-08-15T18:25:00.000Z" },
+    dispatchedAt: "2026-08-15T18:25:00.000Z",
+  };
+  await pool.query(`INSERT INTO codeops.session_runtime_outbox (
+      dispatch_id,session_id,idempotency_key,principal_id,dispatch_json,status,
+      available_at,created_at,claim_token,claimed_by,claimed_at,claim_expires_at,claim_count,
+      runtime_binding_json,runtime_binding_revision,runtime_claim_protocol,
+      runtime_requirement_digest,runtime_profile_id,runtime_release_digest,runtime_capability_digest)
+    VALUES ($1,$2,$1,'codeops:model-proxy-test',$3::jsonb,'claimed',clock_timestamp(),
+      ($3::jsonb->>'dispatchedAt')::timestamptz,$1,'runtime-worker:model-budget-proof',clock_timestamp(),
+      clock_timestamp() + interval '1 hour',1,$4::jsonb,1,'bound-v2',$5,$6,$7,$8)`,
+  [dispatchId, sessionId, canonical(dispatch), canonical(runtimeBinding),
+    runtimeRequirementDigest, runtimeProfile.profileId, runtimeProfile.releaseDigest,
+    runtimeProfile.capabilityDigest]);
+}
 
 test(
   "serializes two proxy clients and preserves durable unknown charges",
@@ -24,6 +75,8 @@ test(
       sessionId: "ses_concurrency_proof",
       budgetId: "budget_concurrency_proof",
       generation: 7,
+      leaseId: "11111111-1111-4111-8111-111111111111",
+      dispatchId: "12121212-1212-4121-8121-121212121212",
       provider: "openai",
       model: "gpt-5.6-sol",
       reasoningEffort: "high",
@@ -34,14 +87,21 @@ test(
     try {
       await ownerPool.query(
         `INSERT INTO codeops.sessions
-           (session_id, generation, lease_id, snapshot_json, updated_at)
+           (session_id, generation, lease_id, snapshot_json, updated_at, owner_principal_id,
+            runtime_requirements_json,runtime_requirement_digest,runtime_launch_binding_json)
          VALUES (
            'ses_concurrency_proof', 7,
            '11111111-1111-4111-8111-111111111111',
            '{"version":"codeops.session-snapshot/v1","sessionId":"ses_concurrency_proof","generation":7,"state":"running","lease":{"leaseId":"11111111-1111-4111-8111-111111111111","generation":7,"status":"active"},"pendingPermission":null,"updatedAt":"2026-08-15T18:25:00.000Z"}'::jsonb,
-           '2026-08-15T18:25:00.000Z'::timestamptz
-         )`,
+           '2026-08-15T18:25:00.000Z'::timestamptz, 'codeops:model-proxy-test',
+           $1::jsonb,$2,$3::jsonb
+        )`, runtimeOwnerValues,
       );
+      await insertClaimedDispatch(ownerPool, {
+        sessionId: "ses_concurrency_proof", generation: 7,
+        leaseId: "11111111-1111-4111-8111-111111111111",
+        dispatchId: "12121212-1212-4121-8121-121212121212",
+      });
       await ownerPool.query(
         `INSERT INTO codeops.session_model_budgets (
            session_id, budget_id, started_at, provider_requests_limit,
@@ -151,6 +211,8 @@ test(
       sessionId: "ses_settlement_proof",
       budgetId: "budget_settlement_proof",
       generation: 2,
+      leaseId: "22222222-2222-4222-8222-222222222222",
+      dispatchId: "23232323-2323-4232-8232-232323232323",
       provider: "openai",
       model: "gpt-5.6-sol",
       reasoningEffort: "medium",
@@ -160,14 +222,21 @@ test(
     try {
       await ownerPool.query(
         `INSERT INTO codeops.sessions
-           (session_id, generation, lease_id, snapshot_json, updated_at)
+           (session_id, generation, lease_id, snapshot_json, updated_at, owner_principal_id,
+            runtime_requirements_json,runtime_requirement_digest,runtime_launch_binding_json)
          VALUES (
            'ses_settlement_proof', 2,
            '22222222-2222-4222-8222-222222222222',
            '{"version":"codeops.session-snapshot/v1","sessionId":"ses_settlement_proof","generation":2,"state":"running","lease":{"leaseId":"22222222-2222-4222-8222-222222222222","generation":2,"status":"active"},"pendingPermission":null,"updatedAt":"2026-08-15T18:25:00.000Z"}'::jsonb,
-           '2026-08-15T18:25:00.000Z'::timestamptz
-         )`,
+           '2026-08-15T18:25:00.000Z'::timestamptz, 'codeops:model-proxy-test',
+           $1::jsonb,$2,$3::jsonb
+        )`, runtimeOwnerValues,
       );
+      await insertClaimedDispatch(ownerPool, {
+        sessionId: "ses_settlement_proof", generation: 2,
+        leaseId: "22222222-2222-4222-8222-222222222222",
+        dispatchId: "23232323-2323-4232-8232-232323232323",
+      });
       await ownerPool.query(
         `INSERT INTO codeops.session_model_budgets (
            session_id, budget_id, started_at, provider_requests_limit,
@@ -252,13 +321,15 @@ test(
     try {
       await ownerPool.query(
         `INSERT INTO codeops.sessions
-           (session_id, generation, lease_id, snapshot_json, updated_at)
+           (session_id, generation, lease_id, snapshot_json, updated_at, owner_principal_id,
+            runtime_requirements_json,runtime_requirement_digest,runtime_launch_binding_json)
          VALUES (
            'ses_recovery_proof', 1,
            '33333333-3333-4333-8333-333333333333',
            '{"version":"codeops.session-snapshot/v1","sessionId":"ses_recovery_proof","generation":1,"state":"running","lease":{"leaseId":"33333333-3333-4333-8333-333333333333","generation":1,"status":"active"},"pendingPermission":null,"updatedAt":"2026-08-15T18:25:00.000Z"}'::jsonb,
-           '2026-08-15T18:25:00.000Z'::timestamptz
-         )`,
+           '2026-08-15T18:25:00.000Z'::timestamptz, 'codeops:model-proxy-test',
+           $1::jsonb,$2,$3::jsonb
+         )`, runtimeOwnerValues,
       );
       await ownerPool.query(
         `INSERT INTO codeops.session_model_budgets (

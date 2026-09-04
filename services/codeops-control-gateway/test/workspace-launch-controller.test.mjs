@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { test } from "node:test";
+import { sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
 import {
   PermanentWorkspaceLaunchError,
   reconcileWorkspaceLaunch,
@@ -26,6 +27,14 @@ const contextAttachment = {
   content: attachmentContent,
 };
 const contextAttachmentDescriptor = (({ content: _content, ...descriptor }) => descriptor)(contextAttachment);
+const runtimeRequirements = {
+  version: "codeops.runtime-requirements/v1", capabilities: ["acp"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1280, ephemeralStorageMiB: 1280 },
+  requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "compatible-substitution-v1",
+};
+const runtimeRequirementDigest = sha256CanonicalJsonDigest(runtimeRequirements);
 const launch = {
   version: "codeops.workspace-launch/v1",
   launchId: "launch-0123456789abcdef01234567",
@@ -33,6 +42,8 @@ const launch = {
   principalId: "user@example.com",
   title: "Investigate the estimator",
   requestDigest: `sha256:${"a".repeat(64)}`,
+  runtimeRequirements,
+  runtimeRequirementDigest,
   policy,
   contextAttachments: [contextAttachmentDescriptor],
   promptDigest: `sha256:${"b".repeat(64)}`,
@@ -112,6 +123,20 @@ test("rejects replica-skew while the matching replica retains stored authority",
   assert.throws(() => workspaceLaunchRuntimeWorkerImage(retryLaunch, rolloutImage),
     PermanentWorkspaceLaunchError);
 });
+const runtimeLaunchBinding = {
+  version: "codeops.runtime-launch-binding/v1",
+  requirementDigest: runtimeRequirementDigest,
+  selectedAt: now().toISOString(),
+  profile: {
+    version: "codeops.runtime-profile/v1", profileId: "standard-v1",
+    releaseDigest: `sha256:${"d".repeat(64)}`, capabilities: ["acp"],
+    capabilityDigest: sha256CanonicalJsonDigest(["acp"]),
+    resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 },
+    authority: runtimeRequirements.maximumAuthority,
+    compatibilityPolicyRevision: "compatible-substitution-v1",
+    images: { agent: image, worker: image, sessionGateway: image },
+  },
+};
 
 function resourceBinding(resource) {
   const role = resource.metadata.labels["codeops.example/resource-role"];
@@ -137,6 +162,8 @@ function resourceConfig(current, identity) {
     agentImage: image,
     runtimeWorkerImage: image,
     configuredRuntimeWorkerImage: image,
+    runtimeLaunchBinding,
+    runtimeRequirements,
     imagePullSecrets: [{ name: "registry" }],
     nodeSelector: {},
     runtimeServiceAccountName: "agents-system-runtime",
@@ -633,7 +660,7 @@ test("cleans a created credential from the exact ensure result when binding pers
     load: async () => ({ launch: { ...launch, deadlineAt: now().toISOString() }, request }),
     update: async (next) => {
       updateCount += 1;
-      if (updateCount === 1) throw new Error("binding persistence failed");
+      if (updateCount === 2) throw new Error("binding persistence failed");
       return next;
     },
     ensureResource: async (resource) => resourceBinding(resource),

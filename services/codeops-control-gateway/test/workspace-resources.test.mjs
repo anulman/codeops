@@ -5,9 +5,38 @@ import {
   assertWorkspaceResources,
   buildWorkspaceResources,
 } from "../dist/workspace-resources.js";
+import { sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
 
 const sha = "a".repeat(40);
 const image = `ghcr.io/anulman/codeops/agent@sha256:${"b".repeat(64)}`;
+const runtimeRequirements = {
+  version: "codeops.runtime-requirements/v1",
+  capabilities: ["acp"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1_280, ephemeralStorageMiB: 1_280 },
+  requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "compatible-substitution-v1",
+};
+const runtimeLaunchBinding = {
+  version: "codeops.runtime-launch-binding/v1",
+  requirementDigest: sha256CanonicalJsonDigest(runtimeRequirements),
+  selectedAt: "2026-08-13T12:00:00.000Z",
+  profile: {
+    version: "codeops.runtime-profile/v1",
+    profileId: "standard-v1",
+    releaseDigest: `sha256:${"f".repeat(64)}`,
+    capabilities: ["acp"],
+    capabilityDigest: sha256CanonicalJsonDigest(["acp"]),
+    resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 },
+    authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+    compatibilityPolicyRevision: "compatible-substitution-v1",
+    images: {
+      agent: image,
+      worker: image.replace("/agent@", "/session-runtime-worker@"),
+      sessionGateway: image.replace("/agent@", "/session-gateway@"),
+    },
+  },
+};
 const contextAttachment = {
   attachmentId: "context-estimator-notes",
   name: "estimator-notes.txt",
@@ -57,6 +86,8 @@ function config(sources = []) {
     })),
     agentImage: image,
     runtimeWorkerImage: image.replace("/agent@", "/session-runtime-worker@"),
+    runtimeLaunchBinding,
+    runtimeRequirements,
     imagePullSecrets: [{ name: "codeops-registry" }],
     nodeSelector: { "codeops.example/codeops": "true" },
     runtimeServiceAccountName: "agents-system-runtime",
@@ -67,6 +98,23 @@ function config(sources = []) {
     modelProxyPodName: "agents-system-model-proxy-pods",
     workspaceStorageSize: "10Gi",
   };
+}
+
+function aggregateRuntimeResources(runtime, key) {
+  const parse = (value) => {
+    const match = /^(\d+)(m|Mi)$/.exec(value);
+    assert.ok(match, `unexpected runtime resource quantity ${value}`);
+    return Number(match[1]);
+  };
+  return runtime.spec.template.spec.containers.reduce(
+    (total, container) => ({
+      cpuMillis: total.cpuMillis + parse(container.resources[key].cpu),
+      memoryMiB: total.memoryMiB + parse(container.resources[key].memory),
+      ephemeralStorageMiB: total.ephemeralStorageMiB +
+        parse(container.resources[key]["ephemeral-storage"]),
+    }),
+    { cpuMillis: 0, memoryMiB: 0, ephemeralStorageMiB: 0 },
+  );
 }
 
 test("builds isolated materializer and runtime Jobs on bounded persistent storage", () => {
@@ -251,6 +299,94 @@ test("binds workspace mounts and Codex configuration to the immutable session po
   assert.equal(reviewCodexConfig.model_reasoning_effort, "high");
 });
 
+test("binds workspace authority and resources to the admitted runtime profile", () => {
+  const reducedWorkspace = config();
+  reducedWorkspace.runtimeRequirements = structuredClone(runtimeRequirements);
+  reducedWorkspace.runtimeRequirements.minimumResources = {
+    cpuMillis: 700,
+    memoryMiB: 1_400,
+    ephemeralStorageMiB: 1_500,
+  };
+  reducedWorkspace.runtimeLaunchBinding = structuredClone(runtimeLaunchBinding);
+  reducedWorkspace.runtimeLaunchBinding.requirementDigest =
+    sha256CanonicalJsonDigest(reducedWorkspace.runtimeRequirements);
+  reducedWorkspace.runtimeLaunchBinding.profile.resources = {
+    cpuMillis: 3_200,
+    memoryMiB: 7_300,
+    ephemeralStorageMiB: 5_300,
+  };
+  reducedWorkspace.runtimeLaunchBinding.profile.authority.workspaceAccess = "read-only";
+  reducedWorkspace.runtimeRequirements.requiredAuthority.workspaceAccess = "read-only";
+  reducedWorkspace.runtimeLaunchBinding.requirementDigest =
+    sha256CanonicalJsonDigest(reducedWorkspace.runtimeRequirements);
+  const runtime = buildWorkspaceResources(reducedWorkspace)[3];
+  for (const container of runtime.spec.template.spec.containers) {
+    assert.equal(
+      container.volumeMounts.find((mount) => mount.mountPath === "/workspace")?.readOnly,
+      true,
+    );
+  }
+  assert.deepEqual(
+    aggregateRuntimeResources(runtime, "requests"),
+    reducedWorkspace.runtimeRequirements.minimumResources,
+  );
+  assert.deepEqual(
+    aggregateRuntimeResources(runtime, "limits"),
+    reducedWorkspace.runtimeLaunchBinding.profile.resources,
+  );
+
+  for (const authority of ["publicNetwork", "brokeredProviderEffects"]) {
+    const reducedAuthority = config();
+    reducedAuthority.runtimeLaunchBinding = structuredClone(runtimeLaunchBinding);
+    reducedAuthority.runtimeLaunchBinding.profile.authority[authority] = false;
+    assert.throws(
+      () => buildWorkspaceResources(reducedAuthority),
+      new RegExp(`does not authorize workspace ${authority === "publicNetwork" ? "public network" : "provider effects"}`),
+    );
+  }
+
+  const driftedRequirements = config();
+  driftedRequirements.runtimeRequirements = structuredClone(runtimeRequirements);
+  driftedRequirements.runtimeRequirements.minimumResources.cpuMillis += 1;
+  assert.throws(
+    () => buildWorkspaceResources(driftedRequirements),
+    /does not match admitted requirements/,
+  );
+
+  const insufficientProfile = config();
+  insufficientProfile.runtimeLaunchBinding = structuredClone(runtimeLaunchBinding);
+  insufficientProfile.runtimeLaunchBinding.profile.resources.cpuMillis = 599;
+  assert.throws(
+    () => buildWorkspaceResources(insufficientProfile),
+    /resource-bound-unsatisfied/,
+  );
+});
+
+test("rejects sidecar subtraction that would invert workspace requests and limits", () => {
+  const counterexample = config();
+  counterexample.runtimeRequirements = structuredClone(runtimeRequirements);
+  counterexample.runtimeRequirements.minimumResources = {
+    cpuMillis: 1200,
+    memoryMiB: 1800,
+    ephemeralStorageMiB: 1800,
+  };
+  counterexample.runtimeLaunchBinding = structuredClone(runtimeLaunchBinding);
+  counterexample.runtimeLaunchBinding.profile.resources = {
+    ...counterexample.runtimeRequirements.minimumResources,
+  };
+  counterexample.runtimeLaunchBinding.requirementDigest =
+    sha256CanonicalJsonDigest(counterexample.runtimeRequirements);
+  assert.throws(() => buildWorkspaceResources(counterexample), /resource-bound-unsatisfied/);
+  counterexample.runtimeLaunchBinding.profile.resources = {
+    cpuMillis: 2100,
+    memoryMiB: 2568,
+    ephemeralStorageMiB: 2568,
+  };
+  const runtime = buildWorkspaceResources(counterexample)[3];
+  const agent = runtime.spec.template.spec.containers.find(({ name }) => name === "coding-agent");
+  assert.deepEqual(agent.resources.requests, agent.resources.limits);
+});
+
 test("routes runtime HTTP traffic through only the exact internal egress proxy", () => {
   const proxied = config();
   proxied.runtimeEgressProxyOrigin = "http://agents-system-runtime-egress-proxy:3128";
@@ -310,6 +446,10 @@ test("puts exact source authority only in the init-only immutable Secret", () =>
 test("rejects authority drift and mutable runtime images", () => {
   assert.throws(() => buildWorkspaceResources({ ...config([{ catalogKey: "codeops", repository: "anulman/CodeOps" }]), sources: [] }), /match the manifest/);
   assert.throws(() => buildWorkspaceResources({ ...config(), agentImage: "ghcr.io/anulman/codeops/agent:latest" }), /immutable digests/);
+  assert.throws(() => buildWorkspaceResources({
+    ...config(),
+    agentImage: `ghcr.io/anulman/codeops/agent@sha256:${"d".repeat(64)}`,
+  }), /durable runtime launch binding/);
   assert.throws(() => buildWorkspaceResources({ ...config(), displayName: " padded " }), /display name/);
 
   const drifted = structuredClone(buildWorkspaceResources(config()));

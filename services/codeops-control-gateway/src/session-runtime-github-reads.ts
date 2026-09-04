@@ -13,6 +13,7 @@ import {
   ClaimedDispatchAuthorityNotFoundError,
   loadClaimedDispatchAuthority,
   selectClaimedWorkspaceSource,
+  assertBrokeredProviderEffects,
 } from "./claimed-dispatch-authority.js";
 
 export class SessionRuntimeGitHubReadNotFoundError extends Error {}
@@ -40,6 +41,7 @@ export async function authorizeSessionRuntimeGitHubRead(
       claimToken: request.claimToken,
       now: input.now,
     });
+    assertBrokeredProviderEffects(authority);
     selectClaimedWorkspaceSource(authority, {
       repository: request.input.repository,
     });

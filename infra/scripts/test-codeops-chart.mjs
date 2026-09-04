@@ -16,6 +16,7 @@ const digestSets = [
   "runtime.workerImage.digest=sha256:dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd",
   "runtime.agentImage.digest=sha256:eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee",
   "runtime.sessionGatewayImage.digest=sha256:5656565656565656565656565656565656565656565656565656565656565656",
+  "runtime.releaseDigest=sha256:7878787878787878787878787878787878787878787878787878787878787878",
   "modelProxy.image.digest=sha256:9999999999999999999999999999999999999999999999999999999999999999",
   "gateway.secretName=team-a-codeops-session-secrets",
   "gateway.repositorySteeringRegistrySecretName=team-a-codeops-repository-steering",
@@ -115,7 +116,11 @@ test("renders one portable CodeOps package with immutable images", () => {
   assert.ok(images.every((image) => /@sha256:[0-9a-f]{64}$/.test(image)));
 
   resource(resources, "StatefulSet", "team-a-codeops-postgresql");
-  resource(resources, "Deployment", "team-a-codeops-session-gateway");
+  const sessionGateway = resource(resources, "Deployment", "team-a-codeops-session-gateway");
+  assert.deepEqual(sessionGateway.spec.strategy, {
+    type: "RollingUpdate",
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 },
+  });
   const githubControllerDeployment = resource(
     resources,
     "Deployment",
@@ -123,6 +128,10 @@ test("renders one portable CodeOps package with immutable images", () => {
   );
   resource(resources, "Deployment", "team-a-codeops-agents-ui");
   const controlGateway = resource(resources, "Deployment", "team-a-codeops-control-gateway");
+  assert.deepEqual(controlGateway.spec.strategy, {
+    type: "RollingUpdate",
+    rollingUpdate: { maxUnavailable: 0, maxSurge: 1 },
+  });
   const orchestrator = resource(resources, "Deployment", "team-a-codeops-orchestrator");
   resource(resources, "Service", "team-a-codeops-control-gateway");
   resource(resources, "PersistentVolumeClaim", "team-a-codeops-control-gateway-evidence");
@@ -229,7 +238,23 @@ test("renders one portable CodeOps package with immutable images", () => {
   assert.match(runtimeImages.metadata.name, /^team-a-codeops-runtime-images-[0-9a-f]{12}$/);
   assert.ok(runtimeImages.metadata.name.length <= 63);
   assert.equal(runtimeImages.immutable, true);
-  for (const value of Object.values(runtimeImages.data)) {
+  const profileRegistry = JSON.parse(runtimeImages.data["profile-registry.json"]);
+  assert.equal(profileRegistry.profiles[0].releaseDigest, `sha256:${"78".repeat(32)}`);
+  assert.equal(
+    profileRegistry.profiles[0].images.sessionGateway,
+    `ghcr.io/anulman/codeops/session-gateway@sha256:${"56".repeat(32)}`,
+  );
+  const sessionGatewayEnv = Object.fromEntries(
+    sessionGateway.spec.template.spec.containers[0].env.map(({ name, value }) => [name, value]),
+  );
+  assert.equal(sessionGatewayEnv.CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE, "/var/run/codeops-runtime/profile-registry.json");
+  assert.equal(sessionGatewayEnv.CODEOPS_RUNTIME_COMPATIBILITY_POLICY_REVISION, "compatible-substitution-v1");
+  assert.equal(
+    sessionGateway.spec.template.spec.volumes.find(({ name }) => name === "runtime-profile-registry").configMap.name,
+    runtimeImages.metadata.name,
+  );
+  for (const [key, value] of Object.entries(runtimeImages.data)) {
+    if (key === "profile-registry.json") continue;
     if (value.includes("ghcr.io/")) assert.match(value, /@sha256:[0-9a-f]{64}$/);
   }
   for (const name of ["agents-ui", "session-gateway", "github-controller", "orchestrator", "runtime", "model-proxy"]) {

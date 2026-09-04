@@ -24,6 +24,7 @@ import {
   sessionRuntimeWorkItemUpdateRequestSchema,
   workItemAdmissionRequestSchema,
   type SessionCommandResult,
+  type RuntimeProfile,
   type GitHubMutationResult,
   type GitHubReadResult,
   type WorkItemCommentResult,
@@ -46,6 +47,7 @@ import {
   ClaimedDispatchAuthorityConflictError,
   ClaimedDispatchAuthorityNotFoundError,
 } from "./claimed-dispatch-authority.js";
+import { RuntimeCompatibilityError } from "./runtime-profile-registry.js";
 import {
   GitHubBranchCandidateConflictError,
   GitHubBranchCandidateInvalidRequestError,
@@ -152,6 +154,10 @@ export async function serveSessionRuntime(input: {
     readonly generation: number;
     readonly leaseId: string;
     readonly identity: unknown;
+    readonly runtimeProfileId?: string;
+    readonly runtimeReleaseDigest?: string;
+    readonly runtimeCapabilityDigest?: string;
+    readonly runtimeProfile?: RuntimeProfile;
     readonly leaseMs: number;
   }) => Promise<SessionRuntimeDispatchClaim | null>;
   readonly complete: (input: {
@@ -282,27 +288,52 @@ export async function serveSessionRuntime(input: {
         "session runtime claim body is invalid",
       );
     }
-    const claim = await input.claim({
-      workerId: input.workerId,
-      sessionId: request.data.sessionId,
-      generation: request.data.generation,
-      leaseId: request.data.leaseId,
-      identity: request.data.identity,
-      leaseMs: request.data.leaseMs,
-    });
-    const extended = request.data.version === "codeops.session-runtime-claim-request/v2";
+    let claim;
+    try {
+      claim = await input.claim({
+        workerId: input.workerId,
+        sessionId: request.data.sessionId,
+        generation: request.data.generation,
+        leaseId: request.data.leaseId,
+        identity: request.data.identity,
+        ...(request.data.version === "codeops.session-runtime-claim-request/v1" ? {} : {
+          runtimeProfileId: request.data.runtimeProfileId,
+          runtimeReleaseDigest: request.data.runtimeReleaseDigest,
+          runtimeCapabilityDigest: request.data.runtimeCapabilityDigest,
+          runtimeProfile: request.data.runtimeProfile,
+        }),
+        leaseMs: request.data.leaseMs,
+      });
+    } catch (error) {
+      if (error instanceof RuntimeCompatibilityError) {
+        return {
+          status: 409,
+          body: { status: "runtime-incompatible", reason: error.code },
+        };
+      }
+      throw error;
+    }
+    if (
+      request.data.version === "codeops.session-runtime-claim-request/v2" &&
+      claim !== null &&
+      claim.runtimeBinding === undefined
+    ) {
+      throw new Error("v2 runtime claim omitted exact runtime proof");
+    }
     return {
       status: 200,
       body: {
-        version: extended
-          ? "codeops.session-runtime-claim-response/v2"
-          : "codeops.session-runtime-claim-response/v1",
-        claim: claim === null || extended ? claim : {
-          dispatch: claim.dispatch,
-          claimToken: claim.claimToken,
-          claimExpiresAt: claim.claimExpiresAt,
-          claimCount: claim.claimCount,
-        },
+        version: request.data.version === "codeops.session-runtime-claim-request/v1"
+          ? "codeops.session-runtime-claim-response/v1"
+          : "codeops.session-runtime-claim-response/v2",
+        claim: request.data.version === "codeops.session-runtime-claim-request/v1" && claim !== null
+          ? {
+              dispatch: claim.dispatch,
+              claimToken: claim.claimToken,
+              claimExpiresAt: claim.claimExpiresAt,
+              claimCount: claim.claimCount,
+            }
+          : claim,
       },
     };
   }

@@ -1,13 +1,28 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
+import { sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
 import {
   WorkspaceLaunchConflictError,
   WorkspaceLaunchQuotaError,
-  admitWorkspaceLaunch,
+  admitWorkspaceLaunch as admitWorkspaceLaunchBase,
+  bindWorkspaceLaunchRuntime,
   createCatalogSourceResolver,
   readyWorkspaceLaunch,
 } from "../dist/workspace-launch.js";
+
+const runtimeRequirements = {
+  version: "codeops.runtime-requirements/v1",
+  capabilities: ["acp", "checkpoint"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1280, ephemeralStorageMiB: 1280 },
+  requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "compatible-substitution-v1",
+};
+const admitWorkspaceLaunch = (input) => admitWorkspaceLaunchBase({
+  ...input,
+  runtimeRequirements,
+});
 
 const request = {
   version: "codeops.workspace-launch-request/v1",
@@ -86,6 +101,59 @@ test("admits one exact catalog-bound workspace launch", async () => {
   assert.equal(target.created.maximumActivePerPrincipal, 5);
   assert.equal(target.created.maximumActiveGlobal, 8);
   assert.equal("prompt" in launch, false);
+});
+
+test("admits and immutably binds one canonical runtime requirement", async () => {
+  const admitted = await admitWorkspaceLaunch({
+    request,
+    principalId: "user@example.com",
+    resolver,
+    store: store(),
+    now: () => new Date("2026-08-13T12:00:00.000Z"),
+  });
+  assert.equal(
+    admitted.runtimeRequirementDigest,
+    sha256CanonicalJsonDigest(runtimeRequirements),
+  );
+  const binding = {
+    version: "codeops.runtime-launch-binding/v1",
+    requirementDigest: admitted.runtimeRequirementDigest,
+    selectedAt: "2026-08-13T12:00:01.000Z",
+    profile: {
+      version: "codeops.runtime-profile/v1", profileId: "standard-v1",
+      releaseDigest: `sha256:${"7".repeat(64)}`,
+      capabilities: ["acp", "checkpoint"],
+      capabilityDigest: sha256CanonicalJsonDigest(["acp", "checkpoint"]),
+      resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 },
+      authority: runtimeRequirements.maximumAuthority,
+      compatibilityPolicyRevision: runtimeRequirements.compatibilityPolicyRevision,
+      images: {
+        agent: `example/agent@sha256:${"8".repeat(64)}`,
+        worker: `example/worker@sha256:${"9".repeat(64)}`,
+        sessionGateway: `example/gateway@sha256:${"a".repeat(64)}`,
+      },
+    },
+  };
+  const bound = bindWorkspaceLaunchRuntime(admitted, binding);
+  assert.deepEqual(bound.runtimeLaunchBinding, binding);
+  assert.throws(
+    () => bindWorkspaceLaunchRuntime(bound, {
+      ...binding,
+      selectedAt: "2026-08-13T12:00:02.000Z",
+    }),
+    /immutable/,
+  );
+
+  const { runtimeRequirements: _requirements, runtimeRequirementDigest: _digest, ...legacy } = admitted;
+  legacy.legacyRuntimeCompatible = true;
+  const upgraded = bindWorkspaceLaunchRuntime(
+    legacy,
+    binding,
+    undefined,
+    runtimeRequirements,
+  );
+  assert.equal(upgraded.runtimeRequirementDigest, binding.requirementDigest);
+  assert.deepEqual(upgraded.runtimeLaunchBinding, binding);
 });
 
 test("admits a scratch workspace without resolving a source", async () => {

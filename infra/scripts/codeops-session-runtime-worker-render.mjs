@@ -1,8 +1,14 @@
-import { parseAllDocuments } from "yaml";
+import { createHash } from "node:crypto";
+import { parseAllDocuments, stringify } from "yaml";
 import {
   assertModelProxyRouting,
   assertModelProxySessionVolume,
 } from "./model-proxy-routing.mjs";
+import {
+  fixedRuntimeResources,
+  requireFullRuntimeAuthority,
+  validateRuntimeProfile,
+} from "./runtime-profile-rendering.mjs";
 
 const DIGEST = /^sha256:[0-9a-f]{64}$/;
 const SHA = /^[0-9a-f]{40}$/;
@@ -20,6 +26,10 @@ const TOKENS = {
   __CODEOPS_LEASE_ID__: "leaseId",
   __CODEOPS_REPOSITORY_URL__: "repository",
   __CODEOPS_RUN_ID__: "runId",
+  __CODEOPS_RUNTIME_CAPABILITY_DIGEST__: "runtimeCapabilityDigest",
+  __CODEOPS_RUNTIME_PROFILE_ID__: "runtimeProfileId",
+  __CODEOPS_RUNTIME_PROFILE_JSON__: "runtimeProfileJson",
+  __CODEOPS_RUNTIME_RELEASE_DIGEST__: "runtimeReleaseDigest",
   __CODEOPS_SESSION_ID__: "sessionId",
   __CODEOPS_SESSION_OWNER_PRINCIPAL_ID__: "ownerPrincipalId",
   __CODEOPS_SESSION_RUNTIME_WORKER_DIGEST__: "workerDigest",
@@ -28,10 +38,31 @@ const TOKENS = {
 };
 
 export function renderSessionRuntimeWorkerManifest(template, input) {
-  for (const key of ["agentDigest", "workerDigest"]) {
+  for (const key of ["agentDigest", "workerDigest", "runtimeReleaseDigest", "runtimeCapabilityDigest"]) {
     if (!DIGEST.test(input[key] ?? "")) {
       throw new Error(`${key} must use one lowercase SHA-256 digest`);
     }
+  }
+  if (!IDENTIFIER.test(input.runtimeProfileId ?? "")) {
+    throw new Error("runtime profile ID is invalid");
+  }
+  const profile = validateRuntimeProfile(input.runtimeProfile);
+  if (profile.compatibilityPolicyRevision !== "compatible-substitution-v1") {
+    throw new Error("runtime profile compatibility policy is unsupported");
+  }
+  requireFullRuntimeAuthority(profile);
+  if (
+    profile?.version !== "codeops.runtime-profile/v1" ||
+    profile.profileId !== input.runtimeProfileId ||
+    profile.releaseDigest !== input.runtimeReleaseDigest ||
+    profile.capabilityDigest !== input.runtimeCapabilityDigest ||
+    !Array.isArray(profile.capabilities) ||
+    profile.capabilityDigest !== `sha256:${createHash("sha256").update(JSON.stringify(profile.capabilities)).digest("hex")}` ||
+    profile.images?.agent !== `ghcr.io/anulman/codeops/agent@${input.agentDigest}` ||
+    profile.images?.worker !== `ghcr.io/anulman/codeops/session-runtime-worker@${input.workerDigest}` ||
+    !/^.+@sha256:[0-9a-f]{64}$/.test(profile.images?.sessionGateway ?? "")
+  ) {
+    throw new Error("runtime profile must bind the exact rendered disposable-session images");
   }
   if (!SHA.test(input.baseSha ?? "")) {
     throw new Error("base SHA must contain 40 lowercase hex characters");
@@ -71,10 +102,14 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
     throw new Error("branch must be one bounded single-line value");
   }
 
+  const values = {
+    ...input,
+    runtimeProfileJson: JSON.stringify(profile).replaceAll("'", "''"),
+  };
   let rendered = template;
   for (const [token, key] of Object.entries(TOKENS)) {
     if (!rendered.includes(token)) throw new Error(`expected ${token}`);
-    rendered = rendered.replaceAll(token, input[key]);
+    rendered = rendered.replaceAll(token, values[key]);
   }
   if (/__CODEOPS_[A-Z0-9_]+__/.test(rendered)) {
     throw new Error("unresolved session runtime worker token");
@@ -115,6 +150,17 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
   const builder = pod.initContainers[0];
   const worker = pod.containers.find((container) => container.name === "runtime-worker");
   const agent = pod.containers.find((container) => container.name === "coding-agent");
+  const allocations = fixedRuntimeResources(profile);
+  builder.resources = allocations.builder;
+  worker.resources = allocations.worker;
+  agent.resources = allocations.agent;
+  const workspaceVolume = pod.volumes.find((volume) => volume.name === "workspace");
+  const tempVolume = pod.volumes.find((volume) => volume.name === "temp");
+  if (workspaceVolume?.emptyDir === undefined || tempVolume?.emptyDir === undefined) {
+    throw new Error("session runtime ephemeral volumes are incomplete");
+  }
+  workspaceVolume.emptyDir.sizeLimit = allocations.workspaceSizeLimit;
+  tempVolume.emptyDir.sizeLimit = allocations.tempSizeLimit;
   const images = [builder, worker, agent].map((container) => container.image);
   if (
     images.filter((image) => image.endsWith(`@${input.agentDigest}`)).length !== 2 ||
@@ -129,11 +175,22 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
     env.CODEOPS_SESSION_RUNTIME_ACP_SOCKET_PATH !== "/run/codeops/agent.sock" ||
     env.CODEOPS_SESSION_RUNTIME_WORKSPACE !== "/workspace" ||
     env.CODEOPS_SESSION_ID !== input.sessionId ||
+    env.CODEOPS_RUNTIME_PROFILE_ID !== input.runtimeProfileId ||
+    env.CODEOPS_RUNTIME_RELEASE_DIGEST !== input.runtimeReleaseDigest ||
+    env.CODEOPS_RUNTIME_CAPABILITY_DIGEST !== input.runtimeCapabilityDigest ||
+    env.CODEOPS_RUNTIME_PROFILE_JSON !== JSON.stringify(profile) ||
     env.CODEOPS_SESSION_OWNER_PRINCIPAL_ID !== input.ownerPrincipalId ||
     env.CODEOPS_SESSION_BASE_SHA !== input.baseSha ||
     env.CODEOPS_SESSION_LEASE_ID !== input.leaseId
   ) {
     throw new Error("session runtime worker execution identity drifted");
+  }
+  if (
+    job.metadata.annotations?.["codeops.example/runtime-profile-id"] !== input.runtimeProfileId ||
+    job.metadata.annotations?.["codeops.example/runtime-release-digest"] !== input.runtimeReleaseDigest ||
+    job.metadata.annotations?.["codeops.example/runtime-capability-digest"] !== input.runtimeCapabilityDigest
+  ) {
+    throw new Error("session runtime Job profile annotations drifted");
   }
   if (
     JSON.stringify(worker.readinessProbe) !== JSON.stringify({
@@ -208,5 +265,5 @@ export function renderSessionRuntimeWorkerManifest(template, input) {
   ) {
     throw new Error("session runtime network boundary drifted");
   }
-  return rendered;
+  return resources.map((resource) => stringify(resource)).join("---\n");
 }

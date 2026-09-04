@@ -11,6 +11,22 @@ const dispatchId = "11111111-1111-4111-8111-111111111111";
 const claimToken = "22222222-2222-4222-8222-222222222222";
 const workerId = "acp-worker:primary";
 const repository = "anulman/codeops";
+const runtimeBinding = {
+    version: "codeops.runtime-binding/v1", requirementDigest: `sha256:${"6".repeat(64)}`,
+    compatibilityPolicyRevision: "policy-7", selectedProfileId: "standard-v1",
+    selectedReleaseDigest: `sha256:${"7".repeat(64)}`,
+   selectedCapabilityDigest: `sha256:${"8".repeat(64)}`,
+    selectedProfile: { version: "codeops.runtime-profile/v1", profileId: "standard-v1", releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"], capabilityDigest: `sha256:${"8".repeat(64)}`, resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 }, authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true }, compatibilityPolicyRevision: "policy-7", images: { agent: `example/agent@sha256:${"a".repeat(64)}`, worker: `example/worker@sha256:${"b".repeat(64)}`, sessionGateway: `example/gateway@sha256:${"c".repeat(64)}` } },
+    selectedAt: "2026-08-14T15:00:00.000Z",
+};
+const runtimeProof = {
+  session_id: dispatch().command.sessionId,
+  session_identity_json: dispatch().snapshot.identity,
+  runtime_binding_json: runtimeBinding,
+  owner_runtime_binding_json: runtimeBinding,
+  runtime_claim_protocol: "bound-v2",
+  legacy_runtime_worker_compatible: false,
+};
 
 function canonical(value) {
   const normalize = (entry) => {
@@ -124,6 +140,7 @@ class Client {
       claimed_by: workerId,
       claim_expires_at: "2026-08-14T15:30:00.000Z",
       owner_principal_id: "access:aidan@example.com",
+      ...runtimeProof,
       ...overrides,
     };
   }

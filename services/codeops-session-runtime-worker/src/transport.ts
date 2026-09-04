@@ -6,6 +6,7 @@ import {
   githubReadResultSchema,
   sessionRuntimeClaimRequestSchema,
   sessionRuntimeClaimRequestV2Schema,
+  sessionRuntimeClaimResponseSchema,
   sessionRuntimeClaimResponseV2Schema,
   sessionRuntimeClaimRenewalRequestSchema,
   sessionRuntimeClaimRenewalResponseSchema,
@@ -42,6 +43,7 @@ import {
   type GitHubBranchPublishCandidateChunkRequest,
   type GitHubReadResult,
   type SessionIdentity,
+  type RuntimeProfile,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
   type SessionRuntimeDispatchClaimV2,
@@ -71,6 +73,15 @@ const MAX_RESPONSE_BYTES = 1024 * 1024;
 const TOKEN_PATTERN = /^[\x21-\x7e]{32,4096}$/;
 
 export class SessionRuntimeTransportError extends Error {}
+export class SessionRuntimeClaimUnavailableError extends SessionRuntimeTransportError {}
+
+class SessionRuntimeHttpStatusError extends SessionRuntimeTransportError {
+  constructor(readonly status: number) {
+    super(`session runtime gateway returned HTTP ${status}`);
+  }
+}
+
+class SessionRuntimeRequestFailureError extends SessionRuntimeTransportError {}
 
 export const runtimeExecutionResultSchema = z.discriminatedUnion("type", [
   z
@@ -297,9 +308,7 @@ export async function boundedJson(response: Response): Promise<unknown> {
 
 export function requireSuccess(response: Response): void {
   if (response.status !== 200) {
-    throw new SessionRuntimeTransportError(
-      `session runtime gateway returned HTTP ${response.status}`,
-    );
+    throw new SessionRuntimeHttpStatusError(response.status);
   }
   if (
     !/^application\/json(?:\s*;\s*charset=utf-8)?$/i.test(
@@ -343,6 +352,10 @@ export class SessionRuntimeTransport {
     readonly generation: number;
     readonly leaseId: string;
     readonly identity: SessionIdentity;
+    readonly runtimeProfileId: string;
+    readonly runtimeReleaseDigest: string;
+    readonly runtimeCapabilityDigest: string;
+    readonly runtimeProfile: RuntimeProfile;
   };
   readonly #fetch: typeof fetch;
   readonly #requestTimeoutMs: number;
@@ -355,6 +368,10 @@ export class SessionRuntimeTransport {
       readonly generation: number;
       readonly leaseId: string;
       readonly identity: SessionIdentity;
+      readonly runtimeProfileId: string;
+      readonly runtimeReleaseDigest: string;
+      readonly runtimeCapabilityDigest: string;
+      readonly runtimeProfile: RuntimeProfile;
     };
     readonly fetch?: typeof fetch;
     readonly requestTimeoutMs?: number;
@@ -362,15 +379,29 @@ export class SessionRuntimeTransport {
     this.#origin = exactGatewayOrigin(input.gatewayOrigin);
     this.#token = exactToken(input.token);
     const authority = sessionRuntimeClaimRequestSchema.parse({
-      version: "codeops.session-runtime-claim-request/v1",
+      version: "codeops.session-runtime-claim-request/v2",
       ...input.authority,
       leaseMs: 1_000,
     });
+    if (authority.version !== "codeops.session-runtime-claim-request/v2") {
+      throw new SessionRuntimeTransportError("session runtime identity is incomplete");
+    }
+    if (
+      authority.runtimeProfileId === undefined ||
+      authority.runtimeReleaseDigest === undefined ||
+      authority.runtimeCapabilityDigest === undefined
+    ) {
+      throw new SessionRuntimeTransportError("session runtime identity is incomplete");
+    }
     this.#authority = {
       sessionId: authority.sessionId,
       generation: authority.generation,
       leaseId: authority.leaseId,
       identity: authority.identity,
+      runtimeProfileId: authority.runtimeProfileId,
+      runtimeReleaseDigest: authority.runtimeReleaseDigest,
+      runtimeCapabilityDigest: authority.runtimeCapabilityDigest,
+      runtimeProfile: authority.runtimeProfile,
     };
     this.#fetch = input.fetch ?? fetch;
     this.#requestTimeoutMs = input.requestTimeoutMs ?? 10_000;
@@ -406,7 +437,7 @@ export class SessionRuntimeTransport {
       return await boundedJson(response);
     } catch (error) {
       if (error instanceof SessionRuntimeTransportError) throw error;
-      throw new SessionRuntimeTransportError(
+      throw new SessionRuntimeRequestFailureError(
         `session runtime gateway request failed: ${error instanceof Error ? error.message : String(error)}`,
       );
     } finally {
@@ -420,10 +451,40 @@ export class SessionRuntimeTransport {
       ...this.#authority,
       leaseMs,
     });
-    const response = sessionRuntimeClaimResponseV2Schema.parse(
-      await this.#post("/v1/session-runtime/claims", request),
-    );
-    return response.claim;
+    try {
+      const response = sessionRuntimeClaimResponseSchema.parse(
+        await this.#post("/v1/session-runtime/claims", request),
+      );
+      if (response.version !== "codeops.session-runtime-claim-response/v2") {
+        throw new SessionRuntimeClaimUnavailableError(
+          "session runtime gateway has not completed the claim-protocol rollout",
+        );
+      }
+      if (response.claim !== null && (
+        response.claim.runtimeBinding.selectedProfileId !== this.#authority.runtimeProfileId ||
+        response.claim.runtimeBinding.selectedReleaseDigest !== this.#authority.runtimeReleaseDigest ||
+        response.claim.runtimeBinding.selectedCapabilityDigest !== this.#authority.runtimeCapabilityDigest
+        || canonicalJsonText(response.claim.runtimeBinding.selectedProfile) !==
+          canonicalJsonText(this.#authority.runtimeProfile)
+      )) {
+        throw new SessionRuntimeTransportError(
+          "session runtime claim proof drifted from the deployed runtime identity",
+        );
+      }
+      return response.claim;
+    } catch (error) {
+      if (error instanceof SessionRuntimeClaimUnavailableError) throw error;
+      if (
+        error instanceof SessionRuntimeRequestFailureError ||
+        (error instanceof SessionRuntimeHttpStatusError &&
+          [400, 404, 408, 425, 429, 502, 503, 504].includes(error.status))
+      ) {
+        throw new SessionRuntimeClaimUnavailableError(
+          `session runtime claim endpoint is temporarily unavailable: ${error.message}`,
+        );
+      }
+      throw error;
+    }
   }
 
   async renewClaim(
@@ -732,6 +793,7 @@ export class SessionRuntimeTransport {
     readonly leaseMs: number;
     readonly execute: RuntimeExecutor;
     readonly now?: () => Date;
+    readonly onClaimAuthenticated?: () => void | Promise<void>;
   }): Promise<SessionCommandResult | null> {
     const claimed = await this.claim(input.leaseMs);
     if (claimed === null) return null;
@@ -742,6 +804,7 @@ export class SessionRuntimeTransport {
         "session runtime claim expired before execution began",
       );
     }
+    await input.onClaimAuthenticated?.();
     // The executor owns ACP/workspace side effects, not broker claim authority.
     // Never expose the claim token or its completion lease to that boundary.
     const renewalAbort = new AbortController();

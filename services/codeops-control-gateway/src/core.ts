@@ -16,6 +16,8 @@ import {
   codingOutcomeSchema,
   researchPersonaReportSchema,
   researchSynthesisSchema,
+  runtimeLaunchBindingSchema,
+  type RuntimeLaunchBinding,
   type AgentJobDispatchRequest,
   type AgentJobDispatchResult,
   type CandidateCheckpoint,
@@ -993,42 +995,68 @@ async function atomicWrite(filePath: string, bytes: string | Uint8Array): Promis
   await rename(temporaryPath, filePath);
 }
 
-export async function retainCheckpoint(input: {
-  rootDirectory: string;
+function reconstructRetainedResult(input: {
   request: AgentJobDispatchRequest;
   runId: string;
-  requestDigest: string;
-  retained: RetainedCheckpoint;
-}): Promise<AgentJobDispatchResult> {
-  const directory = path.join(input.rootDirectory, "agent-runs", input.runId);
-  await claimRequest(input);
-  const requestPath = path.join(directory, "request.json");
-  const existing = JSON.parse(await readFile(requestPath, "utf8")) as {
-    requestDigest?: unknown;
-  };
-  if (existing.requestDigest !== input.requestDigest) {
-    throw new Error("durable Agent Job identity drift");
+  checkpoint: z.infer<typeof checkpointSchema>;
+  checkpointDigest: string;
+  patch: Buffer;
+}): AgentJobDispatchResult {
+  const checkpointBytes = JSON.stringify(input.checkpoint);
+  const computedCheckpointDigest = `sha256:${createHash("sha256")
+    .update(checkpointBytes)
+    .digest("hex")}`;
+  const patchDigest = createHash("sha256").update(input.patch).digest("hex");
+  const projectContextDigest =
+    input.request.role === "coding-agent" || input.request.role === "critic-agent"
+      ? input.request.codingRequest.projectContext.digest
+      : input.request.researchRequest.projectContext.digest;
+  if (
+    input.checkpointDigest !== computedCheckpointDigest ||
+    input.checkpoint.runId !== input.runId ||
+    input.checkpoint.agentRole !== input.request.role ||
+    input.checkpoint.baseSha !== input.request.baseSha ||
+    input.checkpoint.projectContextDigest !== projectContextDigest ||
+    input.checkpoint.error !== undefined ||
+    input.checkpoint.patch.sha256 !== patchDigest ||
+    input.checkpoint.patch.bytes !== input.patch.length
+  ) {
+    throw new Error("retained Agent Job checkpoint evidence drifted");
   }
-  await atomicWrite(
-    path.join(directory, "checkpoint.json"),
-    `${JSON.stringify(input.retained.checkpoint, null, 2)}\n`,
-  );
-  await atomicWrite(path.join(directory, "changes.patch"), input.retained.patch);
-  const researchResponse =
-    input.request.role === "qa-contract-researcher"
-      ? parseTerminalJsonObject(input.retained.checkpoint.response)
-      : undefined;
-  const criticResponse =
-    input.request.role === "critic-agent"
-      ? adversarialReviewSchema.parse(
-          parseTerminalJsonObject(input.retained.checkpoint.response),
-        )
-      : undefined;
-  const codingResponse =
+  if (
+    input.request.role === "qa-contract-researcher" &&
+    (input.patch.length !== 0 || patchDigest !== EMPTY_PATCH_SHA256)
+  ) {
+    throw new Error("retained QA Contract Researcher produced a source patch");
+  }
+  if (
+    input.request.role === "critic-agent" &&
+    (`sha256:${patchDigest}` !== input.request.candidate.patch.digest ||
+      input.patch.length !== input.request.candidate.patch.sizeBytes)
+  ) {
+    throw new Error("retained Critic Agent patch drifted from its candidate");
+  }
+  if (
     input.request.role === "coding-agent" &&
-    input.request.codingRound !== undefined
+    input.request.codingRound === 1 &&
+    input.request.codingRequest.adoptedPullRequest !== undefined &&
+    (input.patch.length !== 0 || patchDigest !== EMPTY_PATCH_SHA256)
+  ) {
+    throw new Error("retained adopted pull-request round changed its exact head");
+  }
+
+  const researchResponse = input.request.role === "qa-contract-researcher"
+    ? parseTerminalJsonObject(input.checkpoint.response)
+    : undefined;
+  const criticResponse = input.request.role === "critic-agent"
+    ? adversarialReviewSchema.parse(
+        parseTerminalJsonObject(input.checkpoint.response),
+      )
+    : undefined;
+  const codingResponse =
+    input.request.role === "coding-agent" && input.request.codingRound !== undefined
       ? codingOutcomeSchema.parse(
-          parseTerminalJsonObject(input.retained.checkpoint.response),
+          parseTerminalJsonObject(input.checkpoint.response),
         )
       : undefined;
   const result = agentJobDispatchResultSchema.parse({
@@ -1036,13 +1064,11 @@ export async function retainCheckpoint(input: {
     role: input.request.role,
     runId: input.runId,
     checkpointUri: `artifact:///agent-runs/${input.runId}/checkpoint.json`,
-    checkpointDigest: input.retained.checkpointDigest,
-    checkpointSizeBytes: Buffer.byteLength(
-      JSON.stringify(input.retained.checkpoint),
-    ),
+    checkpointDigest: input.checkpointDigest,
+    checkpointSizeBytes: Buffer.byteLength(checkpointBytes),
     patchUri: `artifact:///agent-runs/${input.runId}/changes.patch`,
-    patchDigest: `sha256:${input.retained.checkpoint.patch.sha256}`,
-    patchSizeBytes: input.retained.checkpoint.patch.bytes,
+    patchDigest: `sha256:${patchDigest}`,
+    patchSizeBytes: input.patch.length,
     ...(input.request.role === "critic-agent"
       ? { criticReview: criticResponse }
       : {}),
@@ -1091,8 +1117,7 @@ export async function retainCheckpoint(input: {
       (result.researchResult.kind !== "persona" ||
         result.researchResult.report.requestId !==
           input.request.researchRequest.requestId ||
-        result.researchResult.report.persona !==
-          input.request.researchStage.persona)
+        result.researchResult.report.persona !== input.request.researchStage.persona)
     ) {
       throw new Error("research persona identity does not match its dispatch");
     }
@@ -1105,6 +1130,38 @@ export async function retainCheckpoint(input: {
       throw new Error("research synthesis identity does not match its dispatch");
     }
   }
+  return result;
+}
+
+export async function retainCheckpoint(input: {
+  rootDirectory: string;
+  request: AgentJobDispatchRequest;
+  runId: string;
+  requestDigest: string;
+  runtimeLaunchBinding?: RuntimeLaunchBinding;
+  retained: RetainedCheckpoint;
+}): Promise<AgentJobDispatchResult> {
+  const directory = path.join(input.rootDirectory, "agent-runs", input.runId);
+  await claimRequest(input);
+  const requestPath = path.join(directory, "request.json");
+  const existing = JSON.parse(await readFile(requestPath, "utf8")) as {
+    requestDigest?: unknown;
+  };
+  if (existing.requestDigest !== input.requestDigest) {
+    throw new Error("durable Agent Job identity drift");
+  }
+  await atomicWrite(
+    path.join(directory, "checkpoint.json"),
+    `${JSON.stringify(input.retained.checkpoint, null, 2)}\n`,
+  );
+  await atomicWrite(path.join(directory, "changes.patch"), input.retained.patch);
+  const result = reconstructRetainedResult({
+    request: input.request,
+    runId: input.runId,
+    checkpoint: input.retained.checkpoint,
+    checkpointDigest: input.retained.checkpointDigest,
+    patch: input.retained.patch,
+  });
   await atomicWrite(
     path.join(directory, "result.json"),
     `${JSON.stringify(result, null, 2)}\n`,
@@ -1140,26 +1197,49 @@ export async function claimRequest(input: {
   request: AgentJobDispatchRequest;
   runId: string;
   requestDigest: string;
-}): Promise<void> {
+  runtimeLaunchBinding?: RuntimeLaunchBinding;
+}): Promise<RuntimeLaunchBinding> {
   const directory = path.join(input.rootDirectory, "agent-runs", input.runId);
   const requestPath = path.join(directory, "request.json");
   try {
     const existing = JSON.parse(await readFile(requestPath, "utf8")) as {
       requestDigest?: unknown;
+      runtimeLaunchBinding?: unknown;
     };
     if (existing.requestDigest !== input.requestDigest) {
       throw new Error("durable Agent Job identity drift");
     }
+    if (existing.runtimeLaunchBinding === undefined) {
+      throw new Error("unfinished Agent Job has no durable runtime binding");
+    }
+    const storedBinding = runtimeLaunchBindingSchema.parse(
+      existing.runtimeLaunchBinding,
+    );
+    if (
+      input.runtimeLaunchBinding !== undefined &&
+      storedBinding.requirementDigest !== input.runtimeLaunchBinding.requirementDigest
+    ) {
+      throw new Error("durable Agent Job runtime requirement drift");
+    }
+    return storedBinding;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error;
+    const runtimeLaunchBinding = runtimeLaunchBindingSchema.parse(
+      input.runtimeLaunchBinding,
+    );
     await atomicWrite(
       requestPath,
       `${JSON.stringify(
-        { requestDigest: input.requestDigest, request: input.request },
+        {
+          requestDigest: input.requestDigest,
+          request: input.request,
+          runtimeLaunchBinding,
+        },
         null,
         2,
       )}\n`,
     );
+    return runtimeLaunchBinding;
   }
 }
 
@@ -1386,18 +1466,39 @@ export async function readRetainedResult(input: {
   rootDirectory: string;
   runId: string;
   requestDigest: string;
+  request: AgentJobDispatchRequest;
 }): Promise<AgentJobDispatchResult | null> {
   const directory = path.join(input.rootDirectory, "agent-runs", input.runId);
   try {
-    const request = JSON.parse(
+    const requestRecord = JSON.parse(
       await readFile(path.join(directory, "request.json"), "utf8"),
-    ) as { requestDigest?: unknown };
-    if (request.requestDigest !== input.requestDigest) {
+    ) as { requestDigest?: unknown; request?: unknown };
+    const storedRequest = agentJobDispatchRequestSchema.parse(requestRecord.request);
+    if (
+      requestRecord.requestDigest !== input.requestDigest ||
+      canonicalSerialize(storedRequest) !==
+        canonicalSerialize(agentJobDispatchRequestSchema.parse(input.request))
+    ) {
       throw new Error("durable Agent Job identity drift");
     }
-    return agentJobDispatchResultSchema.parse(
+    const result = agentJobDispatchResultSchema.parse(
       JSON.parse(await readFile(path.join(directory, "result.json"), "utf8")),
     );
+    const checkpoint = checkpointSchema.parse(
+      JSON.parse(await readFile(path.join(directory, "checkpoint.json"), "utf8")),
+    );
+    const patch = await readFile(path.join(directory, "changes.patch"));
+    const reconstructed = reconstructRetainedResult({
+      request: input.request,
+      runId: input.runId,
+      checkpoint,
+      checkpointDigest: result.checkpointDigest,
+      patch,
+    });
+    if (canonicalSerialize(result) !== canonicalSerialize(reconstructed)) {
+      throw new Error("retained Agent Job terminal evidence drifted");
+    }
+    return result;
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
     throw error;

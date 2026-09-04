@@ -1,7 +1,10 @@
 import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
-import { sessionJobInitializationRequestSchema } from "@codeops/codeops-contracts";
+import {
+  runtimeProfileSchema,
+  sessionJobInitializationRequestSchema,
+} from "@codeops/codeops-contracts";
 import {
   createAcpPermissionRelay,
   SocketAcpWorkspaceLifecycle,
@@ -137,15 +140,21 @@ try {
   const identity = await loadRuntimeSessionIdentity({ env: process.env });
   const admittedChildJson = process.env.CODEOPS_ADMITTED_CHILD_INITIALIZATION_JSON?.trim();
   const admittedChild = admittedChildJson === undefined ? undefined : JSON.parse(admittedChildJson);
+  const runtimeProfile = runtimeProfileSchema.parse(
+    JSON.parse(required("CODEOPS_RUNTIME_PROFILE_JSON")),
+  );
   const initialization = await initializer.initialize(sessionJobInitializationRequestSchema.parse({
-    version: admittedChild === undefined ? "codeops.session-job-initialization/v1" :
-      "codeops.session-job-initialization/v3",
+    version: "codeops.session-job-initialization/v3",
     ...(admittedChild ?? {}),
     sessionId: required("CODEOPS_SESSION_ID"),
     identity,
     leaseId: required("CODEOPS_SESSION_LEASE_ID"),
     holderId: required("CODEOPS_SESSION_HOLDER_ID"),
     ownerPrincipalId: required("CODEOPS_SESSION_OWNER_PRINCIPAL_ID"),
+    runtimeProfileId: required("CODEOPS_RUNTIME_PROFILE_ID"),
+    runtimeReleaseDigest: required("CODEOPS_RUNTIME_RELEASE_DIGEST"),
+    runtimeCapabilityDigest: required("CODEOPS_RUNTIME_CAPABILITY_DIGEST"),
+    runtimeProfile,
   }));
   if (initialization.snapshot.lease?.status !== "active") {
     throw new Error("session runtime requires an active server-confirmed lease");
@@ -159,6 +168,10 @@ try {
       generation: initialization.snapshot.generation,
       leaseId: initialization.snapshot.lease.leaseId,
       identity: initialization.snapshot.identity,
+      runtimeProfileId: required("CODEOPS_RUNTIME_PROFILE_ID"),
+      runtimeReleaseDigest: required("CODEOPS_RUNTIME_RELEASE_DIGEST"),
+      runtimeCapabilityDigest: required("CODEOPS_RUNTIME_CAPABILITY_DIGEST"),
+      runtimeProfile,
     },
   });
   await workItemsBroker.listen(workItemsBrokerPort);

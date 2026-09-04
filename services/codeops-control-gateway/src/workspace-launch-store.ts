@@ -6,6 +6,7 @@ import {
   type WorkspaceLaunchDetail,
   type WorkspaceLaunchRequest,
 } from "@codeops/codeops-contracts";
+import { workspaceLaunchSessionId } from "@codeops/codeops-contracts/workspace-launch";
 import type { TransactionClient } from "./session-broker-repository.js";
 import type { WorkspaceLaunchStore } from "./workspace-launch.js";
 import {
@@ -20,6 +21,10 @@ interface LaunchRow extends Record<string, unknown> {
 interface LaunchDetailRow extends LaunchRow {
   readonly request_json: unknown;
   readonly initial_prompt_committed: unknown;
+}
+
+interface RuntimeOwnerRow extends Record<string, unknown> {
+  readonly runtime_launch_binding_json: unknown;
 }
 
 export function createPostgresWorkspaceLaunchStore(
@@ -92,8 +97,11 @@ export function createPostgresWorkspaceLaunchStore(
         const inserted = await client.query<LaunchRow>(
           `INSERT INTO codeops.workspace_launches
              (launch_id, principal_id, idempotency_key, request_digest,
-              request_json, launch_json, state, created_at, updated_at)
-           VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9)
+              request_json, launch_json, state, created_at, updated_at,
+              runtime_requirements_json, runtime_requirement_digest,
+              runtime_launch_binding_json, legacy_runtime_compatible)
+           VALUES ($1, $2, $3, $4, $5::jsonb, $6::jsonb, $7, $8, $9,
+                   $10::jsonb, $11, $12::jsonb, $13)
            RETURNING launch_json`,
           [
             launch.launchId,
@@ -105,6 +113,14 @@ export function createPostgresWorkspaceLaunchStore(
             launch.state,
             launch.createdAt,
             launch.updatedAt,
+            launch.runtimeRequirements === undefined
+              ? null
+              : JSON.stringify(launch.runtimeRequirements),
+            launch.runtimeRequirementDigest ?? null,
+            launch.runtimeLaunchBinding === undefined
+              ? null
+              : JSON.stringify(launch.runtimeLaunchBinding),
+            launch.legacyRuntimeCompatible ?? false,
           ],
         );
         await client.query("COMMIT");
@@ -199,15 +215,62 @@ export async function updateWorkspaceLaunch(
   launch: WorkspaceLaunch,
 ): Promise<WorkspaceLaunch> {
   const parsed = workspaceLaunchSchema.parse(launch);
-  const result = await client.query<LaunchRow>(
-    `UPDATE codeops.workspace_launches
-        SET launch_json = $2::jsonb, state = $3, updated_at = $4
+  await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
+  try {
+    const lockedLaunch = await client.query<RuntimeOwnerRow>(
+      `SELECT runtime_launch_binding_json
+         FROM codeops.workspace_launches
+        WHERE launch_id = $1
+        FOR UPDATE`,
+      [parsed.launchId],
+    );
+    if (lockedLaunch.rows.length !== 1) {
+      throw new Error("workspace launch transition lost its active state");
+    }
+    const lockedSession = await client.query<RuntimeOwnerRow>(
+      `SELECT runtime_launch_binding_json
+         FROM codeops.sessions
+        WHERE session_id = $1
+        FOR UPDATE`,
+      [workspaceLaunchSessionId(parsed.launchId)],
+    );
+    if (
+      parsed.runtimeLaunchBinding !== undefined &&
+      lockedSession.rows[0]?.runtime_launch_binding_json != null
+    ) {
+      throw new Error("workspace launch resolved an existing session runtime owner");
+    }
+    const result = await client.query<LaunchRow>(
+      `UPDATE codeops.workspace_launches
+        SET launch_json = $2::jsonb, state = $3, updated_at = $4,
+            runtime_requirements_json = $5::jsonb,
+            runtime_requirement_digest = $6,
+            runtime_launch_binding_json = $7::jsonb,
+            legacy_runtime_compatible = $8
       WHERE launch_id = $1 AND state IN ('queued', 'provisioning')
       RETURNING launch_json`,
-    [parsed.launchId, JSON.stringify(parsed), parsed.state, parsed.updatedAt],
-  );
-  if (result.rowCount !== 1) {
-    throw new Error("workspace launch transition lost its active state");
+      [
+        parsed.launchId,
+        JSON.stringify(parsed),
+        parsed.state,
+        parsed.updatedAt,
+        parsed.runtimeRequirements === undefined
+          ? null
+          : JSON.stringify(parsed.runtimeRequirements),
+        parsed.runtimeRequirementDigest ?? null,
+        parsed.runtimeLaunchBinding === undefined
+          ? null
+          : JSON.stringify(parsed.runtimeLaunchBinding),
+        parsed.legacyRuntimeCompatible ?? false,
+      ],
+    );
+    if (result.rowCount !== 1) {
+      throw new Error("workspace launch transition lost its active state");
+    }
+    await client.query("COMMIT");
+    return workspaceLaunchSchema.parse(result.rows[0]?.launch_json);
+  } catch (error) {
+    await client.query("ROLLBACK");
+    throw error;
   }
-  return workspaceLaunchSchema.parse(result.rows[0]?.launch_json);
 }

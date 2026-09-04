@@ -63,6 +63,26 @@ const workerId = "runtime-worker:candidate-proof";
 const repository = "example-org/example-repository";
 const sourceSha = "a".repeat(40);
 const seededAt = "2026-08-30T10:00:00.000Z";
+const runtimeRequirements = { version: "codeops.runtime-requirements/v1", capabilities: ["acp"],
+  minimumResources: { cpuMillis: 600, memoryMiB: 1280, ephemeralStorageMiB: 1280 },
+  requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "policy-7" };
+const runtimeRequirementDigest = sha256CanonicalJsonDigest(runtimeRequirements);
+const runtimeProfile = { version: "codeops.runtime-profile/v1", profileId: "standard-v1",
+  releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"],
+  capabilityDigest: sha256CanonicalJsonDigest(["acp"]),
+  resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 },
+  authority: runtimeRequirements.maximumAuthority, compatibilityPolicyRevision: "policy-7",
+  images: { agent: `example/agent@sha256:${"8".repeat(64)}`, worker: `example/worker@sha256:${"9".repeat(64)}`,
+    sessionGateway: `example/gateway@sha256:${"a".repeat(64)}` } };
+const runtimeLaunchBinding = { version: "codeops.runtime-launch-binding/v1",
+  requirementDigest: runtimeRequirementDigest, profile: runtimeProfile, selectedAt: seededAt };
+const runtimeBinding = { version: "codeops.runtime-binding/v1", requirementDigest: runtimeRequirementDigest,
+  compatibilityPolicyRevision: "policy-7", selectedProfileId: runtimeProfile.profileId,
+  selectedReleaseDigest: runtimeProfile.releaseDigest, selectedCapabilityDigest: runtimeProfile.capabilityDigest,
+  selectedProfile: runtimeProfile,
+  selectedAt: seededAt };
 
 function snapshot() {
   return {
@@ -149,24 +169,35 @@ async function resetAndSeed(connection, status = "claimed") {
   const claimed = status === "claimed";
   await connection.query(
     `INSERT INTO codeops.sessions(
-       session_id,generation,lease_id,snapshot_json,updated_at,owner_principal_id)
-     VALUES($1,1,$2,$3::jsonb,$4::timestamptz,$5)`,
-    [sessionId, leaseId, canonicalJsonText(snapshot()), seededAt, owner],
+       session_id,generation,lease_id,snapshot_json,updated_at,owner_principal_id,
+       runtime_requirements_json,runtime_requirement_digest,runtime_launch_binding_json)
+     VALUES($1,1,$2,$3::jsonb,$4::timestamptz,$5,$6::jsonb,$7,$8::jsonb)`,
+    [sessionId, leaseId, canonicalJsonText(snapshot()), seededAt, owner,
+      canonicalJsonText(runtimeRequirements), runtimeRequirementDigest, canonicalJsonText(runtimeLaunchBinding)],
   );
   await connection.query(
     `INSERT INTO codeops.session_runtime_outbox(
        dispatch_id,session_id,idempotency_key,principal_id,dispatch_json,status,
        available_at,created_at,claim_token,claimed_by,claimed_at,
-       claim_expires_at,claim_count)
+       claim_expires_at,claim_count,runtime_binding_json,runtime_binding_revision,
+       runtime_claim_protocol,runtime_requirement_digest,runtime_profile_id,
+       runtime_release_digest,runtime_capability_digest)
      VALUES($1,$2,$3,$4,$5::jsonb,$6,$7::timestamptz,$7::timestamptz,
-       $8,$9,$10::timestamptz,$11::timestamptz,$12)`,
+       $8,$9,$10::timestamptz,$11::timestamptz,$12,$13::jsonb,$14,$15,$16,$17,$18,$19)`,
     [dispatchId, sessionId, idempotencyKey, owner,
       canonicalJsonText(dispatch()), status, seededAt,
       claimed ? claimToken : null,
       claimed ? workerId : null,
       claimed ? "2026-08-30T10:01:00.000Z" : null,
       claimed ? "2026-08-30T11:00:00.000Z" : null,
-      claimed ? 1 : 0],
+      claimed ? 1 : 0,
+      claimed ? canonicalJsonText(runtimeBinding) : null,
+      claimed ? 1 : 0,
+      claimed ? "bound-v2" : null,
+      claimed ? runtimeRequirementDigest : null,
+      claimed ? runtimeProfile.profileId : null,
+      claimed ? runtimeProfile.releaseDigest : null,
+      claimed ? runtimeProfile.capabilityDigest : null],
   );
 }
 
@@ -194,17 +225,24 @@ async function seedAdmittedAuthority(connection) {
     command: { ...dispatch().command, sessionId: parentSessionId,
       idempotencyKey: parentDispatchKey }, snapshot: parentSnapshot };
   await connection.query(`INSERT INTO codeops.sessions(
-    session_id,generation,lease_id,snapshot_json,updated_at,owner_principal_id)
-    VALUES($1,1,$2,$3::jsonb,$4::timestamptz,$5)`,
-  [parentSessionId, leaseId, canonicalJsonText(parentSnapshot), seededAt, owner]);
+    session_id,generation,lease_id,snapshot_json,updated_at,owner_principal_id,
+    runtime_requirements_json,runtime_requirement_digest,runtime_launch_binding_json)
+    VALUES($1,1,$2,$3::jsonb,$4::timestamptz,$5,$6::jsonb,$7,$8::jsonb)`,
+  [parentSessionId, leaseId, canonicalJsonText(parentSnapshot), seededAt, owner,
+    canonicalJsonText(runtimeRequirements), runtimeRequirementDigest,
+    canonicalJsonText(runtimeLaunchBinding)]);
   await connection.query(`INSERT INTO codeops.session_runtime_outbox(
     dispatch_id,session_id,idempotency_key,principal_id,dispatch_json,status,
-    available_at,created_at,claim_token,claimed_by,claimed_at,claim_expires_at,claim_count)
+    available_at,created_at,claim_token,claimed_by,claimed_at,claim_expires_at,claim_count,
+    runtime_binding_json,runtime_binding_revision,runtime_claim_protocol,
+    runtime_requirement_digest,runtime_profile_id,runtime_release_digest,runtime_capability_digest)
     VALUES($1,$2,$3,$4,$5::jsonb,'claimed',$6::timestamptz,$6::timestamptz,
-      $7,$8,$9::timestamptz,$10::timestamptz,1)`,
+      $7,$8,$9::timestamptz,$10::timestamptz,1,$11::jsonb,1,'bound-v2',$12,$13,$14,$15)`,
   [parentDispatchId, parentSessionId, parentDispatchKey, owner,
     canonicalJsonText(parentDispatch), seededAt, claimToken, workerId,
-    "2026-08-30T10:01:00.000Z", "2026-08-30T11:00:00.000Z"]);
+    "2026-08-30T10:01:00.000Z", "2026-08-30T11:00:00.000Z",
+    canonicalJsonText(runtimeBinding), runtimeRequirementDigest, runtimeProfile.profileId,
+    runtimeProfile.releaseDigest, runtimeProfile.capabilityDigest]);
   const command = { version: "codeops.session-command/v1", sessionId: parentSessionId,
     generation: 1, leaseId, idempotencyKey: decisionKey, type: "respond_permission",
     permissionRequestId, decision: { outcome: "selected", optionId: "allow-once" } };

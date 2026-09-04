@@ -1,11 +1,16 @@
 import {
+  runtimeLaunchBindingSchema,
+  runtimeRequirementsSchema,
   sessionPolicySchema,
+  sha256CanonicalJsonDigest,
   workspaceContextAttachmentDescriptorsSchema,
   workspaceManifestSchema,
   type SessionPolicy,
   type WorkspaceSessionIdentity,
   type WorkspaceContextAttachmentDescriptor,
   type WorkspaceManifest,
+  type RuntimeLaunchBinding,
+  type RuntimeRequirements,
 } from "@codeops/codeops-contracts";
 import { createHash } from "node:crypto";
 import { kubernetesIdentityLabel } from "./kubernetes.js";
@@ -13,9 +18,52 @@ import {
   assertAgentModelProxyRouting,
   assertAgentModelProxySessionVolume,
 } from "./model-proxy-routing.js";
+import { createRuntimeProfileRegistry } from "./runtime-profile-registry.js";
 
 const dnsLabel = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/;
 const digestImage = /^.+@sha256:[0-9a-f]{64}$/;
+
+type RuntimeResources = {
+  readonly cpuMillis: number;
+  readonly memoryMiB: number;
+  readonly ephemeralStorageMiB: number;
+};
+
+const runtimeWorkerRequests: RuntimeResources = {
+  cpuMillis: 100,
+  memoryMiB: 256,
+  ephemeralStorageMiB: 256,
+};
+const runtimeWorkerLimits: RuntimeResources = {
+  cpuMillis: 1_000,
+  memoryMiB: 1_024,
+  ephemeralStorageMiB: 1_024,
+};
+
+function subtractRuntimeResources(
+  total: RuntimeResources,
+  reserved: RuntimeResources,
+  label: string,
+): RuntimeResources {
+  const remainder = {
+    cpuMillis: total.cpuMillis - reserved.cpuMillis,
+    memoryMiB: total.memoryMiB - reserved.memoryMiB,
+    ephemeralStorageMiB:
+      total.ephemeralStorageMiB - reserved.ephemeralStorageMiB,
+  };
+  if (Object.values(remainder).some((value) => value <= 0)) {
+    throw new Error(`selected workspace runtime ${label} cannot supply the runtime worker`);
+  }
+  return remainder;
+}
+
+function kubernetesRuntimeResources(resources: RuntimeResources) {
+  return {
+    cpu: `${resources.cpuMillis}m`,
+    memory: `${resources.memoryMiB}Mi`,
+    "ephemeral-storage": `${resources.ephemeralStorageMiB}Mi`,
+  };
+}
 
 export interface WorkspaceSourceAuthority {
   readonly catalogKey: string;
@@ -57,6 +105,8 @@ export interface WorkspaceResourceConfig {
   readonly agentImage: string;
   readonly runtimeWorkerImage: string;
   readonly configuredRuntimeWorkerImage: string;
+  readonly runtimeLaunchBinding: RuntimeLaunchBinding;
+  readonly runtimeRequirements: RuntimeRequirements;
   readonly imagePullSecrets: readonly { readonly name: string }[];
   readonly nodeSelector: Readonly<Record<string, string>>;
   readonly runtimeServiceAccountName: string;
@@ -205,6 +255,39 @@ export function buildWorkspaceResources(
 ): readonly Record<string, unknown>[] {
   const workspace = workspaceManifestSchema.parse(raw.workspace);
   const policy = sessionPolicySchema.parse(raw.policy);
+  const runtimeRequirements = runtimeRequirementsSchema.parse(raw.runtimeRequirements);
+  const runtimeLaunchBinding = runtimeLaunchBindingSchema.parse(raw.runtimeLaunchBinding);
+  if (
+    runtimeLaunchBinding.requirementDigest !==
+    sha256CanonicalJsonDigest(runtimeRequirements)
+  ) {
+    throw new Error("workspace runtime binding does not match admitted requirements");
+  }
+  if (!runtimeLaunchBinding.profile.authority.publicNetwork) {
+    throw new Error("selected runtime profile does not authorize workspace public network");
+  }
+  if (!runtimeLaunchBinding.profile.authority.brokeredProviderEffects) {
+    throw new Error("selected runtime profile does not authorize workspace provider effects");
+  }
+  const runtimeProfile = createRuntimeProfileRegistry({
+    version: "codeops.runtime-profile-registry/v1",
+    profiles: [runtimeLaunchBinding.profile],
+  }).resolveCompatible(runtimeLaunchBinding.profile.profileId, runtimeRequirements);
+  const agentRequests = subtractRuntimeResources(
+    runtimeRequirements.minimumResources,
+    runtimeWorkerRequests,
+    "requirements",
+  );
+  const agentLimits = subtractRuntimeResources(
+    runtimeProfile.resources,
+    runtimeWorkerLimits,
+    "profile",
+  );
+  if (agentRequests.cpuMillis > agentLimits.cpuMillis ||
+      agentRequests.memoryMiB > agentLimits.memoryMiB ||
+      agentRequests.ephemeralStorageMiB > agentLimits.ephemeralStorageMiB) {
+    throw new Error("selected runtime produces workspace requests above limits");
+  }
   const contextAttachments = workspaceContextAttachmentDescriptorsSchema.parse(
     raw.contextAttachments ?? [],
   );
@@ -222,7 +305,8 @@ export function buildWorkspaceResources(
   if (policy.modelPolicy.provider !== "openai") {
     throw new Error("interactive workspace runtime requires one model policy");
   }
-  const workspaceReadOnly = policy.workspaceAccess === "read-only";
+  const workspaceReadOnly = policy.workspaceAccess === "read-only" ||
+    runtimeProfile.authority.workspaceAccess === "read-only";
   const suffix = raw.launchId.replace(/^launch-/, "");
   if (!/^(?:[0-9a-f]{24}|[0-9a-f]{32})$/.test(suffix)) {
     throw new Error("workspace launch identity is invalid");
@@ -245,6 +329,12 @@ export function buildWorkspaceResources(
   }
   if (exactOrigin(raw.modelProxyOrigin) !== `http://${raw.modelProxyServiceName}:8080`) {
     throw new Error("workspace model proxy origin must use the exact Service identity");
+  }
+  if (
+    runtimeProfile.images.agent !== raw.agentImage ||
+    runtimeProfile.images.worker !== raw.runtimeWorkerImage
+  ) {
+    throw new Error("workspace images must match the durable runtime launch binding");
   }
   if (
     raw.displayName !== undefined &&
@@ -328,6 +418,9 @@ export function buildWorkspaceResources(
     ...(raw.retryDispositionId === undefined ? {} : {
       "codeops.example/retry-disposition-id": raw.retryDispositionId,
     }),
+    "codeops.example/runtime-profile-id": runtimeProfile.profileId,
+    "codeops.example/runtime-release-digest": runtimeProfile.releaseDigest,
+    "codeops.example/runtime-capability-digest": runtimeProfile.capabilityDigest,
   };
   const securityContext = {
     allowPrivilegeEscalation: false,
@@ -476,6 +569,7 @@ export function buildWorkspaceResources(
               "codeops.example/run-id": raw.admittedChildOwner === undefined
                 ? raw.runId : kubernetesIdentityLabel(raw.runId),
             },
+            annotations: runtimeAnnotations,
           },
           spec: {
             restartPolicy: "Never",
@@ -510,6 +604,10 @@ export function buildWorkspaceResources(
                 { name: "CODEOPS_SESSION_POLICY_JSON", value: JSON.stringify(policy) },
                 { name: "CODEOPS_SESSION_CONTEXT_ATTACHMENTS_JSON", value: JSON.stringify(contextAttachments) },
                 { name: "CODEOPS_SESSION_ID", value: raw.sessionId },
+                { name: "CODEOPS_RUNTIME_PROFILE_ID", value: runtimeProfile.profileId },
+                { name: "CODEOPS_RUNTIME_RELEASE_DIGEST", value: runtimeProfile.releaseDigest },
+                { name: "CODEOPS_RUNTIME_CAPABILITY_DIGEST", value: runtimeProfile.capabilityDigest },
+                { name: "CODEOPS_RUNTIME_PROFILE_JSON", value: JSON.stringify(runtimeProfile) },
                 { name: "CODEOPS_SESSION_OWNER_PRINCIPAL_ID", value: raw.principalId },
                 { name: "CODEOPS_SESSION_WORKFLOW_ID", value: raw.workflowId },
                 { name: "CODEOPS_SESSION_RUN_ID", value: raw.runId },
@@ -542,8 +640,8 @@ export function buildWorkspaceResources(
                 timeoutSeconds: 1,
               },
               resources: {
-                requests: { cpu: "100m", memory: "256Mi", "ephemeral-storage": "256Mi" },
-                limits: { cpu: "1", memory: "1Gi", "ephemeral-storage": "1Gi" },
+                requests: kubernetesRuntimeResources(runtimeWorkerRequests),
+                limits: kubernetesRuntimeResources(runtimeWorkerLimits),
               },
               securityContext,
               volumeMounts: [
@@ -583,8 +681,8 @@ export function buildWorkspaceResources(
                 { name: "CODEOPS_ACP_SOCKET", value: "/run/codeops/agent.sock" },
               ],
               resources: {
-                requests: { cpu: "500m", memory: "1Gi", "ephemeral-storage": "1Gi" },
-                limits: { cpu: "2", memory: "6Gi", "ephemeral-storage": "4Gi" },
+                requests: kubernetesRuntimeResources(agentRequests),
+                limits: kubernetesRuntimeResources(agentLimits),
               },
               securityContext,
               volumeMounts: [
@@ -603,7 +701,11 @@ export function buildWorkspaceResources(
               { name: "workspace", persistentVolumeClaim: { claimName: name } },
               { name: "session", emptyDir: { medium: "Memory", sizeLimit: "16Mi" } },
               { name: "session-state", emptyDir: { sizeLimit: "16Mi" } },
-              { name: "temp", emptyDir: { sizeLimit: "2Gi" } },
+              { name: "temp", emptyDir: {
+                sizeLimit: runtimeProfile.resources.ephemeralStorageMiB >= 2_048
+                  ? "2Gi"
+                  : `${runtimeProfile.resources.ephemeralStorageMiB}Mi`,
+              } },
               { name: "session-secrets", secret: {
                 secretName: raw.sessionSecretsName,
                 defaultMode: 256,

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 import {
   buildSessionRuntimeCompletion,
+  SessionRuntimeClaimUnavailableError,
   SessionRuntimeTransport,
   SessionRuntimeTransportError,
 } from "../dist/transport.js";
@@ -30,6 +31,10 @@ const canonical = (value) => JSON.stringify(Object.fromEntries(
 ));
 
 const authority = {
+  runtimeProfileId: "standard-v1",
+  runtimeReleaseDigest: `sha256:${"7".repeat(64)}`,
+  runtimeCapabilityDigest: `sha256:${"8".repeat(64)}`,
+  runtimeProfile: { version: "codeops.runtime-profile/v1", profileId: "standard-v1", releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"], capabilityDigest: `sha256:${"8".repeat(64)}`, resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 }, authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true }, compatibilityPolicyRevision: "policy-7", images: { agent: `example/agent@sha256:${"a".repeat(64)}`, worker: `example/worker@sha256:${"b".repeat(64)}`, sessionGateway: `example/gateway@sha256:${"c".repeat(64)}` } },
   sessionId: "ses_91a4",
   generation: 3,
   leaseId,
@@ -102,6 +107,16 @@ function claim() {
     claimExpiresAt: "2026-08-04T20:05:00.000Z",
     claimCount: 1,
     isAdmittedInitialDispatch: false,
+    runtimeBinding: {
+      version: "codeops.runtime-binding/v1",
+      requirementDigest: `sha256:${"6".repeat(64)}`,
+      compatibilityPolicyRevision: "policy-7",
+      selectedProfileId: "standard-v1",
+      selectedReleaseDigest: `sha256:${"7".repeat(64)}`,
+     selectedCapabilityDigest: `sha256:${"8".repeat(64)}`,
+      selectedProfile: { version: "codeops.runtime-profile/v1", profileId: "standard-v1", releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"], capabilityDigest: `sha256:${"8".repeat(64)}`, resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 }, authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true }, compatibilityPolicyRevision: "policy-7", images: { agent: `example/agent@sha256:${"a".repeat(64)}`, worker: `example/worker@sha256:${"b".repeat(64)}`, sessionGateway: `example/gateway@sha256:${"c".repeat(64)}` } },
+      selectedAt: "2026-08-04T20:00:00.000Z",
+    },
   };
 }
 
@@ -192,16 +207,20 @@ test("claims and completes one exact dispatch through the worker-only boundary",
     },
   });
 
+  const tokenOrder = [];
   const result = await transport.runOne({
     leaseMs: 300_000,
     now: () => new Date("2026-08-04T20:03:00.000Z"),
+    onClaimAuthenticated: () => tokenOrder.push("claim-authenticated"),
     execute: async (runtimeDispatch) => {
+      tokenOrder.push("execute");
       assert.deepEqual(runtimeDispatch, claim().dispatch);
       assert.equal("claimToken" in runtimeDispatch, false);
       return promptResult;
     },
   });
   assert.equal(result.disposition, "committed");
+  assert.deepEqual(tokenOrder, ["claim-authenticated", "execute"]);
   assert.equal(requests.length, 2);
   assert.equal(requests[0].init.redirect, "error");
   assert.equal(requests[0].init.headers.authorization, `Bearer ${token}`);
@@ -220,6 +239,7 @@ test("claims and completes one exact dispatch through the worker-only boundary",
 
 test("returns null without invoking the executor when no dispatch is available", async () => {
   let executed = false;
+  let authenticated = false;
   const transport = new SessionRuntimeTransport({
     gatewayOrigin: "https://gateway.example.test",
     token,
@@ -235,8 +255,54 @@ test("returns null without invoking the executor when no dispatch is available",
       executed = true;
       return completion();
     },
+    onClaimAuthenticated: () => { authenticated = true; },
   }), null);
   assert.equal(executed, false);
+  assert.equal(authenticated, false);
+});
+
+test("rejects a claim proof from another same-profile release", async () => {
+  const transport = new SessionRuntimeTransport({
+    gatewayOrigin: "https://gateway.example.test",
+    token,
+    authority,
+    fetch: async () => json({
+      version: "codeops.session-runtime-claim-response/v2",
+      claim: {
+        ...claim(),
+        runtimeBinding: {
+          ...claim().runtimeBinding,
+          selectedReleaseDigest: `sha256:${"9".repeat(64)}`,
+          selectedProfile: {
+            ...claim().runtimeBinding.selectedProfile,
+            releaseDigest: `sha256:${"9".repeat(64)}`,
+          },
+        },
+      },
+    }),
+  });
+  await assert.rejects(transport.claim(1_000), /claim proof drifted/);
+});
+
+test("classifies old and unavailable gateway claim endpoints as rollout-retryable", async () => {
+  for (const response of [
+    json({ status: "invalid-request" }, 400),
+    json({
+      version: "codeops.session-runtime-claim-response/v1",
+      claim: null,
+    }),
+  ]) {
+    const transport = new SessionRuntimeTransport({
+      gatewayOrigin: "https://gateway.example.test",
+      token,
+      authority,
+      fetch: async () => response,
+    });
+    await assert.rejects(
+      transport.claim(1_000),
+      SessionRuntimeClaimUnavailableError,
+    );
+  }
 });
 
 test("loads fresh model authority only through the hidden live claim", async () => {

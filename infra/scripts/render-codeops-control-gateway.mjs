@@ -14,7 +14,9 @@ process.stdout.write(
     controlGatewayDigest: process.env.CODEOPS_CONTROL_GATEWAY_DIGEST ?? "",
     modelProxyDigest: process.env.CODEOPS_MODEL_PROXY_DIGEST ?? "",
     agentDigest: process.env.CODEOPS_AGENT_DIGEST ?? "",
+    workerDigest: process.env.CODEOPS_SESSION_RUNTIME_WORKER_DIGEST ?? "",
     sessionGatewayDigest: process.env.CODEOPS_SESSION_GATEWAY_DIGEST ?? "",
+    runtimeReleaseDigest: process.env.CODEOPS_RUNTIME_RELEASE_DIGEST ?? "",
     kubernetesApiCidr: process.env.CODEOPS_KUBERNETES_API_CIDR ?? "",
   }),
 );

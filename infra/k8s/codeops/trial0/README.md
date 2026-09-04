@@ -201,7 +201,9 @@ HTTPS destination trustworthy.
 CODEOPS_CONTROL_GATEWAY_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_MODEL_PROXY_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_AGENT_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_SESSION_RUNTIME_WORKER_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_SESSION_GATEWAY_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_RUNTIME_RELEASE_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_KUBERNETES_API_CIDR=<api-service-ip>/32 \
   node infra/scripts/render-codeops-control-gateway.mjs \
   > "$CODEOPS_CONTROL_GATEWAY_MANIFEST"
@@ -1450,12 +1452,17 @@ or admit the Job:
 ```bash
 CODEOPS_AGENT_DIGEST=sha256:<64-lowercase-hex> \
 CODEOPS_SESSION_RUNTIME_WORKER_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_RUNTIME_PROFILE_ID=standard-v1 \
+CODEOPS_RUNTIME_RELEASE_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_RUNTIME_CAPABILITY_DIGEST=sha256:<64-lowercase-hex> \
+CODEOPS_RUNTIME_PROFILE_JSON='<exact codeops.runtime-profile/v1 JSON matching the profile, release, capability, agent, and worker inputs>' \
 CODEOPS_BASE_SHA=<40-lowercase-hex> \
 CODEOPS_BRANCH=feat/agents-ui \
 CODEOPS_LEASE_ID=<lowercase-uuid> \
 CODEOPS_REPOSITORY=https://github.com/example-org/example-repository \
 CODEOPS_RUN_ID=video-proof-1 \
 CODEOPS_SESSION_ID=ses_video_1 \
+CODEOPS_SESSION_OWNER_PRINCIPAL_ID=codeops:agents-ui \
 CODEOPS_SESSION_SUFFIX=video-1 \
 CODEOPS_WORKFLOW_ID=video-proof-1 \
   node infra/scripts/render-codeops-session-runtime-worker.mjs \

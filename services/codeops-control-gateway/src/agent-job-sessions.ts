@@ -9,6 +9,8 @@ import {
   temporalCodeOpsSessionIdentitySchema,
   trustedTemporalCodeOpsSessionIdentitySchema,
   type AgentJobDispatchRequest,
+  type RuntimeLaunchBinding,
+  type RuntimeRequirements,
 } from "@codeops/codeops-contracts";
 import { buildAgentPrompt } from "./core.js";
 import { agentJobSessionId } from "./agent-job-identity.js";
@@ -116,12 +118,17 @@ export async function projectAgentJobSessionStarted(input: {
   client: TransactionClient;
   request: AgentJobDispatchRequest;
   runId: string;
+  runtimeOwner: {
+    readonly requirements: RuntimeRequirements;
+    readonly launchBinding: RuntimeLaunchBinding;
+  };
   now?: () => Date;
 }): Promise<string | null> {
   const projected = describeAgentJobSession(input.request, input.runId);
   if (projected === null) return null;
   const now = (input.now ?? (() => new Date()))();
   const initialized = await initializeSessionFromJob(input.client, {
+    runtimeOwner: input.runtimeOwner,
     request: {
       version: "version" in projected.identity &&
           projected.identity.version === "codeops.temporal-session-identity/v2"
@@ -132,6 +139,10 @@ export async function projectAgentJobSessionStarted(input: {
       leaseId: deterministicUuid(`lease:${input.runId}`),
       holderId: `agent-job:${input.runId}`,
       ownerPrincipalId: projected.ownerPrincipalId,
+      runtimeProfileId: input.runtimeOwner.launchBinding.profile.profileId,
+      runtimeReleaseDigest: input.runtimeOwner.launchBinding.profile.releaseDigest,
+      runtimeCapabilityDigest: input.runtimeOwner.launchBinding.profile.capabilityDigest,
+      runtimeProfile: input.runtimeOwner.launchBinding.profile,
     },
     now: () => now,
   });

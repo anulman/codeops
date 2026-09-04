@@ -12,6 +12,10 @@ import {
   workspaceContextAttachmentsSchema,
   workspaceManifestSchema,
 } from "./workspace-launch.js";
+import {
+  runtimeProfileSchema,
+  type RuntimeProfile,
+} from "./runtime-profile.js";
 
 const identifier = z
   .string()
@@ -742,7 +746,38 @@ const rootSessionIdentity = <Schema extends z.ZodTypeAny>(schema: Schema) =>
     "a Job may initialize only a root session",
   );
 
-export const sessionJobInitializationRequestSchema = z.union([
+const optionalRuntimeIdentity = {
+  runtimeProfileId: identifier.optional(),
+  runtimeReleaseDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
+  runtimeCapabilityDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/).optional(),
+  runtimeProfile: runtimeProfileSchema.optional(),
+} as const;
+
+const requiredRuntimeIdentity = {
+  runtimeProfileId: identifier,
+  runtimeReleaseDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  runtimeCapabilityDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+  runtimeProfile: runtimeProfileSchema,
+} as const;
+
+function runtimeIdentityComplete(
+  value: Readonly<Record<string, unknown>>,
+): boolean {
+  const present = [
+    value.runtimeProfileId,
+    value.runtimeReleaseDigest,
+    value.runtimeCapabilityDigest,
+    value.runtimeProfile,
+  ].filter((candidate) => candidate !== undefined).length;
+  if (present === 0) return true;
+  if (present !== 4) return false;
+  const profile = value.runtimeProfile as RuntimeProfile;
+  return value.runtimeProfileId === profile.profileId &&
+    value.runtimeReleaseDigest === profile.releaseDigest &&
+    value.runtimeCapabilityDigest === profile.capabilityDigest;
+}
+
+const sessionJobLegacyInitializationRequestSchema = z.union([
   z.object({
     version: z.literal("codeops.session-job-initialization/v1"),
     sessionId: identifier,
@@ -753,7 +788,8 @@ export const sessionJobInitializationRequestSchema = z.union([
     leaseId: uuid,
     holderId: identifier,
     ownerPrincipalId: sessionOwnerPrincipalSchema,
-  }).strict(),
+    ...optionalRuntimeIdentity,
+  }).strict().refine(runtimeIdentityComplete, "runtime identity must be present as one complete tuple"),
   z.object({
     version: z.literal("codeops.session-job-initialization/v2"),
     sessionId: identifier,
@@ -761,8 +797,11 @@ export const sessionJobInitializationRequestSchema = z.union([
     leaseId: uuid,
     holderId: identifier,
     ownerPrincipalId: sessionOwnerPrincipalSchema,
-  }).strict(),
-  z.object({
+    ...optionalRuntimeIdentity,
+  }).strict().refine(runtimeIdentityComplete, "runtime identity must be present as one complete tuple"),
+]);
+
+export const sessionJobAdmittedInitializationRequestSchema = z.object({
     version: z.literal("codeops.session-job-initialization/v3"),
     admissionId: canonicalUuid,
     approvalId: canonicalUuid,
@@ -784,7 +823,33 @@ export const sessionJobInitializationRequestSchema = z.union([
       agent: z.string().regex(/^[^\s@]+@sha256:[0-9a-f]{64}$/),
       runtimeWorker: z.string().regex(/^[^\s@]+@sha256:[0-9a-f]{64}$/),
     }).strict(),
-  }).strict(),
+    ...requiredRuntimeIdentity,
+  }).strict().refine(
+    runtimeIdentityComplete,
+    "runtime identity must match its complete profile tuple",
+  );
+
+const sessionJobRootBoundInitializationRequestSchema = z.object({
+  version: z.literal("codeops.session-job-initialization/v3"),
+  sessionId: identifier,
+  identity: rootSessionIdentity(sessionIdentitySchema),
+  leaseId: uuid,
+  holderId: identifier,
+  ownerPrincipalId: sessionOwnerPrincipalSchema,
+  ...requiredRuntimeIdentity,
+}).strict().refine(
+  runtimeIdentityComplete,
+  "runtime identity must match its complete profile tuple",
+);
+
+export const sessionJobBoundInitializationRequestSchema = z.union([
+  sessionJobRootBoundInitializationRequestSchema,
+  sessionJobAdmittedInitializationRequestSchema,
+]);
+
+export const sessionJobInitializationRequestSchema = z.union([
+  sessionJobLegacyInitializationRequestSchema,
+  sessionJobBoundInitializationRequestSchema,
 ]);
 
 export const sessionJobInitializationResponseSchema = z

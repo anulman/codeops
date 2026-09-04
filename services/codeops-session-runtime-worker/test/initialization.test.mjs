@@ -30,6 +30,17 @@ function request() {
   };
 }
 
+function runtimeRequest() {
+  return {
+    ...request(),
+    version: "codeops.session-job-initialization/v3",
+    runtimeProfileId: "standard-v1",
+    runtimeReleaseDigest: `sha256:${"7".repeat(64)}`,
+    runtimeCapabilityDigest: `sha256:${"8".repeat(64)}`,
+    runtimeProfile: { version: "codeops.runtime-profile/v1", profileId: "standard-v1", releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"], capabilityDigest: `sha256:${"8".repeat(64)}`, resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 }, authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true }, compatibilityPolicyRevision: "policy-7", images: { agent: `example/agent@sha256:${"a".repeat(64)}`, worker: `example/worker@sha256:${"b".repeat(64)}`, sessionGateway: `example/gateway@sha256:${"c".repeat(64)}` } },
+  };
+}
+
 function capabilities() {
   return [
     "prompt", "respond_permission", "cancel", "checkpoint", "hibernate",
@@ -132,6 +143,101 @@ test("initializes one exact root session through the Job-only bearer", async () 
   assert.deepEqual(calls[0].body, request());
 });
 
+test("never downgrades a bound initialization after an exact invalid request", async () => {
+  const bodies = [];
+  const initializer = new SessionJobInitializer({
+    gatewayOrigin: "http://codeops-control-gateway:8080",
+    token,
+    fetch: async (_url, init) => {
+      const body = JSON.parse(init.body);
+      bodies.push(body);
+      return json({ status: "invalid-request" }, 400);
+    },
+  });
+  await assert.rejects(
+    initializer.initialize(runtimeRequest()),
+    SessionRuntimeTransportError,
+  );
+  assert.deepEqual(bodies, [runtimeRequest()]);
+});
+
+test("uses the runtime tuple without retry through a new gateway", async () => {
+  const calls = [];
+  const initializer = new SessionJobInitializer({
+    gatewayOrigin: "http://codeops-control-gateway:8080",
+    token,
+    fetch: async (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) });
+      return json(response());
+    },
+  });
+  assert.equal((await initializer.initialize(runtimeRequest())).disposition, "created");
+  assert.deepEqual(calls, [{
+    url: "http://codeops-control-gateway:8080/v2/session-jobs/initializations",
+    body: runtimeRequest(),
+  }]);
+});
+
+test("retries the exact bound request across old and new gateway replicas", async () => {
+  const calls = [];
+  const initializer = new SessionJobInitializer({
+    gatewayOrigin: "http://codeops-control-gateway:8080",
+    token,
+    retryDelaysMs: [0, 0],
+    fetch: async (url, init) => {
+      calls.push({ url, body: JSON.parse(init.body) });
+      return calls.length < 3
+        ? json({ status: "not-found" }, 404)
+        : json(response());
+    },
+  });
+  assert.equal((await initializer.initialize(runtimeRequest())).disposition, "created");
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every(({ url }) =>
+    url === "http://codeops-control-gateway:8080/v2/session-jobs/initializations"));
+  assert.ok(calls.every(({ body }) =>
+    JSON.stringify(body) === JSON.stringify(runtimeRequest())));
+});
+
+test("recovers an ambiguous created request through the idempotent duplicate", async () => {
+  const bodies = [];
+  const initializer = new SessionJobInitializer({
+    gatewayOrigin: "https://gateway.example.test",
+    token,
+    retryDelaysMs: [0],
+    fetch: async (_url, init) => {
+      bodies.push(JSON.parse(init.body));
+      if (bodies.length === 1) throw new TypeError("response connection closed");
+      return json({ ...response(), disposition: "duplicate" });
+    },
+  });
+  assert.equal((await initializer.initialize(runtimeRequest())).disposition, "duplicate");
+  assert.deepEqual(bodies, [runtimeRequest(), runtimeRequest()]);
+});
+
+test("fails closed after old-only replicas and recovers on a later exact attempt", async () => {
+  const bodies = [];
+  let rolledOut = false;
+  const initializer = new SessionJobInitializer({
+    gatewayOrigin: "https://gateway.example.test",
+    token,
+    retryDelaysMs: [],
+    fetch: async (_url, init) => {
+      bodies.push(JSON.parse(init.body));
+      return rolledOut
+        ? json({ ...response(), disposition: "duplicate" })
+        : json({ status: "not-found" }, 404);
+    },
+  });
+  await assert.rejects(
+    initializer.initialize(runtimeRequest()),
+    SessionRuntimeTransportError,
+  );
+  rolledOut = true;
+  assert.equal((await initializer.initialize(runtimeRequest())).disposition, "duplicate");
+  assert.deepEqual(bodies, [runtimeRequest(), runtimeRequest()]);
+});
+
 test("rejects a valid-looking response that drifts from the Job root", async () => {
   const initializer = new SessionJobInitializer({
     gatewayOrigin: "https://gateway.example.test",
@@ -229,6 +335,10 @@ function admittedRequest() {
     release: "v0.5.0-alpha.58", images: {
       agent: `registry.example/agent@sha256:${"a".repeat(64)}`,
       runtimeWorker: `registry.example/worker@sha256:${"b".repeat(64)}` },
+    runtimeProfileId: runtimeRequest().runtimeProfileId,
+    runtimeReleaseDigest: runtimeRequest().runtimeReleaseDigest,
+    runtimeCapabilityDigest: runtimeRequest().runtimeCapabilityDigest,
+    runtimeProfile: runtimeRequest().runtimeProfile,
     attachment: { ...descriptor, content: bytes.toString("base64") } };
 }
 

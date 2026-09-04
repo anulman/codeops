@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { parseAllDocuments } from "yaml";
@@ -12,6 +13,8 @@ const grants = await readFile(
   new URL("../k8s/codeops/trial0/session-runtime-worker-grants.sql", import.meta.url),
   "utf8",
 );
+const capabilities = ["acp"];
+const capabilityDigest = `sha256:${createHash("sha256").update(JSON.stringify(capabilities)).digest("hex")}`;
 const input = {
   agentDigest: `sha256:${"a".repeat(64)}`,
   workerDigest: `sha256:${"b".repeat(64)}`,
@@ -20,6 +23,24 @@ const input = {
   leaseId: "11111111-1111-4111-8111-111111111111",
   repository: "https://github.com/example-org/example-repository",
   runId: "video-proof-1",
+  runtimeProfileId: "standard-v1",
+  runtimeReleaseDigest: `sha256:${"7".repeat(64)}`,
+  runtimeCapabilityDigest: capabilityDigest,
+  runtimeProfile: {
+    version: "codeops.runtime-profile/v1",
+    profileId: "standard-v1",
+    releaseDigest: `sha256:${"7".repeat(64)}`,
+    capabilities,
+    capabilityDigest,
+    resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 },
+    authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+    compatibilityPolicyRevision: "compatible-substitution-v1",
+    images: {
+      agent: `ghcr.io/anulman/codeops/agent@sha256:${"a".repeat(64)}`,
+      worker: `ghcr.io/anulman/codeops/session-runtime-worker@sha256:${"b".repeat(64)}`,
+      sessionGateway: `ghcr.io/anulman/codeops/session-gateway@sha256:${"c".repeat(64)}`,
+    },
+  },
   sessionId: "ses_video_1",
   ownerPrincipalId: "codeops:agents-ui",
   sessionSuffix: "video-1",
@@ -29,6 +50,22 @@ const input = {
 function resources(source = template, values = input) {
   return parseAllDocuments(renderSessionRuntimeWorkerManifest(source, values))
     .map((document) => document.toJS());
+}
+
+function effectiveResources(pod, key) {
+  const quantity = (value) => value.endsWith("m")
+    ? Number(value.slice(0, -1))
+    : Number(value.slice(0, -2)) * (value.endsWith("Gi") ? 1_024 : 1);
+  const names = ["cpu", "memory", "ephemeral-storage"];
+  const application = Object.fromEntries(names.map((name) => [
+    name,
+    pod.containers.reduce((total, container) => total + quantity(container.resources[key][name]), 0),
+  ]));
+  return Object.fromEntries(names.map((name) => [
+    name,
+    Math.max(application[name], ...pod.initContainers.map((container) =>
+      quantity(container.resources[key][name]))),
+  ]));
 }
 
 test("packages one immutable non-retrying disposable session Job", () => {
@@ -49,6 +86,11 @@ test("packages one immutable non-retrying disposable session Job", () => {
     "-e",
     "process.exit(require('node:fs').existsSync('/run/codeops/ready') ? 0 : 1)",
   ]);
+  const runtimeIdentity = Object.fromEntries(worker.env.map((entry) => [entry.name, entry.value]));
+  assert.equal(runtimeIdentity.CODEOPS_RUNTIME_PROFILE_ID, input.runtimeProfileId);
+  assert.equal(runtimeIdentity.CODEOPS_RUNTIME_RELEASE_DIGEST, input.runtimeReleaseDigest);
+  assert.equal(runtimeIdentity.CODEOPS_RUNTIME_CAPABILITY_DIGEST, input.runtimeCapabilityDigest);
+  assert.equal(job.metadata.annotations["codeops.example/runtime-release-digest"], input.runtimeReleaseDigest);
   assert.deepEqual(
     [...pod.initContainers, ...pod.containers].map((container) => container.image),
     [
@@ -113,6 +155,50 @@ test("denies ingress and permits only proof gateway, proof database, model proxy
   assert.equal(policy.spec.egress[2].to[0].podSelector.matchLabels["app.kubernetes.io/name"], "codeops-model-proxy");
 });
 
+test("renders exact profile resource and ephemeral volume bounds", () => {
+  const pod = resources().find((value) => value.kind === "Job").spec.template.spec;
+  const builder = pod.initContainers.find(({ name }) => name === "workspace-builder");
+  for (const container of [...pod.initContainers, ...pod.containers]) {
+    assert.deepEqual(Object.keys(container.resources.requests).sort(), ["cpu", "ephemeral-storage", "memory"]);
+    assert.deepEqual(Object.keys(container.resources.limits).sort(), ["cpu", "ephemeral-storage", "memory"]);
+  }
+  assert.deepEqual(
+    pod.containers.find(({ name }) => name === "coding-agent").resources.limits,
+    { cpu: "2000m", memory: "6144Mi", "ephemeral-storage": "4096Mi" },
+  );
+  assert.deepEqual(effectiveResources(pod, "requests"), {
+    cpu: 600,
+    memory: 1_280,
+    "ephemeral-storage": 1_280,
+  });
+  assert.deepEqual(effectiveResources(pod, "limits"), {
+    cpu: input.runtimeProfile.resources.cpuMillis,
+    memory: input.runtimeProfile.resources.memoryMiB,
+    "ephemeral-storage": input.runtimeProfile.resources.ephemeralStorageMiB,
+  });
+  assert.equal(builder.resources.requests["ephemeral-storage"], "1280Mi");
+  assert.equal(builder.resources.limits["ephemeral-storage"], "5120Mi");
+  assert.equal(pod.volumes.find(({ name }) => name === "workspace").emptyDir.sizeLimit, "5120Mi");
+});
+
+test("rejects incomplete, unbounded, and restricted runtime profiles", () => {
+  assert.throws(() => resources(template, { ...input, runtimeProfile: { ...input.runtimeProfile, extra: true } }), /complete trusted schema/);
+  assert.throws(() => resources(template, { ...input, runtimeProfile: {
+    ...input.runtimeProfile,
+    resources: { cpuMillis: 1200, memoryMiB: 1800, ephemeralStorageMiB: 1800 },
+  } }), /cannot bound coding-agent/);
+  for (const authority of [
+    { workspaceAccess: "read-only" },
+    { publicNetwork: false },
+    { brokeredProviderEffects: false },
+  ]) {
+    assert.throws(() => resources(template, { ...input, runtimeProfile: {
+      ...input.runtimeProfile,
+      authority: { ...input.runtimeProfile.authority, ...authority },
+    } }), /does not render authority denied/);
+  }
+});
+
 test("rejects mutable images, unsafe identity, broad authority, and resource drift", () => {
   for (const patch of [
     { workerDigest: "latest" },
@@ -125,6 +211,9 @@ test("rejects mutable images, unsafe identity, broad authority, and resource dri
     { sessionId: `s${"x".repeat(63)}` },
     { sessionSuffix: "UPPER" },
     { sessionSuffix: `s${"x".repeat(40)}` },
+    { runtimeProfileId: " unsafe" },
+    { runtimeCapabilityDigest: `sha256:${"A".repeat(64)}` },
+    { workerDigest: `sha256:${"d".repeat(64)}` },
   ]) {
     assert.throws(() => renderSessionRuntimeWorkerManifest(template, { ...input, ...patch }));
   }

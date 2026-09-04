@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -11,6 +11,7 @@ import {
 import {
   authenticateBearer,
   buildAgentPrompt,
+  claimRequest,
   createRunIdentity,
   loadGitHubReviewComments,
   parseCheckpointLogs,
@@ -19,7 +20,7 @@ import {
   readRetainedResult,
   resolveGitHubBranchHead,
   resolveGitHubPullRequestHead,
-  retainCheckpoint,
+  retainCheckpoint as retainCheckpointBase,
 } from "../dist/core.js";
 import { assertRunResources, buildRunResources } from "../dist/resources.js";
 
@@ -29,6 +30,85 @@ const modelAuth = {
   signingKey: "m".repeat(64),
   issuedAt: new Date("2026-08-09T17:00:00.000Z"),
 };
+const runtimeProfile = {
+  version: "codeops.runtime-profile/v1",
+  profileId: "standard-v1",
+  releaseDigest: `sha256:${"7".repeat(64)}`,
+  capabilities: ["acp"],
+  capabilityDigest: `sha256:${createHash("sha256").update(JSON.stringify(["acp"])).digest("hex")}`,
+  resources: { cpuMillis: 3_000, memoryMiB: 7_168, ephemeralStorageMiB: 5_120 },
+  authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "compatible-substitution-v1",
+  images: {
+    agent: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+    worker: `ghcr.io/a/worker@sha256:${"e".repeat(64)}`,
+    sessionGateway: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+  },
+};
+const runtimeRequirements = {
+  version: "codeops.runtime-requirements/v1",
+  capabilities: ["acp"],
+  minimumResources: {
+    cpuMillis: 600,
+    memoryMiB: 1_280,
+    ephemeralStorageMiB: 1_280,
+  },
+  requiredAuthority: runtimeProfile.authority,
+  maximumAuthority: runtimeProfile.authority,
+  compatibilityPolicyRevision: runtimeProfile.compatibilityPolicyRevision,
+};
+const runtimeLaunchBinding = {
+  version: "codeops.runtime-launch-binding/v1",
+  requirementDigest: `sha256:${"6".repeat(64)}`,
+  profile: runtimeProfile,
+  selectedAt: "2026-08-09T17:00:00.000Z",
+};
+const retainCheckpoint = (input) => retainCheckpointBase({
+  ...input,
+  runtimeLaunchBinding,
+});
+
+test("replays an Agent Job from its durable runtime binding across a release rollover", async () => {
+  const rootDirectory = await mkdtemp(path.join(os.tmpdir(), "codeops-runtime-binding-"));
+  const identity = createRunIdentity(request);
+  try {
+    assert.deepEqual(await claimRequest({
+      rootDirectory,
+      request,
+      ...identity,
+      runtimeLaunchBinding,
+    }), runtimeLaunchBinding);
+    const replacement = {
+      ...runtimeLaunchBinding,
+      profile: {
+        ...runtimeLaunchBinding.profile,
+        releaseDigest: `sha256:${"9".repeat(64)}`,
+        images: {
+          agent: `ghcr.io/a/agent@sha256:${"9".repeat(64)}`,
+          worker: `ghcr.io/a/worker@sha256:${"9".repeat(64)}`,
+          sessionGateway: `ghcr.io/a/gateway@sha256:${"9".repeat(64)}`,
+        },
+      },
+    };
+    assert.deepEqual(await claimRequest({
+      rootDirectory,
+      request,
+      ...identity,
+      runtimeLaunchBinding: replacement,
+    }), runtimeLaunchBinding);
+    await assert.rejects(claimRequest({
+      rootDirectory,
+      request,
+      ...identity,
+      runtimeLaunchBinding: {
+        ...replacement,
+        requirementDigest: `sha256:${"5".repeat(64)}`,
+      },
+    }), /runtime requirement drift/);
+  } finally {
+    await rm(rootDirectory, { recursive: true, force: true });
+  }
+});
 
 const projectContext = createProjectContext({
   version: "codeops.project-context/v1",
@@ -556,6 +636,8 @@ test("delivers immutable ticket and sibling decision context to coding jobs", ()
       repositoryUrl: "https://github.com/example-org/example-repository",
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      runtimeProfile,
+      runtimeRequirements,
       repositoryReadToken: "repo-token",
       modelAuth,
     },
@@ -563,6 +645,20 @@ test("delivers immutable ticket and sibling decision context to coding jobs", ()
   );
   assert.doesNotThrow(() => assertRunResources(resources));
   const job = resources.find((resource) => resource.kind === "Job");
+  const sessionGateway = job.spec.template.spec.containers.find(
+    ({ name }) => name === "session-gateway",
+  );
+  const codingAgent = job.spec.template.spec.containers.find(
+    ({ name }) => name === "coding-agent",
+  );
+  assert.deepEqual(sessionGateway.resources, {
+    requests: { cpu: "100m", memory: "256Mi", "ephemeral-storage": "256Mi" },
+    limits: { cpu: "1000m", memory: "1024Mi", "ephemeral-storage": "1024Mi" },
+  });
+  assert.deepEqual(codingAgent.resources, {
+    requests: { cpu: "500m", memory: "1024Mi", "ephemeral-storage": "1024Mi" },
+    limits: { cpu: "2000m", memory: "6144Mi", "ephemeral-storage": "4096Mi" },
+  });
   assert.equal(
     job.spec.template.spec.volumes.find((volume) => volume.name === "temp")
       .emptyDir.sizeLimit,
@@ -587,6 +683,115 @@ test("delivers immutable ticket and sibling decision context to coding jobs", ()
       .find((volume) => volume.name === "run-input")
       .secret.items.some((item) => item.path === "coding-request.json"),
   );
+});
+
+test("rejects an Agent Job profile that cannot supply its runtime requirements", () => {
+  assert.throws(() => buildRunResources(
+    {
+      namespace: "codeops-trial",
+      ...createRunIdentity(codingDispatch),
+      repositoryUrl: "https://github.com/example-org/example-repository",
+      agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
+      runtimeProfile: {
+        ...runtimeProfile,
+        resources: { ...runtimeProfile.resources, memoryMiB: 1_279 },
+      },
+      runtimeRequirements,
+      repositoryReadToken: "repo-token",
+      modelAuth,
+    },
+    codingDispatch,
+  ), /does not supply runtime requirements/);
+});
+
+test("does not fail open for a lower-authority compatible Agent Job profile", () => {
+  const input = {
+    namespace: "codeops-trial",
+    ...createRunIdentity(codingDispatch),
+    repositoryUrl: "https://github.com/example-org/example-repository",
+    agentImage: runtimeProfile.images.agent,
+    runtimeRequirements,
+    repositoryReadToken: "repo-token",
+    modelAuth,
+  };
+  const readOnlyProfile = structuredClone(runtimeProfile);
+  readOnlyProfile.authority.workspaceAccess = "read-only";
+  const readOnlyRequirements = structuredClone(runtimeRequirements);
+  readOnlyRequirements.requiredAuthority.workspaceAccess = "read-only";
+  const readOnlyJob = buildRunResources({
+    ...input,
+    runtimeProfile: readOnlyProfile,
+    runtimeRequirements: readOnlyRequirements,
+  }, codingDispatch).find((resource) => resource.kind === "Job");
+  for (const container of readOnlyJob.spec.template.spec.containers) {
+    assert.equal(
+      container.volumeMounts.find(({ mountPath }) => mountPath === "/workspace")
+        ?.readOnly,
+      true,
+    );
+  }
+
+  for (const [authority, message] of [
+    ["publicNetwork", /does not authorize Agent Job public network/],
+    ["brokeredProviderEffects", /does not authorize Agent Job provider effects/],
+  ]) {
+    const reducedProfile = structuredClone(runtimeProfile);
+    reducedProfile.authority[authority] = false;
+    assert.throws(
+      () => buildRunResources({ ...input, runtimeProfile: reducedProfile }, codingDispatch),
+      message,
+    );
+  }
+});
+
+test("binds workspace-builder ephemeral storage to the selected profile", () => {
+  const boundedRequirements = structuredClone(runtimeRequirements);
+  boundedRequirements.minimumResources.ephemeralStorageMiB = 1_537;
+  const boundedProfile = structuredClone(runtimeProfile);
+  boundedProfile.resources.ephemeralStorageMiB = 5_377;
+  const resources = buildRunResources({
+    namespace: "codeops-trial",
+    ...createRunIdentity(codingDispatch),
+    repositoryUrl: "https://github.com/example-org/example-repository",
+    agentImage: boundedProfile.images.agent,
+    runtimeProfile: boundedProfile,
+    runtimeRequirements: boundedRequirements,
+    repositoryReadToken: "repo-token",
+    modelAuth,
+  }, codingDispatch);
+  const builder = resources.find((resource) => resource.kind === "Job")
+    .spec.template.spec.initContainers.find(({ name }) => name === "workspace-builder");
+  assert.deepEqual(builder.resources, {
+    requests: { cpu: "100m", memory: "128Mi", "ephemeral-storage": "1537Mi" },
+    limits: { cpu: "500m", memory: "512Mi", "ephemeral-storage": "5377Mi" },
+  });
+});
+
+test("rejects sidecar subtraction that would invert Agent Job requests and limits", () => {
+  const requirements = structuredClone(runtimeRequirements);
+  requirements.minimumResources = {
+    cpuMillis: 1200,
+    memoryMiB: 1800,
+    ephemeralStorageMiB: 1800,
+  };
+  const profile = structuredClone(runtimeProfile);
+  profile.resources = { ...requirements.minimumResources };
+  const input = {
+    namespace: "codeops-trial",
+    ...createRunIdentity(codingDispatch),
+    repositoryUrl: "https://github.com/example-org/example-repository",
+    agentImage: profile.images.agent,
+    runtimeProfile: profile,
+    runtimeRequirements: requirements,
+    repositoryReadToken: "repo-token",
+    modelAuth,
+  };
+  assert.throws(() => buildRunResources(input, codingDispatch), /resource-bound-unsatisfied/);
+  profile.resources = { cpuMillis: 2100, memoryMiB: 2568, ephemeralStorageMiB: 2568 };
+  const job = buildRunResources({ ...input, runtimeProfile: profile }, codingDispatch)
+    .find(({ kind }) => kind === "Job");
+  const agent = job.spec.template.spec.containers.find(({ name }) => name === "coding-agent");
+  assert.deepEqual(agent.resources.requests, agent.resources.limits);
 });
 
 test("critic prompt keeps an empty fast-follow pass inside the strict review schema", () => {
@@ -677,6 +882,8 @@ test("binds adopted pull-request Agent tokens to their durable session budget", 
     repositoryUrl: "https://github.com/example-org/example-repository",
     agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
     sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+    runtimeProfile,
+    runtimeRequirements,
     repositoryReadToken: "repo-token",
     modelAuth,
   }, adopted);
@@ -766,6 +973,8 @@ test("retains passing coding evidence and mounts the exact cumulative patch for 
         repositoryUrl: "https://github.com/example-org/example-repository",
         agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
         sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+        runtimeProfile,
+        runtimeRequirements,
         repositoryReadToken: "repo-token",
         modelAuth,
         candidate,
@@ -1183,19 +1392,28 @@ test("retains one idempotent digest-bound result", async () => {
       retained,
     });
     assert.deepEqual(
-      await readRetainedResult({ rootDirectory, ...identity }),
+      await readRetainedResult({ rootDirectory, request, ...identity }),
       result,
     );
+    const directory = path.join(rootDirectory, "agent-runs", identity.runId);
+    const resultPath = path.join(directory, "result.json");
+    const driftedResult = structuredClone(result);
+    driftedResult.researchResult.report.requestId = "another-research-request";
+    await writeFile(resultPath, `${JSON.stringify(driftedResult, null, 2)}\n`);
+    await assert.rejects(
+      readRetainedResult({ rootDirectory, request, ...identity }),
+      /research persona identity|terminal evidence drifted/,
+    );
+    await writeFile(resultPath, `${JSON.stringify(result, null, 2)}\n`);
+    await writeFile(path.join(directory, "changes.patch"), "drift");
+    await assert.rejects(
+      readRetainedResult({ rootDirectory, request, ...identity }),
+      /checkpoint evidence drifted/,
+    );
     assert.equal(
-      await readFile(
-        path.join(
-          rootDirectory,
-          "agent-runs",
-          identity.runId,
-          "changes.patch",
-        ),
-      ).then((value) => value.length),
-      0,
+      await readFile(path.join(directory, "changes.patch")).then((value) =>
+        value.toString("utf8")),
+      "drift",
     );
   } finally {
     await rm(rootDirectory, { recursive: true, force: true });
@@ -1211,6 +1429,8 @@ test("builds only the fixed tokenless run resources", () => {
       repositoryUrl: "https://github.com/example-org/example-repository",
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      runtimeProfile,
+      runtimeRequirements,
       repositoryReadToken: "repo-token",
       modelAuth,
     },
@@ -1503,6 +1723,8 @@ test("rejects model proxy token projection and lifecycle mutations", () => {
       repositoryUrl: "https://github.com/example-org/example-repository",
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      runtimeProfile,
+      runtimeRequirements,
       repositoryReadToken: "repo-token",
       modelAuth,
     },
@@ -1718,6 +1940,8 @@ test("builds Agent Jobs from portable chart runtime identity", () => {
       repositoryUrl: "https://github.com/example-org/example-repository",
       agentImage: `ghcr.io/a/agent@sha256:${"c".repeat(64)}`,
       sessionGatewayImage: `ghcr.io/a/gateway@sha256:${"d".repeat(64)}`,
+      runtimeProfile,
+      runtimeRequirements,
       repositoryReadToken: "repo-token",
       imagePullSecrets: [{ name: "team-a-registry" }],
       nodeSelector: { "codeops.dev/operator": "true" },

@@ -111,6 +111,55 @@ test("binds a root Job initialization request to one created snapshot", () => {
   );
 });
 
+test("requires one complete exact runtime tuple at bound initialization version 3", () => {
+  const profile = {
+    version: "codeops.runtime-profile/v1",
+    profileId: "standard-v1",
+    releaseDigest: `sha256:${"7".repeat(64)}`,
+    capabilities: ["acp"],
+    capabilityDigest: `sha256:${"8".repeat(64)}`,
+    resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 },
+    authority: {
+      workspaceAccess: "bounded-writes",
+      publicNetwork: true,
+      brokeredProviderEffects: true,
+    },
+    compatibilityPolicyRevision: "policy-7",
+    images: {
+      agent: `example/agent@sha256:${"a".repeat(64)}`,
+      worker: `example/worker@sha256:${"b".repeat(64)}`,
+      sessionGateway: `example/gateway@sha256:${"c".repeat(64)}`,
+    },
+  };
+  const request = {
+    version: "codeops.session-job-initialization/v3",
+    sessionId,
+    identity: snapshot().identity,
+    leaseId,
+    holderId: "job:bound-runtime",
+    ownerPrincipalId: "access:aidan@example.com",
+    runtimeProfileId: profile.profileId,
+    runtimeReleaseDigest: profile.releaseDigest,
+    runtimeCapabilityDigest: profile.capabilityDigest,
+    runtimeProfile: profile,
+  };
+  assert.deepEqual(sessionJobInitializationRequestSchema.parse(request), request);
+  for (const field of [
+    "runtimeProfileId",
+    "runtimeReleaseDigest",
+    "runtimeCapabilityDigest",
+    "runtimeProfile",
+  ]) {
+    const incomplete = { ...request };
+    delete incomplete[field];
+    assert.throws(() => sessionJobInitializationRequestSchema.parse(incomplete));
+  }
+  assert.throws(() => sessionJobInitializationRequestSchema.parse({
+    ...request,
+    runtimeReleaseDigest: `sha256:${"9".repeat(64)}`,
+  }));
+});
+
 test("binds a runtime terminal fact to exact Kubernetes and Session identity", () => {
   const observation = sessionRuntimeTerminalObservationSchema.parse({
     version: "codeops.session-runtime-terminal-observation/v1",

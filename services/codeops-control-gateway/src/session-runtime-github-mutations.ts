@@ -21,9 +21,11 @@ import {
   ClaimedDispatchAuthorityConflictError,
   ClaimedDispatchAuthorityNotFoundError,
   loadClaimedDispatchAuthority,
+  assertBrokeredProviderEffects,
   selectClaimedWorkspaceSource,
   validateClaimedDispatchAuthority,
   type ClaimedDispatchAuthority,
+  type ClaimedDispatchRow,
 } from "./claimed-dispatch-authority.js";
 import {
   decodeProviderResponseText,
@@ -62,13 +64,7 @@ interface StoredMutationRow extends Record<string, unknown> {
   readonly provider_effect_marker: unknown;
 }
 
-interface LockedMutationDispatchRow extends Record<string, unknown> {
-  readonly dispatch_json: unknown;
-  readonly status: unknown;
-  readonly claim_token: unknown;
-  readonly claimed_by: unknown;
-  readonly claim_expires_at: unknown;
-  readonly owner_principal_id: unknown;
+interface LockedMutationDispatchRow extends ClaimedDispatchRow {
   readonly admission_id: unknown;
 }
 
@@ -187,6 +183,7 @@ async function loadMutationAuthority(
       claimToken: input.claimToken,
       now: () => input.now,
     });
+    assertBrokeredProviderEffects(authority);
     const identity = authority.snapshot.identity;
     if (
       "version" in identity &&
@@ -319,7 +316,12 @@ async function authorizeSessionRuntimeGitHubMutationTransaction(
   const lockedDispatch = await client.query<LockedMutationDispatchRow>(
     `SELECT outbox.dispatch_json, outbox.status, outbox.claim_token,
             outbox.claimed_by, outbox.claim_expires_at,
-            session.owner_principal_id, outbox.admission_id
+            outbox.runtime_binding_json, outbox.runtime_claim_protocol,
+            codeops.session_runtime_owner_binding(outbox.session_id)
+              AS owner_runtime_binding_json,
+            session.session_id, session.snapshot_json->'identity'
+              AS session_identity_json, session.owner_principal_id,
+            session.legacy_runtime_worker_compatible, outbox.admission_id
        FROM codeops.session_runtime_outbox AS outbox
        JOIN codeops.sessions AS session ON session.session_id = outbox.session_id
       WHERE outbox.dispatch_id = $1

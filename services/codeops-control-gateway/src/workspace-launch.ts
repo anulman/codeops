@@ -1,7 +1,10 @@
 import { createHash, randomUUID } from "node:crypto";
 import {
   canonicalJsonText,
+  runtimeLaunchBindingSchema,
+  runtimeRequirementsSchema,
   sessionPolicyForMode,
+  sha256CanonicalJsonDigest,
   workspaceLaunchRequestSchema,
   workspaceLaunchSchema,
   workspaceManifestSchema,
@@ -52,9 +55,12 @@ export async function admitWorkspaceLaunch(input: {
   readonly principalId: string;
   readonly resolver: WorkspaceSourceResolver;
   readonly store: WorkspaceLaunchStore;
+  readonly runtimeRequirements: unknown;
   readonly now?: () => Date;
 }): Promise<WorkspaceLaunch> {
   const request = workspaceLaunchRequestSchema.parse(input.request);
+  const runtimeRequirements = runtimeRequirementsSchema.parse(input.runtimeRequirements);
+  const runtimeRequirementDigest = sha256CanonicalJsonDigest(runtimeRequirements);
   let contextAttachments;
   try {
     contextAttachments = workspaceContextAttachmentDescriptors(
@@ -105,6 +111,8 @@ export async function admitWorkspaceLaunch(input: {
     idempotencyKey: request.idempotencyKey,
     principalId,
     requestDigest,
+    runtimeRequirements,
+    runtimeRequirementDigest,
     policy: sessionPolicyForMode(request.mode),
     contextAttachments,
     ...(request.title === undefined ? {} : { title: request.title }),
@@ -121,6 +129,43 @@ export async function admitWorkspaceLaunch(input: {
     request,
     maximumActivePerPrincipal: MAX_ACTIVE_PER_PRINCIPAL,
     maximumActiveGlobal: MAX_ACTIVE_GLOBAL,
+  });
+}
+
+export function bindWorkspaceLaunchRuntime(
+  launch: WorkspaceLaunch,
+  rawBinding: unknown,
+  now: () => Date = () => new Date(),
+  rawLegacyRequirements?: unknown,
+): WorkspaceLaunch {
+  const runtimeRequirements = runtimeRequirementsSchema.parse(
+    launch.runtimeRequirements ?? (launch.legacyRuntimeCompatible === true
+      ? rawLegacyRequirements
+      : undefined),
+  );
+  const runtimeRequirementDigest = sha256CanonicalJsonDigest(runtimeRequirements);
+  if (
+    launch.runtimeRequirementDigest !== undefined &&
+    launch.runtimeRequirementDigest !== runtimeRequirementDigest
+  ) {
+    throw new Error("legacy workspace launch requires re-admission");
+  }
+  const runtimeLaunchBinding = runtimeLaunchBindingSchema.parse(rawBinding);
+  if (runtimeLaunchBinding.requirementDigest !== runtimeRequirementDigest) {
+    throw new Error("runtime launch binding does not match admitted requirements");
+  }
+  if (launch.runtimeLaunchBinding !== undefined) {
+    if (canonicalJsonText(launch.runtimeLaunchBinding) !== canonicalJsonText(runtimeLaunchBinding)) {
+      throw new Error("runtime launch binding is immutable");
+    }
+    return launch;
+  }
+  return workspaceLaunchSchema.parse({
+    ...launch,
+    runtimeRequirements,
+    runtimeRequirementDigest,
+    runtimeLaunchBinding,
+    updatedAt: now().toISOString(),
   });
 }
 

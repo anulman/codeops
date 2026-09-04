@@ -20,6 +20,26 @@ const token = "r".repeat(32);
 const dispatchId = "44444444-4444-4444-8444-444444444444";
 const claimToken = "55555555-5555-4555-8555-555555555555";
 const requestId = "permission-1";
+const runtimeProfile = {
+  version: "codeops.runtime-profile/v1", profileId: "standard-v1",
+  releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"],
+  capabilityDigest: `sha256:${"8".repeat(64)}`,
+  resources: { cpuMillis: 3_000, memoryMiB: 7_168, ephemeralStorageMiB: 5_120 },
+  authority: { workspaceAccess: "bounded-writes", publicNetwork: true,
+    brokeredProviderEffects: true },
+  compatibilityPolicyRevision: "compatible-substitution-v1",
+  images: { agent: `example/agent@sha256:${"9".repeat(64)}`,
+    worker: `example/worker@sha256:${"a".repeat(64)}`,
+    sessionGateway: `example/gateway@sha256:${"b".repeat(64)}` },
+};
+const runtimeBinding = {
+  version: "codeops.runtime-binding/v1", requirementDigest: `sha256:${"6".repeat(64)}`,
+  compatibilityPolicyRevision: runtimeProfile.compatibilityPolicyRevision,
+  selectedProfileId: runtimeProfile.profileId,
+  selectedReleaseDigest: runtimeProfile.releaseDigest,
+  selectedCapabilityDigest: runtimeProfile.capabilityDigest,
+  selectedProfile: runtimeProfile, selectedAt: "2026-08-04T17:30:00.000Z",
+};
 
 test("routes dispatch-bound model authority through the exact live claim", async () => {
   const calls = [];
@@ -74,6 +94,7 @@ test("routes claim renewal and maps expired authority to typed conflict", async 
     claimExpiresAt: "2026-08-04T18:10:00.000Z",
     claimCount: 1,
     isAdmittedInitialDispatch: false,
+    runtimeBinding,
   };
   const inputs = [];
   const base = {
@@ -439,6 +460,39 @@ test("authenticates one server-bound worker before claiming", async () => {
     body: { status: "unauthorized" },
   });
   assert.equal(unauthorized.claims.length, 0);
+});
+
+test("keeps the strict v1 claim response free of v2 runtime proof fields", async () => {
+  const internalClaim = {
+    dispatch: { durable: "dispatch" },
+    claimToken,
+    claimExpiresAt: "2026-08-04T20:05:00.000Z",
+    claimCount: 2,
+    runtimeBinding: {
+      version: "codeops.runtime-binding/v1",
+      requirementDigest: `sha256:${"6".repeat(64)}`,
+      compatibilityPolicyRevision: "policy-7",
+      selectedProfileId: "standard-v1",
+      selectedReleaseDigest: `sha256:${"7".repeat(64)}`,
+     selectedCapabilityDigest: `sha256:${"8".repeat(64)}`,
+      selectedProfile: { version: "codeops.runtime-profile/v1", profileId: "standard-v1", releaseDigest: `sha256:${"7".repeat(64)}`, capabilities: ["acp"], capabilityDigest: `sha256:${"8".repeat(64)}`, resources: { cpuMillis: 3000, memoryMiB: 7168, ephemeralStorageMiB: 5120 }, authority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true }, compatibilityPolicyRevision: "policy-7", images: { agent: `example/agent@sha256:${"a".repeat(64)}`, worker: `example/worker@sha256:${"b".repeat(64)}`, sessionGateway: `example/gateway@sha256:${"c".repeat(64)}` } },
+      selectedAt: "2026-08-04T20:00:00.000Z",
+    },
+  };
+  const submitted = request({ claim: async () => internalClaim });
+  assert.deepEqual(await submitted.promise, {
+    status: 200,
+    body: {
+      version: "codeops.session-runtime-claim-response/v1",
+      claim: {
+        dispatch: internalClaim.dispatch,
+        claimToken: internalClaim.claimToken,
+        claimExpiresAt: internalClaim.claimExpiresAt,
+        claimCount: internalClaim.claimCount,
+      },
+    },
+  });
+  assert.equal("runtimeBinding" in (await request({ claim: async () => internalClaim }).promise).body.claim, false);
 });
 
 test("binds a completion to the path, claim, and authenticated worker", async () => {

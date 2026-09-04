@@ -323,6 +323,9 @@ postgresql:
     namespace: ""
 
 runtime:
+  profileId: standard-v1
+  releaseDigest: ""
+  compatibilityPolicyRevision: compatible-substitution-v1
   workspaceStorageClassName: ""
   workspaceStorage: 10Gi
   workerImage:

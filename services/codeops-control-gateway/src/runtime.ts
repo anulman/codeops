@@ -4,6 +4,8 @@ import path from "node:path";
 import type {
   AgentJobDispatchRequest,
   AgentJobDispatchResult,
+  RuntimeLaunchBinding,
+  RuntimeRequirements,
 } from "@codeops/codeops-contracts";
 import {
   createRunIdentity,
@@ -20,6 +22,7 @@ import {
   retainAgentJobSecretReplacement,
   retainFailure,
 } from "./core.js";
+import { sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
 import type { KubernetesClient } from "./kubernetes.js";
 import {
   assertRunResources,
@@ -34,7 +37,8 @@ interface RuntimeConfig {
   readonly namespace: string;
   readonly repositoryRegistry: RepositoryRegistry;
   readonly agentImage: string;
-  readonly sessionGatewayImage: string;
+  readonly runtimeRequirements: RuntimeRequirements;
+  readonly runtimeLaunchBinding: RuntimeLaunchBinding;
   readonly imagePullSecrets?: readonly { readonly name: string }[];
   readonly nodeSelector?: Readonly<Record<string, string>>;
   readonly evidenceClaimName?: string;
@@ -49,7 +53,14 @@ interface RuntimeConfig {
   readonly pollIntervalMs?: number;
   readonly timeoutMs?: number;
   readonly sessionProjection?: {
-    started(request: AgentJobDispatchRequest, runId: string): Promise<void>;
+    started(
+      request: AgentJobDispatchRequest,
+      runId: string,
+      runtimeOwner: {
+        readonly requirements: RuntimeRequirements;
+        readonly launchBinding: RuntimeLaunchBinding;
+      },
+    ): Promise<void>;
     terminal(input: {
       request: AgentJobDispatchRequest;
       runId: string;
@@ -111,10 +122,29 @@ export function createAgentJobRunner(input: {
 ) => Promise<AgentJobDispatchResult> {
   return async (request, signal) => {
     signal?.throwIfAborted();
+    const identity = createRunIdentity(request);
+    const retained = await readRetainedResult({
+      rootDirectory: input.config.evidenceRoot,
+      request,
+      ...identity,
+    });
+    const runtimeLaunchBinding = retained === null
+      ? await claimRequest({
+          rootDirectory: input.config.evidenceRoot,
+          request,
+          ...identity,
+          runtimeLaunchBinding: input.config.runtimeLaunchBinding,
+        })
+      : input.config.runtimeLaunchBinding;
+    if (
+      runtimeLaunchBinding.requirementDigest !== input.config.runtimeLaunchBinding.requirementDigest ||
+      runtimeLaunchBinding.requirementDigest !== sha256CanonicalJsonDigest(input.config.runtimeRequirements)
+    ) {
+      throw new Error("durable Agent Job runtime requirement drift");
+    }
     const repository = input.config.repositoryRegistry.resolve(
       dispatchRepositoryIdentity(request),
     );
-    const identity = createRunIdentity(request);
     const retainedCandidate = await readCandidatePatch({
       rootDirectory: input.config.evidenceRoot,
       request,
@@ -124,8 +154,9 @@ export function createAgentJobRunner(input: {
         namespace: input.config.namespace,
         ...identity,
         repositoryUrl: repository.repositoryUrl,
-        agentImage: input.config.agentImage,
-        sessionGatewayImage: input.config.sessionGatewayImage,
+        agentImage: runtimeLaunchBinding.profile.images.agent,
+        runtimeProfile: runtimeLaunchBinding.profile,
+        runtimeRequirements: input.config.runtimeRequirements,
         imagePullSecrets: input.config.imagePullSecrets,
         nodeSelector: input.config.nodeSelector,
         evidenceClaimName: input.config.evidenceClaimName,
@@ -146,7 +177,6 @@ export function createAgentJobRunner(input: {
       request,
       ...identity,
     });
-    await input.config.sessionProjection?.started(request, identity.runId);
     const resourceKey = (resource: Record<string, unknown>): string => {
       const metadata = resource.metadata as { readonly name?: unknown } | undefined;
       if (typeof resource.kind !== "string" || typeof metadata?.name !== "string") {
@@ -187,11 +217,8 @@ export function createAgentJobRunner(input: {
       }
       if (firstError !== undefined) throw firstError;
     };
-    const retained = await readRetainedResult({
-      rootDirectory: input.config.evidenceRoot,
-      ...identity,
-    });
-    if (retained) {
+    if (retained !== null) {
+      await cleanup();
       await input.config.sessionProjection?.terminal({
         request,
         runId: identity.runId,
@@ -199,9 +226,12 @@ export function createAgentJobRunner(input: {
         state: "completed",
         source: "retained-reconciliation",
       });
-      await cleanup();
       return retained;
     }
+    await input.config.sessionProjection?.started(request, identity.runId, {
+      requirements: input.config.runtimeRequirements,
+      launchBinding: runtimeLaunchBinding,
+    });
     let logs = "";
     let completedResponse: string | null = null;
     try {

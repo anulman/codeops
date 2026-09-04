@@ -1,4 +1,5 @@
 import { execFileSync } from "node:child_process";
+import { createHash } from "node:crypto";
 import { readFile, writeFile } from "node:fs/promises";
 import { pathToFileURL } from "node:url";
 import { stringify } from "yaml";
@@ -83,7 +84,23 @@ export async function resolveCodeOpsReleaseImages(plan, inspect) {
   values.postgresql = { image: plan.upstream.postgresql };
   values.githubController ??= {};
   values.githubController.controlPlaneSha = plan.sourceSha;
-  return { version: "codeops.release-images/v1", sourceSha: plan.sourceSha, images, values };
+  values.runtime ??= {};
+  const immutableReleaseManifest = {
+    version: "codeops.immutable-release-manifest/v1",
+    sourceSha: plan.sourceSha,
+    images,
+    upstream: { postgresql: plan.upstream.postgresql },
+  };
+  values.runtime.releaseDigest = `sha256:${createHash("sha256")
+    .update(JSON.stringify(immutableReleaseManifest))
+    .digest("hex")}`;
+  return {
+    version: "codeops.release-images/v1",
+    sourceSha: plan.sourceSha,
+    images,
+    upstream: immutableReleaseManifest.upstream,
+    values,
+  };
 }
 
 function inspectRegistry(ref) {
