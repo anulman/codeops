@@ -248,10 +248,12 @@ test("initial Job creation rejects mutating-admission configuration drift", asyn
 test("accepts reviewed API-server Job defaults but rejects other added configuration", async () => {
   const job = { apiVersion: "batch/v1", kind: "Job", metadata: expected.metadata,
     spec: { backoffLimit: 0, template: { metadata: { labels: { app: "worker" } }, spec: {
-      restartPolicy: "Never", serviceAccountName: "runtime", containers: [{ name: "worker",
+      restartPolicy: "Never", serviceAccountName: "runtime", imagePullSecrets: [],
+      containers: [{ name: "worker",
         image: `registry/worker@sha256:${"1".repeat(64)}` }], volumes: [{ name: "workspace",
         persistentVolumeClaim: { claimName: "workspace" } }] } } } };
   const response = existingResource(job, "created-job-uid");
+  delete response.spec.template.spec.imagePullSecrets;
   response.metadata.finalizers = ["batch.kubernetes.io/job-tracking"];
   Object.assign(response.spec, { completionMode: "NonIndexed", completions: 1, parallelism: 1,
     suspend: false, manualSelector: false, managedBy: "kubernetes.io/job-controller",
@@ -285,6 +287,9 @@ test("accepts reviewed API-server Job defaults but rejects other added configura
   kubernetesResourceConfigurationDigest(job));
   assert.deepEqual(cleanupMethods, ["GET", "DELETE"]);
   response.spec.template.spec.hostNetwork = true;
+  await assert.rejects(client.ensure(job, digest), KubernetesResourceIdentityDriftError);
+  delete response.spec.template.spec.hostNetwork;
+  response.spec.template.spec.imagePullSecrets = [{ name: "foreign-registry" }];
   await assert.rejects(client.ensure(job, digest), KubernetesResourceIdentityDriftError);
 });
 
