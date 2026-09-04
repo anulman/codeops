@@ -316,6 +316,14 @@ function canonicalizeServerOwnedFields(existing: Record<string, unknown>,
         value === "/dev/termination-log");
       omitIfUnsubmitted(current, submitted, "terminationMessagePolicy", (value) =>
         value === "File");
+      const currentReadinessProbe = record(current.readinessProbe);
+      const submittedReadinessProbe = record(submitted?.readinessProbe);
+      if (currentReadinessProbe !== undefined && submittedReadinessProbe !== undefined) {
+        omitIfUnsubmitted(currentReadinessProbe, submittedReadinessProbe,
+          "failureThreshold", (value) => value === 3);
+        omitIfUnsubmitted(currentReadinessProbe, submittedReadinessProbe,
+          "successThreshold", (value) => value === 1);
+      }
     }
   }
   const existingVolumes = existingPodSpec.volumes;
@@ -358,14 +366,37 @@ function observedResourceConfigurationMatches(resource: KubernetesResource,
     .update(canonicalJsonText(value)).digest("hex")}`;
   if (digest(configuration) === expectedDigest) return true;
   // For an identity-only replay or cleanup request, the desired Job body is
-  // unavailable. Check the one reviewed API-server omission as an alternate
-  // canonical shape without weakening any non-empty registry identity.
+  // unavailable. Check only reviewed API-server omissions as alternate
+  // canonical shapes without weakening non-empty registry or probe identity.
   if (resource.kind === "Job") {
-    const podSpec = record(record(record(configuration.spec)?.template)?.spec);
-    if (podSpec !== undefined && podSpec.imagePullSecrets === undefined) {
-      podSpec.imagePullSecrets = [];
-      return digest(configuration) === expectedDigest;
+    const reviewedVariants: Record<string, unknown>[] = [];
+    const withEmptyPullSecrets = structuredClone(configuration);
+    const pullSecretsPodSpec = record(record(record(withEmptyPullSecrets.spec)?.template)?.spec);
+    if (pullSecretsPodSpec !== undefined && pullSecretsPodSpec.imagePullSecrets === undefined) {
+      pullSecretsPodSpec.imagePullSecrets = [];
+      reviewedVariants.push(withEmptyPullSecrets);
     }
+    for (const base of [configuration, ...reviewedVariants]) {
+      const withoutProbeDefaults = structuredClone(base);
+      const podSpec = record(record(record(withoutProbeDefaults.spec)?.template)?.spec);
+      const containers = podSpec?.containers;
+      let changed = false;
+      if (Array.isArray(containers)) {
+        for (const value of containers) {
+          const probe = record(record(value)?.readinessProbe);
+          if (probe?.failureThreshold === 3) {
+            delete probe.failureThreshold;
+            changed = true;
+          }
+          if (probe?.successThreshold === 1) {
+            delete probe.successThreshold;
+            changed = true;
+          }
+        }
+      }
+      if (changed) reviewedVariants.push(withoutProbeDefaults);
+    }
+    return reviewedVariants.some((value) => digest(value) === expectedDigest);
   }
   return false;
 }
