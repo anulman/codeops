@@ -788,7 +788,16 @@ test("normal-role PostgreSQL binds every root and lineage producer and rejects r
        VALUES($1,1,$2,$3::jsonb,$4::timestamptz,'access:user@example.com')`,
       [idleLegacy.sessionId, leaseId, canonicalJsonText(idleLegacy), idleLegacy.updatedAt],
     );
-    const preclaimedLegacy = snapshot("older-preclaimed-root", "older-preclaimed-run");
+    const activePreclaimedLegacy = snapshot("older-preclaimed-root", "older-preclaimed-run");
+    const preclaimedLegacy = {
+      ...activePreclaimedLegacy,
+      state: "cancelled",
+      lease: {
+        leaseId, generation: 1, status: "released",
+        releasedAt: "2026-08-31T08:00:30.000Z",
+      },
+      updatedAt: "2026-08-31T08:00:30.000Z",
+    };
     const preclaimedCommand = {
       version: "codeops.session-command/v1", sessionId: preclaimedLegacy.sessionId,
       generation: 1, leaseId,
@@ -798,7 +807,7 @@ test("normal-role PostgreSQL binds every root and lineage producer and rejects r
     const preclaimedDispatch = buildSessionRuntimeDispatch({
       dispatchId: "42424242-4242-4242-8242-424242424242",
       principalId: "access:user@example.com", command: preclaimedCommand,
-      snapshot: preclaimedLegacy, dispatchedAt: "2026-08-31T08:01:00.000Z",
+      snapshot: activePreclaimedLegacy, dispatchedAt: "2026-08-31T08:01:00.000Z",
     });
     await connection.query(
       `INSERT INTO codeops.sessions
@@ -859,6 +868,12 @@ test("normal-role PostgreSQL binds every root and lineage producer and rejects r
       runtime_claim_protocol: "legacy-unproven-v1",
       runtime_binding_revision: "0",
     });
+    const migratedPreclaimedOwner = await connection.query(
+      `SELECT legacy_runtime_worker_compatible
+         FROM codeops.sessions WHERE session_id=$1`,
+      [preclaimedLegacy.sessionId],
+    );
+    assert.equal(migratedPreclaimedOwner.rows[0].legacy_runtime_worker_compatible, true);
     const markedLaunch = await connection.query(
       `SELECT launch_json->>'legacyRuntimeCompatible' AS marker
          FROM codeops.workspace_launches WHERE launch_id=$1`,
