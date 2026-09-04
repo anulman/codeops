@@ -263,7 +263,11 @@ function retryPodDependencies(pod) {
       loadSession: async () => ({
         sessionId: identity.sessionId,
         generation: 1,
-        lease: { status: "active", leaseId: identity.leaseId },
+        lease: {
+          status: "active",
+          leaseId: identity.leaseId,
+          expiresAt: "2026-08-13T13:00:00.000Z",
+        },
         identity: {
           version: "codeops.session-workspace-identity/v1",
           policy: current.policy,
@@ -431,6 +435,70 @@ test("provisions fixed resources, waits for the exact session, and sends one pro
     observedAt: now().toISOString(),
   }]);
 });
+
+function initializedSession(identity, leaseExpiresAt) {
+  return {
+    version: "codeops.session-snapshot/v1",
+    sessionId: identity.sessionId,
+    generation: 1,
+    state: "running",
+    identity: {
+      version: "codeops.session-workspace-identity/v1",
+      policy: launch.policy,
+      contextAttachments: launch.contextAttachments,
+      workspace: launch.workspace,
+      workflowId: identity.workflowId,
+      runId: identity.runId,
+      displayName: launch.title,
+      parentSessionId: null,
+      forkedAtCursor: null,
+    },
+    lease: {
+      leaseId: identity.leaseId,
+      generation: 1,
+      status: "active",
+      holderId: `session-job:${identity.sessionId}`,
+      acquiredAt: "2026-08-13T10:00:00.000Z",
+      expiresAt: leaseExpiresAt,
+    },
+    checkpoint: null,
+    pendingPermission: null,
+    eventCursor: 1,
+    capabilities: [],
+    updatedAt: now().toISOString(),
+  };
+}
+
+for (const [condition, leaseExpiresAt, runtimeStatus] of [
+  ["an expired session lease", "2026-08-13T11:59:59.000Z", { active: 1 }],
+  ["a failed runtime Job", "2026-08-13T13:00:00.000Z", {
+    conditions: [{ type: "Failed", status: "True" }],
+  }],
+]) {
+  test(`fails before prompt admission when the initialized launch has ${condition}`, async () => {
+    let current = { ...launch, state: "provisioning", materializedAt: now().toISOString() };
+    const identity = workspaceLaunchRuntimeIdentity(current);
+    let promptCalls = 0;
+    let observationCalls = 0;
+    const result = await reconcileWorkspaceLaunch(current.launchId, {
+      load: async () => ({ launch: current, request }),
+      update: async (next) => (current = next),
+      ensureResource: async (resource) => resourceBinding(resource),
+      loadSession: async () => initializedSession(identity, leaseExpiresAt),
+      loadJob: async () => ({ status: runtimeStatus }),
+      listRuntimePods: async () => [],
+      recordRuntimePodObservations: async () => { observationCalls += 1; },
+      removeResource: async () => {},
+      enqueuePrompt: async () => { promptCalls += 1; return { command: {} }; },
+      resourceConfig,
+      now,
+    });
+    assert.equal(result.state, "failed");
+    assert.equal(result.failureCode, "provisioning-failed");
+    assert.equal(promptCalls, 0);
+    assert.equal(observationCalls, 0);
+  });
+}
 
 test("keeps provisioning durable until the root session initializes", async () => {
   let current = launch;
