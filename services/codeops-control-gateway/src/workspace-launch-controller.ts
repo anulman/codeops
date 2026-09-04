@@ -424,9 +424,19 @@ export async function reconcileWorkspaceLaunch(
         "workspace launch session identity drifted from provisioning",
       );
     }
+    const reconciliationNow = (dependencies.now ?? (() => new Date()))();
+    if (
+      !Number.isFinite(Date.parse(session.lease.expiresAt)) ||
+      reconciliationNow.getTime() >= Date.parse(session.lease.expiresAt)
+    ) {
+      return terminate("provisioning-failed");
+    }
     await ensureBound(runtimeJob);
     const runtimeName = (runtimeJob.metadata as { readonly name: string }).name;
-    const observedAt = (dependencies.now ?? (() => new Date()))().toISOString();
+    if (jobState(await dependencies.loadJob(runtimeName)) === "failed") {
+      return terminate("provisioning-failed");
+    }
+    const observedAt = reconciliationNow.toISOString();
     await dependencies.recordRuntimePodObservations(
       workspaceRuntimePodObservations({
         pods: await dependencies.listRuntimePods(identity.runId),
