@@ -224,6 +224,96 @@ function omitControllerAnnotation(existing: Record<string, unknown>,
   }
 }
 
+function exactKubernetesQuantity(value: unknown, resourceName: string): bigint | undefined {
+  // The API server serializes whole CPU cores and binary byte quantities in a
+  // shorter spelling. Compare only the fixed resource classes emitted by the
+  // workspace builder; unknown Kubernetes quantity forms remain exact.
+  if (typeof value !== "string") return undefined;
+  if (resourceName === "cpu") {
+    const millicores = /^(\d+)m$/.exec(value);
+    if (millicores !== null) return BigInt(millicores[1]!);
+    const cores = /^(\d+)$/.exec(value);
+    return cores === null ? undefined : BigInt(cores[1]!) * 1_000n;
+  }
+  if (resourceName !== "memory" && resourceName !== "ephemeral-storage") return undefined;
+  const binary = /^(\d+)(Ki|Mi|Gi|Ti)$/.exec(value);
+  if (binary === null) return undefined;
+  const exponent = { Ki: 10n, Mi: 20n, Gi: 30n, Ti: 40n }[binary[2] as
+    "Ki" | "Mi" | "Gi" | "Ti"];
+  return BigInt(binary[1]!) << exponent;
+}
+
+function canonicalizeSubmittedContainerResources(existing: Record<string, unknown>,
+  expected: Record<string, unknown> | undefined): void {
+  const existingResources = record(existing.resources);
+  const expectedResources = record(expected?.resources);
+  if (existingResources === undefined || expectedResources === undefined) return;
+  for (const category of ["requests", "limits"]) {
+    const current = record(existingResources[category]);
+    const submitted = record(expectedResources[category]);
+    if (current === undefined || submitted === undefined) continue;
+    for (const [resourceName, submittedValue] of Object.entries(submitted)) {
+      const currentValue = current[resourceName];
+      if (currentValue === submittedValue) continue;
+      const currentQuantity = exactKubernetesQuantity(currentValue, resourceName);
+      const submittedQuantity = exactKubernetesQuantity(submittedValue, resourceName);
+      if (currentQuantity !== undefined && currentQuantity === submittedQuantity) {
+        current[resourceName] = submittedValue;
+      }
+    }
+  }
+}
+
+function submittedQuantityAlternative(value: unknown, resourceName: string): string | undefined {
+  if (typeof value !== "string") return undefined;
+  if (resourceName === "cpu") {
+    const cores = /^(\d+)$/.exec(value);
+    return cores === null ? undefined : `${BigInt(cores[1]!) * 1_000n}m`;
+  }
+  if (resourceName !== "memory" && resourceName !== "ephemeral-storage") return undefined;
+  const gibibytes = /^(\d+)Gi$/.exec(value);
+  return gibibytes === null ? undefined : `${BigInt(gibibytes[1]!) * 1_024n}Mi`;
+}
+
+function reviewedQuantityVariants(resource: Record<string, unknown>): Record<string, unknown>[] {
+  // Identity-only replay has the stored desired digest but not the submitted
+  // body. Enumerate a bounded set of semantically identical builder spellings
+  // so cleanup remains possible without accepting a changed resource amount.
+  let variants = [structuredClone(resource)];
+  const podSpec = record(record(record(resource.spec)?.template)?.spec);
+  const containers = podSpec?.containers;
+  if (!Array.isArray(containers)) return variants;
+  for (let containerIndex = 0; containerIndex < containers.length; containerIndex += 1) {
+    for (const category of ["requests", "limits"]) {
+      const quantities = record(record(record(containers[containerIndex])?.resources)?.[category]);
+      if (quantities === undefined) continue;
+      for (const [resourceName, value] of Object.entries(quantities)) {
+        const alternative = submittedQuantityAlternative(value, resourceName);
+        if (alternative === undefined || alternative === value) continue;
+        if (variants.length >= 256) return variants;
+        const additions: Record<string, unknown>[] = [];
+        for (const variant of variants) {
+          const variantContainers = record(record(record(variant.spec)?.template)?.spec)?.containers;
+          if (!Array.isArray(variantContainers)) continue;
+          const variantQuantities = record(record(
+            record(variantContainers[containerIndex])?.resources)?.[category]);
+          if (variantQuantities === undefined) continue;
+          const changed = structuredClone(variant);
+          const changedContainers = record(record(record(changed.spec)?.template)?.spec)?.containers;
+          if (!Array.isArray(changedContainers)) continue;
+          const changedQuantities = record(record(
+            record(changedContainers[containerIndex])?.resources)?.[category]);
+          if (changedQuantities === undefined) continue;
+          changedQuantities[resourceName] = alternative;
+          additions.push(changed);
+        }
+        variants = [...variants, ...additions];
+      }
+    }
+  }
+  return variants;
+}
+
 function canonicalizeServerOwnedFields(existing: Record<string, unknown>,
   expected: Record<string, unknown>, kind: string): void {
   const existingMetadata = record(existing.metadata);
@@ -316,6 +406,17 @@ function canonicalizeServerOwnedFields(existing: Record<string, unknown>,
         value === "/dev/termination-log");
       omitIfUnsubmitted(current, submitted, "terminationMessagePolicy", (value) =>
         value === "File");
+      canonicalizeSubmittedContainerResources(current, submitted);
+      const currentVolumeMounts = current.volumeMounts;
+      const submittedVolumeMounts = submitted?.volumeMounts;
+      if (Array.isArray(currentVolumeMounts) && Array.isArray(submittedVolumeMounts)) {
+        for (let mountIndex = 0; mountIndex < currentVolumeMounts.length; mountIndex += 1) {
+          const currentMount = record(currentVolumeMounts[mountIndex]);
+          const submittedMount = record(submittedVolumeMounts[mountIndex]);
+          if (currentMount !== undefined && currentMount.readOnly === undefined &&
+              submittedMount?.readOnly === false) currentMount.readOnly = false;
+        }
+      }
       const currentReadinessProbe = record(current.readinessProbe);
       const submittedReadinessProbe = record(submitted?.readinessProbe);
       if (currentReadinessProbe !== undefined && submittedReadinessProbe !== undefined) {
@@ -396,7 +497,29 @@ function observedResourceConfigurationMatches(resource: KubernetesResource,
       }
       if (changed) reviewedVariants.push(withoutProbeDefaults);
     }
-    return reviewedVariants.some((value) => digest(value) === expectedDigest);
+    for (const base of [configuration, ...reviewedVariants]) {
+      const withWritableSubPaths = structuredClone(base);
+      const podSpec = record(record(record(withWritableSubPaths.spec)?.template)?.spec);
+      const containers = podSpec?.containers;
+      let changed = false;
+      if (Array.isArray(containers)) {
+        for (const value of containers) {
+          const mounts = record(value)?.volumeMounts;
+          if (!Array.isArray(mounts)) continue;
+          for (const mountValue of mounts) {
+            const mount = record(mountValue);
+            if (typeof mount?.subPath === "string" && mount.subPath.length > 0 &&
+                mount.readOnly === undefined) {
+              mount.readOnly = false;
+              changed = true;
+            }
+          }
+        }
+      }
+      if (changed) reviewedVariants.push(withWritableSubPaths);
+    }
+    return [configuration, ...reviewedVariants].some((base) =>
+      reviewedQuantityVariants(base).some((value) => digest(value) === expectedDigest));
   }
   return false;
 }
