@@ -5,6 +5,7 @@ import {
   PermanentWorkspaceLaunchError,
   reconcileWorkspaceLaunch,
   workspaceLaunchRuntimeIdentity,
+  workspaceLaunchRuntimeWorkerImage,
 } from "../dist/workspace-launch-controller.js";
 
 const now = () => new Date("2026-08-13T12:00:00.000Z");
@@ -51,6 +52,66 @@ const request = {
   sources: [],
 };
 const image = `ghcr.io/anulman/codeops/image@sha256:${"c".repeat(64)}`;
+const rolloutImage = `ghcr.io/anulman/codeops/image@sha256:${"d".repeat(64)}`;
+const retryLaunch = {
+  ...launch,
+  retryRuntime: {
+    dispositionId: "22222222-2222-4222-8222-222222222222",
+    sessionId: "ses_abcdef0123456789abcdef01",
+    workflowId: "workflow-retry",
+    runId: "launch-abcdef0123456789abcdef01",
+    leaseId: "33333333-3333-4333-8333-333333333333",
+    promptIdempotencyKey: "44444444-4444-4444-8444-444444444444",
+    runtimeWorkerImage: image,
+  },
+};
+const retryLaunchWithSource = {
+  ...retryLaunch,
+  workspace: {
+    ...retryLaunch.workspace,
+    sources: [{
+      catalogKey: "codeops",
+      repository: "anulman/codeops",
+      checkoutPath: "sources/codeops",
+      requestedRef: "main",
+      resolvedSha: "1".repeat(40),
+    }],
+  },
+};
+const boundRetryLaunch = {
+  ...retryLaunch,
+  resourceBindings: {
+    sourceAuthority: {
+      uid: "uid-source-authority",
+      configDigest: `sha256:${"d".repeat(64)}`,
+    },
+  },
+};
+const boundRetryLaunchWithSource = {
+  ...retryLaunchWithSource,
+  resourceBindings: {
+    sourceAuthority: {
+      ...boundRetryLaunch.resourceBindings.sourceAuthority,
+      resourceName: `workspace-${retryLaunchWithSource.launchId.slice("launch-".length)}-source-32279f510b`,
+    },
+  },
+};
+
+test("reconstructs a crashed successor from its disposition-bound runtime image", () => {
+  const recovered = JSON.parse(JSON.stringify(retryLaunch));
+  assert.equal(workspaceLaunchRuntimeWorkerImage(recovered, image), image);
+});
+
+test("rejects live runtime image drift after a rollout", () => {
+  assert.throws(() => workspaceLaunchRuntimeWorkerImage(retryLaunch, rolloutImage),
+    /drifted from live configuration/);
+});
+
+test("rejects replica-skew while the matching replica retains stored authority", () => {
+  assert.equal(workspaceLaunchRuntimeWorkerImage(retryLaunch, image), image);
+  assert.throws(() => workspaceLaunchRuntimeWorkerImage(retryLaunch, rolloutImage),
+    PermanentWorkspaceLaunchError);
+});
 
 function resourceBinding(resource) {
   const role = resource.metadata.labels["codeops.example/resource-role"];
@@ -68,9 +129,14 @@ function resourceConfig(current, identity) {
     policy: current.policy,
     contextAttachments: current.contextAttachments,
     workspace: current.workspace,
-    sources: [],
+    sources: current.workspace.sources.map((source) => ({
+      catalogKey: source.catalogKey,
+      repositoryUrl: "https://github.com/anulman/codeops.git",
+      readToken: "github-read-token",
+    })),
     agentImage: image,
     runtimeWorkerImage: image,
+    configuredRuntimeWorkerImage: image,
     imagePullSecrets: [{ name: "registry" }],
     nodeSelector: {},
     runtimeServiceAccountName: "agents-system-runtime",
@@ -82,6 +148,154 @@ function resourceConfig(current, identity) {
     workspaceStorageSize: "10Gi",
   };
 }
+
+function driftedResourceConfig(current, identity) {
+  return {
+    ...resourceConfig(current, identity),
+    runtimeWorkerImage: current.retryRuntime?.runtimeWorkerImage ?? rolloutImage,
+    configuredRuntimeWorkerImage: rolloutImage,
+  };
+}
+
+test("cleans a source Secret after restart before failing live-image drift", async () => {
+  let sourceSecretExists = true;
+  const removed = [];
+  const result = await reconcileWorkspaceLaunch(boundRetryLaunchWithSource.launchId, {
+    load: async () => ({ launch: boundRetryLaunchWithSource, request }),
+    update: async (next) => next,
+    ensureResource: async () => assert.fail("unexpected resource ensure"),
+    loadSession: async () => assert.fail("unexpected session load"),
+    loadJob: async () => assert.fail("unexpected Job load"),
+    listRuntimePods: async () => assert.fail("unexpected Pod list"),
+    recordRuntimePodObservations: async () => assert.fail("unexpected observation"),
+    removeResource: async (resource) => {
+      removed.push(resource.metadata.name);
+      sourceSecretExists = false;
+    },
+    enqueuePrompt: async () => assert.fail("unexpected prompt"),
+    resourceConfig: driftedResourceConfig,
+    now,
+  });
+  assert.equal(result.state, "failed");
+  assert.equal(result.failureCode, "identity-conflict");
+  assert.equal(sourceSecretExists, false);
+  assert.deepEqual(removed, [
+    `workspace-${boundRetryLaunchWithSource.launchId.slice("launch-".length)}-source-32279f510b`,
+  ]);
+});
+
+test("repeats live-image-drift cleanup idempotently after a terminal update failure", async () => {
+  let current = boundRetryLaunch;
+  let sourceSecretExists = true;
+  let removeCalls = 0;
+  let failedUpdateOnce = false;
+  const dependencies = {
+    load: async () => ({ launch: current, request }),
+    update: async (next) => {
+      if (next.state === "failed" && !failedUpdateOnce) {
+        failedUpdateOnce = true;
+        throw new Error("database unavailable after cleanup");
+      }
+      return (current = next);
+    },
+    ensureResource: async () => assert.fail("unexpected resource ensure"),
+    loadSession: async () => assert.fail("unexpected session load"),
+    loadJob: async () => assert.fail("unexpected Job load"),
+    listRuntimePods: async () => assert.fail("unexpected Pod list"),
+    recordRuntimePodObservations: async () => assert.fail("unexpected observation"),
+    removeResource: async () => {
+      removeCalls += 1;
+      sourceSecretExists = false;
+    },
+    enqueuePrompt: async () => assert.fail("unexpected prompt"),
+    resourceConfig: driftedResourceConfig,
+    now,
+  };
+  await assert.rejects(
+    reconcileWorkspaceLaunch(boundRetryLaunch.launchId, dependencies),
+    /database unavailable after cleanup/,
+  );
+  assert.equal(sourceSecretExists, false);
+  assert.equal((await reconcileWorkspaceLaunch(boundRetryLaunch.launchId, dependencies)).state, "failed");
+  assert.equal(removeCalls, 2);
+});
+
+function retryPodDependencies(pod) {
+  const current = {
+    ...retryLaunch,
+    state: "provisioning",
+    materializedAt: now().toISOString(),
+  };
+  const identity = workspaceLaunchRuntimeIdentity(current);
+  return {
+    launch: current,
+    dependencies: {
+      load: async () => ({ launch: current, request }),
+      update: async (next) => next,
+      ensureResource: async () => {},
+      loadSession: async () => ({
+        sessionId: identity.sessionId,
+        generation: 1,
+        lease: { status: "active", leaseId: identity.leaseId },
+        identity: {
+          version: "codeops.session-workspace-identity/v1",
+          policy: current.policy,
+          contextAttachments: current.contextAttachments,
+          workspace: current.workspace,
+          displayName: current.title,
+        },
+      }),
+      loadJob: async () => ({ status: { active: 1 } }),
+      listRuntimePods: async () => [{
+        metadata: {
+          uid: "successor-pod",
+          labels: { "codeops.example/run-id": identity.runId },
+          ownerReferences: [{
+            apiVersion: "batch/v1",
+            kind: "Job",
+            name: `workspace-${current.launchId.slice("launch-".length)}`,
+            controller: true,
+          }],
+        },
+        spec: { containers: [{ name: "runtime-worker", image }] },
+        status: { podIP: "10.42.1.9", ...pod.status },
+      }],
+      recordRuntimePodObservations: async () => assert.fail("unexpected observation"),
+      removeResource: async () => {},
+      enqueuePrompt: async () => assert.fail("unexpected prompt"),
+      resourceConfig,
+      now,
+    },
+  };
+}
+
+test("requeues an assigned successor Pod while its startup image is absent", async () => {
+  const input = retryPodDependencies({
+    status: {
+      phase: "Pending",
+      containerStatuses: [{ name: "runtime-worker", state: { waiting: {
+        reason: "ContainerCreating",
+      } } }],
+    },
+  });
+  const result = await reconcileWorkspaceLaunch(input.launch.launchId, input.dependencies);
+  assert.equal(result.state, "provisioning");
+  assert.equal(result.attemptCount, input.launch.attemptCount + 1);
+});
+
+test("fails a terminal successor Pod whose image is absent", async () => {
+  const input = retryPodDependencies({
+    status: {
+      phase: "Failed",
+      containerStatuses: [{ name: "runtime-worker", state: { terminated: {
+        exitCode: 1,
+      } } }],
+    },
+  });
+  const result = await reconcileWorkspaceLaunch(input.launch.launchId, input.dependencies);
+  assert.equal(result.state, "failed");
+  assert.equal(result.failureCode, "provisioning-failed");
+});
 
 test("provisions fixed resources, waits for the exact session, and sends one prompt", async () => {
   let current = launch;

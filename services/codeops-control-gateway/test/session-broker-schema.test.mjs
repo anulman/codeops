@@ -81,6 +81,39 @@ const admittedChildMaterializationsRevertUrl = new URL(
   "../sql/admitted-child-materializations-v1-revert.sql", import.meta.url,
 );
 const workItemAdmissionSourceUrl = new URL("../src/work-item-admission.ts", import.meta.url);
+const workItemRetryUrl = new URL("../sql/work-item-retry-v1.sql", import.meta.url);
+const workItemRetryRevertUrl = new URL("../sql/work-item-retry-v1-revert.sql", import.meta.url);
+const workItemRetrySourceUrl = new URL("../src/work-item-retry.ts", import.meta.url);
+
+test("defines bounded immutable retry lineage with a fail-closed revert", async () => {
+  const sql = await readFile(workItemRetryUrl, "utf8");
+  const revert = await readFile(workItemRetryRevertUrl, "utf8");
+  const source = await readFile(workItemRetrySourceUrl, "utf8");
+  assert.match(sql, /CREATE TABLE codeops\.work_item_retry_dispositions/);
+  assert.match(sql, /attempt BETWEEN 1 AND 4/);
+  assert.match(sql, /work_item_retry_successor_per_predecessor_idx/);
+  assert.match(sql, /work_item_retry_dispositions_immutable/);
+  assert.match(sql, /DISABLE TRIGGER work_item_admissions_immutable[\s\S]*ENABLE TRIGGER work_item_admissions_immutable/);
+  assert.match(sql, /work_item_admissions_initial_work_item_idx[\s\S]*WHERE attempt = 1/);
+  assert.match(sql, /session_runtime_outbox_retry_completion_fence/);
+  assert.match(sql, /OLD\.claimed_at >= \([\s\S]*authority_expires_at/);
+  assert.match(sql, /OLD\.claim_expires_at <= NEW\.completed_at/);
+  assert.match(sql, /a\.attempt < retry\.attempt/);
+  assert.match(sql, /provider_effect_receipts_failure_shape_check/);
+  assert.match(sql, /DEFERRABLE INITIALLY DEFERRED/);
+  assert.match(sql, /retry_runtime_release/);
+  assert.match(sql, /retryRuntime,runtimeWorkerImage/);
+  assert.match(sql, /disposition_id, successor_launch_id, runtime_release/);
+  assert.match(revert, /cannot revert work-item retry while retry authority exists/);
+  assert.match(revert, /DROP TRIGGER session_runtime_outbox_retry_completion_fence/);
+  assert.match(revert, /ADD UNIQUE \(repository, provider, workspace_id, project_id, work_item_id\)/);
+  assert.match(source, /BEGIN ISOLATION LEVEL SERIALIZABLE/);
+  assert.match(source, /clock_timestamp\(\) AS now/);
+  assert.match(source, /terminal fact exists without its atomic retry disposition/);
+  assert.match(source, /retry aggregate model budget is exhausted/);
+  assert.ok(source.lastIndexOf("session_runtime_terminal_observations") >
+    source.lastIndexOf("work_item_retry_dispositions"));
+});
 
 test("defines exact immutable admission authority and a fail-closed revert", async () => {
   const sql = await readFile(workItemAdmissionUrl, "utf8");

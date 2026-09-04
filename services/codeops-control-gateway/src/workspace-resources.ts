@@ -49,12 +49,14 @@ export interface WorkspaceResourceConfig {
   readonly holderId?: string;
   readonly admittedChildOwner?: AdmittedChildResourceOwner;
   readonly identity?: WorkspaceSessionIdentity;
+  readonly retryDispositionId?: string;
   readonly policy: SessionPolicy;
   readonly contextAttachments?: readonly WorkspaceContextAttachmentDescriptor[];
   readonly workspace: WorkspaceManifest;
   readonly sources: readonly WorkspaceSourceAuthority[];
   readonly agentImage: string;
   readonly runtimeWorkerImage: string;
+  readonly configuredRuntimeWorkerImage: string;
   readonly imagePullSecrets: readonly { readonly name: string }[];
   readonly nodeSelector: Readonly<Record<string, string>>;
   readonly runtimeServiceAccountName: string;
@@ -225,6 +227,10 @@ export function buildWorkspaceResources(
   if (!/^(?:[0-9a-f]{24}|[0-9a-f]{32})$/.test(suffix)) {
     throw new Error("workspace launch identity is invalid");
   }
+  if (raw.retryDispositionId !== undefined &&
+      !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(raw.retryDispositionId)) {
+    throw new Error("workspace retry disposition identity is invalid");
+  }
   for (const [name, value] of [
     ["namespace", raw.namespace],
     ["runtime ServiceAccount", raw.runtimeServiceAccountName],
@@ -297,6 +303,9 @@ export function buildWorkspaceResources(
       "codeops.example/admission-id": raw.admittedChildOwner.admissionId,
       "codeops.example/dispatch-id": raw.admittedChildOwner.childDispatchId,
     }),
+    ...(raw.retryDispositionId === undefined ? {} : {
+      "codeops.example/retry-disposition-id": raw.retryDispositionId,
+    }),
   };
   const annotations = {
     "codeops.example/request-digest": raw.requestDigest,
@@ -316,6 +325,9 @@ export function buildWorkspaceResources(
     "codeops.example/session-generation": String(raw.generation ?? 1),
     "codeops.example/session-lease-id": raw.leaseId,
     "codeops.example/session-run-id": raw.runId,
+    ...(raw.retryDispositionId === undefined ? {} : {
+      "codeops.example/retry-disposition-id": raw.retryDispositionId,
+    }),
   };
   const securityContext = {
     allowPrivilegeEscalation: false,

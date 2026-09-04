@@ -250,6 +250,24 @@ test("maps a definitive GitHub mutation conflict to typed HTTP 409", async () =>
   });
   assert.deepEqual(result, { status: 409, body: { status: "conflict" } });
 });
+
+test("does not expose retry classification or caller-selected terminal evidence on the worker token", async () => {
+  let read = false;
+  const result = await serveSessionRuntime({
+    method: "POST",
+    url: "/v1/session-runtime/work-item-retry-dispositions",
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    token,
+    workerId: "runtime-worker:forged-retry",
+    readBody: async () => { read = true; return { terminalObservation: {}, runtimeRelease: "forged" }; },
+    claim: async () => null,
+    complete: async () => ({}),
+    submitPermission: async () => ({}),
+    pollPermission: async () => ({}),
+  });
+  assert.equal(result, null);
+  assert.equal(read, false);
+});
 const authority = {
   sessionId: "ses_91a4",
   generation: 3,

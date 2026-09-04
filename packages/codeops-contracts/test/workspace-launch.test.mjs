@@ -158,6 +158,34 @@ test("records durable launch state without the prompt body", () => {
   assert.equal("initialPrompt" in detail.launch, false);
 });
 
+test("requires an immutable worker image in disposition-bound retry runtime", () => {
+  const base = {
+    version: "codeops.workspace-launch/v1",
+    launchId: "launch-retry",
+    idempotencyKey: "11111111-1111-4111-8111-111111111111",
+    principalId: "operator@example.com",
+    requestDigest: digest,
+    policy: { version: "codeops.session-policy/v1", mode: "implement",
+      workspaceAccess: "bounded-writes", modelCalls: "allowed",
+      modelPolicy: { provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "medium" } },
+    contextAttachments: [], promptDigest: digest,
+    workspace: { version: "codeops.workspace/v1", sources: [], scratchPath: "scratch" },
+    state: "queued", createdAt: "2026-08-13T12:00:00.000Z",
+    updatedAt: "2026-08-13T12:00:00.000Z", deadlineAt: "2026-08-13T18:00:00.000Z",
+    attemptCount: 0,
+    retryRuntime: { dispositionId: "22222222-2222-4222-8222-222222222222",
+      sessionId: "ses_abcdef0123456789abcdef01", workflowId: "workflow-retry",
+      runId: "launch-abcdef0123456789abcdef01",
+      leaseId: "33333333-3333-4333-8333-333333333333",
+      promptIdempotencyKey: "44444444-4444-4444-8444-444444444444",
+      runtimeWorkerImage: `ghcr.io/example/runtime-worker@${digest}` },
+  };
+  assert.equal(workspaceLaunchSchema.parse(base).retryRuntime.runtimeWorkerImage,
+    `ghcr.io/example/runtime-worker@${digest}`);
+  assert.throws(() => workspaceLaunchSchema.parse({ ...base,
+    retryRuntime: { ...base.retryRuntime, runtimeWorkerImage: "ghcr.io/example/runtime-worker:latest" } }));
+});
+
 test("groups checkpoint evidence by source and scratch artifact", () => {
   const checkpoint = workspaceCheckpointSchema.parse({
     version: "codeops.workspace-checkpoint/v1",

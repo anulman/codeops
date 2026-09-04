@@ -145,6 +145,7 @@ import {
 import {
   listInteractiveRuntimeCandidates,
   listRetainedInteractiveRuntimeJobUids,
+  attestInteractiveRuntimeRelease,
   observeInteractiveRuntimeTerminal,
   recordInteractiveRuntimeJobProgress,
   reconcileInteractiveRuntimeTerminal,
@@ -560,6 +561,7 @@ if (runtimeRole === "api") {
     migrationClient.release();
   }
 }
+const configuredSessionRuntimeWorkerImage = requireDigestImage("CODEOPS_SESSION_RUNTIME_WORKER_IMAGE");
 const run = runtimeRole === "file-dispatcher" ? createAgentJobRunner({
   kubernetes,
   config: {
@@ -639,6 +641,9 @@ function workspaceResourceConfig(
     contextAttachments: launch.contextAttachments,
     ...(launch.title === undefined ? {} : { displayName: launch.title }),
     ...identity,
+    ...(launch.retryRuntime === undefined ? {} : {
+      retryDispositionId: launch.retryRuntime.dispositionId,
+    }),
     workspace: launch.workspace,
     sources: launch.workspace.sources.map((source) => {
       const authority = repositoryRegistry.resolve(source.repository);
@@ -649,7 +654,9 @@ function workspaceResourceConfig(
       };
     }),
     agentImage: requireDigestImage("CODEOPS_AGENT_IMAGE"),
-    runtimeWorkerImage: requireDigestImage("CODEOPS_SESSION_RUNTIME_WORKER_IMAGE"),
+    runtimeWorkerImage: launch.retryRuntime?.runtimeWorkerImage ??
+      configuredSessionRuntimeWorkerImage,
+    configuredRuntimeWorkerImage: configuredSessionRuntimeWorkerImage,
     imagePullSecrets: imagePullSecrets("CODEOPS_AGENT_IMAGE_PULL_SECRETS"),
     nodeSelector: stringMap("CODEOPS_AGENT_NODE_SELECTOR"),
     runtimeServiceAccountName: kubernetesObjectName(
@@ -1000,11 +1007,12 @@ function scheduleRuntimeTerminalReconciliation(): void {
           progressClient.release();
         }
         if (progress === "stale") continue;
+        const pods = await kubernetes.listRunPods(candidate.runId,
+          candidate.runtimeUid !== undefined);
         const observation = observeInteractiveRuntimeTerminal({
           candidate,
           job,
-          pods: await kubernetes.listRunPods(candidate.runId,
-            candidate.runtimeUid !== undefined),
+          pods,
           observedAt,
         });
         if (observation === null) continue;
@@ -1013,6 +1021,11 @@ function scheduleRuntimeTerminalReconciliation(): void {
           await reconcileInteractiveRuntimeTerminal(
             reconciliationClient,
             observation,
+            {
+              configured: configuredSessionRuntimeWorkerImage,
+              observed: attestInteractiveRuntimeRelease({ pods, jobUid: observation.job.uid,
+                configuredRuntimeRelease: configuredSessionRuntimeWorkerImage }),
+            },
           );
         } finally {
           reconciliationClient.release();

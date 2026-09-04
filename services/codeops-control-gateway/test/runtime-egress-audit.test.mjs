@@ -13,6 +13,7 @@ const identity = {
   jobName: "workspace-0123456789abcdef01234567",
   observedAt: "2026-08-15T22:10:00.000Z",
 };
+const runtimeWorkerImage = `ghcr.io/example/runtime-worker@sha256:${"c".repeat(64)}`;
 
 function pod(uid, podIP, overrides = {}) {
   return {
@@ -27,7 +28,9 @@ function pod(uid, podIP, overrides = {}) {
       }],
       ...overrides.metadata,
     },
-    status: { podIP, ...overrides.status },
+    spec: { containers: [{ name: "runtime-worker", image: runtimeWorkerImage }], ...overrides.spec },
+    status: { podIP, containerStatuses: [{ name: "runtime-worker",
+      imageID: `docker-pullable://${runtimeWorkerImage}` }], ...overrides.status },
   };
 }
 
@@ -66,6 +69,50 @@ test("rejects foreign owners and waits for an assigned Pod IP", () => {
     }),
     /no assigned network identity/,
   );
+});
+
+test("rejects a successor Pod whose observed runtime image differs from stored authority", () => {
+  const drifted = pod("pod-a", "10.42.1.8", { status: { containerStatuses: [{
+    name: "runtime-worker",
+    imageID: `docker-pullable://ghcr.io/example/runtime-worker@sha256:${"d".repeat(64)}`,
+  }] } });
+  assert.throws(() => workspaceRuntimePodObservations({
+    ...identity,
+    expectedRuntimeWorkerImage: runtimeWorkerImage,
+    pods: [drifted],
+  }), /runtime Pod image drifted/);
+});
+
+test("waits when a successor Pod has an IP but its startup image is not yet attestable", () => {
+  const starting = pod("pod-a", "10.42.1.8", {
+    status: {
+      phase: "Pending",
+      containerStatuses: [{ name: "runtime-worker", state: { waiting: {
+        reason: "ContainerCreating",
+      } } }],
+    },
+  });
+  assert.throws(() => workspaceRuntimePodObservations({
+    ...identity,
+    expectedRuntimeWorkerImage: runtimeWorkerImage,
+    pods: [starting],
+  }), /not yet attestable/);
+});
+
+test("fails closed when a terminal successor Pod has no reported image", () => {
+  const failed = pod("pod-a", "10.42.1.8", {
+    status: {
+      phase: "Failed",
+      containerStatuses: [{ name: "runtime-worker", state: { terminated: {
+        exitCode: 1,
+      } } }],
+    },
+  });
+  assert.throws(() => workspaceRuntimePodObservations({
+    ...identity,
+    expectedRuntimeWorkerImage: runtimeWorkerImage,
+    pods: [failed],
+  }), /runtime Pod image drifted/);
 });
 
 test("records bounded observations atomically and idempotently", async () => {
