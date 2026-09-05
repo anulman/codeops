@@ -1,0 +1,36 @@
+name: CodeOps preparation readback only
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: codeops-preparation-readback
+  cancel-in-progress: false
+jobs:
+  readback:
+    if: github.repository == 'anulman/codeops' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Fetch reviewed readback sources only
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          sparse-checkout: scripts/preparation-readback
+          sparse-checkout-cone-mode: false
+          fetch-depth: 1
+          submodules: false
+          lfs: false
+      - name: Bounded metadata discovery only
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: /usr/bin/bash --noprofile --norc scripts/preparation-readback/bootstrap.sh
+      - name: Deliver bounded receipt outside inspected process
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: preparation-readback-${{ github.run_id }}-${{ github.run_attempt }}
+          path: ${{ runner.temp }}/codeops-readback-${{ github.run_id }}-${{ github.run_attempt }}/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0
