@@ -363,6 +363,24 @@ try{await c.query('CREATE SCHEMA forbidden_execution');throw Error('DDL allowed'
         'policyTypes': ['Egress'], 'egress': [{'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}}}],
         'ports': [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]}]}))
     job('execution', 'runtime-service-denied', t, success=False)
+    # Regress the real dispatcher startup failure using shipped policies, not
+    # the fixture's permissive database/DNS rule. No credentials are needed.
+    c.kubectl('-n', 'fresh', 'delete', 'networkpolicy', 'local-db')
+    network_probe = """const dns=require('dns').promises,net=require('net');
+(async()=>{await dns.lookup('codeops-database');await new Promise((resolve,reject)=>{
+const s=net.connect({host:'codeops-database',port:5432},()=>{s.end();resolve()});
+s.setTimeout(3000,()=>s.destroy(Error('timeout')));s.on('error',reject);});})().catch(()=>process.exit(1));"""
+    labels = {'app.kubernetes.io/name': 'fixture-control-gateway-dispatcher',
+              'app.kubernetes.io/component': 'control-gateway-file-dispatcher',
+              'app.kubernetes.io/part-of': 'codeops'}
+    t = pod(candidate, ['node', '-e', network_probe], labels)
+    job('fresh', 'dispatcher-default-denied', t, success=False)
+    c.apply(*[d for d in docs if d['kind'] == 'NetworkPolicy' and
+              d['metadata']['name'] in ('fixture-control-gateway', 'fixture-postgresql')])
+    job('fresh', 'dispatcher-dns-database-allowed', t)
+    t['metadata']['labels'] = {'app.kubernetes.io/part-of': 'codeops',
+                               'app.kubernetes.io/component': 'untrusted'}
+    job('fresh', 'unrelated-dns-database-denied', t, success=False)
     c.record('execution-authority', {'actualToken': True, 'executionSecretAndJob': 'allow',
         'databaseSecretsJobsExec': 'deny', 'executionRolebinding': 'deny',
         'databaseAndPvc': 'unchanged', 'production': False})
