@@ -16,9 +16,9 @@ Upstream tool and image pins are in `pins.json`; locks stay in the normal source
 The existing scoped OS-tool exception and original notices still apply.
 
 Calico provides real NetworkPolicy enforcement. After image acquisition/import,
-runner iptables rules deny new node/Pod connections to the host, bridge peers,
+node-namespace mangle POSTROUTING and runner iptables rules deny new node/Pod connections to the host, bridge peers,
 and external networks. An outside-cluster canary succeeds before fencing and
-fails after. CoreDNS has no upstream forwarder. Candidate Pods have restricted
+fails after. The node fence covers same-bridge forwarding that bypasses Docker host chains. CoreDNS has no upstream forwarder. Candidate Pods have restricted
 admission, no host mounts, and only the disposable credentials explicitly needed
 by their role. A disposable inspector token exercises actual API allow/deny
 requests; impersonation checks are additional evidence, not a substitute.

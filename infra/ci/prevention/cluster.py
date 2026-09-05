@@ -102,6 +102,7 @@ def setup():
         command('docker', 'pull', '--platform=linux/amd64', image, timeout=600)
     # Standard Dockerfile: only ignore-scripts acquisition has networking; all
     # repository-controlled rewriting/compilation RUN instructions use none.
+    print('Acquisition complete; building offline candidate', flush=True)
     candidate = RUN + ':candidate'
     command('docker', 'build', '--build-arg', 'NODE_IMAGE=' + PINS['node'],
             '-f', ROOT / 'infra/docker/codeops-control-gateway.Dockerfile',
@@ -114,6 +115,7 @@ def setup():
             '--config', WORK / 'kind.yaml', '--wait', '0s', timeout=300)
     command('docker', 'cp', RUN + '-control-plane:/usr/bin/kubectl', bindir / 'kubectl')
     (bindir / 'kubectl').chmod(0o555)
+    print('Disposable cluster created; loading pinned images', flush=True)
     for image in images[1:] + [candidate]:
         command('kind', 'load', 'docker-image', '--name', RUN, image, timeout=600)
     calico = (WORK / 'calico.yaml').read_text()
@@ -144,6 +146,16 @@ def setup():
             rule = ['-s', source, '-m', 'conntrack', '--ctstate', 'NEW', '-j', 'DROP']
             command('sudo', '-n', 'iptables', '-I', chain, '1', *rule)
             RULES.append((chain, rule))
+    # Same-bridge traffic can bypass the host DOCKER-USER chain. Fence at the
+    # node's outbound interface as well, before it reaches the bridge. Mangle
+    # POSTROUTING covers locally generated AND forwarded Pod traffic, before
+    # Calico/Docker SNAT; existing host->API response flows remain permitted.
+    node_rule = ['-t', 'mangle', '-I', 'POSTROUTING', '1', '-o', 'eth0',
+                 '-m', 'conntrack', '--ctstate', 'NEW', '-j', 'DROP']
+    command('docker', 'exec', RUN + '-control-plane', 'iptables', *node_rule)
+    check_rule = ['-t', 'mangle', '-C', 'POSTROUTING', '-o', 'eth0',
+                  '-m', 'conntrack', '--ctstate', 'NEW', '-j', 'DROP']
+    command('docker', 'exec', RUN + '-control-plane', 'iptables', *check_rule)
     if command('docker', 'exec', RUN + '-control-plane', 'bash', '-c',
                f'timeout 2 bash -c "echo > /dev/tcp/{canary}/8080"', ok=False).returncode == 0:
         raise RuntimeError('External fence did not deny its positive control')
@@ -161,6 +173,7 @@ def setup():
                         'pins': PINS, 'freeAfterStaging': free, 'outsideCanary': canary,
                         'node': node, 'externalBefore': 'allowed', 'externalAfter': 'denied',
                         'claim': 'single-node disposable CI; not production enforcement'})
+    print('External fence and cluster-only DNS proved; starting lifecycle', flush=True)
     return candidate, canary
 
 
