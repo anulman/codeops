@@ -292,6 +292,82 @@ if(await req(method,path,body)!==403)throw Error('denial');})().catch(()=>proces
     job(ns, 'role-connections', t)
 
 
+def execution_authority(candidate):
+    """Use the shipped cross-namespace Role and binding with a real projected token."""
+    directory = chart(c.ROOT, 'execution-authority-chart', candidate)
+    original = c.ROOT / 'infra/charts/codeops/templates'
+    for name in ('control-gateway.yaml', 'execution-namespace.yaml', 'serviceaccounts.yaml', 'networkpolicies.yaml'):
+        (directory / 'templates' / name).write_bytes((original / name).read_bytes())
+    values = yaml.safe_load((directory / 'values.yaml').read_text())
+    values['runtime']['executionNamespace'] = 'execution'
+    (directory / 'values.yaml').write_text(yaml.safe_dump(values))
+    rendered = c.command('helm', 'template', 'fixture', str(directory), '-n', 'fresh').stdout
+    docs = [d for d in yaml.safe_load_all(rendered) if d]
+    authority = [d for d in docs if d['kind'] in ('Role', 'RoleBinding') and
+                 d['metadata']['name'] == 'fixture-control-gateway']
+    if len(authority) != 2 or any(d['metadata']['namespace'] != 'execution' for d in authority):
+        raise AssertionError('Gateway authority did not leave database namespace')
+    c.apply(next(d for d in docs if d['kind'] == 'Namespace'), *authority,
+            obj('ServiceAccount', 'fixture-control-gateway', 'fresh', automountServiceAccountToken=False))
+    # No broad default authority in either namespace. API access is permitted by
+    # the existing disposable migration-only egress rule; RBAC decides effects.
+    program = r"""const fs=require('fs'),https=require('https');
+const root='/var/run/secrets/kubernetes.io/serviceaccount/';
+function req(method,path,body){return new Promise((resolve,reject)=>{
+const r=https.request({host:process.env.KUBERNETES_SERVICE_HOST,port:443,method,path,
+ca:fs.readFileSync(root+'ca.crt'),headers:{Authorization:'Bearer '+fs.readFileSync(root+'token','utf8').trim(),
+'Content-Type':'application/json'},timeout:3000},s=>{s.resume();s.on('end',()=>resolve(s.statusCode))});
+r.on('timeout',()=>r.destroy(Error('timeout')));r.on('error',reject);r.end(body?JSON.stringify(body):undefined);});}
+(async()=>{
+if(await req('POST','/api/v1/namespaces/execution/secrets',{apiVersion:'v1',kind:'Secret',metadata:{name:'scoped-proof'},stringData:{fixture:'not-a-credential'}})!==201)throw Error('positive Secret');
+if(await req('GET','/api/v1/namespaces/execution/secrets/scoped-proof')!==200)throw Error('positive read');
+if(await req('POST','/apis/batch/v1/namespaces/execution/jobs',{apiVersion:'batch/v1',kind:'Job',metadata:{name:'scoped-job'},spec:{backoffLimit:0,activeDeadlineSeconds:30,template:{spec:{restartPolicy:'Never',automountServiceAccountToken:false,securityContext:{runAsNonRoot:true,runAsUser:1000,seccompProfile:{type:'RuntimeDefault'}},containers:[{name:'proof',image:process.argv[1],imagePullPolicy:'Never',command:['node','-e','process.exit(0)'],securityContext:{allowPrivilegeEscalation:false,readOnlyRootFilesystem:true,capabilities:{drop:['ALL']}}}]}}}})!==201)throw Error('positive Job');
+
+for(const [method,path,body] of [
+['GET','/api/v1/namespaces/fresh/secrets/codeops-postgres'],
+['POST','/apis/batch/v1/namespaces/fresh/jobs',{apiVersion:'batch/v1',kind:'Job',metadata:{name:'forbidden'}}],
+['POST','/api/v1/namespaces/fresh/pods/db/exec?command=true&stdout=true'],
+['POST','/apis/rbac.authorization.k8s.io/v1/namespaces/execution/rolebindings',{}]])
+if(await req(method,path,body)!==403)throw Error('authority escape');
+})().catch(()=>process.exit(1));"""
+    t = pod(candidate, ['node', '-e', program, candidate], {'app.kubernetes.io/component': 'session-migration'}, token=True)
+    t['spec']['serviceAccountName'] = 'fixture-control-gateway'
+    job('fresh', 'execution-authority', t)
+    c.kubectl('-n', 'execution', 'wait', '--for=condition=complete', 'job/scoped-job', '--timeout=60s')
+    # Materialize only the shipped runtime subset; owner/app/provider fields
+    # are absent. Existing fixture password is used, never production authority.
+    runtime_secret = next(d for d in docs if d['kind'] == 'Secret' and d['metadata'].get('namespace') == 'execution')
+    if set(runtime_secret['stringData']) != {'runtime-worker-token', 'initialization-token', 'runtime-database-url'}:
+        raise AssertionError('Unexpected runtime credential projection')
+    runtime_secret.pop('stringData')
+    source = get('fresh', 'secret', 'codeops-session-secrets')['data']
+    runtime_secret['data'] = {k: source[k] for k in ('runtime-worker-token', 'initialization-token', 'runtime-database-url')}
+    policies = [d for d in docs if d['kind'] == 'NetworkPolicy' and
+                (d['metadata']['namespace'] == 'execution' or d['metadata']['name'].endswith('-execution-postgresql'))]
+    aliases = [d for d in docs if d['kind'] == 'Service' and d['metadata'].get('namespace') == 'execution']
+    c.apply(runtime_secret, *policies, *aliases)
+    dbpods = json.loads(c.kubectl('-n', 'fresh', 'get', 'pods', '-l', 'app=db', '-o', 'json').stdout)['items']
+    for dbpod in dbpods:
+        c.kubectl('-n', 'fresh', 'label', 'pod', dbpod['metadata']['name'], 'app.kubernetes.io/name=fixture-postgresql')
+    program = """const fs=require('fs');const {Client}=require('./services/codeops-control-gateway/node_modules/pg');
+(async()=>{const c=new Client({connectionString:fs.readFileSync('/runtime/runtime-database-url','utf8').trim(),connectionTimeoutMillis:5000});
+await c.connect();if((await c.query('select current_user')).rows[0].current_user!=='codeops_runtime_receipts')throw Error('wrong role');
+try{await c.query('CREATE SCHEMA forbidden_execution');throw Error('DDL allowed');}catch(e){if(e.code!=='42501')throw e;}await c.end();})().catch(()=>process.exit(1));"""
+    t = pod(candidate, ['node', '-e', program], {'app.kubernetes.io/component': 'runtime'})
+    t['spec']['volumes'] = [{'name': 'runtime', 'secret': {'secretName': runtime_secret['metadata']['name']}}]
+    t['spec']['containers'][0]['volumeMounts'] = [{'name': 'runtime', 'mountPath': '/runtime', 'readOnly': True}]
+    job('execution', 'runtime-service-credential-delivery', t)
+    # Deny unlabelled execution Pods from the same DB; DNS remains permitted.
+    t['metadata']['labels'] = {'proof': 'denied-execution'}
+    c.apply(obj('NetworkPolicy', 'denied-dns', 'execution', spec={'podSelector': {'matchLabels': t['metadata']['labels']},
+        'policyTypes': ['Egress'], 'egress': [{'to': [{'namespaceSelector': {'matchLabels': {'kubernetes.io/metadata.name': 'kube-system'}}}],
+        'ports': [{'protocol': 'UDP', 'port': 53}, {'protocol': 'TCP', 'port': 53}]}]}))
+    job('execution', 'runtime-service-denied', t, success=False)
+    c.record('execution-authority', {'actualToken': True, 'executionSecretAndJob': 'allow',
+        'databaseSecretsJobsExec': 'deny', 'executionRolebinding': 'deny',
+        'databaseAndPvc': 'unchanged', 'production': False})
+
+
 def run(candidate, canary):
     pinned = c.LOADED[candidate]
     current = chart(c.ROOT, 'candidate-chart', pinned)
@@ -359,6 +435,7 @@ await assert.rejects(migrateSessionBroker(c),e=>e.code==='42501');}finally{await
         'await requireApplicationDatabaseAuthority(c);')
     t['spec']['containers'][0].update(image=pinned, command=['node', '--input-type=module', '-e', current_init])
     job('prior72', 'current-readonly-initialization', t)
+    execution_authority(pinned)
     c.record('scope', {'freshInstall': True, 'prior72CredentialCutover': True,
         'prior69NonemptyTransition': True, 'invalidPreQuiescence': True,
         'precommitRollback': True, 'postcommitFailure': True, 'explicitRestore': True,

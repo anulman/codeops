@@ -1054,6 +1054,25 @@ test("retains passing coding evidence and mounts the exact cumulative patch for 
       /candidate evidence claim boundary drifted/,
     );
 
+    const delivered = buildRunResources({
+      namespace: "execution", serviceNamespace: "database", ...criticIdentity,
+      repositoryUrl: "https://github.com/example-org/example-repository",
+      agentImage: runtimeProfile.images.agent, runtimeProfile, runtimeRequirements,
+      repositoryReadToken: "repo-token", modelAuth, candidate, candidatePatch: patch,
+    }, critic);
+    assert.doesNotThrow(() => assertRunResources(delivered));
+    const deliveredPod = delivered.find((r) => r.kind === "Job").spec.template.spec;
+    assert.equal(deliveredPod.affinity, undefined);
+    assert.equal(JSON.stringify(deliveredPod).includes("persistentVolumeClaim"), false);
+    const chunks = delivered.filter((r) => r.kind === "Secret" && r.metadata.name.startsWith("codeops-candidate-"));
+    assert.equal(Buffer.concat(chunks.map((r) => Buffer.from(Object.values(r.data)[0], "base64"))).equals(patch), true);
+    assert.equal(chunks.every((r) => r.immutable && r.metadata.namespace === "execution"), true);
+    const wrongChunk = structuredClone(delivered);
+    wrongChunk[0].metadata.name = "codeops-candidate-foreign";
+    assert.throws(() => assertRunResources(wrongChunk), /candidate chunk identity/);
+    assert.deepEqual(delivered.find((r) => r.kind === "NetworkPolicy").spec.egress[0].to[0].namespaceSelector,
+      { matchLabels: { "kubernetes.io/metadata.name": "database" } });
+
     const review = {
       version: "codeops.adversarial-review/v1",
       workflowId: critic.workflowId,

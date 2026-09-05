@@ -42,6 +42,8 @@ interface RuntimeConfig {
   readonly imagePullSecrets?: readonly { readonly name: string }[];
   readonly nodeSelector?: Readonly<Record<string, string>>;
   readonly evidenceClaimName?: string;
+  readonly deliverCandidatePatch?: boolean;
+  readonly serviceNamespace?: string;
   readonly modelProxyServiceName?: string;
   readonly modelProxyPodName?: string;
   readonly modelAuth: {
@@ -165,6 +167,8 @@ export function createAgentJobRunner(input: {
         repositoryReadToken: repository.readToken,
         modelAuth: input.config.modelAuth,
         candidate: retainedCandidate?.candidate,
+        candidatePatch: input.config.deliverCandidatePatch ? retainedCandidate?.patch : undefined,
+        serviceNamespace: input.config.serviceNamespace,
       },
       request,
     );

@@ -1211,3 +1211,22 @@ test("protected external database egress selects namespace and database Pods tog
   assert.ok(targets.length > 0);
   for (const target of targets) assert.deepEqual(target.podSelector, {matchLabels: {"fixture-db": "true"}});
 });
+
+test("execution namespace leaves database storage in place and grants only remote runtime effects", () => {
+  const docs = renderQuickstart(["--set", "runtime.executionNamespace=codeops-execution"]);
+  const gatewayRole = docs.find((r) => r.kind === "Role" && r.metadata.name.endsWith("-control-gateway"));
+  assert.equal(gatewayRole.metadata.namespace, "codeops-execution");
+  const binding = docs.find((r) => r.kind === "RoleBinding" && r.metadata.name === gatewayRole.metadata.name);
+  assert.equal(binding.metadata.namespace, "codeops-execution");
+  assert.equal(binding.subjects[0].namespace, "codeops");
+  for (const r of docs.filter((r) => ["StatefulSet", "PersistentVolumeClaim"].includes(r.kind))) {
+    assert.equal(r.metadata.namespace ?? "codeops", "codeops");
+  }
+  const runtime = docs.find((r) => r.kind === "Secret" && r.metadata.namespace === "codeops-execution");
+  assert.deepEqual(Object.keys(runtime.stringData).sort(), ["initialization-token", "runtime-database-url", "runtime-worker-token"]);
+  assert.match(runtime.stringData["runtime-database-url"], /^postgresql:\/\/codeops_runtime_receipts:/);
+  assert.equal(docs.some((r) => r.kind === "Role" && r.metadata.namespace === "codeops" && r.rules?.some((rule) => rule.resources?.includes("secrets"))), false);
+  const aliases = docs.filter((r) => r.kind === "Service" && r.metadata.namespace === "codeops-execution");
+  assert.equal(aliases.length, 4);
+  assert.ok(aliases.every((r) => r.spec.externalName.endsWith(".codeops.svc.cluster.local")));
+});

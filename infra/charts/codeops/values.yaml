@@ -329,6 +329,9 @@ postgresql:
     podSelector: {}
 
 runtime:
+  # Opt-in forward cutover. Never points to the database namespace.
+  executionNamespace: ""
+  executionImagePullSecrets: []
   profileId: standard-v1
   model: gpt-5.6-sol
   releaseDigest: ""

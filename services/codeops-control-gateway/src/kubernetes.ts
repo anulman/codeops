@@ -595,6 +595,9 @@ export function createInClusterKubernetesClient(input: {
     expected?: readonly number[], contentType?: string, token?: string) =>
       Promise<{ status: number; text: string }>;
 }): KubernetesClient {
+  if (!/^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/.test(input.namespace)) {
+    throw new Error("invalid execution namespace");
+  }
   class KubernetesHttpStatusError extends Error {
     constructor(readonly status: number) { super(`Kubernetes API returned ${status}`); }
   }
@@ -765,6 +768,9 @@ export function createInClusterKubernetesClient(input: {
   };
 
   const collectionPath = (resource: KubernetesResource): string => {
+    if (resource.metadata.namespace !== input.namespace) {
+      throw new KubernetesResourceIdentityDriftError("resource outside execution namespace");
+    }
     const template = resourcePaths[resource.kind];
     if (!template) throw new Error(`unsupported Kubernetes kind ${resource.kind}`);
     return template.replace("{namespace}", input.namespace);

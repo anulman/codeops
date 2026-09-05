@@ -11,7 +11,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
   name: {{ include "codeops.fullname" . }}-control-gateway
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "codeops.executionNamespace" . }}
   labels:
     {{- include "codeops.labels" . | nindent 4 }}
 rules:
@@ -41,7 +41,7 @@ apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
 metadata:
   name: {{ include "codeops.fullname" . }}-control-gateway
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "codeops.executionNamespace" . }}
   labels:
     {{- include "codeops.labels" . | nindent 4 }}
 subjects:
@@ -112,6 +112,7 @@ spec:
             - { name: CODEOPS_CONTROL_GATEWAY_RUNTIME_ROLE, value: api }
             - { name: CODEOPS_DEPLOYMENT_PROFILE, value: {{ .Values.profile | quote }} }
             - { name: CODEOPS_RELEASE, value: {{ .Chart.Version | quote }} }
+            - { name: CODEOPS_EXECUTION_NAMESPACE, value: {{ include "codeops.executionNamespace" . | quote }} }
             - name: CODEOPS_NAMESPACE
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
             - { name: CODEOPS_AGENT_IMAGE, value: {{ include "codeops.image" .Values.runtime.agentImage | quote }} }
@@ -119,7 +120,7 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_IMAGE, value: {{ include "codeops.image" .Values.runtime.workerImage | quote }} }
             - { name: CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE, value: /var/run/codeops-runtime/profile-registry.json }
             - { name: CODEOPS_RUNTIME_COMPATIBILITY_POLICY_REVISION, value: {{ .Values.runtime.compatibilityPolicyRevision | quote }} }
-            - { name: CODEOPS_AGENT_IMAGE_PULL_SECRETS, value: {{ include "codeops.imagePullSecretsJson" . | quote }} }
+            - { name: CODEOPS_AGENT_IMAGE_PULL_SECRETS, value: {{ ternary (.Values.runtime.executionImagePullSecrets | toJson) (include "codeops.imagePullSecretsJson" .) (ne (include "codeops.executionNamespace" .) .Release.Namespace) | quote }} }
             - { name: CODEOPS_AGENT_NODE_SELECTOR, value: {{ .Values.nodeSelector | toJson | quote }} }
             - { name: CODEOPS_AGENT_EVIDENCE_CLAIM_NAME, value: {{ printf "%s-control-gateway-evidence" (include "codeops.fullname" .) | quote }} }
             - { name: CODEOPS_AGENT_MODEL_PROXY_SERVICE_NAME, value: {{ printf "%s-model-proxy" (include "codeops.fullname" .) | quote }} }
@@ -148,7 +149,7 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/codeops/runtime-worker-token }
             - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/codeops/initialization-token }
             - { name: CODEOPS_SESSION_RUNTIME_SERVICE_ACCOUNT_NAME, value: {{ printf "%s-runtime" (include "codeops.fullname" .) | quote }} }
-            - { name: CODEOPS_SESSION_SECRETS_NAME, value: {{ .Values.gateway.secretName | quote }} }
+            - { name: CODEOPS_SESSION_SECRETS_NAME, value: {{ ternary (printf "%s-execution" .Values.gateway.secretName) .Values.gateway.secretName (ne (include "codeops.executionNamespace" .) .Release.Namespace) | quote }} }
             - { name: CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN, value: http://{{ include "codeops.fullname" . }}-session-control-gateway:8080 }
             {{- if .Values.runtimeEgressProxy.enabled }}
             - { name: CODEOPS_RUNTIME_EGRESS_PROXY_ORIGIN, value: http://{{ include "codeops.fullname" . }}-runtime-egress-proxy:3128 }
@@ -283,6 +284,7 @@ spec:
             - { name: CODEOPS_CONTROL_GATEWAY_RUNTIME_ROLE, value: file-dispatcher }
             - { name: CODEOPS_DEPLOYMENT_PROFILE, value: {{ .Values.profile | quote }} }
             - { name: CODEOPS_RELEASE, value: {{ .Chart.Version | quote }} }
+            - { name: CODEOPS_EXECUTION_NAMESPACE, value: {{ include "codeops.executionNamespace" . | quote }} }
             - name: CODEOPS_NAMESPACE
               valueFrom: { fieldRef: { fieldPath: metadata.namespace } }
             - { name: CODEOPS_AGENT_IMAGE, value: {{ include "codeops.image" .Values.runtime.agentImage | quote }} }
@@ -290,7 +292,7 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_IMAGE, value: {{ include "codeops.image" .Values.runtime.workerImage | quote }} }
             - { name: CODEOPS_RUNTIME_PROFILE_REGISTRY_FILE, value: /var/run/codeops-runtime/profile-registry.json }
             - { name: CODEOPS_RUNTIME_COMPATIBILITY_POLICY_REVISION, value: {{ .Values.runtime.compatibilityPolicyRevision | quote }} }
-            - { name: CODEOPS_AGENT_IMAGE_PULL_SECRETS, value: {{ include "codeops.imagePullSecretsJson" . | quote }} }
+            - { name: CODEOPS_AGENT_IMAGE_PULL_SECRETS, value: {{ ternary (.Values.runtime.executionImagePullSecrets | toJson) (include "codeops.imagePullSecretsJson" .) (ne (include "codeops.executionNamespace" .) .Release.Namespace) | quote }} }
             - { name: CODEOPS_AGENT_NODE_SELECTOR, value: {{ .Values.nodeSelector | toJson | quote }} }
             - { name: CODEOPS_AGENT_EVIDENCE_CLAIM_NAME, value: {{ printf "%s-control-gateway-evidence" (include "codeops.fullname" .) | quote }} }
             - { name: CODEOPS_AGENT_MODEL_PROXY_SERVICE_NAME, value: {{ printf "%s-model-proxy" (include "codeops.fullname" .) | quote }} }
@@ -319,7 +321,7 @@ spec:
             - { name: CODEOPS_SESSION_RUNTIME_WORKER_TOKEN_FILE, value: /var/run/secrets/codeops/runtime-worker-token }
             - { name: CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE, value: /var/run/secrets/codeops/initialization-token }
             - { name: CODEOPS_SESSION_RUNTIME_SERVICE_ACCOUNT_NAME, value: {{ printf "%s-runtime" (include "codeops.fullname" .) | quote }} }
-            - { name: CODEOPS_SESSION_SECRETS_NAME, value: {{ .Values.gateway.secretName | quote }} }
+            - { name: CODEOPS_SESSION_SECRETS_NAME, value: {{ ternary (printf "%s-execution" .Values.gateway.secretName) .Values.gateway.secretName (ne (include "codeops.executionNamespace" .) .Release.Namespace) | quote }} }
             - { name: CODEOPS_SESSION_RUNTIME_GATEWAY_ORIGIN, value: http://{{ include "codeops.fullname" . }}-session-control-gateway:8080 }
             {{- if .Values.runtimeEgressProxy.enabled }}
             - { name: CODEOPS_RUNTIME_EGRESS_PROXY_ORIGIN, value: http://{{ include "codeops.fullname" . }}-runtime-egress-proxy:3128 }

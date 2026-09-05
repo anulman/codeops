@@ -1,3 +1,11 @@
+{{- if .Values.runtime.executionNamespace -}}
+{{- if ne .Values.postgresql.deployment "managed" -}}
+{{- fail "execution namespace cutover requires the existing managed PostgreSQL service" -}}
+{{- end -}}
+{{- if or (eq .Values.runtime.executionNamespace .Release.Namespace) (not (regexMatch "^[a-z0-9]([-a-z0-9]{0,61}[a-z0-9])?$" .Values.runtime.executionNamespace)) -}}
+{{- fail "runtime.executionNamespace must be a valid separate namespace" -}}
+{{- end -}}
+{{- end -}}
 {{- if or (not .Values.migration.applicationSecretName) (has .Values.migration.applicationSecretName (list .Values.gateway.secretName .Values.migration.secretName .Values.lifecycleRelay.secretName .Values.modelProxy.secretName .Values.postgresql.secretName)) -}}
 {{- fail "migration.applicationSecretName must be a separate staged application credential" -}}
 {{- end -}}

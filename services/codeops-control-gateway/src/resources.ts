@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type {
   AgentJobDispatchRequest,
   CandidateCheckpoint,
@@ -45,6 +46,8 @@ interface ResourceConfig {
     readonly issuedAt?: Date;
   };
   readonly candidate?: CandidateCheckpoint;
+  readonly candidatePatch?: Buffer;
+  readonly serviceNamespace?: string;
 }
 
 type RuntimeResources = {
@@ -248,6 +251,13 @@ export function buildRunResources(
       "codeops.example/request-digest": input.requestDigest,
     },
   };
+  const patch = input.candidatePatch;
+  if (patch !== undefined && (!input.candidate || patch.length !== input.candidate.patch.sizeBytes ||
+      `sha256:${createHash("sha256").update(patch).digest("hex")}` !== input.candidate.patch.digest ||
+      patch.length > 2_000_000)) throw new Error("candidate patch identity drifted");
+  const chunks = patch === undefined ? [] : Array.from({ length: Math.max(1, Math.ceil(patch.length / 262144)) },
+    (_, i) => ({ name: `codeops-candidate-${input.runId}-${i}`, key: `part-${i}`,
+      bytes: patch.subarray(i * 262144, (i + 1) * 262144) }));
   const name = `codeops-agent-${input.runId}`;
   const secretName = `codeops-run-${input.runId}`;
   const modelProxyOrigin = new URL(input.modelAuth.origin);
@@ -334,7 +344,7 @@ export function buildRunResources(
         ]
       : []),
   ];
-  const resources = [
+  const resources: Record<string, unknown>[] = [
     {
       apiVersion: "v1",
       kind: "Secret",
@@ -400,7 +410,7 @@ export function buildRunResources(
             nodeSelector: input.nodeSelector ?? {
               "codeops.example/codeops": "true",
             },
-            ...(input.candidate
+            ...(input.candidate && patch === undefined
               ? {
                   affinity: {
                     podAffinity: {
@@ -446,6 +456,7 @@ export function buildRunResources(
                     "test \"$(git -c safe.directory=/workspace -C /workspace rev-parse HEAD)\" = \"$CODEOPS_BASE_SHA\"",
                     ...(input.candidate
                       ? [
+                          ...(patch === undefined ? [] : ["cat /candidate-parts/part-* > /candidate/changes.patch"]),
                           "test -f /candidate/changes.patch",
                           "test \"$(wc -c < /candidate/changes.patch | tr -d ' ')\" = \"$CODEOPS_CANDIDATE_PATCH_SIZE\"",
                           "test \"sha256:$(sha256sum /candidate/changes.patch | cut -d' ' -f1)\" = \"$CODEOPS_CANDIDATE_PATCH_DIGEST\"",
@@ -526,10 +537,12 @@ export function buildRunResources(
                     ? [
                         {
                           name: "candidate",
-                          mountPath: "/candidate/changes.patch",
-                          subPath: `agent-runs/${input.candidate.runId}/changes.patch`,
-                          readOnly: true,
+                          mountPath: patch === undefined ? "/candidate/changes.patch" : "/candidate",
+                          ...(patch === undefined ? { subPath: `agent-runs/${input.candidate.runId}/changes.patch`, readOnly: true } : {}),
                         },
+                        ...(patch === undefined ? [] : [{
+                          name: "candidate-parts", mountPath: "/candidate-parts", readOnly: true,
+                        }]),
                       ]
                     : []),
                 ],
@@ -740,14 +753,18 @@ export function buildRunResources(
                     : `${runtimeProfile.resources.ephemeralStorageMiB}Mi`,
                 },
               },
+              ...(patch === undefined ? [] : [{ name: "candidate-parts", projected: {
+                defaultMode: 256, sources: chunks.map((chunk) => ({ secret: {
+                  name: chunk.name, items: [{ key: chunk.key, path: chunk.key }],
+                } })),
+              } }]),
               ...(input.candidate
                 ? [
                     {
                       name: "candidate",
-                      persistentVolumeClaim: {
-                        claimName: evidenceClaimName,
-                        readOnly: true,
-                      },
+                      ...(patch === undefined ? { persistentVolumeClaim: {
+                        claimName: evidenceClaimName, readOnly: true,
+                      } } : { emptyDir: { sizeLimit: "2Mi" } }),
                     },
                   ]
                 : []),
@@ -772,6 +789,9 @@ export function buildRunResources(
           {
             to: [
               {
+                ...(input.serviceNamespace === undefined ? {} : { namespaceSelector: {
+                  matchLabels: { "kubernetes.io/metadata.name": input.serviceNamespace },
+                } }),
                 podSelector: {
                   matchLabels: {
                     "app.kubernetes.io/name": modelProxyPodName,
@@ -823,6 +843,10 @@ export function buildRunResources(
       },
     },
   ];
+  for (const chunk of [...chunks].reverse()) resources.unshift({
+    apiVersion: "v1", kind: "Secret", metadata: { ...metadata, name: chunk.name },
+    immutable: true, type: "Opaque", data: { [chunk.key]: chunk.bytes.toString("base64") },
+  });
   assertRenderedRuntimeResources(resources, runtimeRequirements, runtimeProfile);
   return resources;
 }
@@ -834,6 +858,9 @@ export function assertRunResources(
     readonly podName?: string;
   } = {},
 ): void {
+  const candidateSecrets = resources.filter((r) => r.kind === "Secret" &&
+    String((r.metadata as { name?: string })?.name).startsWith("codeops-candidate-"));
+  resources = resources.filter((r) => !candidateSecrets.includes(r));
   const serialized = JSON.stringify(resources);
   if (
     resources.length !== 4 ||
@@ -913,6 +940,7 @@ export function assertRunResources(
           };
         }[];
       };
+      emptyDir?: { sizeLimit?: string };
       persistentVolumeClaim?: {
         claimName?: string;
         readOnly?: boolean;
@@ -1084,7 +1112,34 @@ export function assertRunResources(
   ) {
     throw new Error("model proxy credential boundary drifted");
   }
-  if (candidateVolume) {
+  if (candidateVolume?.emptyDir) {
+    const projected = pod.volumes?.find((v) => v.name === "candidate-parts");
+    const expected = candidateSecrets.map((r, i) => {
+      const secret = r as { metadata: { name: string; namespace: string }; immutable?: boolean; data?: Record<string, string> };
+      if (secret.metadata.name !== `codeops-candidate-${runId}-${i}` ||
+          secret.metadata.namespace !== (job.metadata as { namespace?: string })?.namespace || secret.immutable !== true ||
+          Object.keys(secret.data ?? {}).join() !== `part-${i}` ||
+          Buffer.from(secret.data?.[`part-${i}`] ?? "", "base64").length > 262144) {
+        throw new Error("candidate chunk identity drifted");
+      }
+      return { secret: { name: secret.metadata.name, items: [{ key: `part-${i}`, path: `part-${i}` }] } };
+    });
+    const builder = pod.initContainers?.find((c) => c.name === "workspace-builder");
+    const bytes = Buffer.concat(candidateSecrets.map((r, i) => Buffer.from(
+      (r as { data: Record<string, string> }).data[`part-${i}`]!, "base64")));
+    const env = Object.fromEntries((builder?.env ?? []).map((e) => [e.name, e.value]));
+    if (`sha256:${createHash("sha256").update(bytes).digest("hex")}` !== env.CODEOPS_CANDIDATE_PATCH_DIGEST ||
+        String(bytes.length) !== env.CODEOPS_CANDIDATE_PATCH_SIZE || bytes.length > 2_000_000 ||
+        pod.containers?.some((c) => c.volumeMounts?.some((m) => ["candidate", "candidate-parts"].includes(m.name ?? "")))) {
+      throw new Error("candidate delivered content or mount drifted");
+    }
+    if (candidateSecrets.length < 1 || candidateSecrets.length > 8 ||
+        candidateVolume.emptyDir.sizeLimit !== "2Mi" || pod.affinity !== undefined || claimReferences !== 0 ||
+        JSON.stringify(projected) !== JSON.stringify({ name: "candidate-parts", projected: { defaultMode: 256, sources: expected } })) {
+      throw new Error("candidate delivery boundary drifted");
+    }
+  } else if (candidateSecrets.length > 0) throw new Error("unmounted candidate chunks");
+  if (candidateVolume && !candidateVolume.emptyDir) {
     const builder = pod.initContainers?.find(
       (container) => container.name === "workspace-builder",
     );
@@ -1133,7 +1188,7 @@ export function assertRunResources(
   }
   if (
     claimReferences !==
-    Number(candidateVolume !== undefined)
+    Number(candidateVolume?.persistentVolumeClaim !== undefined)
   ) {
     throw new Error("unexpected Agent Job persistent claim");
   }

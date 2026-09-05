@@ -1,0 +1,75 @@
+{{- $execution := include "codeops.executionNamespace" . -}}
+{{- if ne $execution .Release.Namespace }}
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: {{ $execution }}
+  annotations: { helm.sh/resource-policy: keep }
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/enforce-version: latest
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: codeops-default-deny, namespace: {{ $execution }} }
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+{{- $services := list (printf "%s-model-proxy" (include "codeops.fullname" .)) (printf "%s-session-control-gateway" (include "codeops.fullname" .)) (printf "%s-runtime-egress-proxy" (include "codeops.fullname" .)) .Values.postgresql.serviceName }}
+{{- range $service := $services }}
+---
+apiVersion: v1
+kind: Service
+metadata: { name: {{ $service }}, namespace: {{ $execution }} }
+spec:
+  type: ExternalName
+  externalName: {{ printf "%s.%s.svc.cluster.local" $service $.Release.Namespace }}
+{{- end }}
+{{- range $component := list "model-proxy" "session-gateway" "runtime-egress-proxy" "postgresql" }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata: { name: {{ printf "%s-execution-%s" (include "codeops.fullname" $) $component }}, namespace: {{ $.Release.Namespace }} }
+spec:
+  podSelector:
+    matchLabels: { app.kubernetes.io/name: {{ printf "%s-%s" (include "codeops.fullname" $) $component }} }
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ $execution }} }
+          podSelector:
+            {{- if eq $component "model-proxy" }}
+            matchExpressions: [{ key: codeops.example/run-id, operator: Exists }]
+            {{- else }}
+            matchLabels: { app.kubernetes.io/component: runtime }
+            {{- end }}
+        {{- if eq $component "model-proxy" }}
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ $execution }} }
+          podSelector:
+            matchLabels: { app.kubernetes.io/component: runtime }
+        {{- end }}
+      ports: [{ protocol: TCP, port: {{ if eq $component "postgresql" }}5432{{ else if eq $component "runtime-egress-proxy" }}3128{{ else }}8080{{ end }} }]
+{{- end }}
+{{- if not .Values.quickstart.enabled }}
+{{- $source := lookup "v1" "Secret" .Release.Namespace .Values.gateway.secretName -}}
+{{- $data := required "stage the prevention-aware gateway Secret before execution cutover" $source.data -}}
+{{- $url := required "runtime database URL is missing" (index $data "runtime-database-url") -}}
+{{- if not (hasPrefix "postgresql://codeops_runtime_receipts:" ($url | b64dec)) -}}
+{{- fail "execution runtime must use codeops_runtime_receipts, never owner or application credentials" -}}
+{{- end }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: {{ printf "%s-execution" .Values.gateway.secretName }}
+  namespace: {{ $execution }}
+  annotations: { helm.sh/resource-policy: keep }
+type: Opaque
+data:
+  runtime-database-url: {{ $url | quote }}
+  runtime-worker-token: {{ required "runtime worker token missing" (index $data "runtime-worker-token") | quote }}
+  initialization-token: {{ required "runtime initialization token missing" (index $data "initialization-token") | quote }}
+{{- end }}
+{{- end }}

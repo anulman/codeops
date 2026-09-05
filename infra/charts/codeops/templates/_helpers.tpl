@@ -188,3 +188,7 @@ namespaceSelector:
   matchLabels: { kubernetes.io/metadata.name: {{ .Values.jetstream.external.namespace }} }
 {{- end -}}
 {{- end -}}
+
+{{- define "codeops.executionNamespace" -}}
+{{- default .Release.Namespace .Values.runtime.executionNamespace -}}
+{{- end -}}
