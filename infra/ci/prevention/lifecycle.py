@@ -178,8 +178,9 @@ def chart(source, name, gateway_image):
     t['spec']['containers'][0]['readinessProbe'] = {'exec': {'command': ['node', '-e', WRITER.split('setInterval')[0] + 'tick().then(()=>process.exit(0)).catch(()=>process.exit(1));']}, 'periodSeconds': 2, 'timeoutSeconds': 3}
     deployment = obj('Deployment', 'fixture-session-gateway', spec={'replicas': 1,
         'selector': {'matchLabels': t['metadata']['labels']}, 'template': t})
-    account = obj('ServiceAccount', 'fixture-session-gateway', automountServiceAccountToken=False)
-    (directory / 'templates/writer.yaml').write_text(yaml.safe_dump(account) + '\n---\n' + yaml.safe_dump(deployment))
+    accounts = [obj('ServiceAccount', name, automountServiceAccountToken=False)
+                for name in ('fixture-session-gateway', 'fixture-control-gateway')]
+    (directory / 'templates/writer.yaml').write_text('\n---\n'.join(yaml.safe_dump(o) for o in accounts + [deployment]))
     c.record(name + '-template-inputs', hashes)
     return directory
 
