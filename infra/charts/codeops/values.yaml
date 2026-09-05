@@ -99,6 +99,8 @@ migration:
   enabled: true
   # Deployment-only owner connection; never mount in an application Pod.
   secretName: codeops-migration-secrets
+  # New credential staged before pre-upgrade; never mutate the old gateway early.
+  applicationSecretName: codeops-application-database
 
 sessionOwner:
   # Required on the first upgrade that finds existing session rows.
@@ -323,6 +325,8 @@ postgresql:
     host: ""
     port: 5432
     namespace: ""
+    # Optional exact destination Pod labels in the external database namespace.
+    podSelector: {}
 
 runtime:
   profileId: standard-v1

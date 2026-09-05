@@ -7,7 +7,8 @@ hold stays in effect. Do not use the damaged CodeOps control plane for this repa
 
 1. Verify the disposable launcher image, code and config digests outside the
    checkout. Install the reviewed launcher and config as operator-owned files.
-2. Run `--gate proof`, `--gate focused`, then `--gate verify`. Each invocation
+2. Supply the reviewed `--expected-source-sha256` and pinned dependency tar.
+   Run `--gate proof`, `--gate focused`, then `--gate verify`. Each invocation
    creates a new PostgreSQL instance and a copied workspace, with loopback-only
    networking, no published port, no host credential or Docker socket mounts,
    no capabilities and a non-root test process. The operator verifies container
@@ -22,6 +23,29 @@ caller targets before their first mutation. A database name is not isolation.
 The Node guard is defense in depth; it is not the credential/network boundary.
 Dependency and Helm archives are copied into the disposable volume, never mounted
 from the host. Offline chart verification checks pinned archive hashes.
+
+## P1 corrections and qualification hold
+
+The FD-relative snapshot reader refuses symlink ancestors/leaves, special files,
+hardlinks, cross-device traversal and detectable content mutation. Same-filesystem
+bind mounts are not detected: host mount topology must remain operator-controlled. It pins the source
+root across Git enumeration and file reads. Failed snapshots are not imported.
+Synthetic races are tested before installing the launcher; no checkout code is
+run by those proofs. Exact snapshot content/mode digest is required at launch. Manifest v2 hashes a
+version prefix followed by sorted records: 8-byte big-endian path length, path
+bytes, one normalized executable byte, 8-byte content length and 32-byte SHA256.
+This digest is not compatible with the ambiguous prior format.
+The operator must pin dependency tar digests in launcher-config.json; passing a
+mutable dependency directory is no longer supported. Dependency archives must
+be reviewed for contained paths/link targets before their digest is admitted.
+The old installed launcher MUST NOT be used pending independent review of this
+correction. The operator has installed a fail-closed hold entrypoint and retained
+the previous code as a root-only audit copy; the corrected launcher is not yet
+installed. Do not interpret earlier container proofs as host snapshot coverage.
+
+See [PROTECTED-CUTOVER.md](PROTECTED-CUTOVER.md) for the explicit prior-chart
+credential ordering, protected namespace/tool design and remaining live placement
+blocker. The managed quickstart does not claim production owner isolation.
 
 ## Production cutover: blocked pending exact live identity review
 

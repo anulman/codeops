@@ -1,3 +1,6 @@
+{{- if or (not .Values.migration.applicationSecretName) (has .Values.migration.applicationSecretName (list .Values.gateway.secretName .Values.migration.secretName .Values.lifecycleRelay.secretName .Values.modelProxy.secretName .Values.postgresql.secretName)) -}}
+{{- fail "migration.applicationSecretName must be a separate staged application credential" -}}
+{{- end -}}
 {{- if or (not .Values.migration.secretName) (eq .Values.migration.secretName .Values.gateway.secretName) (eq .Values.migration.secretName .Values.lifecycleRelay.secretName) (eq .Values.migration.secretName .Values.modelProxy.secretName) -}}
 {{- fail "migration.secretName must be separate from every application secret" -}}
 {{- end -}}

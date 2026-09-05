@@ -196,7 +196,7 @@ test("renders one portable CodeOps package with immutable images", () => {
   ]);
   assert.deepEqual(
     migration.spec.template.spec.volumes.find(({ name }) => name === "secrets").secret.items.map(({ key }) => key).sort(),
-    ["database-url", "runtime-database-role", "runtime-database-url"],
+    ["runtime-database-role", "runtime-database-url"],
   );
   assert.deepEqual(
     migration.spec.template.spec.volumes.find(({ name }) => name === "relay-authority").secret.items.map(({ key }) => key).sort(),
@@ -921,7 +921,7 @@ test("defaults to deny and opens only explicit component paths", () => {
 test("creates a complete one-repository quickstart from one values file", () => {
   const resources = renderQuickstart();
   const secrets = resources.filter(({ kind }) => kind === "Secret");
-  assert.equal(secrets.length, 18); // Dedicated deployment-only owner Secret.
+  assert.equal(secrets.length, 19); // Owner and staged application credentials.
   assert.equal(
     secrets.every((secret) => secret.metadata.annotations["helm.sh/resource-policy"] === "keep"),
     true,
@@ -1135,4 +1135,46 @@ test("accepts arbitrary namespaces and fails closed on invalid configuration", (
 
 test("rejects a shared migration and application secret", () => {
   assert.throws(() => render(["--set", "migration.secretName=team-a-codeops-session-secrets"]), /must be separate/);
+});
+
+
+test("stages new quickstart credentials before migration without rotating old runtime secrets", () => {
+  const resources = renderQuickstart(["--is-upgrade"]);
+  const migration = resource(resources, "Job", "codeops-session-migrate");
+  const owner = resource(resources, "Secret", "codeops-migration-secrets");
+  const application = resource(resources, "Secret", "codeops-application-database");
+  const gateway = resource(resources, "Secret", "codeops-session-secrets");
+  for (const secret of [owner, application]) {
+    assert.equal(secret.metadata.annotations["helm.sh/hook"], "pre-install,pre-upgrade");
+    assert.ok(Number(secret.metadata.annotations["helm.sh/hook-weight"]) <
+      Number(migration.metadata.annotations["helm.sh/hook-weight"]));
+    assert.equal(secret.metadata.annotations["helm.sh/hook-delete-policy"], "before-hook-creation");
+  }
+  assert.equal(gateway.metadata.annotations["helm.sh/hook"], undefined);
+  assert.equal(application.stringData["database-url"], gateway.stringData["database-url"]);
+  assert.notEqual(owner.stringData["database-url"], application.stringData["database-url"]);
+  const volumes = migration.spec.template.spec.volumes;
+  assert.equal(volumes.find(v => v.name === "application-authority").secret.secretName,
+    application.metadata.name);
+  assert.equal(volumes.find(v => v.name === "secrets").secret.items.some(i => i.key === "database-url"), false);
+  // The only pre-upgrade Secrets must be new names. In particular no
+  // credential consumed by the prior gateway is a pre-upgrade replacement.
+  const staged = resources.filter(r => r.kind === "Secret" && r.metadata.annotations?.["helm.sh/hook"]?.includes("pre-upgrade"));
+  assert.deepEqual(staged.map(r => r.metadata.name).sort(), ["codeops-application-database", "codeops-migration-secrets"]);
+  for (const name of ["codeops-session-secrets", "codeops-lifecycle-relay", "codeops-model-proxy-credentials", "codeops-postgres"]) {
+    assert.equal(resource(resources, "Secret", name).metadata.annotations["helm.sh/hook"], undefined);
+  }
+});
+
+
+test("protected external database egress selects namespace and database Pods together", () => {
+  const resources = render(["--set", "profile=custom", "--set", "postgresql.deployment=external",
+    "--set", "postgresql.external.host=codeops-database.codeops-database-owner.svc",
+    "--set", "postgresql.external.namespace=codeops-database-owner",
+    "--set-string", "postgresql.external.podSelector.fixture-db=true"]);
+  const policies = resources.filter(r => r.kind === "NetworkPolicy");
+  const targets = policies.flatMap(p => (p.spec.egress ?? []).flatMap(e => e.to ?? []))
+    .filter(t => t.namespaceSelector?.matchLabels?.["kubernetes.io/metadata.name"] === "codeops-database-owner");
+  assert.ok(targets.length > 0);
+  for (const target of targets) assert.deepEqual(target.podSelector, {matchLabels: {"fixture-db": "true"}});
 });
