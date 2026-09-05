@@ -1,0 +1,12 @@
+[
+  {
+    "path": "/usr/bin/dpkg-deb",
+    "sha256": "fc9dde782ca8309b65ab92e61d13318bf463cd1aa71daa8967b87b81b48b63d2",
+    "scope": "current trusted bootstrap only; hosted use must read back exact identity or provide independent replacement acceptance"
+  },
+  {
+    "path": "/usr/bin/python3.12",
+    "sha256": "1643dacd9feaedc58f3cc581e4d22577dfe25c09b10282936186ccf0f2e61118",
+    "scope": "current trusted bootstrap only; hosted use must read back exact identity or provide independent replacement acceptance"
+  }
+]

@@ -1,0 +1,748 @@
+{
+  "schema": "clean-input-acquisition-v2",
+  "published": false,
+  "ready": true,
+  "executionAdmitted": false,
+  "reason": "Direct original upstreams and exact public reconstructions; no cache aggregates or public upload",
+  "objects": {
+    "cf1e9437ac7ddf6539dbe87b68858cbdef84d78c6aac243ab3b6e564a52ed930": {
+      "sha256": "cf1e9437ac7ddf6539dbe87b68858cbdef84d78c6aac243ab3b6e564a52ed930",
+      "bytes": 15180,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libcap-ng0_0.8.4-2build2_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libc/libcap-ng/libcap-ng0_0.8.4-2build2_amd64.deb"
+    },
+    "1d7f54e77f0455ab5e607cd5e78b576801d8efdc66115e02cf3c6e708d093667": {
+      "sha256": "1d7f54e77f0455ab5e607cd5e78b576801d8efdc66115e02cf3c6e708d093667",
+      "bytes": 68124,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libpam0g_1.5.3-5ubuntu5.7_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/pam/libpam0g_1.5.3-5ubuntu5.7_amd64.deb"
+    },
+    "3b8d5391b6b484a4c81fd000b6064885ad967ec3cb966bc57603f3fb3ebf0ed5": {
+      "sha256": "3b8d5391b6b484a4c81fd000b6064885ad967ec3cb966bc57603f3fb3ebf0ed5",
+      "bytes": 3262434,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libc6_2.39-0ubuntu8.8_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/g/glibc/libc6_2.39-0ubuntu8.8_amd64.deb"
+    },
+    "dfcf25061e07aad7efd3f4f880ba5ad4d4d09ebe7fc8cc77ab6b8a161d6d4727": {
+      "sha256": "dfcf25061e07aad7efd3f4f880ba5ad4d4d09ebe7fc8cc77ab6b8a161d6d4727",
+      "bytes": 299472,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libzstd1_1.5.5+dfsg2-2build1.1_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libz/libzstd/libzstd1_1.5.5+dfsg2-2build1.1_amd64.deb"
+    },
+    "110a797a57673d3ee497a141cf988199258058c57525799c63194d81822529a0": {
+      "sha256": "110a797a57673d3ee497a141cf988199258058c57525799c63194d81822529a0",
+      "bytes": 226662,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libpcre2-8-0_10.42-4ubuntu2.1_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/p/pcre2/libpcre2-8-0_10.42-4ubuntu2.1_amd64.deb"
+    },
+    "957b9eeaa83cf6f2d5d5d76dbb8aa31d3297e6781d8a02fa08dcc897ae650a0b": {
+      "sha256": "957b9eeaa83cf6f2d5d5d76dbb8aa31d3297e6781d8a02fa08dcc897ae650a0b",
+      "bytes": 536494,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libgcrypt20_1.10.3-2ubuntu0.2_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libg/libgcrypt20/libgcrypt20_1.10.3-2ubuntu0.2_amd64.deb"
+    },
+    "9474785cd6f398512bf8c305c3901dbb111569dccb6f5832002373c0a8ac5832": {
+      "sha256": "9474785cd6f398512bf8c305c3901dbb111569dccb6f5832002373c0a8ac5832",
+      "bytes": 82302,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libcrypt1_1%3a4.4.36-4build1_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libx/libxcrypt/libcrypt1_4.4.36-4build1_amd64.deb"
+    },
+    "23c627c77c66552a658e62852f244f4946dc543898e0ec5428d5dc6bffde2d6a": {
+      "sha256": "23c627c77c66552a658e62852f244f4946dc543898e0ec5428d5dc6bffde2d6a",
+      "bytes": 30500,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/libcap2_2.66-5ubuntu2.4_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libc/libcap2/libcap2_2.66-5ubuntu2.4_amd64.deb"
+    },
+    "a9cbdc424bc0a5c8af3d6445488a48de76df5ff4d76b7dab8aaf88f712358bbc": {
+      "sha256": "a9cbdc424bc0a5c8af3d6445488a48de76df5ff4d76b7dab8aaf88f712358bbc",
+      "bytes": 51830,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libkmod2_31+20240202-2ubuntu7.2_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/k/kmod/libkmod2_31+20240202-2ubuntu7.2_amd64.deb"
+    },
+    "6abaa6c26f46ef17764c4a753e0e84de1cdadde5634fd2987621fdc617988d19": {
+      "sha256": "6abaa6c26f46ef17764c4a753e0e84de1cdadde5634fd2987621fdc617988d19",
+      "bytes": 79660,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libselinux1_3.5-2ubuntu2.1_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libselinux/libselinux1_3.5-2ubuntu2.1_amd64.deb"
+    },
+    "7e2992d3a79fc05514dc5966558ee9c66a7214a47edf2a36017b9e2777528665": {
+      "sha256": "7e2992d3a79fc05514dc5966558ee9c66a7214a47edf2a36017b9e2777528665",
+      "bytes": 36596,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/libuuid1_2.39.3-9ubuntu6.6_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/u/util-linux/libuuid1_2.39.3-9ubuntu6.6_amd64.deb"
+    },
+    "93654ee8180a73a0363f25c51dc673d67cbabcbecd164187b8a2deb54d007aef": {
+      "sha256": "93654ee8180a73a0363f25c51dc673d67cbabcbecd164187b8a2deb54d007aef",
+      "bytes": 70092,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libgpg-error0_1.47-3build2.1_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libg/libgpg-error/libgpg-error0_1.47-3build2.1_amd64.deb"
+    },
+    "d2eabd41ca77d2c2dd9d5d4ef478cccb64ffde6279c47cf4699a857d46785a52": {
+      "sha256": "d2eabd41ca77d2c2dd9d5d4ef478cccb64ffde6279c47cf4699a857d46785a52",
+      "bytes": 127352,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/liblzma5_5.6.1+really5.4.5-1ubuntu0.3_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/x/xz-utils/liblzma5_5.6.1+really5.4.5-1ubuntu0.3_amd64.deb"
+    },
+    "8f2c25589f187dacfdc5bb6be2af0aee6c2ba7b4d2edd1ca4b26753469f07aae": {
+      "sha256": "8f2c25589f187dacfdc5bb6be2af0aee6c2ba7b4d2edd1ca4b26753469f07aae",
+      "bytes": 134082,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libmount1_2.39.3-9ubuntu6.6_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/u/util-linux/libmount1_2.39.3-9ubuntu6.6_amd64.deb"
+    },
+    "408457f91745dd33746d24d063986df96a81166d6a59431583073398cefa1301": {
+      "sha256": "408457f91745dd33746d24d063986df96a81166d6a59431583073398cefa1301",
+      "bytes": 46962,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libaudit1_1%3a3.1.2-2.1build1.1_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/a/audit/libaudit1_3.1.2-2.1build1.1_amd64.deb"
+    },
+    "33fc96f1e008d27c042a3db9bcd16f7f4d49e866f7a3141b758a799328dbdc3f": {
+      "sha256": "33fc96f1e008d27c042a3db9bcd16f7f4d49e866f7a3141b758a799328dbdc3f",
+      "bytes": 50424,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libseccomp2_2.5.5-1ubuntu3.1_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/libs/libseccomp/libseccomp2_2.5.5-1ubuntu3.1_amd64.deb"
+    },
+    "3d0955bc049bbcca0f4c3e78a3a8b994593d96db7d84f4320217224433844534": {
+      "sha256": "3d0955bc049bbcca0f4c3e78a3a8b994593d96db7d84f4320217224433844534",
+      "bytes": 1944134,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libssl3t64_3.0.13-0ubuntu3.15_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/o/openssl/libssl3t64_3.0.13-0ubuntu3.15_amd64.deb"
+    },
+    "f2bfd3f8f00413d5f1f04fc723063803c56ac0f1e0efae3bc41f2d7276972ec3": {
+      "sha256": "f2bfd3f8f00413d5f1f04fc723063803c56ac0f1e0efae3bc41f2d7276972ec3",
+      "bytes": 16792,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/libacl1_2.3.2-1build1.1_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/a/acl/libacl1_2.3.2-1build1.1_amd64.deb"
+    },
+    "319331270d5cc52d5ebffe51c941d7b01b432bc402c2924b557209a64d4ecbad": {
+      "sha256": "319331270d5cc52d5ebffe51c941d7b01b432bc402c2924b557209a64d4ecbad",
+      "bytes": 63062,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/apt/liblz4-1_1.9.4-1build1.1_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/l/lz4/liblz4-1_1.9.4-1build1.1_amd64.deb"
+    },
+    "3bcf169cd65e2539059b2287924090fc629f9bf90f595fc25465a7efe950ee82": {
+      "sha256": "3bcf169cd65e2539059b2287924090fc629f9bf90f595fc25465a7efe950ee82",
+      "bytes": 124124,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/libblkid1_2.39.3-9ubuntu6.6_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/u/util-linux/libblkid1_2.39.3-9ubuntu6.6_amd64.deb"
+    },
+    "c95d59cad331f88ddffa3a85f1119bac98dd956916af642c60dd66a485ee97df": {
+      "sha256": "c95d59cad331f88ddffa3a85f1119bac98dd956916af642c60dd66a485ee97df",
+      "bytes": 22808,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/libcom-err2_1.47.0-2.4~exp1ubuntu4_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/e/e2fsprogs/libcom-err2_1.47.0-2.4~exp1ubuntu4_amd64.deb"
+    },
+    "8722a69d99c1a7e6f72c5389e9c6d8053d95d2f5f4fede5dc83118f735812518": {
+      "sha256": "8722a69d99c1a7e6f72c5389e9c6d8053d95d2f5f4fede5dc83118f735812518",
+      "bytes": 2077458,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/libsystemd-shared_255.4-1ubuntu8.17_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/s/systemd/libsystemd-shared_255.4-1ubuntu8.17_amd64.deb"
+    },
+    "09e929ceb9fc5d11757f28429b3151601c44db4c96e0bc5ad46c501c8d56f4f9": {
+      "sha256": "09e929ceb9fc5d11757f28429b3151601c44db4c96e0bc5ad46c501c8d56f4f9",
+      "bytes": 118192,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/mount_2.39.3-9ubuntu6.6_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/u/util-linux/mount_2.39.3-9ubuntu6.6_amd64.deb"
+    },
+    "84f33a780d27cce20a2cd925e7ce8498daba2dbc614d433548a19fbb2c5dac18": {
+      "sha256": "84f33a780d27cce20a2cd925e7ce8498daba2dbc614d433548a19fbb2c5dac18",
+      "bytes": 66282,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/libsmartcols1_2.39.3-9ubuntu6.6_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/u/util-linux/libsmartcols1_2.39.3-9ubuntu6.6_amd64.deb"
+    },
+    "73abd544076b5959eb387a42a70c781a94d64364e961e72949456104f3d8d084": {
+      "sha256": "73abd544076b5959eb387a42a70c781a94d64364e961e72949456104f3d8d084",
+      "bytes": 221550,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/libext2fs2t64_1.47.0-2.4~exp1ubuntu4_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/e/e2fsprogs/libext2fs2t64_1.47.0-2.4~exp1ubuntu4_amd64.deb"
+    },
+    "bc3f351b5a45ae2278d2baa81ae1f4e690260ed8b8c870c8a8f5f4f97d36a8ad": {
+      "sha256": "bc3f351b5a45ae2278d2baa81ae1f4e690260ed8b8c870c8a8f5f4f97d36a8ad",
+      "bytes": 600734,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/e2fsprogs_1.47.0-2.4~exp1ubuntu4_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/e/e2fsprogs/e2fsprogs_1.47.0-2.4~exp1ubuntu4_amd64.deb"
+    },
+    "250345b73e42a97ee71cae7c1e470897dfad3c639eb0a7aafe4f9a3a29871cb2": {
+      "sha256": "250345b73e42a97ee71cae7c1e470897dfad3c639eb0a7aafe4f9a3a29871cb2",
+      "bytes": 3475000,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/systemd_255.4-1ubuntu8.17_amd64.deb",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://archive.ubuntu.com/ubuntu/pool/main/s/systemd/systemd_255.4-1ubuntu8.17_amd64.deb"
+    },
+    "40c16bcf324f354b382d07e845e6a79e3493fc0c09b252dff9e1a46125589bff": {
+      "sha256": "40c16bcf324f354b382d07e845e6a79e3493fc0c09b252dff9e1a46125589bff",
+      "bytes": 81872801,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/docker-28.3.3.tgz",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://download.docker.com/linux/static/stable/x86_64/docker-28.3.3.tgz"
+    },
+    "72748da13197c1fb161e3afeef20a6a385ff24f2165e6e2758e47008e7faba4c": {
+      "sha256": "72748da13197c1fb161e3afeef20a6a385ff24f2165e6e2758e47008e7faba4c",
+      "bytes": 34143368,
+      "localSource": "/home/clawy/.openclaw/workspace/worktrees/codeops-lifecycle-boundary-v5/artifacts/resource-v5/cpython-3.12.14-stripped.tar.gz",
+      "method": "original upstream HTTPS download",
+      "publicUpload": false,
+      "url": "https://github.com/astral-sh/python-build-standalone/releases/download/20260901/cpython-3.12.14%2B20260901-x86_64-unknown-linux-gnu-install_only_stripped.tar.gz"
+    },
+    "2e7e297a73d8424077959e5c948852c6a42068991ea9390238d7162074d25a48": {
+      "sha256": "2e7e297a73d8424077959e5c948852c6a42068991ea9390238d7162074d25a48",
+      "bytes": 7813120,
+      "method": "public exact git archive",
+      "commit": "36c1455751b14c6da2d90f9603f0cf5b74562fae",
+      "url": "https://github.com/anulman/codeops.git",
+      "publicUpload": false
+    },
+    "781227e36cd65d332ee02e581e340ee85aa4d63230b12fbdba07dcf097d6724d": {
+      "sha256": "781227e36cd65d332ee02e581e340ee85aa4d63230b12fbdba07dcf097d6724d",
+      "bytes": 409640960,
+      "method": "public pinned Node OCI reconstruction",
+      "sourceIndex": "sha256:be23f54a88d34e8824c741b19b91064094f92c1c97b194144bfc8b50d67258e2",
+      "publicUpload": false
+    },
+    "af1cd32d4a6d4637d59432cd2cbf54a404fca23656ab71d35a30ac43796a022d": {
+      "sha256": "af1cd32d4a6d4637d59432cd2cbf54a404fca23656ab71d35a30ac43796a022d",
+      "bytes": 98126,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/@nats-io/jetstream/-/jetstream-3.4.0.tgz",
+      "integrity": "sha512-GzHQodNJ942+R5LRb8PuZ5ugVWVWMRiufxUYLLVWkXKfwDXYN+Owo0d7L/b9O7BPyrbYD7jQWAC6+ZVuXa9Gyw==",
+      "publicUpload": false
+    },
+    "31f2fc3134feecfec3d39dc91109cea2e4ca3985330b040fa8aa628449aa6694": {
+      "sha256": "31f2fc3134feecfec3d39dc91109cea2e4ca3985330b040fa8aa628449aa6694",
+      "bytes": 110185,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/@nats-io/nats-core/-/nats-core-3.4.0.tgz",
+      "integrity": "sha512-QMDM86EUNm+wudlKC67HLar/KHHQUvJGLfb4jbahje3pUk3K9afeck9fwsxBZF0eUFox6T/TA6m/t+lQqf+QsQ==",
+      "publicUpload": false
+    },
+    "ef049e45bfc688d0795e30fec5c76fb5dda728d6659d15193af6e8c2ccd4757e": {
+      "sha256": "ef049e45bfc688d0795e30fec5c76fb5dda728d6659d15193af6e8c2ccd4757e",
+      "bytes": 20925,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/@nats-io/nkeys/-/nkeys-2.0.3.tgz",
+      "integrity": "sha512-JVt56GuE6Z89KUkI4TXUbSI9fmIfAmk6PMPknijmuL72GcD+UgIomTcRWiNvvJKxA01sBbmIPStqJs5cMRBC3A==",
+      "publicUpload": false
+    },
+    "be0a75457049ead786b53d3158290c03602d42c11e99691980f2aa5b7e0aed68": {
+      "sha256": "be0a75457049ead786b53d3158290c03602d42c11e99691980f2aa5b7e0aed68",
+      "bytes": 10009,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/@nats-io/nuid/-/nuid-3.0.0.tgz",
+      "integrity": "sha512-QbXZDrxmYlrn5AD06gYcUTmEHwxn96HBQMIk7XTjDlEcx6FPzVBBPjp4AMRh1lEv6B4iJ6Xb/Uz61JugPXFRQg==",
+      "publicUpload": false
+    },
+    "9cb9de6ac256b3ed32264ae3265ccb952a279f5aa567fe4d29a5dcf4a4e3857c": {
+      "sha256": "9cb9de6ac256b3ed32264ae3265ccb952a279f5aa567fe4d29a5dcf4a4e3857c",
+      "bytes": 13685,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/@nats-io/transport-node/-/transport-node-3.4.0.tgz",
+      "integrity": "sha512-hH7u7ejIBTFEJIZ8rIcMrHJI6wl+HhpO5sVFs1+ppmXa8RuB2+Lh1+UwTzZ5xTNNm1TKcRkYy+2qCV56qp8RxA==",
+      "publicUpload": false
+    },
+    "99a23609b460c35e04e2aa1cb696bc0199a05dfe48835ed515a3114181a69a0d": {
+      "sha256": "99a23609b460c35e04e2aa1cb696bc0199a05dfe48835ed515a3114181a69a0d",
+      "bytes": 430623,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/@types/node/-/node-25.7.0.tgz",
+      "integrity": "sha512-z+pdZyxE+RTQE9AcboAZCb4otwcrvgHD+GlBpPgn0emDVt0ohrTMhAwlr2Wd9nZ+nihhYFxO2pThz3C5qSu2Eg==",
+      "publicUpload": false
+    },
+    "0d29cf4e8cb07ab6b3b1dc81f3242b46a36c1ec92839f519043e7ca34edde525": {
+      "sha256": "0d29cf4e8cb07ab6b3b1dc81f3242b46a36c1ec92839f519043e7ca34edde525",
+      "bytes": 5403,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/@types/pg/-/pg-8.20.3.tgz",
+      "integrity": "sha512-4Tvg+HO6+oQaAkpT8GTYoSExzpGGZz532GXgbbCElWJQeQdMozBWxEKNBhJJpHFjWXsMxqPbyypvj/89FWNoSQ==",
+      "publicUpload": false
+    },
+    "8a4ed1dea872353ae486375e5f0bba2a451fb9eebbb07bfeec4208d0a0c1be5c": {
+      "sha256": "8a4ed1dea872353ae486375e5f0bba2a451fb9eebbb07bfeec4208d0a0c1be5c",
+      "bytes": 5260,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/@types/web-push/-/web-push-3.6.4.tgz",
+      "integrity": "sha512-GnJmSr40H3RAnj0s34FNTcJi1hmWFV5KXugE0mYWnYhgTAHLJ/dJKAwDmvPJYMke0RplY2XE9LnM4hqSqKIjhQ==",
+      "publicUpload": false
+    },
+    "7dd4a61668a9a4e8d4e903f1a254f94d53dafd3f316f2b9b597c5ad8c79cb57e": {
+      "sha256": "7dd4a61668a9a4e8d4e903f1a254f94d53dafd3f316f2b9b597c5ad8c79cb57e",
+      "bytes": 7812,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/agent-base/-/agent-base-7.1.4.tgz",
+      "integrity": "sha512-MnA+YT8fwfJPgBx3m60MNqakm30XOkyIoH1y6huTQvC0PwZG7ki8NacLBcrPbNoo8vEZy7Jpuk7+jMO+CUovTQ==",
+      "publicUpload": false
+    },
+    "9cc59e0b515f254ee8ecc9fe584d6fb02d86b2a10f6de6c5d6923ef0d8f8c2a1": {
+      "sha256": "9cc59e0b515f254ee8ecc9fe584d6fb02d86b2a10f6de6c5d6923ef0d8f8c2a1",
+      "bytes": 13550,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/asn1.js/-/asn1.js-5.4.1.tgz",
+      "integrity": "sha512-+I//4cYPccV8LdmBLiX8CYvf9Sp3vQsrqu2QNXRcrbiWvcx/UdlFiqUJJzxRQxgsZmvhXhn4cSKeSmoFjVdupA==",
+      "publicUpload": false
+    },
+    "35d828a52d5f1f18fa069632ce6bb47f797aeac22c543a813511d0afc73dadff": {
+      "sha256": "35d828a52d5f1f18fa069632ce6bb47f797aeac22c543a813511d0afc73dadff",
+      "bytes": 10323,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/aws4fetch/-/aws4fetch-1.0.20.tgz",
+      "integrity": "sha512-/djoAN709iY65ETD6LKCtyyEI04XIBP5xVvfmNxsEP0uJB5tyaGBztSryRr4HqMStr9R06PisQE7m9zDTXKu6g==",
+      "publicUpload": false
+    },
+    "50c550f01680444f2d5985b78bab8976ea17c3f43963a8fdc39bdbb4489fb5fb": {
+      "sha256": "50c550f01680444f2d5985b78bab8976ea17c3f43963a8fdc39bdbb4489fb5fb",
+      "bytes": 21900,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/bn.js/-/bn.js-4.12.5.tgz",
+      "integrity": "sha512-3aRg6/JxfffFD+OlOjOFR3Vo79l39ooBTFucxx+MT3dhCtzn3EmiUPQo+6/OZuI2jbXi3YKgmiTFBgChQMwIRQ==",
+      "publicUpload": false
+    },
+    "8f455159e342103e7854ed6a4cc73edbab144d857917c88edefea862f09fe75a": {
+      "sha256": "8f455159e342103e7854ed6a4cc73edbab144d857917c88edefea862f09fe75a",
+      "bytes": 3125,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/buffer-equal-constant-time/-/buffer-equal-constant-time-1.0.1.tgz",
+      "integrity": "sha512-zRpUiDwd/xk6ADqPMATG8vc9VPrkck7T07OIx0gnjmJAnHnTVXNQG3vfvWNuiZIkwu9KrKdA1iJKfsfTVxE6NA==",
+      "publicUpload": false
+    },
+    "89c1ac9c946ee8905a875837114528e97eeae35e03be3190584b2216af43e4a7": {
+      "sha256": "89c1ac9c946ee8905a875837114528e97eeae35e03be3190584b2216af43e4a7",
+      "bytes": 13449,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/debug/-/debug-4.4.3.tgz",
+      "integrity": "sha512-RGwwWnwQvkVfavKVt22FGLw+xYSdzARwm0ru6DhTVA3umU5hZc28V3kO4stgYryrTlLpuvgI9GiijltAjNbcqA==",
+      "publicUpload": false
+    },
+    "487cb94dff2414772c3bb648a5e4e41c03cbbcc64263d08a56e36d735fc848fe": {
+      "sha256": "487cb94dff2414772c3bb648a5e4e41c03cbbcc64263d08a56e36d735fc848fe",
+      "bytes": 7104,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/ecdsa-sig-formatter/-/ecdsa-sig-formatter-1.0.11.tgz",
+      "integrity": "sha512-nagl3RYrbNv6kQkeJIpt6NJZy8twLB/2vtz6yN9Z4vRKHN4/QZJIEbqohALSgwKdnksuY3k5Addp5lg8sVoVcQ==",
+      "publicUpload": false
+    },
+    "24d56ba3da8f09b34544eccbe34634b38683457c665569cb9c70b94a8eb7706e": {
+      "sha256": "24d56ba3da8f09b34544eccbe34634b38683457c665569cb9c70b94a8eb7706e",
+      "bytes": 5100,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/http_ece/-/http_ece-1.2.0.tgz",
+      "integrity": "sha512-JrF8SSLVmcvc5NducxgyOrKXe3EsyHMgBFgSaIUGmArKe+rwr0uphRkRXvwiom3I+fpIfoItveHrfudL8/rxuA==",
+      "publicUpload": false
+    },
+    "960f89e8e5240882f64249d04a538421dd39d62ffacc138544647cc3251bc0e0": {
+      "sha256": "960f89e8e5240882f64249d04a538421dd39d62ffacc138544647cc3251bc0e0",
+      "bytes": 8998,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/https-proxy-agent/-/https-proxy-agent-7.0.6.tgz",
+      "integrity": "sha512-vK9P5/iUfdl95AI+JVyUuIcVtd4ofvtrOr3HNtM2yxC9bnMbEdp3x01OhQNnjb8IJYi38VlTE3mBXwcfvywuSw==",
+      "publicUpload": false
+    },
+    "d94dbc6c1bb3c5ac0fb12a73ade187108fc60de273a1b754f55044eb5e24afaf": {
+      "sha256": "d94dbc6c1bb3c5ac0fb12a73ade187108fc60de273a1b754f55044eb5e24afaf",
+      "bytes": 2030,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/inherits/-/inherits-2.0.4.tgz",
+      "integrity": "sha512-k/vGaX4/Yla3WzyMCvTQOXYeIHvqOKtnqBduzTHpzpQZzAskKMhZ2K+EnBiSM9zGSoIFeMpXKxa4dYeZIQqewQ==",
+      "publicUpload": false
+    },
+    "c8bc0cf9fbbdc9d2f1b6f3f97ab9c1f70130eec6b153f29fd69baa5a6aa8341d": {
+      "sha256": "c8bc0cf9fbbdc9d2f1b6f3f97ab9c1f70130eec6b153f29fd69baa5a6aa8341d",
+      "bytes": 4720,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/jwa/-/jwa-2.0.1.tgz",
+      "integrity": "sha512-hRF04fqJIP8Abbkq5NKGN0Bbr3JxlQ+qhZufXVr0DvujKy93ZCbXZMHDL4EOtodSbCWxOqR8MS1tXA5hwqCXDg==",
+      "publicUpload": false
+    },
+    "ed3a5fb027f8ce1006c8e30a37e88e7cd49824d4873efca8765304b20fe92e12": {
+      "sha256": "ed3a5fb027f8ce1006c8e30a37e88e7cd49824d4873efca8765304b20fe92e12",
+      "bytes": 6190,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/jws/-/jws-4.0.1.tgz",
+      "integrity": "sha512-EKI/M/yqPncGUUh44xz0PxSidXFr/+r0pA70+gIYhjv+et7yxM+s29Y+VGDkovRofQem0fs7Uvf4+YmAdyRduA==",
+      "publicUpload": false
+    },
+    "f16522c947d6dbe3a99f5ff4296ccc253090b838959abdddc45fe81edb03f3a0": {
+      "sha256": "f16522c947d6dbe3a99f5ff4296ccc253090b838959abdddc45fe81edb03f3a0",
+      "bytes": 1020,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/minimalistic-assert/-/minimalistic-assert-1.0.1.tgz",
+      "integrity": "sha512-UtJcAD4yEaGtjPezWuO9wC4nwUnVH/8/Im3yEHQP4b67cXlD/Qr9hdITCU1xDbSEXg2XKNaP8jsReV7vQd00/A==",
+      "publicUpload": false
+    },
+    "350a76c115b393c19d24654834261e5dc9f0e8cc5e08f3937fa80140f3e4ce83": {
+      "sha256": "350a76c115b393c19d24654834261e5dc9f0e8cc5e08f3937fa80140f3e4ce83",
+      "bytes": 15520,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/minimist/-/minimist-1.2.8.tgz",
+      "integrity": "sha512-2yyAR8qBkN3YuheJanUpWC5U3bb5osDywNB8RzDVlDwDHbocAJveqqj1u8+SVD7jkWT4yvsHCpWqqWqAxb0zCA==",
+      "publicUpload": false
+    },
+    "f6616e15e530ed552f9daa2d3ce71963947c6bc7c98c9b64fd3e673fd02622c6": {
+      "sha256": "f6616e15e530ed552f9daa2d3ce71963947c6bc7c98c9b64fd3e673fd02622c6",
+      "bytes": 2967,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/ms/-/ms-2.1.3.tgz",
+      "integrity": "sha512-6FlzubTLZG3J2a/NVCAleEhjzq5oxgHyaCU9yYXvcLsvoVaHJq/s5xXI6/XXP6tz7R9xAOtHnSO/tXtF3WRTlA==",
+      "publicUpload": false
+    },
+    "2f8b273b9b93b8712251cbe2b0f05378f4da2187eab5348c3c6c34d02622a55e": {
+      "sha256": "2f8b273b9b93b8712251cbe2b0f05378f4da2187eab5348c3c6c34d02622a55e",
+      "bytes": 26737,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/pg/-/pg-8.22.0.tgz",
+      "integrity": "sha512-8wih1vVIBMxoUM2oB4soJsD9tDnDpLv4OXBJ+EJzFsvycD+lfyIreC2gGHq78f8jbLLt+bvlPTFdFZfJkOuzAA==",
+      "publicUpload": false
+    },
+    "bffbb359f525d8ef6a0ce72f185feb109018a6c763aafc4f7a1b20fde66b98da": {
+      "sha256": "bffbb359f525d8ef6a0ce72f185feb109018a6c763aafc4f7a1b20fde66b98da",
+      "bytes": 6938,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/pg-cloudflare/-/pg-cloudflare-1.4.0.tgz",
+      "integrity": "sha512-Vo7z/6rrQYxpNRylp4Tlob2elzbh+N/MOQbxFVWCxS7oEx6jF53GTJFxK2WWpKuBRkmiin4Mt+xofFDjx09R0A==",
+      "publicUpload": false
+    },
+    "314e8be01b0c5217f51b51a8d334ddbb41d84de437e1296e2608b97dc1dfc120": {
+      "sha256": "314e8be01b0c5217f51b51a8d334ddbb41d84de437e1296e2608b97dc1dfc120",
+      "bytes": 5825,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/pg-connection-string/-/pg-connection-string-2.14.0.tgz",
+      "integrity": "sha512-XwWDGcLRGCXAR8F/AM5bG7Q+A3Wm2s6QeEjlOKZLlH3UYcguiqCWKyWXVag5TLTIjR7oOJUY8kcADaZgWPyLeg==",
+      "publicUpload": false
+    },
+    "f010d48974a96814e841edbb6fc6096385574610714d2a50e99811170c365e92": {
+      "sha256": "f010d48974a96814e841edbb6fc6096385574610714d2a50e99811170c365e92",
+      "bytes": 1508,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/pg-int8/-/pg-int8-1.0.1.tgz",
+      "integrity": "sha512-WCtabS6t3c8SkpDBUlb1kjOs7l66xsGdKpIPZsg4wR+B3+u9UAum2odSsF9tnvxg80h4ZxLWMy4pRjOsFIqQpw==",
+      "publicUpload": false
+    },
+    "0b0b8729c09d5eaa059313c9c3d11efc8907441386bbf86ccc57e1298c6ce71a": {
+      "sha256": "0b0b8729c09d5eaa059313c9c3d11efc8907441386bbf86ccc57e1298c6ce71a",
+      "bytes": 9579,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/pg-pool/-/pg-pool-3.14.0.tgz",
+      "integrity": "sha512-gKtPkFdQPU3DksooVLi9LsjZxrsBUZIpa+7aVx+LV5pNh0KzP4Zleud2po+ConrxbuXGBJ6Hfer6hdgpIBpBaw==",
+      "publicUpload": false
+    },
+    "5b15041a6b199130037b6c0a23c4ab07be9c35d839e1e03801fa7cdfa7f9ceab": {
+      "sha256": "5b15041a6b199130037b6c0a23c4ab07be9c35d839e1e03801fa7cdfa7f9ceab",
+      "bytes": 39317,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/pg-protocol/-/pg-protocol-1.15.0.tgz",
+      "integrity": "sha512-cq9sECI5s0+uPUXjbz8ioyPJni6RzsRib0US67i5IoTZKw8fNeYlVE7u8F4dG7vEJJtc5wdD1K189lCCUwqWTQ==",
+      "publicUpload": false
+    },
+    "c4804fd058140c32f8fda78883ad45dee3eaa4fd9e9127b6eb659fefe51981bd": {
+      "sha256": "c4804fd058140c32f8fda78883ad45dee3eaa4fd9e9127b6eb659fefe51981bd",
+      "bytes": 10344,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/pg-types/-/pg-types-2.2.0.tgz",
+      "integrity": "sha512-qTAAlrEsl8s4OiEQY69wDvcMIdQN6wdz5ojQiOy6YRMuynxenON0O5oCpJI6lshc6scgAY8qvJ2On/p+CXY0GA==",
+      "publicUpload": false
+    },
+    "ff794c956186430afd600b5bc4500f3f0faf34b62be6ff98494f4c7f4a6d8597": {
+      "sha256": "ff794c956186430afd600b5bc4500f3f0faf34b62be6ff98494f4c7f4a6d8597",
+      "bytes": 4280,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/pgpass/-/pgpass-1.0.5.tgz",
+      "integrity": "sha512-FdW9r/jQZhSeohs1Z3sI1yxFQNFvMcnmfuj4WBMUTxOrAyLMaTcE1aAMBiTlbMNaXvBCQuVi0R7hd8udDSP7ug==",
+      "publicUpload": false
+    },
+    "dbf1035c777631d4b0a4b5c035b1f6247dd923db6b2ea115b93b1eabb172b3a0": {
+      "sha256": "dbf1035c777631d4b0a4b5c035b1f6247dd923db6b2ea115b93b1eabb172b3a0",
+      "bytes": 2213,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/postgres-array/-/postgres-array-2.0.0.tgz",
+      "integrity": "sha512-VpZrUqU5A69eQyW2c5CA1jtLecCsN2U/bD6VilrFDWq5+5UIEVO7nazS3TEcHf1zuPYO/sqGvUvW62g86RXZuA==",
+      "publicUpload": false
+    },
+    "0395e34ecb9945b0003132af6e11463ec7ec8f17fb5cbdbccc5a822bd6807d96": {
+      "sha256": "0395e34ecb9945b0003132af6e11463ec7ec8f17fb5cbdbccc5a822bd6807d96",
+      "bytes": 1724,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/postgres-bytea/-/postgres-bytea-1.0.1.tgz",
+      "integrity": "sha512-5+5HqXnsZPE65IJZSMkZtURARZelel2oXUEO8rH83VS/hxH5vv1uHquPg5wZs8yMAfdv971IU+kcPUczi7NVBQ==",
+      "publicUpload": false
+    },
+    "a67a8d90e7b8f64041a6f425b102b27a3e86d5854ace7e9414a890912f3adb59": {
+      "sha256": "a67a8d90e7b8f64041a6f425b102b27a3e86d5854ace7e9414a890912f3adb59",
+      "bytes": 2836,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/postgres-date/-/postgres-date-1.0.7.tgz",
+      "integrity": "sha512-suDmjLVQg78nMK2UZ454hAG+OAW+HQPZ6n++TNDUX+L0+uUlLywnoxJKDou51Zm+zTCjrCl0Nq6J9C5hP9vK/Q==",
+      "publicUpload": false
+    },
+    "e67563626b30aa7d22caf930e38529bb137476146a11eaaa0bb1e07c0a2413b1": {
+      "sha256": "e67563626b30aa7d22caf930e38529bb137476146a11eaaa0bb1e07c0a2413b1",
+      "bytes": 2926,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/postgres-interval/-/postgres-interval-1.2.0.tgz",
+      "integrity": "sha512-9ZhXKM/rw350N1ovuWHbGxnGh/SNJ4cnxHiM0rxE4VN41wsg8P8zWn9hv/buK00RP4WvlOyr/RBDiptyxVbkZQ==",
+      "publicUpload": false
+    },
+    "5d181804516c4a693a384272a7bd0e42d17e0d4b301ccfbe408669ccafdcb3e8": {
+      "sha256": "5d181804516c4a693a384272a7bd0e42d17e0d4b301ccfbe408669ccafdcb3e8",
+      "bytes": 9972,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/safe-buffer/-/safe-buffer-5.2.1.tgz",
+      "integrity": "sha512-rp3So07KcdmmKbGvgaNxQSJr7bGVSVk5S9Eq1F+ppbRo70+YeaDxkw5Dd8NPN+GD6bjnYm2VuPuCXmpuYvmCXQ==",
+      "publicUpload": false
+    },
+    "78812f65ae3b98071ce1c9bacbe0666f4220d0b2753c2a11530eb27df440a3b3": {
+      "sha256": "78812f65ae3b98071ce1c9bacbe0666f4220d0b2753c2a11530eb27df440a3b3",
+      "bytes": 12035,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/safer-buffer/-/safer-buffer-2.1.2.tgz",
+      "integrity": "sha512-YZo3K82SD7Riyi0E1EQPojLz7kpepnSQI9IyPbHHg1XXXevb5dJI7tpyN2ADxGcQbHG7vcyRHk0cbwqcQriUtg==",
+      "publicUpload": false
+    },
+    "e0061e7f042fc5ff6dcda8afb66619757d92ab1ff514a28a5904f2ebde27bf54": {
+      "sha256": "e0061e7f042fc5ff6dcda8afb66619757d92ab1ff514a28a5904f2ebde27bf54",
+      "bytes": 4668,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/split2/-/split2-4.2.0.tgz",
+      "integrity": "sha512-UcjcJOWknrNkF6PLX83qcHM6KHgVKNkV62Y8a5uYDVv9ydGQVwAHMKqHdJje1VTWpljG0WYpCDhrCdAOYH4TWg==",
+      "publicUpload": false
+    },
+    "5f8dc49cb4483e206ba3ebb22abbccfc0218c59b60fc78cce24197ced5b9e102": {
+      "sha256": "5f8dc49cb4483e206ba3ebb22abbccfc0218c59b60fc78cce24197ced5b9e102",
+      "bytes": 49790,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/tweetnacl/-/tweetnacl-1.0.3.tgz",
+      "integrity": "sha512-6rt+RN7aOi1nGMyC4Xa5DdYiukl2UWCbcJft7YhxReBGQD7OAM8Pbxw6YMo4r2diNEA8FEmu32YOn9rhaiE5yw==",
+      "publicUpload": false
+    },
+    "33cd0ee1beaa8c9e9d15a9da836c62ddea4c34a42d7c2d349dbc80d94165d22a": {
+      "sha256": "33cd0ee1beaa8c9e9d15a9da836c62ddea4c34a42d7c2d349dbc80d94165d22a",
+      "bytes": 4515854,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/typescript/-/typescript-6.0.3.tgz",
+      "integrity": "sha512-y2TvuxSZPDyQakkFRPZHKFm+KKVqIisdg9/CZwm9ftvKXLP8NRWj38/ODjNbr43SsoXqNuAisEf1GdCxqWcdBw==",
+      "publicUpload": false
+    },
+    "9cc8ea10e2e1771cd95db8e51ea91ffb5adccb02705605b1023743a5cb4954c5": {
+      "sha256": "9cc8ea10e2e1771cd95db8e51ea91ffb5adccb02705605b1023743a5cb4954c5",
+      "bytes": 28011,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/undici-types/-/undici-types-7.21.0.tgz",
+      "integrity": "sha512-w9IMgQrz4O0YN1LtB7K5P63vhlIOvC7opSmouCJ+ZywlPAlO9gIkJ+otk6LvGpAs2wg4econaCz3TvQ9xPoyuQ==",
+      "publicUpload": false
+    },
+    "85774fffee09f70bde084cebcebae20b3cf6f48239f61659e45aed9fd513463e": {
+      "sha256": "85774fffee09f70bde084cebcebae20b3cf6f48239f61659e45aed9fd513463e",
+      "bytes": 13481,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/web-push/-/web-push-3.6.7.tgz",
+      "integrity": "sha512-OpiIUe8cuGjrj3mMBFWY+e4MMIkW3SVT+7vEIjvD9kejGUypv8GPDf84JdPWskK8zMRIJ6xYGm+Kxr8YkPyA0A==",
+      "publicUpload": false
+    },
+    "bd22a01d43c799be7bb53dfa9e775b132045e39525e51efb977528a00041ba48": {
+      "sha256": "bd22a01d43c799be7bb53dfa9e775b132045e39525e51efb977528a00041ba48",
+      "bytes": 2529,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/xtend/-/xtend-4.0.2.tgz",
+      "integrity": "sha512-LKYU1iAXJXUgAXn9URjiu+MWhyUXHsvfp7mcuYm9dSUKK0/CjtrUwFAxD82/mCWbtLsGjFIad0wIsod4zrTAEQ==",
+      "publicUpload": false
+    },
+    "9e1f1a05f0dd0c1dab64ee91ceb9bf55cd44d35368c70edda80a2fdc70a88377": {
+      "sha256": "9e1f1a05f0dd0c1dab64ee91ceb9bf55cd44d35368c70edda80a2fdc70a88377",
+      "bytes": 583600,
+      "method": "original upstream HTTPS download",
+      "url": "https://registry.npmjs.org/zod/-/zod-3.25.76.tgz",
+      "integrity": "sha512-gzUt/qt81nXsFGKIFcC3YnfEAx5NkunCfnDlvuBSSFS02bcXu4Lmea0AFIUwbLWxWPx3d9p8S5QoaujKcNQxcQ==",
+      "publicUpload": false
+    }
+  },
+  "inputs": {
+    "source": {
+      "sha256": "2e7e297a73d8424077959e5c948852c6a42068991ea9390238d7162074d25a48"
+    },
+    "runner": {
+      "sha256": "781227e36cd65d332ee02e581e340ee85aa4d63230b12fbdba07dcf097d6724d"
+    },
+    "npm-00": {
+      "sha256": "af1cd32d4a6d4637d59432cd2cbf54a404fca23656ab71d35a30ac43796a022d"
+    },
+    "npm-01": {
+      "sha256": "31f2fc3134feecfec3d39dc91109cea2e4ca3985330b040fa8aa628449aa6694"
+    },
+    "npm-02": {
+      "sha256": "ef049e45bfc688d0795e30fec5c76fb5dda728d6659d15193af6e8c2ccd4757e"
+    },
+    "npm-03": {
+      "sha256": "be0a75457049ead786b53d3158290c03602d42c11e99691980f2aa5b7e0aed68"
+    },
+    "npm-04": {
+      "sha256": "9cb9de6ac256b3ed32264ae3265ccb952a279f5aa567fe4d29a5dcf4a4e3857c"
+    },
+    "npm-05": {
+      "sha256": "99a23609b460c35e04e2aa1cb696bc0199a05dfe48835ed515a3114181a69a0d"
+    },
+    "npm-06": {
+      "sha256": "0d29cf4e8cb07ab6b3b1dc81f3242b46a36c1ec92839f519043e7ca34edde525"
+    },
+    "npm-07": {
+      "sha256": "8a4ed1dea872353ae486375e5f0bba2a451fb9eebbb07bfeec4208d0a0c1be5c"
+    },
+    "npm-08": {
+      "sha256": "7dd4a61668a9a4e8d4e903f1a254f94d53dafd3f316f2b9b597c5ad8c79cb57e"
+    },
+    "npm-09": {
+      "sha256": "9cc59e0b515f254ee8ecc9fe584d6fb02d86b2a10f6de6c5d6923ef0d8f8c2a1"
+    },
+    "npm-10": {
+      "sha256": "35d828a52d5f1f18fa069632ce6bb47f797aeac22c543a813511d0afc73dadff"
+    },
+    "npm-11": {
+      "sha256": "50c550f01680444f2d5985b78bab8976ea17c3f43963a8fdc39bdbb4489fb5fb"
+    },
+    "npm-12": {
+      "sha256": "8f455159e342103e7854ed6a4cc73edbab144d857917c88edefea862f09fe75a"
+    },
+    "npm-13": {
+      "sha256": "89c1ac9c946ee8905a875837114528e97eeae35e03be3190584b2216af43e4a7"
+    },
+    "npm-14": {
+      "sha256": "487cb94dff2414772c3bb648a5e4e41c03cbbcc64263d08a56e36d735fc848fe"
+    },
+    "npm-15": {
+      "sha256": "24d56ba3da8f09b34544eccbe34634b38683457c665569cb9c70b94a8eb7706e"
+    },
+    "npm-16": {
+      "sha256": "960f89e8e5240882f64249d04a538421dd39d62ffacc138544647cc3251bc0e0"
+    },
+    "npm-17": {
+      "sha256": "d94dbc6c1bb3c5ac0fb12a73ade187108fc60de273a1b754f55044eb5e24afaf"
+    },
+    "npm-18": {
+      "sha256": "c8bc0cf9fbbdc9d2f1b6f3f97ab9c1f70130eec6b153f29fd69baa5a6aa8341d"
+    },
+    "npm-19": {
+      "sha256": "ed3a5fb027f8ce1006c8e30a37e88e7cd49824d4873efca8765304b20fe92e12"
+    },
+    "npm-20": {
+      "sha256": "f16522c947d6dbe3a99f5ff4296ccc253090b838959abdddc45fe81edb03f3a0"
+    },
+    "npm-21": {
+      "sha256": "350a76c115b393c19d24654834261e5dc9f0e8cc5e08f3937fa80140f3e4ce83"
+    },
+    "npm-22": {
+      "sha256": "f6616e15e530ed552f9daa2d3ce71963947c6bc7c98c9b64fd3e673fd02622c6"
+    },
+    "npm-23": {
+      "sha256": "2f8b273b9b93b8712251cbe2b0f05378f4da2187eab5348c3c6c34d02622a55e"
+    },
+    "npm-24": {
+      "sha256": "bffbb359f525d8ef6a0ce72f185feb109018a6c763aafc4f7a1b20fde66b98da"
+    },
+    "npm-25": {
+      "sha256": "314e8be01b0c5217f51b51a8d334ddbb41d84de437e1296e2608b97dc1dfc120"
+    },
+    "npm-26": {
+      "sha256": "f010d48974a96814e841edbb6fc6096385574610714d2a50e99811170c365e92"
+    },
+    "npm-27": {
+      "sha256": "0b0b8729c09d5eaa059313c9c3d11efc8907441386bbf86ccc57e1298c6ce71a"
+    },
+    "npm-28": {
+      "sha256": "5b15041a6b199130037b6c0a23c4ab07be9c35d839e1e03801fa7cdfa7f9ceab"
+    },
+    "npm-29": {
+      "sha256": "c4804fd058140c32f8fda78883ad45dee3eaa4fd9e9127b6eb659fefe51981bd"
+    },
+    "npm-30": {
+      "sha256": "ff794c956186430afd600b5bc4500f3f0faf34b62be6ff98494f4c7f4a6d8597"
+    },
+    "npm-31": {
+      "sha256": "dbf1035c777631d4b0a4b5c035b1f6247dd923db6b2ea115b93b1eabb172b3a0"
+    },
+    "npm-32": {
+      "sha256": "0395e34ecb9945b0003132af6e11463ec7ec8f17fb5cbdbccc5a822bd6807d96"
+    },
+    "npm-33": {
+      "sha256": "a67a8d90e7b8f64041a6f425b102b27a3e86d5854ace7e9414a890912f3adb59"
+    },
+    "npm-34": {
+      "sha256": "e67563626b30aa7d22caf930e38529bb137476146a11eaaa0bb1e07c0a2413b1"
+    },
+    "npm-35": {
+      "sha256": "5d181804516c4a693a384272a7bd0e42d17e0d4b301ccfbe408669ccafdcb3e8"
+    },
+    "npm-36": {
+      "sha256": "78812f65ae3b98071ce1c9bacbe0666f4220d0b2753c2a11530eb27df440a3b3"
+    },
+    "npm-37": {
+      "sha256": "e0061e7f042fc5ff6dcda8afb66619757d92ab1ff514a28a5904f2ebde27bf54"
+    },
+    "npm-38": {
+      "sha256": "5f8dc49cb4483e206ba3ebb22abbccfc0218c59b60fc78cce24197ced5b9e102"
+    },
+    "npm-39": {
+      "sha256": "33cd0ee1beaa8c9e9d15a9da836c62ddea4c34a42d7c2d349dbc80d94165d22a"
+    },
+    "npm-40": {
+      "sha256": "9cc8ea10e2e1771cd95db8e51ea91ffb5adccb02705605b1023743a5cb4954c5"
+    },
+    "npm-41": {
+      "sha256": "85774fffee09f70bde084cebcebae20b3cf6f48239f61659e45aed9fd513463e"
+    },
+    "npm-42": {
+      "sha256": "bd22a01d43c799be7bb53dfa9e775b132045e39525e51efb977528a00041ba48"
+    },
+    "npm-43": {
+      "sha256": "9e1f1a05f0dd0c1dab64ee91ceb9bf55cd44d35368c70edda80a2fdc70a88377"
+    }
+  }
+}

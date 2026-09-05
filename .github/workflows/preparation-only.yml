@@ -1,0 +1,48 @@
+name: CodeOps clean input preparation only
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: codeops-integrated-preparation-only
+  cancel-in-progress: false
+jobs:
+  prepare:
+    if: github.repository == 'anulman/codeops' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    environment: codeops-preparation-only
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+          fetch-depth: 1
+          submodules: false
+          lfs: false
+      - name: Verify exact placement and invoke no-workload preparation
+        env:
+          PLACED_SHA: ${{ github.sha }}
+          PREP_RUN: ${{ github.run_id }}
+          PREP_ATTEMPT: ${{ github.run_attempt }}
+        shell: bash --noprofile --norc -euo pipefail {0}
+        run: |
+          cd scripts/preparation-only
+          # Independent placed-commit review must also authenticate this workflow.
+          test "$(git rev-parse HEAD)" = "$PLACED_SHA"
+          test "$(find . -mindepth 1 -maxdepth 1 | wc -l)" = 30
+          test -z "$(find . -mindepth 1 ! -type f)"
+          printf '%s\n' '1cd28488f0b237f1e5df10d2c0c3d1bafd5612436027296449abbdfc668efca3  PACKET.json' 'f06c24c440c270f92a4dcb9705cf989c6742c7ff22d2db208cbc1a2b25269bf0  bootstrap.sh' | sha256sum --strict --check
+          sudo -n test ! -e /opt/codeops-preparation-bootstrap
+          sudo -n install -o root -g root -m 0500 bootstrap.sh /opt/codeops-preparation-bootstrap
+          printf '%s\n' 'f06c24c440c270f92a4dcb9705cf989c6742c7ff22d2db208cbc1a2b25269bf0  /opt/codeops-preparation-bootstrap' | sudo -n sha256sum --strict --check
+          sudo -n /usr/bin/env -i PATH=/usr/bin:/bin LANG=C HOME=/nonexistent /usr/bin/bash --noprofile --norc /opt/codeops-preparation-bootstrap 1cd28488f0b237f1e5df10d2c0c3d1bafd5612436027296449abbdfc668efca3 "$PLACED_SHA" "$PREP_RUN" "$PREP_ATTEMPT"
+      - name: Upload fixed bounded bridge only
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: preparation-${{ github.run_id }}-${{ github.run_attempt }}
+          path: /opt/codeops-preparation/transport/*
+          if-no-files-found: error
+          retention-days: 7
+          compression-level: 0

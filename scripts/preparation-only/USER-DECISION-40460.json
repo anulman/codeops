@@ -1,0 +1,96 @@
+{
+  "approvedBy": "Aidan",
+  "sourceMessage": "telegram:6723643628/40460",
+  "decision": "Approve exact unmodified OS tool/runtime aggregate exceptions for disposable qualification only; use direct upstream acquisition; keep local cache aggregates private.",
+  "components": [
+    {
+      "component": "libcap-ng0",
+      "version": "0.8.4-2build2",
+      "sha256": "cf1e9437ac7ddf6539dbe87b68858cbdef84d78c6aac243ab3b6e564a52ed930"
+    },
+    {
+      "component": "libpam0g",
+      "version": "1.5.3-5ubuntu5.7",
+      "sha256": "1d7f54e77f0455ab5e607cd5e78b576801d8efdc66115e02cf3c6e708d093667"
+    },
+    {
+      "component": "libc6",
+      "version": "2.39-0ubuntu8.8",
+      "sha256": "3b8d5391b6b484a4c81fd000b6064885ad967ec3cb966bc57603f3fb3ebf0ed5"
+    },
+    {
+      "component": "libgcrypt20",
+      "version": "1.10.3-2ubuntu0.2",
+      "sha256": "957b9eeaa83cf6f2d5d5d76dbb8aa31d3297e6781d8a02fa08dcc897ae650a0b"
+    },
+    {
+      "component": "libkmod2",
+      "version": "31+20240202-2ubuntu7.2",
+      "sha256": "a9cbdc424bc0a5c8af3d6445488a48de76df5ff4d76b7dab8aaf88f712358bbc"
+    },
+    {
+      "component": "libgpg-error0",
+      "version": "1.47-3build2.1",
+      "sha256": "93654ee8180a73a0363f25c51dc673d67cbabcbecd164187b8a2deb54d007aef"
+    },
+    {
+      "component": "libmount1",
+      "version": "2.39.3-9ubuntu6.6",
+      "sha256": "8f2c25589f187dacfdc5bb6be2af0aee6c2ba7b4d2edd1ca4b26753469f07aae"
+    },
+    {
+      "component": "libaudit1",
+      "version": "1:3.1.2-2.1build1.1",
+      "sha256": "408457f91745dd33746d24d063986df96a81166d6a59431583073398cefa1301"
+    },
+    {
+      "component": "libseccomp2",
+      "version": "2.5.5-1ubuntu3.1",
+      "sha256": "33fc96f1e008d27c042a3db9bcd16f7f4d49e866f7a3141b758a799328dbdc3f"
+    },
+    {
+      "component": "libacl1",
+      "version": "2.3.2-1build1.1",
+      "sha256": "f2bfd3f8f00413d5f1f04fc723063803c56ac0f1e0efae3bc41f2d7276972ec3"
+    },
+    {
+      "component": "libblkid1",
+      "version": "2.39.3-9ubuntu6.6",
+      "sha256": "3bcf169cd65e2539059b2287924090fc629f9bf90f595fc25465a7efe950ee82"
+    },
+    {
+      "component": "libsystemd-shared",
+      "version": "255.4-1ubuntu8.17",
+      "sha256": "8722a69d99c1a7e6f72c5389e9c6d8053d95d2f5f4fede5dc83118f735812518"
+    },
+    {
+      "component": "mount",
+      "version": "2.39.3-9ubuntu6.6",
+      "sha256": "09e929ceb9fc5d11757f28429b3151601c44db4c96e0bc5ad46c501c8d56f4f9"
+    },
+    {
+      "component": "libsmartcols1",
+      "version": "2.39.3-9ubuntu6.6",
+      "sha256": "84f33a780d27cce20a2cd925e7ce8498daba2dbc614d433548a19fbb2c5dac18"
+    },
+    {
+      "component": "libext2fs2t64",
+      "version": "1.47.0-2.4~exp1ubuntu4",
+      "sha256": "73abd544076b5959eb387a42a70c781a94d64364e961e72949456104f3d8d084"
+    },
+    {
+      "component": "e2fsprogs",
+      "version": "1.47.0-2.4~exp1ubuntu4",
+      "sha256": "bc3f351b5a45ae2278d2baa81ae1f4e690260ed8b8c870c8a8f5f4f97d36a8ad"
+    },
+    {
+      "component": "systemd",
+      "version": "255.4-1ubuntu8.17",
+      "sha256": "250345b73e42a97ee71cae7c1e470897dfad3c639eb0a7aafe4f9a3a29871cb2"
+    }
+  ],
+  "scope": "Separate disposable preparation tools/runtime, notices preserved; no incorporation into authored CodeOps libraries or product/release redistribution.",
+  "certifi": "No separate exception inferred; pursue reviewed exclusion of unused pip subtree or report necessity.",
+  "cachePolicy": "No public upload of either local cache aggregate. Use upstream inputs or reviewed clean reconstruction; preserve incident artifacts.",
+  "remainingGates": "Independent changed-input review, execution isolation, lifecycle proof, and existing human merge/release gates unchanged."
+}

@@ -1,0 +1,59 @@
+{
+  "schema": "clean-resource-v2",
+  "executionAdmitted": false,
+  "recorded": {
+    "originalAcquisitionBytes": 553470742,
+    "sealedOriginalBytes": 423606271,
+    "nodeCompressedArchiveBytes": 409640960,
+    "nodeExpandedLayerBytes": 1161124352,
+    "largestTemporaryExpandedLayer": 597366272,
+    "vfsConservativeCumulativeLayerBytes": 6023844864,
+    "npmInputFiles": 1400,
+    "npmEmittedFiles": 1398,
+    "npmEmittedBytes": 32818047,
+    "sourceArchiveBytes": 7813120,
+    "selectedRuntimeRegularBytes": 330895813
+  },
+  "limits": {
+    "aggregateMemoryBytes": 1610612736,
+    "privateDaemonMemoryBytes": 402653184,
+    "compilerMemoryBytes": 805306368,
+    "swapBytes": 0,
+    "fixedRunFilesystemBytes": 17179869184,
+    "requiredHostFreeAfterAllStagingBytes": 17179869184,
+    "preAllocationHostFreeAfterDownloadBytes": 34359738368,
+    "hostFreeInodes": 262144,
+    "runFilesystemInodes": 220000,
+    "unmeasuredWorktreeCompileGrowthReserveBytes": 2147483648,
+    "sourceNormalizationReserveBytes": 1073741824,
+    "npmTarReserveBytes": 83886080,
+    "journalControlReserveBytes": 134217728,
+    "dockerDistributionAdditionalReserveBytes": 1570765312
+  },
+  "phaseAccounting": {
+    "adapterPeak": 2168131584,
+    "retainedSavePlusVfs": 7184969216,
+    "notes": [
+      "vfs estimate charges every expanded layer prefix; actual metadata/block/inode consumption must be observed",
+      "sealed originals remain plus Docker-save plus vfs copies; no deletion/reuse credit",
+      "compiler reserve is cap/planning budget, NOT observed compiler working set",
+      "original downloads and Node reconstruction blobs also occupy backing host outside run filesystem; staged runtime per-file inventory adds more",
+      "16GiB host-free check occurs after all downloads, extraction, fixed allocation and sealed copies; failure preserves objects; no admission on historical readback"
+    ]
+  },
+  "nextRequiredProofs": [
+    "actual constructor peak and file/inode count",
+    "exact image Docker import with independent daemon aggregate observer",
+    "separate compiler fit and kill/reap/teardown evidence"
+  ],
+  "oldCacheMeasurementsReused": false,
+  "planningRunBytes": 13216036351,
+  "planningFitsFixedRunFilesystem": true,
+  "hostStagingAccounting": {
+    "acquiredObjects": 553470742,
+    "runtimeRegularBytes": 330895813,
+    "nodeReconstructionBlobsUpper": 409640960,
+    "sourceBareFetchPlanningReserve": 268435456,
+    "note": "Root/bootstrap downloads never execute candidate code. Free-after-staging observation, not this estimate, controls later eligibility; git cache reserve is not an observed maximum."
+  }
+}

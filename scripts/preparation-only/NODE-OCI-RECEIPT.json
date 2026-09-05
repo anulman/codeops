@@ -1,0 +1,126 @@
+{
+  "sourceIndex": "sha256:be23f54a88d34e8824c741b19b91064094f92c1c97b194144bfc8b50d67258e2",
+  "platform": {
+    "annotations": {
+      "com.docker.official-images.bashbrew.arch": "amd64",
+      "org.opencontainers.image.base.digest": "sha256:c8e8f3d6e647f782059d933878e9a0de6889cec350149a770d51d1baa245a60e",
+      "org.opencontainers.image.base.name": "buildpack-deps:bookworm",
+      "org.opencontainers.image.created": "2026-08-27T17:02:11Z",
+      "org.opencontainers.image.revision": "c4eb0858f5c522521768d5b6dc1d9f1631d4854d",
+      "org.opencontainers.image.source": "https://github.com/nodejs/docker-node.git#c4eb0858f5c522521768d5b6dc1d9f1631d4854d:24/bookworm",
+      "org.opencontainers.image.url": "https://hub.docker.com/_/node",
+      "org.opencontainers.image.version": "24"
+    },
+    "digest": "sha256:9137a20e25879e0b557227b57e3ee4e9af4bde29eb3db66134cd1723e84f830b",
+    "mediaType": "application/vnd.oci.image.manifest.v1+json",
+    "platform": {
+      "architecture": "amd64",
+      "os": "linux"
+    },
+    "size": 2493
+  },
+  "config": {
+    "mediaType": "application/vnd.oci.image.config.v1+json",
+    "digest": "sha256:aa09691f441f07a6d1f076f25470751bff882a4ba88274f3d7f9fa5af542f0ce",
+    "size": 6717
+  },
+  "imageId": "sha256:aa09691f441f07a6d1f076f25470751bff882a4ba88274f3d7f9fa5af542f0ce",
+  "layers": [
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:abf56b2f87242de589f03ea56779358079c07c4c099bd1e454d083538eb6666d",
+      "size": 48497362
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:08457856946d74c8aede7d750e185d1e479a79b8123d1b805182a580d224a6e2",
+      "size": 24056247
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:8cab6ce149c24516f80b26a762b6b9aaebcaf4fbe51d4c6844af7d7dbc372f2d",
+      "size": 64413065
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:01a6a9ffe665b63ea18491fedb646423413ae3fdefcf7776ee25a2eaff8a673e",
+      "size": 211662335
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:1252dbc77c173ad14ada4b3011a358999485a2468f5a881b8da6b18295f4c1e1",
+      "size": 3327
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:fc43bb6c3dac23ba1c5d43e9f7557ddba1efabe98f8447d50defe5b307109172",
+      "size": 59729700
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:753c789c519899755b1a7d932c7063079f3eee959f27f9680a1f65159f5c2be1",
+      "size": 1250673
+    },
+    {
+      "mediaType": "application/vnd.oci.image.layer.v1.tar+gzip",
+      "digest": "sha256:e5a74028d13202c370e3ff67d121de73d28ab38a9c35ad9bc91fb40f43883522",
+      "size": 447
+    }
+  ],
+  "diffIds": [
+    "sha256:cd482426e5675a31e31f2bddad58815b83b309a587bf56b46a308586d9fd6eb5",
+    "sha256:ffc8aa3c6d1eee538ec70f1c9d749b8bebe8f016bfd4b16ee45c623c9cffa402",
+    "sha256:74a032b83597c9456f0d3bc320e33b56a52127ce0027d313a80e31a32ab99a42",
+    "sha256:3ae67b6c3bdf10cd6600d5cf69601a33d304b74372b690fd736562f67d3a5f41",
+    "sha256:491a4b8c316a73dbfd8d1abe2130d70284801ce8255206f900037604a931e18d",
+    "sha256:fbfe4a3372927cee81452ee2d3d853b3be07ad478a74b074a6941b11afaad5e8",
+    "sha256:30f8742377fe325048abf083d2c3f3735e5f72a1ed038dc01bccf9bbd0316db4",
+    "sha256:f6a9135a676c69f7066d1c4ac8803ddf6dc4eb696c8b60d95ae22b3cb3c82303"
+  ],
+  "archive": "/home/clawy/.openclaw/workspace/worktrees/upstream-40460/node/node-amd64.oci.tar",
+  "bytes": 409640960,
+  "sha256": "781227e36cd65d332ee02e581e340ee85aa4d63230b12fbdba07dcf097d6724d",
+  "executionAdmitted": false,
+  "diffIdVerification": [
+    {
+      "digest": "sha256:abf56b2f87242de589f03ea56779358079c07c4c099bd1e454d083538eb6666d",
+      "diffId": "sha256:cd482426e5675a31e31f2bddad58815b83b309a587bf56b46a308586d9fd6eb5",
+      "expandedBytes": 121384960
+    },
+    {
+      "digest": "sha256:08457856946d74c8aede7d750e185d1e479a79b8123d1b805182a580d224a6e2",
+      "diffId": "sha256:ffc8aa3c6d1eee538ec70f1c9d749b8bebe8f016bfd4b16ee45c623c9cffa402",
+      "expandedBytes": 49577984
+    },
+    {
+      "digest": "sha256:8cab6ce149c24516f80b26a762b6b9aaebcaf4fbe51d4c6844af7d7dbc372f2d",
+      "diffId": "sha256:74a032b83597c9456f0d3bc320e33b56a52127ce0027d313a80e31a32ab99a42",
+      "expandedBytes": 181947904
+    },
+    {
+      "digest": "sha256:01a6a9ffe665b63ea18491fedb646423413ae3fdefcf7776ee25a2eaff8a673e",
+      "diffId": "sha256:3ae67b6c3bdf10cd6600d5cf69601a33d304b74372b690fd736562f67d3a5f41",
+      "expandedBytes": 597366272
+    },
+    {
+      "digest": "sha256:1252dbc77c173ad14ada4b3011a358999485a2468f5a881b8da6b18295f4c1e1",
+      "diffId": "sha256:491a4b8c316a73dbfd8d1abe2130d70284801ce8255206f900037604a931e18d",
+      "expandedBytes": 21504
+    },
+    {
+      "digest": "sha256:fc43bb6c3dac23ba1c5d43e9f7557ddba1efabe98f8447d50defe5b307109172",
+      "diffId": "sha256:fbfe4a3372927cee81452ee2d3d853b3be07ad478a74b074a6941b11afaad5e8",
+      "expandedBytes": 205466624
+    },
+    {
+      "digest": "sha256:753c789c519899755b1a7d932c7063079f3eee959f27f9680a1f65159f5c2be1",
+      "diffId": "sha256:30f8742377fe325048abf083d2c3f3735e5f72a1ed038dc01bccf9bbd0316db4",
+      "expandedBytes": 5355520
+    },
+    {
+      "digest": "sha256:e5a74028d13202c370e3ff67d121de73d28ab38a9c35ad9bc91fb40f43883522",
+      "diffId": "sha256:f6a9135a676c69f7066d1c4ac8803ddf6dc4eb696c8b60d95ae22b3cb3c82303",
+      "expandedBytes": 3584
+    }
+  ]
+}
