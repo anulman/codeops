@@ -272,8 +272,14 @@ metadata:
   name: {{ include "codeops.fullname" . }}-control-gateway
   namespace: {{ .Release.Namespace }}
 spec:
+  # The API and file dispatcher are separate Pods of the same control plane.
   podSelector:
-    matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-control-gateway }
+    matchExpressions:
+      - key: app.kubernetes.io/name
+        operator: In
+        values:
+          - {{ include "codeops.fullname" . }}-control-gateway
+          - {{ include "codeops.fullname" . }}-control-gateway-dispatcher
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
@@ -281,9 +287,13 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/component
                 operator: In
-                values: [agents-ui, github-controller, orchestrator, runtime, session-gateway]
+                values: [agents-ui, github-controller, orchestrator, runtime, session-gateway, control-gateway]
       ports: [{ protocol: TCP, port: 8080 }]
   egress:
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-control-gateway-dispatcher }
+      ports: [{ protocol: TCP, port: 8080 }]
     {{- range .Values.controlGateway.kubernetesApiCidrs }}
     - to: [{ ipBlock: { cidr: {{ . | quote }} } }]
       ports:
@@ -425,7 +435,7 @@ spec:
             matchExpressions:
               - key: app.kubernetes.io/component
                 operator: In
-                values: [session-gateway, session-migration, control-gateway, runtime, lifecycle-relay, model-proxy]
+                values: [session-gateway, session-migration, control-gateway, control-gateway-file-dispatcher, runtime, lifecycle-relay, model-proxy]
         {{- if eq .Values.temporal.deployment "managed" }}
         - podSelector:
             matchLabels:

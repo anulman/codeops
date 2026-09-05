@@ -878,6 +878,7 @@ test("defaults to deny and opens only explicit component paths", () => {
     .find(({ key }) => key === "app.kubernetes.io/component").values;
   assert.deepEqual(postgresqlComponents.sort(), [
     "control-gateway",
+    "control-gateway-file-dispatcher",
     "lifecycle-relay",
     "model-proxy",
     "runtime",
@@ -896,6 +897,24 @@ test("defaults to deny and opens only explicit component paths", () => {
   assert.ok(JSON.stringify(controlGateway).includes("10.43.0.1/32"));
   assert.ok(JSON.stringify(controlGateway.spec.ingress).includes("orchestrator"));
   assert.ok(JSON.stringify(controlGateway.spec.ingress).includes("session-gateway"));
+  // Regress the shipped dispatcher label falling through to default-deny.
+  const selectedNames = controlGateway.spec.podSelector.matchExpressions
+    .find(({ key, operator }) => key === "app.kubernetes.io/name" && operator === "In").values;
+  for (const name of ["team-a-codeops-control-gateway", "team-a-codeops-control-gateway-dispatcher"]) {
+    const deployment = resource(resources, "Deployment", name);
+    assert.ok(selectedNames.includes(deployment.spec.template.metadata.labels["app.kubernetes.io/name"]));
+    assert.ok(postgresqlComponents.includes(deployment.spec.template.metadata.labels["app.kubernetes.io/component"]));
+  }
+  assert.equal(selectedNames.length, 2);
+  const dns = controlGateway.spec.egress.find(({ to }) =>
+    to.some(({ namespaceSelector }) => namespaceSelector?.matchLabels?.["kubernetes.io/metadata.name"] === "kube-system"));
+  assert.deepEqual(dns.ports, [{ protocol: "UDP", port: 53 }, { protocol: "TCP", port: 53 }]);
+  assert.ok(controlGateway.spec.egress.some(({ ports, to }) => ports.some(({ port }) => port === 5432) &&
+    JSON.stringify(to).includes("team-a-codeops-postgresql")));
+  assert.ok(controlGateway.spec.egress.some(({ ports, to }) => ports.some(({ port }) => port === 8080) &&
+    JSON.stringify(to).includes("team-a-codeops-control-gateway-dispatcher")));
+  assert.ok(JSON.stringify(controlGateway.spec.ingress).includes('"control-gateway"'));
+
   const orchestrator = resource(resources, "NetworkPolicy", "team-a-codeops-orchestrator");
   assert.ok(JSON.stringify(orchestrator).includes("team-a-codeops-control-gateway"));
   const migration = resource(resources, "NetworkPolicy", "team-a-codeops-session-migration");
