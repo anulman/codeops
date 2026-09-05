@@ -21,6 +21,7 @@ WORK = Path(os.environ['RUNNER_TEMP']) / RUN
 EVIDENCE = ROOT / 'prevention-evidence'
 ENV = dict(os.environ)
 RULES = []
+LOADED = {}
 
 
 def command(*args, data=None, ok=True, timeout=300):
@@ -74,6 +75,27 @@ def inspect(kind, name):
     return json.loads(command('docker', kind, 'inspect', name).stdout)[0]
 
 
+def load_image(image, number):
+    # A digest-only Docker pull need not have RepoTags. Give kind a local tag,
+    # then bind its imported manifest back to the acquired immutable config.
+    tag = RUN + '-image-' + str(number) + ':loaded'
+    expected = inspect('image', image)['Id']
+    command('docker', 'tag', image, tag)
+    command('kind', 'load', 'docker-image', '--name', RUN, tag, timeout=600)
+    listing = command('docker', 'exec', RUN + '-control-plane', 'ctr', '-n', 'k8s.io', 'images', 'ls').stdout
+    rows = [line.split() for line in listing.splitlines() if line.split() and line.split()[0].endswith('/' + tag)]
+    if len(rows) != 1:
+        raise RuntimeError('Imported image tag missing or ambiguous')
+    ref, _, digest = rows[0][:3]
+    manifest = json.loads(command('docker', 'exec', RUN + '-control-plane', 'ctr', '-n', 'k8s.io', 'content', 'get', digest).stdout)
+    if manifest.get('config', {}).get('digest') != expected:
+        raise RuntimeError('Imported image differs from acquired config')
+    pinned = ref.rsplit(':', 1)[0] + '@' + digest
+    command('docker', 'exec', RUN + '-control-plane', 'ctr', '-n', 'k8s.io', 'images', 'tag', ref, pinned)
+    LOADED[image] = pinned
+    record('image-' + str(number), {'source': image, 'config': expected, 'imported': pinned})
+
+
 def setup():
     if ENV.get('GITHUB_ACTIONS') != 'true' or ENV.get('RUNNER_ENVIRONMENT') != 'github-hosted':
         raise RuntimeError('Only a disposable GitHub-hosted runner is supported')
@@ -116,14 +138,14 @@ def setup():
     command('docker', 'cp', RUN + '-control-plane:/usr/bin/kubectl', bindir / 'kubectl')
     (bindir / 'kubectl').chmod(0o555)
     print('Disposable cluster created; loading pinned images', flush=True)
-    for image in images[1:] + [candidate]:
-        command('kind', 'load', 'docker-image', '--name', RUN, image, timeout=600)
+    for number, image in enumerate(images[1:] + [candidate]):
+        load_image(image, number)
     calico = (WORK / 'calico.yaml').read_text()
     for key in ('calico/node', 'calico/cni', 'calico/kube-controllers'):
         old = 'docker.io/' + key + ':v3.30.3'
         if old not in calico:
             raise RuntimeError('Unexpected upstream Calico image references')
-        calico = calico.replace(old, 'docker.io/' + PINS[key])
+        calico = calico.replace(old, LOADED[PINS[key]])
     kubectl('apply', '-f', '-', data=calico)
     kubectl('wait', '--for=condition=Ready', 'nodes', '--all', '--timeout=240s')
     kubectl('-n', 'kube-system', 'rollout', 'status', 'daemonset/calico-node', '--timeout=240s')

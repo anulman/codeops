@@ -61,12 +61,12 @@ class ControllerChecks(unittest.TestCase):
             api.assert_not_called()
 
     def test_failed_helm_is_never_counted_as_success(self):
-        with patch.object(c, 'command', return_value=subprocess.CompletedProcess([], 1, '', 'fixture failure')):
+        with patch.object(life, 'diagnose'), patch.object(c, 'command', return_value=subprocess.CompletedProcess([], 1, '', 'fixture failure')):
             with self.assertRaisesRegex(AssertionError, 'outcome mismatch'):
                 life.helm('fixture', Path('/fixture'))
 
     def test_successful_helm_is_never_counted_as_expected_failure(self):
-        with patch.object(c, 'command', return_value=subprocess.CompletedProcess([], 0, '', '')):
+        with patch.object(life, 'diagnose'), patch.object(c, 'command', return_value=subprocess.CompletedProcess([], 0, '', '')):
             with self.assertRaisesRegex(AssertionError, 'outcome mismatch'):
                 life.helm('fixture', Path('/fixture'), success=False)
 

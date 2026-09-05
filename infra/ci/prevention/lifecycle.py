@@ -26,6 +26,27 @@ def obj(kind, name, ns=None, **fields):
     return {'apiVersion': api, 'kind': kind, 'metadata': {'name': name, **({'namespace': ns} if ns else {})}, **fields}
 
 
+def image(pin):
+    return c.LOADED.get(pin, pin)
+
+
+def diagnose(ns):
+    # Fixed namespace, bounded status/log tails, no Secret specs or environments.
+    import re
+    def clean(text):
+        return re.sub(r'postgres(?:ql)?://[^\s]+|[A-Za-z0-9._~-]{32,}', '[redacted]', text[-4000:])
+    events = c.kubectl('-n', ns, 'get', 'events', '--field-selector', 'type=Warning', '-o', 'json', ok=False)
+    pods = c.kubectl('-n', ns, 'get', 'pods', '-o', 'json', ok=False)
+    data = {'warnings': clean(events.stdout), 'pods': []}
+    if pods.returncode == 0:
+        for p in json.loads(pods.stdout)['items'][:8]:
+            data['pods'].append({'name': p['metadata']['name'], 'status': clean(json.dumps(p.get('status', {})))})
+    for selector in ('app=db', 'app.kubernetes.io/component=session-migration'):
+        logs = c.kubectl('-n', ns, 'logs', '-l', selector, '--all-containers', '--tail=20', ok=False, timeout=20)
+        data[selector] = clean(logs.stdout + logs.stderr)
+    c.record(ns + '-failure-diagnostics', data)
+
+
 def get(ns, kind, name):
     return json.loads(c.kubectl('-n', ns, 'get', kind, name, '-o', 'json').stdout)
 
@@ -45,6 +66,7 @@ def job(ns, name, template, success=True):
     status = c.wait(lambda: (s if s.get('succeeded') or s.get('failed') else None)
                     if (s := get(ns, 'job', name).get('status', {})) else None, 150)
     if bool(status.get('succeeded')) != success:
+        diagnose(ns)
         # No raw Job logs: mounted test passwords must not enter artifacts.
         raise AssertionError('Job outcome mismatch: ' + name)
     pods = json.loads(c.kubectl('-n', ns, 'get', 'pods', '-l', 'job-name=' + name, '-o', 'json').stdout)['items']
@@ -89,7 +111,7 @@ def new_case(ns):
     secret['metadata'].update(labels={'app.kubernetes.io/managed-by': 'Helm'},
         annotations={'meta.helm.sh/release-name': 'fixture', 'meta.helm.sh/release-namespace': ns})
     c.apply(secret)
-    t = pod(c.PINS['library/postgres'], ['docker-entrypoint.sh', 'postgres'], {'app': 'db'})
+    t = pod(image(c.PINS['library/postgres']), ['docker-entrypoint.sh', 'postgres'], {'app': 'db'})
     t['spec']['restartPolicy'] = 'Always'
     t['spec']['securityContext'] = {**SECURITY, 'runAsUser': 999, 'runAsGroup': 999, 'fsGroup': 999}
     ctr = t['spec']['containers'][0]
@@ -101,7 +123,11 @@ def new_case(ns):
     ctr['readinessProbe'] = {'exec': {'command': ['pg_isready', '-U', 'agents', '-d', 'agents']}, 'periodSeconds': 2}
     c.apply(obj('Deployment', 'db', ns, spec={'replicas': 1, 'selector': {'matchLabels': {'app': 'db'}}, 'template': t}),
             obj('Service', 'codeops-database', ns, spec={'selector': {'app': 'db'}, 'ports': [{'port': 5432}]}))
-    c.kubectl('-n', ns, 'rollout', 'status', 'deployment/db', '--timeout=120s')
+    try:
+        c.kubectl('-n', ns, 'rollout', 'status', 'deployment/db', '--timeout=120s')
+    except Exception:
+        diagnose(ns)
+        raise
     identity = sql(ns, "SELECT current_database()||':'||system_identifier FROM pg_control_system()")
     if not identity.startswith('agents:'):
         raise AssertionError('Wrong disposable database')
@@ -116,7 +142,7 @@ await c.query('INSERT INTO codeops.fixture_writes VALUES(1,1) ON CONFLICT(id) DO
 setInterval(()=>tick().catch(()=>process.exit(1)),500);tick().catch(()=>process.exit(1));'''
 
 
-def chart(source, name, image):
+def chart(source, name, gateway_image):
     """Exact shipped templates, plus one explicitly test-only writer Deployment."""
     directory = c.WORK / name
     (directory / 'templates').mkdir(parents=True)
@@ -136,17 +162,17 @@ def chart(source, name, image):
                 else:
                     digests(value)
     digests(values)
-    repo, digest = image.split('@')
+    repo, digest = gateway_image.split('@')
     values.update(fullnameOverride='fixture')
     values['gateway']['image'] = {'repository': repo, 'digest': digest}
-    values['postgresql']['image'] = dict(zip(('repository', 'digest'), c.PINS['library/postgres'].split('@')))
+    values['postgresql']['image'] = dict(zip(('repository', 'digest'), image(c.PINS['library/postgres']).split('@')))
     values['quickstart']['enabled'] = True
     values['quickstart']['registry'].update(username='fixture', token='fixture-not-a-credential')
     values['jetstream']['driver'] = 'jetstream'
     values['plane']['adapter']['enabled'] = False
     (directory / 'values.yaml').write_text(yaml.safe_dump(values))
     # Use the actual prior image with application credentials after cutover.
-    t = pod(c.PINS['alpha72']['image'], ['node', '-e', WRITER], {'app.kubernetes.io/name': 'fixture-session-gateway'})
+    t = pod(image(c.PINS['alpha72']['image']), ['node', '-e', WRITER], {'app.kubernetes.io/name': 'fixture-session-gateway'})
     t['spec'].update(restartPolicy='Always', volumes=[{'name': 'db', 'secret': {'secretName': 'codeops-session-secrets'}}])
     t['spec']['containers'][0]['volumeMounts'] = [{'name': 'db', 'mountPath': '/db', 'readOnly': True}]
     t['spec']['containers'][0]['readinessProbe'] = {'exec': {'command': ['node', '-e', WRITER.split('setInterval')[0] + 'tick().then(()=>process.exit(0)).catch(()=>process.exit(1));']}, 'periodSeconds': 2, 'timeoutSeconds': 3}
@@ -163,6 +189,7 @@ def helm(ns, directory, upgrade=False, success=True):
                        '--namespace', ns, '--kube-context', 'kind-' + c.RUN,
                        '--wait', '--wait-for-jobs', '--timeout', '300s', ok=False, timeout=330)
     if (result.returncode == 0) != success:
+        diagnose(ns)
         raise AssertionError('Helm lifecycle outcome mismatch for ' + ns)
     c.record(ns + '-helm-' + str(time.time_ns()), {'upgrade': upgrade, 'expectedSuccess': success,
                                                 'exitCode': result.returncode})
@@ -264,16 +291,10 @@ if(await req(method,path,body)!==403)throw Error('denial');})().catch(()=>proces
 
 
 def run(candidate, canary):
-    # Bind locally built config to containerd's imported immutable manifest.
-    listing = c.command('docker', 'exec', c.RUN + '-control-plane', 'ctr', '-n', 'k8s.io', 'images', 'ls').stdout
-    lines = [line.split() for line in listing.splitlines() if line.split() and line.split()[0].endswith(candidate)]
-    if len(lines) != 1 or not lines[0][2].startswith('sha256:'):
-        raise AssertionError('Candidate containerd manifest missing or ambiguous')
-    pinned = 'docker.io/library/codeops-prevention@' + lines[0][2]
-    c.command('docker', 'exec', c.RUN + '-control-plane', 'ctr', '-n', 'k8s.io', 'images', 'tag', lines[0][0], pinned)
+    pinned = c.LOADED[candidate]
     current = chart(c.ROOT, 'candidate-chart', pinned)
-    prior72 = chart(c.ROOT / 'prior72', 'alpha72-chart', c.PINS['alpha72']['image'])
-    prior69 = chart(c.ROOT / 'prior69', 'alpha69-chart', c.PINS['alpha69']['image'])
+    prior72 = chart(c.ROOT / 'prior72', 'alpha72-chart', image(c.PINS['alpha72']['image']))
+    prior69 = chart(c.ROOT / 'prior69', 'alpha69-chart', image(c.PINS['alpha69']['image']))
     fresh = 'fresh'
     new_case(fresh)
     helm(fresh, current)
@@ -324,7 +345,7 @@ const {Client}=createRequire(process.cwd()+'/services/codeops-control-gateway/pa
 const {migrateSessionBroker}=await import(process.cwd()+'/services/codeops-control-gateway/dist/session-broker-migration.js');
 const c=new Client({connectionString:fs.readFileSync('/db/database-url','utf8').trim()});
 await c.connect();try{await migrateSessionBroker(c);}finally{await c.end();}"""
-    t = pod(c.PINS['alpha72']['image'], ['node', '--input-type=module', '-e', compatibility])
+    t = pod(image(c.PINS['alpha72']['image']), ['node', '--input-type=module', '-e', compatibility])
     t['spec']['volumes'] = [{'name': 'db', 'secret': {'secretName': 'codeops-session-secrets'}}]
     t['spec']['containers'][0]['volumeMounts'] = [{'name': 'db', 'mountPath': '/db', 'readOnly': True}]
     job('prior72', 'prior-initialization-compatibility', t)
