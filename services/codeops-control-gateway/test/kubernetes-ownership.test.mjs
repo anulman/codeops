@@ -808,3 +808,17 @@ test("delete accepts only an identity-bound successful Status or exact deleted r
       error.status === 202 && !isTransientKubernetesError(error));
   }
 });
+
+// The transport must refuse before reading even the projected API token.
+test("refuses foreign namespace effects before credentials or requests", async () => {
+  let touched = 0;
+  const client = createInClusterKubernetesClient({ namespace: "execution", host: "unused", port: 443,
+    ca: Buffer.alloc(0), token: async () => { touched++; throw Error("token touched"); },
+    request: async () => { touched++; throw Error("request touched"); } });
+  for (const invoke of [() => client.ensure(expected, digest),
+    () => client.delete(expected, digest, "uid", digest),
+    () => client.recoverOwned(expected, digest), () => client.readResourceUid(expected)]) {
+    await assert.rejects(invoke, /outside execution namespace/);
+  }
+  assert.equal(touched, 0);
+});

@@ -281,7 +281,8 @@ function json(
   response.end(encoded);
 }
 
-const namespace = required("CODEOPS_NAMESPACE");
+const controlNamespace = required("CODEOPS_NAMESPACE");
+const namespace = process.env.CODEOPS_EXECUTION_NAMESPACE?.trim() || controlNamespace;
 const materializationProfile = required("CODEOPS_DEPLOYMENT_PROFILE");
 if (!["full-managed", "full-external", "custom"].includes(materializationProfile)) {
   throw new Error("CODEOPS_DEPLOYMENT_PROFILE is invalid");
@@ -590,6 +591,8 @@ const run = runtimeRole === "file-dispatcher" ? createAgentJobRunner({
     imagePullSecrets: imagePullSecrets("CODEOPS_AGENT_IMAGE_PULL_SECRETS"),
     nodeSelector: stringMap("CODEOPS_AGENT_NODE_SELECTOR"),
     evidenceClaimName: kubernetesObjectName("CODEOPS_AGENT_EVIDENCE_CLAIM_NAME"),
+    deliverCandidatePatch: namespace !== controlNamespace,
+    serviceNamespace: controlNamespace,
     modelProxyServiceName: kubernetesObjectName(
       "CODEOPS_AGENT_MODEL_PROXY_SERVICE_NAME",
     ),

@@ -440,7 +440,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "codeops.fullname" . }}-workspace-materializer
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "codeops.executionNamespace" . }}
 spec:
   podSelector:
     matchLabels: { app.kubernetes.io/component: workspace-materializer }
@@ -463,7 +463,7 @@ apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
   name: {{ include "codeops.fullname" . }}-runtime
-  namespace: {{ .Release.Namespace }}
+  namespace: {{ include "codeops.executionNamespace" . }}
 spec:
   podSelector:
     matchLabels: { app.kubernetes.io/component: runtime }
@@ -471,14 +471,22 @@ spec:
   ingress: []
   egress:
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Release.Namespace }} }
+          podSelector:
             matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-session-gateway }
       ports: [{ protocol: TCP, port: 8080 }]
     - to:
-        - {{ include "codeops.postgresqlEgressTarget" . | nindent 10 | trim }}
+        - {{- if eq .Values.postgresql.deployment "managed" }}
+          namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Release.Namespace }} }
+          {{- end }}
+          {{ include "codeops.postgresqlEgressTarget" . | nindent 10 | trim }}
       ports: [{ protocol: TCP, port: 5432 }]
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Release.Namespace }} }
+          podSelector:
             matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-model-proxy }
       ports: [{ protocol: TCP, port: 8080 }]
     - to:
@@ -489,7 +497,9 @@ spec:
         - { protocol: TCP, port: 53 }
     {{- if .Values.runtimeEgressProxy.enabled }}
     - to:
-        - podSelector:
+        - namespaceSelector:
+            matchLabels: { kubernetes.io/metadata.name: {{ .Release.Namespace }} }
+          podSelector:
             matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-runtime-egress-proxy }
       ports: [{ protocol: TCP, port: 3128 }]
     {{- else }}
