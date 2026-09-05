@@ -324,7 +324,7 @@ def run(candidate, canary):
             raise AssertionError('Alpha69 must execute its genuine 28 migrations')
         if committed:
             # Fails role provisioning only AFTER all migration transactions commit.
-            sql(ns, 'CREATE ROLE fixture_parent; CREATE ROLE codeops_app; GRANT fixture_parent TO codeops_app;')
+            sql(ns, 'CREATE ROLE fixture_parent; CREATE ROLE codeops_app LOGIN; GRANT fixture_parent TO codeops_app;')
         else:
             sql(ns, "CREATE FUNCTION public.fixture_fail() RETURNS event_trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'fixture precommit failure'; END$$; CREATE EVENT TRIGGER fixture_fail ON ddl_command_start WHEN TAG IN ('DROP FUNCTION') EXECUTE FUNCTION public.fixture_fail();")
         helm(ns, current, upgrade=True, success=False)
