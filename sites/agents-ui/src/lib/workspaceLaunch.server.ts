@@ -29,9 +29,11 @@ export async function readOptionalLaunch(client: WorkspaceLaunchClient, input: {
   }
 }
 
-function unavailableTransport(error: unknown): boolean {
+function unavailableTransport(error: unknown, signal: AbortSignal): boolean {
   if (!(error instanceof Error)) return false;
   if (error.name === "TimeoutError") return true;
+  if (error.name === "AbortError" && signal.aborted &&
+      signal.reason instanceof Error && signal.reason.name === "TimeoutError") return true;
   const code = (error.cause as { code?: string } | undefined)?.code;
   return ["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN", "ENOTFOUND", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code ?? "");
 }
@@ -76,6 +78,13 @@ export function createWorkspaceLaunchClient(input: {
       readonly allowMissing?: boolean;
     } = {},
   ): Promise<unknown> => {
+    const signal = AbortSignal.timeout(options.allowMissing ? 2_000 : REQUEST_TIMEOUT_MS);
+    const transportFailure = (error: unknown): never => {
+      if (options.allowMissing && unavailableTransport(error, signal)) {
+        throw new WorkspaceLaunchUnavailableError("Launch metadata is temporarily unavailable");
+      }
+      throw error;
+    };
     const response = await (input.fetch ?? fetch)(new URL(path, input.baseUrl), {
       method: options.method ?? "GET",
       headers: {
@@ -89,13 +98,8 @@ export function createWorkspaceLaunchClient(input: {
       body: options.body,
       redirect: "error",
       cache: "no-store",
-      signal: AbortSignal.timeout(options.allowMissing ? 2_000 : REQUEST_TIMEOUT_MS),
-    }).catch((error: unknown) => {
-      if (options.allowMissing && unavailableTransport(error)) {
-        throw new WorkspaceLaunchUnavailableError("Launch metadata is temporarily unavailable");
-      }
-      throw error;
-    });
+      signal,
+    }).catch(transportFailure);
     if (options.allowMissing && [502, 503, 504].includes(response.status)) {
       throw new WorkspaceLaunchUnavailableError("Launch metadata is temporarily unavailable");
     }
@@ -110,7 +114,7 @@ export function createWorkspaceLaunchClient(input: {
     if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
       throw new Error("workspace launcher response exceeds the size limit");
     }
-    const responseBody = await response.text();
+    const responseBody = await response.text().catch(transportFailure);
     if (Buffer.byteLength(responseBody) > MAX_RESPONSE_BYTES) {
       throw new Error("workspace launcher response exceeds the size limit");
     }
