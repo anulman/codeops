@@ -51,7 +51,7 @@ const checkpointSchema = z
     ]),
     baseSha: z.string().regex(/^[0-9a-f]{40}$/),
     projectContextDigest: z.string().regex(SHA256),
-    model: z.literal("gpt-5.6-sol"),
+    model: z.enum(["gpt-5.6-sol", "gpt-6-astra"]),
     reasoningEffort: z.literal("high"),
     sessionId: z.string().max(500).optional(),
     stopReason: z.string().max(500).optional(),

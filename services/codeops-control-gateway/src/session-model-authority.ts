@@ -7,6 +7,7 @@ import {
   loadClaimedDispatchAuthority,
   ClaimedDispatchAuthorityConflictError,
 } from "./claimed-dispatch-authority.js";
+import { runtimeProfileModel } from "./runtime-profile-registry.js";
 import {
   loadSessionSnapshot,
   type TransactionClient,
@@ -145,6 +146,19 @@ export async function issueClaimedSessionModelAuthority(
   )) {
     throw new ClaimedDispatchAuthorityConflictError(
       "model authority belongs only to a claimed prompt or resume dispatch",
+    );
+  }
+  const claimedModel = authority.runtimeBinding === undefined
+    ? "gpt-5.6-sol"
+    : runtimeProfileModel(authority.runtimeBinding.selectedProfile);
+  const dispatchedPolicy = "version" in authority.snapshot.identity &&
+      authority.snapshot.identity.version === "codeops.session-workspace-identity/v1"
+    ? authority.snapshot.identity.policy.modelPolicy
+    : { provider: "openai" as const, model: "gpt-5.6-sol" as const };
+  if (dispatchedPolicy?.provider !== "openai" ||
+      dispatchedPolicy.model !== claimedModel) {
+    throw new ClaimedDispatchAuthorityConflictError(
+      "model authority does not match the signed runtime profile",
     );
   }
   const snapshot = await loadSessionSnapshot(

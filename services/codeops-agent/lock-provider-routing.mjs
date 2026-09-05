@@ -13,6 +13,7 @@ export function assertImmutableProviderRequest(method, params, configuredProvide
   if (configuredProvider === null) return;
   if (
     method === "providers/set" ||
+    method === "providers/disable" ||
     (method === "authenticate" &&
       (params?.methodId !== "api-key" || params?._meta !== undefined))
   ) {
@@ -21,19 +22,25 @@ export function assertImmutableProviderRequest(method, params, configuredProvide
 }
 
 export function lockProviderRouting(source) {
-  const authenticate = "  async authenticate(authRequest) {\n    if (!isCodexAuthRequest(authRequest)) {";
-  const guardedAuthenticate = `  async authenticate(authRequest) {${configuredProviderGuard}\n    if (!isCodexAuthRequest(authRequest)) {`;
-  const setProvider = "  setProvider(request) {\n    if (request.providerId !== CUSTOM_GATEWAY_PROVIDER_ID) {";
-  const guardedSetProvider = `  setProvider(request) {\n    if (this.modelProvider !== null) {\n      throw RequestError.invalidParams(void 0, \"configured process provider is immutable\");\n    }\n    if (request.providerId !== CUSTOM_GATEWAY_PROVIDER_ID) {`;
+  const authenticate = "  async authenticate(authRequest, urlElicitationRequester) {\n    if (!isCodexAuthRequest(authRequest)) {";
+  const guardedAuthenticate = `  async authenticate(authRequest, urlElicitationRequester) {${configuredProviderGuard}\n    if (!isCodexAuthRequest(authRequest)) {`;
+  const setProvider = "  setProvider(request) {\n    if (request.providerId !== OPENAI_PROVIDER_ID) {";
+  const guardedSetProvider = `  setProvider(request) {\n    if (this.modelProvider !== null) {\n      throw RequestError.invalidParams(void 0, \"configured process provider is immutable\");\n    }\n    if (request.providerId !== OPENAI_PROVIDER_ID) {`;
+  const disableProvider = "  disableProvider(request) {\n    const overrideWasActive = this.gatewayConfig !== null;";
+  const guardedDisableProvider = `  disableProvider(request) {\n    if (this.modelProvider !== null) {\n      throw RequestError.invalidParams(void 0, \"configured process provider is immutable\");\n    }\n    const overrideWasActive = this.gatewayConfig !== null;`;
   if (
     source.split(authenticate).length !== 2 ||
     source.split(setProvider).length !== 2 ||
+    source.split(disableProvider).length !== 2 ||
     !source.includes('var package_default = {\n  name: "@agentclientprotocol/codex-acp",') ||
-    !source.includes('  version: "1.1.7",')
+    !source.includes('  version: "1.10.0",')
   ) {
-    throw new Error("unexpected codex-acp 1.1.7 provider routing source");
+    throw new Error("unexpected codex-acp 1.10.0 provider routing source");
   }
-  return source.replace(authenticate, guardedAuthenticate).replace(setProvider, guardedSetProvider);
+  return source
+    .replace(authenticate, guardedAuthenticate)
+    .replace(setProvider, guardedSetProvider)
+    .replace(disableProvider, guardedDisableProvider);
 }
 
 async function main(path) {

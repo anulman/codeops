@@ -226,3 +226,23 @@ test("rejects upstream URL drift before contacting either provider", async () =>
   );
   assert.equal(calls, 0);
 });
+
+
+test("refuses Astra API routes before credentials or upstream access", async () => {
+  for (const options of [
+    { primaryMode: "api-key", allowApiKeyFallback: false },
+    { primaryMode: "chatgpt-primary", allowApiKeyFallback: true },
+  ]) {
+    let calls = 0;
+    const broker = createProviderBroker({
+      ...options,
+      apiKey: "unused-test-key",
+      chatGptAuthFile: "/nonexistent/astra-auth-must-not-be-read",
+      fetch: async () => { calls += 1; throw new Error("unexpected upstream"); },
+    });
+    await assert.rejects(broker(providerBrokerConstants.OPENAI_RESPONSES_URL, {
+      ...requestInit(), body: Buffer.from(JSON.stringify({ model: "gpt-6-astra" })),
+    }), /Astra requires subscription routing/);
+    assert.equal(calls, 0);
+  }
+});

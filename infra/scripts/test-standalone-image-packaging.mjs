@@ -54,6 +54,32 @@ test("packages the standalone browser acceptance runner", async () => {
   assert.match(dockerignore, /^!services\/codeops-acceptance-runner\/src\/\*\*$/m);
 });
 
+test("pins and proves the exact released Codex CLI in the agent image", async () => {
+  const manifest = JSON.parse(await readFile(
+    new URL("../../services/codeops-agent/package.json", import.meta.url),
+    "utf8",
+  ));
+  const lock = JSON.parse(await readFile(
+    new URL("../../services/codeops-agent/package-lock.json", import.meta.url),
+    "utf8",
+  ));
+  const dockerfile = await readFile(
+    new URL("../docker/codeops-agent.Dockerfile", import.meta.url),
+    "utf8",
+  );
+  assert.equal(manifest.dependencies["@agentclientprotocol/codex-acp"], "1.10.0");
+  assert.equal(manifest.dependencies["@openai/codex"], "0.153.3");
+  assert.equal(lock.packages["node_modules/@openai/codex"].version, "0.153.3");
+  assert.deepEqual(
+    Object.entries(lock.packages)
+      .filter(([name]) => name.endsWith("node_modules/@openai/codex"))
+      .map(([, value]) => value.version),
+    ["0.153.3"],
+  );
+  assert.match(dockerfile,
+    /test "\$\(node_modules\/\.bin\/codex --version\)" = "codex-cli 0\.153\.3"/);
+});
+
 test("rewrites only the exact workspace contract for isolated npm image installs", async () => {
   const directory = await mkdtemp(path.join(tmpdir(), "codeops-image-package-"));
   const packagePath = path.join(directory, "package.json");

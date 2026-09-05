@@ -69,6 +69,8 @@ RUN chmod 0555 /usr/local/bin/codeops-agent-entrypoint \
   && chmod 0444 /opt/codeops-agent/github-reads-mcp.mjs \
   && chmod 0444 /opt/codeops-agent/github-mutations-mcp.mjs \
   && test -x node_modules/.bin/codex-acp \
+  && test -x node_modules/.bin/codex \
+  && test "$(node_modules/.bin/codex --version)" = "codex-cli 0.153.3" \
   && node_modules/.bin/codex-acp --version
 
 ENV NODE_ENV=production \

@@ -112,7 +112,7 @@ test("entrypoint rejects every missing or mismatched model proxy route", () => {
 });
 
 test("pins ACP new, load, and resume routing to the process model provider", () => {
-  assert.equal(codexAcpPackage.version, "1.1.7");
+  assert.equal(codexAcpPackage.version, "1.10.0");
   assert.match(codexAcpSource, /const modelProvider = process\.env\["MODEL_PROVIDER"\];/);
   assert.match(
     codexAcpSource,
@@ -167,6 +167,15 @@ test("rejects provider overrides before ACP new, load, and resume", () => {
       () => assertImmutableProviderRequest(
         "providers/set",
         { providerId: "custom-gateway", baseUrl: "http://other-proxy:8080/v1" },
+        "codeops_proxy",
+      ),
+      /configured process provider is immutable/,
+      lifecycle,
+    );
+    assert.throws(
+      () => assertImmutableProviderRequest(
+        "providers/disable",
+        { providerId: "openai" },
         "codeops_proxy",
       ),
       /configured process provider is immutable/,

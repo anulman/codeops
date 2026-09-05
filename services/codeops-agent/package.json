@@ -7,8 +7,9 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
-    "@agentclientprotocol/codex-acp": "1.1.7",
-    "@codeops/codeops-contracts": "workspace:*"
+    "@agentclientprotocol/codex-acp": "1.10.0",
+    "@codeops/codeops-contracts": "workspace:*",
+    "@openai/codex": "0.153.3"
   },
   "devDependencies": {
     "@types/node": "25.7.0",

@@ -12,6 +12,7 @@ import {
   type WorkspaceLaunchRequest,
   type WorkspaceManifest,
   type WorkspaceSource,
+  type SessionModel,
 } from "@codeops/codeops-contracts";
 import { workspaceContextAttachmentDescriptors } from "@codeops/codeops-contracts/workspace-context-node";
 
@@ -56,6 +57,8 @@ export async function admitWorkspaceLaunch(input: {
   readonly resolver: WorkspaceSourceResolver;
   readonly store: WorkspaceLaunchStore;
   readonly runtimeRequirements: unknown;
+  /** Server-selected model from the verified runtime profile; never client input. */
+  readonly runtimeModel?: SessionModel;
   readonly now?: () => Date;
 }): Promise<WorkspaceLaunch> {
   const request = workspaceLaunchRequestSchema.parse(input.request);
@@ -113,7 +116,7 @@ export async function admitWorkspaceLaunch(input: {
     requestDigest,
     runtimeRequirements,
     runtimeRequirementDigest,
-    policy: sessionPolicyForMode(request.mode),
+    policy: sessionPolicyForMode(request.mode, input.runtimeModel),
     contextAttachments,
     ...(request.title === undefined ? {} : { title: request.title }),
     promptDigest: digest(request.prompt),

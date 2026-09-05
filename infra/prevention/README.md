@@ -24,7 +24,7 @@ The Node guard is defense in depth; it is not the credential/network boundary.
 Dependency and Helm archives are copied into the disposable volume, never mounted
 from the host. Offline chart verification checks pinned archive hashes.
 
-## P1 corrections and qualification hold
+## P1 corrections and qualification evidence
 
 The FD-relative snapshot reader refuses symlink ancestors/leaves, special files,
 hardlinks, cross-device traversal and detectable content mutation. Same-filesystem
@@ -38,14 +38,21 @@ This digest is not compatible with the ambiguous prior format.
 The operator must pin dependency tar digests in launcher-config.json; passing a
 mutable dependency directory is no longer supported. Dependency archives must
 be reviewed for contained paths/link targets before their digest is admitted.
-The old installed launcher MUST NOT be used pending independent review of this
-correction. The operator has installed a fail-closed hold entrypoint and retained
-the previous code as a root-only audit copy; the corrected launcher is not yet
-installed. Do not interpret earlier container proofs as host snapshot coverage.
+The corrected launcher was independently reviewed, installed and read back in
+this incident; exact installation and qualification receipts are recorded in
+`R1-INSTALLED-QUALIFICATION.md` in the incident prevention directory. This is not
+an assertion about another host: verify its effective resolved launcher/config
+against those accepted identities before use. Never use the superseded launcher
+or interpret container-only proofs as host snapshot coverage. Existing unchanged
+qualification need not be rerun merely to update this documentation.
 
 See [PROTECTED-CUTOVER.md](PROTECTED-CUTOVER.md) for the explicit prior-chart
 credential ordering, protected namespace/tool design and remaining live placement
 blocker. The managed quickstart does not claim production owner isolation.
+
+After application-role cutover, alpha72 API restart and automatic old-image or
+Helm downgrade are forbidden. Use a prevention-aware image and forward correction
+without regranting owner authority; see the forward-only section of the runbook.
 
 ## Production cutover: blocked pending exact live identity review
 

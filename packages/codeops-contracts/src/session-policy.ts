@@ -15,10 +15,12 @@ export const interactiveSessionModeSchema = z.enum([
   "review",
 ]);
 
+export const sessionModelSchema = z.enum(["gpt-5.6-sol", "gpt-6-astra"]);
+
 const modelSessionPolicySchema = z
   .object({
     provider: z.literal("openai"),
-    model: z.literal("gpt-5.6-sol"),
+    model: sessionModelSchema,
     reasoningEffort: z.enum(["medium", "high"]),
   })
   .strict();
@@ -95,10 +97,14 @@ const sessionPolicyShapeSchema = z
 export const sessionPolicySchema = sessionPolicyShapeSchema.superRefine(
   (policy, context) => {
     const expected = policyByMode[policy.mode];
+    const expectedModelPolicy = policy.modelPolicy.provider === "openai" &&
+      expected.modelPolicy.provider === "openai"
+      ? { ...expected.modelPolicy, model: policy.modelPolicy.model }
+      : expected.modelPolicy;
     if (
       policy.workspaceAccess !== expected.workspaceAccess ||
       policy.modelCalls !== expected.modelCalls ||
-      JSON.stringify(policy.modelPolicy) !== JSON.stringify(expected.modelPolicy)
+      JSON.stringify(policy.modelPolicy) !== JSON.stringify(expectedModelPolicy)
     ) {
       context.addIssue({
         code: z.ZodIssueCode.custom,
@@ -110,11 +116,16 @@ export const sessionPolicySchema = sessionPolicyShapeSchema.superRefine(
 
 export function sessionPolicyForMode(
   mode: z.infer<typeof sessionModeSchema>,
+  model: z.infer<typeof sessionModelSchema> = "gpt-5.6-sol",
 ): z.infer<typeof sessionPolicySchema> {
+  const base = policyByMode[mode];
   return sessionPolicySchema.parse({
     version: "codeops.session-policy/v1",
     mode,
-    ...policyByMode[mode],
+    ...base,
+    ...(base.modelPolicy.provider === "openai"
+      ? { modelPolicy: { ...base.modelPolicy, model } }
+      : {}),
   });
 }
 
@@ -123,3 +134,4 @@ export type InteractiveSessionMode = z.infer<
   typeof interactiveSessionModeSchema
 >;
 export type SessionPolicy = z.infer<typeof sessionPolicySchema>;
+export type SessionModel = z.infer<typeof sessionModelSchema>;

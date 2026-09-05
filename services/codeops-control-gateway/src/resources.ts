@@ -19,7 +19,10 @@ import {
   assertAgentModelProxyRouting,
   assertAgentModelProxySessionVolume,
 } from "./model-proxy-routing.js";
-import { createRuntimeProfileRegistry } from "./runtime-profile-registry.js";
+import {
+  createRuntimeProfileRegistry,
+  runtimeProfileModel,
+} from "./runtime-profile-registry.js";
 
 interface ResourceConfig {
   readonly namespace: string;
@@ -267,10 +270,11 @@ export function buildRunResources(
     throw new Error("model proxy origin must be the internal service");
   }
   const modelBudgetAuthority = agentJobModelBudgetAuthority(request, input.runId);
+  const model = runtimeProfileModel(runtimeProfile);
   const tokenInput = {
     subject: modelBudgetAuthority?.budgetId ?? input.runId,
     signingKey: input.modelAuth.signingKey,
-    model: "gpt-5.6-sol",
+    model,
     reasoningEffort: "high" as const,
     issuedAt: input.modelAuth.issuedAt,
   };
@@ -315,7 +319,7 @@ export function buildRunResources(
     },
     { name: "CODEOPS_AGENT_ROLE", value: request.role },
     { name: "CODEOPS_PROJECT_CONTEXT_DIGEST", value: projectContext.digest },
-    { name: "CODEOPS_MODEL", value: "gpt-5.6-sol" },
+    { name: "CODEOPS_MODEL", value: model },
     { name: "CODEOPS_REASONING_EFFORT", value: "high" },
     ...(input.candidate
       ? [
@@ -624,7 +628,7 @@ export function buildRunResources(
                   {
                     name: "CODEX_CONFIG",
                     value: JSON.stringify({
-                      model: "gpt-5.6-sol",
+                      model,
                       model_reasoning_effort: "high",
                       approvals_reviewer: "auto_review",
                       web_search: "cached",

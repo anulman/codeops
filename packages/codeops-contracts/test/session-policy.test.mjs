@@ -47,6 +47,21 @@ test("rejects client-selected policy overrides", () => {
   );
 });
 
+test("admits Astra without weakening the immutable mode policy", () => {
+  const policy = sessionPolicyForMode("implement", "gpt-6-astra");
+  assert.equal(policy.modelPolicy.model, "gpt-6-astra");
+  assert.equal(policy.workspaceAccess, "bounded-writes");
+  assert.equal(policy.modelCalls, "allowed");
+  assert.equal(
+    sessionPolicyForMode("validate", "gpt-6-astra").modelPolicy.provider,
+    "none",
+  );
+  assert.throws(() => sessionPolicySchema.parse({
+    ...policy,
+    modelPolicy: { ...policy.modelPolicy, model: "gpt-6-astra-preview" },
+  }));
+});
+
 test("keeps Validate out of interactive workspace launch", () => {
   assert.equal(interactiveSessionModeSchema.parse("review"), "review");
   assert.throws(() => interactiveSessionModeSchema.parse("validate"));

@@ -58,6 +58,36 @@ separate operator action limited to the named session gateway. The migration
 container gets no Kubernetes token. Unquiesce only after migration, role-denial
 proofs and schema compatibility pass. Do not reuse the runtime gateway's token.
 
+## Forward-only application-role cutover (deployment gate)
+
+Before execution, bind the approved prevention-aware image digests, database
+identity/schema fingerprint, credential references, and every affected startup
+consumer in the operator run record. Include shared credential consumers such as
+Temporal; preserve the database, storage and unrelated workloads. This document
+is preparation, not authorization to deploy its example namespace topology.
+
+**After application-role cutover, do not restart the alpha72 API, automatically
+roll back to its image, or perform a Helm downgrade to its chart/runtime.** Alpha72
+API startup invokes migrations and must fail with PostgreSQL `42501` under the
+restricted application identity. The prevention-aware read-only initializer is
+required. Prior-image fixture DML does not prove old API startup compatibility.
+
+- Before runtime credential replacement: preserve the prior credential and image.
+  Restore only the exact quiesced writers after checking identity, actual grants,
+  schema and committed effects. A failed hook can leave separately committed
+  role-provisioning changes; transaction rollback is not a global rollback.
+- After successful role/credential cutover: keep incompatible consumers stopped.
+  On failure, record actual image/schema/role/Secret-reference state and correct
+  forward using an approved prevention-aware image and protected deployment path.
+  Resume only after compatible startup and scoped denial checks pass.
+- Never regrant owner, CREATE, elevated membership or migration authority to an
+  application identity to make old startup or rollback succeed. If a safe forward
+  correction is unavailable, remain stopped and escalate to the operator; do not
+  restore historical authority, reset the ledger, or enable the supervisor.
+
+Human merge/release and exact production cutover approval remain separate. The
+successful disposable CI evidence is not production identity enforcement.
+
 ## Network and workload admission
 
 Use the companion protected-boundary.yaml in a DISPOSABLE cluster first. It

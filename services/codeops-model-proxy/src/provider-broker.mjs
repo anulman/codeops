@@ -187,6 +187,11 @@ export function createProviderBroker(input) {
     if (String(url) !== OPENAI_RESPONSES_URL) {
       throw new Error("model provider broker received an unsupported upstream URL");
     }
+    const model = JSON.parse(Buffer.from(init.body).toString("utf8")).model;
+    if (model === "gpt-6-astra" &&
+        (primaryMode !== "chatgpt-primary" || allowApiKeyFallback)) {
+      throw new Error("Astra requires subscription routing without API-key fallback");
+    }
     if (primaryMode === "api-key") return apiRequest(init);
     let response;
     try {

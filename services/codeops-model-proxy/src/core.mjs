@@ -528,9 +528,11 @@ async function relaySettledStream(input) {
 
 export function createModelProxyRequestListener(input) {
   if (
-    typeof input.openAiApiKey !== "string" ||
-    input.openAiApiKey.length < 16 ||
-    /\s/.test(input.openAiApiKey)
+    input.openAiApiKey !== undefined &&
+    input.openAiApiKey !== null &&
+    (typeof input.openAiApiKey !== "string" ||
+      input.openAiApiKey.length < 16 ||
+      /\s/.test(input.openAiApiKey))
   ) {
     throw new Error("OpenAI API key is invalid");
   }
@@ -544,7 +546,11 @@ export function createModelProxyRequestListener(input) {
   const inFlightByRun = new Map();
   const requestsByRun = new Map();
   const allowedModels = new Set(
-    input.allowedModels ?? ["gpt-5.6-sol", "gpt-5.4-nano-2026-03-17"],
+    input.allowedModels ?? [
+      "gpt-5.6-sol",
+      "gpt-5.4-nano-2026-03-17",
+      "gpt-6-astra",
+    ],
   );
   const maxOutputTokens = input.maxOutputTokens ?? 32_768;
   const maxRequestsPerRun = input.maxRequestsPerRun ?? 200;
@@ -772,10 +778,12 @@ export function createModelProxyRequestListener(input) {
         }
         const headers = new Headers({
           Accept: typeof request.headers.accept === "string" ? request.headers.accept : "application/json",
-          Authorization: `Bearer ${input.openAiApiKey}`,
           "Content-Type": "application/json",
           "User-Agent": "codeops-model-proxy/0.1",
         });
+        if (input.openAiApiKey != null) {
+          headers.set("Authorization", `Bearer ${input.openAiApiKey}`);
+        }
         for (const name of ["openai-beta", "idempotency-key", "x-client-request-id"]) {
           const value = request.headers[name];
           if (typeof value === "string" && value.length <= 1_024) headers.set(name, value);

@@ -308,6 +308,39 @@ test("isolates subscription auth in the model proxy and keeps API fallback", () 
   );
 });
 
+test("renders the signed Astra profile only through dedicated OAuth with no API fallback", () => {
+  const settings = [
+    "--set", "runtime.profileId=gpt-6-astra",
+    "--set", "runtime.model=gpt-6-astra",
+    "--set", "modelProxy.provider.primary=chatgpt-primary",
+    "--set", "modelProxy.provider.apiKeyFallback=false",
+    "--set", "modelProxy.provider.chatgptAuthClaimName=agents-system-codex-auth",
+  ];
+  for (const resources of [render(settings), renderUpgrade(settings)]) {
+    const modelProxy = resource(resources, "Deployment", "team-a-codeops-model-proxy");
+    const container = modelProxy.spec.template.spec.containers[0];
+    const env = Object.fromEntries(container.env.map(({ name, value }) => [name, value]));
+    assert.equal(env.CODEOPS_MODEL_PROVIDER_PRIMARY, "chatgpt-primary");
+    assert.equal(env.CODEOPS_MODEL_API_KEY_FALLBACK, "false");
+    assert.equal(env.OPENAI_API_KEY, undefined);
+    assert.equal(JSON.stringify(container.env).includes("openai-api-key"), false);
+    assert.equal(modelProxy.spec.template.spec.volumes[0]
+      .persistentVolumeClaim.claimName, "agents-system-codex-auth");
+    const runtime = resources.find(({ kind, metadata }) => kind === "ConfigMap" &&
+      metadata?.labels?.["app.kubernetes.io/component"] === "runtime");
+    const profile = JSON.parse(runtime.data["profile-registry.json"]).profiles[0];
+    assert.equal(profile.profileId, "gpt-6-astra");
+    assert.ok(profile.capabilities.includes("api-key-fallback:false"));
+    assert.ok(profile.capabilities.includes("model:gpt-6-astra"));
+    assert.ok(profile.capabilities.includes("provider-route:chatgpt-primary"));
+  }
+  for (const invalid of [
+    ["--set", "runtime.profileId=gpt-6-astra", "--set", "runtime.model=gpt-6-astra"],
+    [...settings, "--set", "modelProxy.provider.apiKeyFallback=true"],
+    [...settings, "--set", "modelProxy.provider.chatgptAuthClaimName="],
+  ]) assert.throws(() => render(invalid));
+});
+
 test("runs migration as an ordinary install Job and a pre-upgrade hook", () => {
   const resources = renderUpgrade();
   const migration = resource(

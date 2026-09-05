@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import { createHash, createHmac } from "node:crypto";
 import { createServer } from "node:http";
 import { once } from "node:events";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 import {
   createModelProxyRequestListener as createRawModelProxyRequestListener,
@@ -9,6 +12,10 @@ import {
   validateModelProxyToken,
 } from "../src/core.mjs";
 import { ModelBudgetExhaustedError } from "../src/model-budget-ledger.mjs";
+import {
+  createProviderBroker,
+  providerBrokerConstants,
+} from "../src/provider-broker.mjs";
 
 const signingKey = "m".repeat(64);
 const now = Date.parse("2026-08-09T17:00:00.000Z");
@@ -294,6 +301,89 @@ test("commits a reservation before fetch and settles proved JSON usage", async (
     provedTotalTokens: 200,
     failureClass: null,
   });
+});
+
+test("settles one claimed Astra dispatch through isolated OAuth without exposing credentials", async (t) => {
+  const ledger = testLedger();
+  const authRoot = await mkdtemp(path.join(tmpdir(), "codeops-astra-auth-"));
+  t.after(() => rm(authRoot, { recursive: true, force: true }));
+  const claims = Buffer.from(JSON.stringify({
+    exp: Math.floor(now / 1_000) + 3_600,
+    chatgpt_account_id: "acct_astra_smoke",
+  })).toString("base64url");
+  const reusableCredential = `header.${claims}.signature`;
+  const authFile = path.join(authRoot, "auth.json");
+  await writeFile(authFile, JSON.stringify({
+    auth_mode: "chatgpt",
+    tokens: {
+      access_token: reusableCredential,
+      refresh_token: "refresh-reusable-credential-never-emitted",
+      account_id: "acct_astra_smoke",
+    },
+  }), { mode: 0o600 });
+  let providerCalls = 0;
+  const providerFetch = createProviderBroker({
+    primaryMode: "chatgpt-primary",
+    chatGptAuthFile: authFile,
+    allowApiKeyFallback: false,
+    now: () => now,
+    fetch: async (url, init) => {
+      providerCalls += 1;
+      assert.equal(url, providerBrokerConstants.CHATGPT_RESPONSES_URL);
+      assert.equal(init.headers.get("Authorization"), `Bearer ${reusableCredential}`);
+      return new Response(JSON.stringify({
+        id: "resp_astra_1",
+        output: [{ type: "message", content: [{ type: "output_text", text: "astra-ok" }] }],
+        usage: { input_tokens: 9, output_tokens: 4, total_tokens: 13 },
+      }), { status: 200, headers: { "Content-Type": "application/json" } });
+    },
+  });
+  await withProxy(
+    createModelProxyRequestListener({
+      openAiApiKey: undefined,
+      signingKey,
+      now: () => now,
+      modelBudgetLedger: ledger,
+      fetch: async (url, init) => {
+        assert.equal(Buffer.from(init.body).includes(reusableCredential), false);
+        return providerFetch(url, init);
+      },
+    }),
+    async (origin) => {
+      const response = await fetch(`${origin}/v1/responses`, {
+        method: "POST",
+        headers: {
+          Authorization: `Bearer ${dispatchToken({ model: "gpt-6-astra" })}`,
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          model: "gpt-6-astra",
+          input: "isolated Astra smoke",
+          reasoning: { effort: "high" },
+          max_output_tokens: 512,
+        }),
+      });
+      const output = await response.text();
+      assert.equal(response.status, 200);
+      assert.match(output, /astra-ok/);
+      assert.equal(output.includes(reusableCredential), false);
+    },
+  );
+  assert.equal(providerCalls, 1);
+  assert.equal(ledger.calls[0].input.model, "gpt-6-astra");
+  assert.equal(ledger.calls[0].input.leaseId, "11111111-1111-4111-8111-111111111111");
+  assert.equal(ledger.calls[0].input.dispatchId, "22222222-2222-4222-8222-222222222222");
+  assert.equal(ledger.calls[0].input.claimCount, 3);
+  assert.deepEqual(ledger.calls[1].input, {
+    reservationId: ledger.calls[0].input.reservationId,
+    state: "settled",
+    providerRequestId: "resp_astra_1",
+    provedInputTokens: 9,
+    provedOutputTokens: 4,
+    provedTotalTokens: 13,
+    failureClass: null,
+  });
+  assert.equal(JSON.stringify(ledger.calls).includes(reusableCredential), false);
 });
 
 test("forwards SSE progress and commits usage before the terminal event", async () => {

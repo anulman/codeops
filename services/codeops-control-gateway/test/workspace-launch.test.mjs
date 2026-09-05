@@ -103,6 +103,19 @@ test("admits one exact catalog-bound workspace launch", async () => {
   assert.equal("prompt" in launch, false);
 });
 
+test("binds the server-selected Astra runtime model into session policy", async () => {
+  const launch = await admitWorkspaceLaunch({
+    request,
+    principalId: "astra@example.com",
+    resolver,
+    store: store(),
+    runtimeModel: "gpt-6-astra",
+    now: () => new Date("2026-08-13T12:00:00.000Z"),
+  });
+  assert.equal(launch.policy.modelPolicy.model, "gpt-6-astra");
+  assert.equal(request.model, undefined);
+});
+
 test("admits and immutably binds one canonical runtime requirement", async () => {
   const admitted = await admitWorkspaceLaunch({
     request,

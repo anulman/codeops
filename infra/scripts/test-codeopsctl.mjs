@@ -3,7 +3,9 @@ import test from "node:test";
 import {
   buildSmokeReport,
   buildCompensatingRollbackPlan,
+  buildHelmUpgradeArguments,
   parseArguments,
+  referencedPersistentVolumeClaimNames,
   formatError,
   validateLock,
   validatePolicy,
@@ -147,6 +149,36 @@ test("plans a hook-free compensating rollback for upgrades and cleans fresh inst
     }).length,
     2,
   );
+});
+
+test("preserves installed provider and auth-PVC values only during upgrades", () => {
+  const input = {
+    release: "agents-system",
+    chartPath: "/tmp/codeops.tgz",
+    namespace: "agents-system",
+    valuesPath: "values.yaml",
+    helmTimeout: "20m",
+  };
+  assert.ok(buildHelmUpgradeArguments({
+    ...input,
+    preserveInstalledValues: true,
+  }).includes("--reset-then-reuse-values"));
+  assert.equal(buildHelmUpgradeArguments({
+    ...input,
+    preserveInstalledValues: false,
+  }).includes("--reset-then-reuse-values"), false);
+});
+
+test("includes an external ChatGPT auth PVC in upgrade and rollback preservation", () => {
+  assert.deepEqual(referencedPersistentVolumeClaimNames([{
+    kind: "Deployment",
+    spec: { template: { spec: { volumes: [
+      { name: "chatgpt-auth", persistentVolumeClaim: {
+        claimName: "agents-system-codex-auth",
+      } },
+      { name: "config", configMap: { name: "config" } },
+    ] } } },
+  }]), ["agents-system-codex-auth"]);
 });
 
 test("reports both deployment and rollback failures", () => {

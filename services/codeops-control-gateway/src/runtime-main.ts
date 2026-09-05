@@ -52,7 +52,11 @@ import {
   loadRepositoryRegistryFile,
   resolveRepositoryRoute,
 } from "./repository-registry.js";
-import { loadRuntimeProfileRegistryFile, resolveWorkspaceRuntimeLaunchBinding } from "./runtime-profile-registry.js";
+import {
+  loadRuntimeProfileRegistryFile,
+  resolveWorkspaceRuntimeLaunchBinding,
+  runtimeProfileModel,
+} from "./runtime-profile-registry.js";
 import { requireApplicationDatabaseAuthority } from "./session-broker-migration.js";
 import {
   InvalidSessionCommandRequestError,
@@ -1222,6 +1226,7 @@ const server = createServer((request, response) => {
               resolver: workspaceSourceResolver,
               store: createPostgresWorkspaceLaunchStore(client),
               runtimeRequirements: workspaceRuntimeRequirements,
+              runtimeModel: runtimeProfileModel(selectedRuntimeProfile),
             });
             scheduleWorkspaceReconciliation();
             return launch;
