@@ -824,7 +824,28 @@ test("critic prompt keeps an empty fast-follow pass inside the strict review sch
       },
     },
   };
+  critic.summary = "Review the latest correction round";
+  critic.codingRequest = structuredClone(critic.codingRequest);
+  critic.codingRequest.workItem.summary = "Restore Astra service, then resume the approved backlog";
+  critic.codingRequest.workItem.acceptanceCriteria = [
+    "Tests have no production authority",
+    "No custom attestation platform",
+  ];
   const promptLines = buildAgentPrompt(critic).split("\n");
+  assert.ok(promptLines.includes(`Task: ${critic.summary}`));
+  assert.ok(promptLines.includes(`Original task: ${critic.codingRequest.workItem.summary}`));
+  assert.ok(promptLines.includes(
+    `Acceptance criteria: ${JSON.stringify(critic.codingRequest.workItem.acceptanceCriteria)}`,
+  ));
+  const scopeIndex = promptLines.findIndex((line) => line.startsWith("Before correctness findings,"));
+  const lensesIndex = promptLines.findIndex((line) => line.startsWith("Review every lens independently:"));
+  assert.ok(scopeIndex >= 0 && scopeIndex < lensesIndex);
+  assert.match(promptLines[scopeIndex], /original user outcome.*mandatory safety invariants.*explicit non-goals/);
+  assert.ok(promptLines.some((line) => line.includes("Is this mechanism necessary and proportionate; is there a simpler existing alternative?")));
+  assert.ok(promptLines.some((line) => line.includes("Removing unnecessary machinery is a valid remedy; never weaken mandatory isolation.")));
+  assert.ok(promptLines.some((line) => line.startsWith("Prior corrections do not redefine the original need.")));
+  assert.ok(promptLines.some((line) => line.includes("Reviewers are advisory: the supervisor adjudicates simplify, retire, or justify")));
+
   assert.ok(promptLines.includes(
     "Tautological tests are considered harmful. Tests must exercise observable behavior independently of the implementation under test.",
   ));
