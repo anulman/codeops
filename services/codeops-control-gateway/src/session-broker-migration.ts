@@ -558,7 +558,7 @@ export async function grantApplicationDatabaseAccess(
     const inspector = await client.query("SELECT 1 FROM pg_roles WHERE rolname='codeops_inspector'");
     if (!inspector.rows.length) await client.query('CREATE ROLE codeops_inspector NOLOGIN');
     await requireUnownedDatabaseRole(client, 'codeops_inspector');
-    await client.query('ALTER ROLE codeops_inspector NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS');
+    await client.query('ALTER ROLE codeops_inspector NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS');
     await client.query('REVOKE ALL ON SCHEMA codeops FROM codeops_inspector');
     await client.query('GRANT USAGE ON SCHEMA codeops TO codeops_inspector');
     await client.query('REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM codeops_inspector');

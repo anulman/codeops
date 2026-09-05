@@ -134,17 +134,71 @@ async function insertDispatch(connection, current, dispatchId, idempotencyKey, o
   return current;
 }
 
+async function observeBlockingWriters(observer, blockedProcessId) {
+  // UNION deduplicates the graph, including any deadlock cycle. A waiter can
+  // block behind a tuple-lock waiter rather than directly behind its owner.
+  const observed = await observer.query(
+    `WITH RECURSIVE blockers(pid) AS (
+       SELECT unnest(pg_blocking_pids($1::integer))
+       UNION
+       SELECT unnest(pg_blocking_pids(blockers.pid)) FROM blockers
+     )
+     SELECT pg_blocking_pids($1::integer) AS direct,
+            ARRAY(SELECT pid FROM blockers ORDER BY pid) AS ancestors`,
+    [blockedProcessId],
+  );
+  return observed.rows[0];
+}
+
 async function waitForBlockingWriter(writer, blockedProcessId) {
+  let observed;
   for (let attempt = 0; attempt < 100; attempt += 1) {
-    const observed = await writer.query(
-      `SELECT $1::integer = ANY(pg_blocking_pids($2::integer)) AS blocked`,
-      [writer.processID, blockedProcessId],
-    );
-    if (observed.rows[0].blocked) return;
+    observed = await observeBlockingWriters(writer, blockedProcessId);
+    if (observed.ancestors.includes(writer.processID)) return observed;
     await delay(10);
   }
-  assert.fail("rollback did not wait for the concurrent normal-role writer");
+  assert.fail(`backend ${blockedProcessId} did not wait for writer ${writer.processID}: ${JSON.stringify(observed)}`);
 }
+
+test("blocking observer requires the exact writer through direct and transitive waits", { skip }, async () => {
+  const holder = new Client({ connectionString: databaseUrl });
+  const middle = new Client({ connectionString: databaseUrl });
+  const leaf = new Client({ connectionString: databaseUrl });
+  await Promise.all([holder.connect(), middle.connect(), leaf.connect()]);
+  let middleWait;
+  let leafWait;
+  try {
+    for (const client of [holder, middle, leaf]) {
+      await client.query("BEGIN");
+      await client.query("SET LOCAL lock_timeout = '5s'");
+    }
+    await holder.query("SELECT pg_advisory_xact_lock(731901, 1)");
+    await middle.query("SELECT pg_advisory_xact_lock(731901, 2)");
+    middleWait = settled(middle.query("SELECT pg_advisory_xact_lock(731901, 1)"));
+    const direct = await waitForBlockingWriter(holder, middle.processID);
+    assert.deepEqual(direct.direct, [holder.processID]);
+    leafWait = settled(leaf.query("SELECT pg_advisory_xact_lock(731901, 2)"));
+    const transitive = await waitForBlockingWriter(holder, leaf.processID);
+    assert.deepEqual(transitive.direct, [middle.processID]);
+    assert.equal(transitive.direct.includes(holder.processID), false);
+    assert.deepEqual(transitive.ancestors, [holder.processID, middle.processID].sort((a, b) => a - b));
+    assert.equal(transitive.ancestors.includes(suiteLock.processID), false);
+    await holder.query("COMMIT");
+    assert.equal((await middleWait).error, null);
+    await middle.query("COMMIT");
+    assert.equal((await leafWait).error, null);
+    await leaf.query("COMMIT");
+    assert.deepEqual(await observeBlockingWriters(holder, leaf.processID), { direct: [], ancestors: [] });
+    console.log(JSON.stringify({event: "blocking_graph_proof", direct: true, transitive: true, unrelatedWriterRejected: true, releasedWaitRejected: true}));
+  } finally {
+    await holder.query("ROLLBACK").catch(() => undefined);
+    if (middleWait) await middleWait;
+    await middle.query("ROLLBACK").catch(() => undefined);
+    if (leafWait) await leafWait;
+    await leaf.query("ROLLBACK").catch(() => undefined);
+    await Promise.all([holder.end(), middle.end(), leaf.end()]);
+  }
+});
 
 function pauseAfterQuery(connection, pattern) {
   let reached;
@@ -494,7 +548,8 @@ test("normal-role workspace binding wins atomically before initialization and cl
       "worker:workspace-owner-first",
       "44444444-4444-4444-8444-444444444444",
     )));
-    await waitForBlockingWriter(binder, initializer.processID);
+    const blocking = await waitForBlockingWriter(binder, initializer.processID);
+    console.log(JSON.stringify({event: "workspace_writer_wait", direct: blocking.direct.includes(binder.processID), transitive: blocking.ancestors.includes(binder.processID)}));
     bindingBarrier.release();
     const [binding, initialization, claim] = await Promise.all([
       bindingOutcome,

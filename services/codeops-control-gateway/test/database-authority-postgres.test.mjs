@@ -18,7 +18,34 @@ test('database roles refuse schema destruction and supervisor writes', {skip: !u
     await grantSessionRuntimeReceiptAccess(owner, 'codeops_runtime_receipts', randomBytes(32).toString('hex'));
     await grantLifecycleRelayAccess(owner, 'codeops_lifecycle_relay', randomBytes(32).toString('hex'));
     await grantModelProxyLedgerAccess(owner, 'codeops_model_proxy', randomBytes(32).toString('hex'));
+    // Existing login/admin flags must be normalized, not retained. Use a
+    // real direct connection before and after provisioning (loopback trust).
+    await owner.query('ALTER ROLE codeops_inspector LOGIN SUPERUSER CREATEDB CREATEROLE REPLICATION BYPASSRLS');
+    const inspectorUrl = new URL(url); inspectorUrl.username = 'codeops_inspector';
+    const previousInspector = new Client({connectionString: inspectorUrl.toString()});
+    await previousInspector.connect();
+    await previousInspector.end();
+    await grantApplicationDatabaseAccess(owner, 'codeops_app', randomBytes(32).toString('hex'));
+    const flags = (await owner.query(`SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole,
+      rolreplication, rolbypassrls FROM pg_roles WHERE rolname='codeops_inspector'`)).rows[0];
+    assert.deepEqual(flags, {rolcanlogin:false, rolsuper:false, rolcreatedb:false,
+      rolcreaterole:false, rolreplication:false, rolbypassrls:false});
+    const refusedInspector = new Client({connectionString: inspectorUrl.toString()});
+    try { await assert.rejects(refusedInspector.connect(), error => error.code === '28000'); }
+    finally { await refusedInspector.end(); }
+    // Membership is refused transactionally, including a NOINHERIT parent.
+    await owner.query('CREATE ROLE inspector_parent NOLOGIN');
+    await owner.query('ALTER ROLE codeops_inspector LOGIN NOINHERIT');
+    await owner.query('GRANT inspector_parent TO codeops_inspector');
+    await assert.rejects(grantApplicationDatabaseAccess(owner, 'codeops_app', randomBytes(32).toString('hex')), /no ownership or memberships/);
+    assert.equal((await owner.query("SELECT rolcanlogin FROM pg_roles WHERE rolname='codeops_inspector'")).rows[0].rolcanlogin, true);
+    await owner.query('REVOKE inspector_parent FROM codeops_inspector');
+    await owner.query('DROP ROLE inspector_parent');
+    await grantApplicationDatabaseAccess(owner, 'codeops_app', randomBytes(32).toString('hex'));
     await owner.query('CREATE ROLE codeops_inspection_login LOGIN IN ROLE codeops_inspector');
+    // Existing member logins are permitted: the group itself remains NOLOGIN.
+    await grantApplicationDatabaseAccess(owner, 'codeops_app', randomBytes(32).toString('hex'));
+
     const identities = [
       ['codeops_app', 'SELECT count(*) FROM codeops.sessions'],
       ['codeops_inspection_login', 'SELECT count(*) FROM codeops.sessions'],
@@ -32,6 +59,16 @@ test('database roles refuse schema destruction and supervisor writes', {skip: !u
       await connection.connect();
       try {
         await connection.query(read);
+        assert.equal((await connection.query('SELECT current_user AS identity')).rows[0].identity, role);
+        if (role === 'codeops_inspection_login') {
+          // Do not rely on default_transaction_read_only; ACLs must refuse writes.
+          await connection.query('SET default_transaction_read_only = off');
+          const acl = (await connection.query(`SELECT
+            has_table_privilege(current_user, 'codeops.sessions', 'SELECT') AS read,
+            has_table_privilege(current_user, 'codeops.sessions', 'INSERT,UPDATE,DELETE,TRUNCATE') AS write,
+            has_schema_privilege(current_user, 'codeops', 'CREATE') AS create`)).rows[0];
+          assert.deepEqual(acl, {read:true, write:false, create:false});
+        }
         if (role === 'codeops_app') {
           await requireApplicationDatabaseAuthority(connection);
           await connection.query('DELETE FROM codeops.sessions WHERE false');
