@@ -1,4 +1,6 @@
-import { mkdtemp, mkdir, rm } from "node:fs/promises";
+import { parse } from "yaml";
+import { createHash } from "node:crypto";
+import { mkdtemp, mkdir, rm, readFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { spawnSync } from "node:child_process";
@@ -30,6 +32,21 @@ async function helmWithRetry(args, env, attempts = 5) {
     }
   }
   throw failure;
+}
+
+// Offline verification uses the same pinned archives, without repository egress.
+if (process.env.CODEOPS_OFFLINE_CHARTS === "1") {
+  const lock = parse(await readFile("infra/charts/codeops/Chart.lock", "utf8"));
+  const pins = JSON.parse(await readFile("infra/charts/codeops/dependency-sha256.json", "utf8"));
+  const names = lock.dependencies.map(({name, version}) => `${name}-${version}.tgz`).sort();
+  if (JSON.stringify(Object.keys(pins).sort()) !== JSON.stringify(names)) throw new Error("Offline chart set differs from lock");
+  for (const [file, expected] of Object.entries(pins)) {
+    if (!/^[a-z0-9.-]+\.tgz$/.test(file) || !/^[a-f0-9]{64}$/.test(expected)) throw new Error("Invalid chart archive pin");
+    const bytes = await readFile(path.join("infra/charts/codeops/charts", file));
+    if (createHash("sha256").update(bytes).digest("hex") !== expected) throw new Error("Offline chart archive digest mismatch");
+  }
+  if (Object.keys(pins).length !== repositories.length) throw new Error("Offline chart archive set is incomplete");
+  process.exit(0);
 }
 
 const helmRoot = await mkdtemp(path.join(os.tmpdir(), "codeops-helm-"));

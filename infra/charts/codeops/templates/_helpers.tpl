@@ -171,6 +171,11 @@ podSelector:
 {{- else -}}
 namespaceSelector:
   matchLabels: { kubernetes.io/metadata.name: {{ .Values.postgresql.external.namespace }} }
+{{- with .Values.postgresql.external.podSelector }}
+podSelector:
+  matchLabels:
+    {{- toYaml . | nindent 4 }}
+{{- end }}
 {{- end -}}
 {{- end -}}
 

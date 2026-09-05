@@ -1,0 +1,15 @@
+# PREPARED ONLY. Applying this to the current managed release would remove its
+# StatefulSet. Never apply until the exact non-destructive placement plan passes.
+profile: custom
+quickstart:
+  enabled: false
+migration:
+  enabled: false
+postgresql:
+  deployment: external
+  external:
+    host: codeops-database.codeops-database-owner.svc
+    port: 5432
+    namespace: codeops-database-owner
+    podSelector:
+      app.kubernetes.io/component: postgresql

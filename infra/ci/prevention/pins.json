@@ -1,0 +1,30 @@
+{
+  "library/postgres": "library/postgres@sha256:051f7b7b3abdd564d5d1bd1e8c4b9c1b6e77087d1dd22020ede611c096a272e0",
+  "calico/node": "calico/node@sha256:92d8bcca3280cd27b9c98cb6e70c3af10ad6ff8accd288919b04ae0cd6021c2e",
+  "calico/cni": "calico/cni@sha256:b32ac832411b188a8adc9e31b3e23cbbecd6d63c182a3802e947303f97c2f700",
+  "calico/kube-controllers": "calico/kube-controllers@sha256:b9df43a10ec4cc40ab95779f646d1f9c1675259b3baacf883f5247333bb6385d",
+  "kind": {
+    "url": "https://github.com/kubernetes-sigs/kind/releases/download/v0.29.0/kind-linux-amd64",
+    "sha256": "c72eda46430f065fb45c5f70e7c957cc9209402ef309294821978677c8fb3284"
+  },
+  "helm": {
+    "url": "https://get.helm.sh/helm-v3.19.2-linux-amd64.tar.gz",
+    "sha256": "2114c9dea2844dce6d0ee2d792a9aae846be8cf53d5b19dc2988b5a0e8fec26e"
+  },
+  "node": "node@sha256:be23f54a88d34e8824c741b19b91064094f92c1c97b194144bfc8b50d67258e2",
+  "kindNode": "kindest/node:v1.33.1@sha256:050072256b9a903bd914c0b2866828150cb229cea0efe5892e2b644d5dd3b34f",
+  "calicoManifest": {
+    "url": "https://raw.githubusercontent.com/projectcalico/calico/v3.30.3/manifests/calico.yaml",
+    "sha256": "9382d2b27a76f40c170454b408653e6d71e2205ef0aef069e942bb690e7381d0"
+  },
+  "alpha72": {
+    "commit": "ed0bd370616086029993d9dbc86de2a0136aa37d",
+    "image": "ghcr.io/anulman/codeops/control-gateway@sha256:b0afa0e3df92af9b16b778c528bf957b4c433f643f87f14b149b694f3cc99eff",
+    "migrations": 29
+  },
+  "alpha69": {
+    "commit": "b829c8cbff3572c4d3c7cdcb1845e1944569a862",
+    "image": "ghcr.io/anulman/codeops/control-gateway@sha256:92b9cee13c9026955b850e2d683b832b96cba34e8d7fe615588c1140b0d43945",
+    "migrations": 28
+  }
+}

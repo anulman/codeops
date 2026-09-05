@@ -45,7 +45,7 @@ import {
   PlaneSessionTargetNotFoundError,
   servePlaneSessionSteering,
 } from "./plane-session-steering.js";
-import { migrateSessionBroker } from "./session-broker-migration.js";
+import { requireApplicationDatabaseAuthority } from "./session-broker-migration.js";
 import { loadRuntimeProfileRegistryFile } from "./runtime-profile-registry.js";
 import {
   InvalidSessionCommandRequestError,
@@ -344,14 +344,11 @@ const database = new Pool({
   connectionString: await secretFile("CODEOPS_DATABASE_URL_FILE"),
   max: 4,
 });
-const migrationClient = await database.connect();
+const authorityClient = await database.connect();
 try {
-  await migrateSessionBroker(migrationClient, {
-    legacySessionOwnerPrincipalId:
-      process.env.CODEOPS_LEGACY_SESSION_OWNER_PRINCIPAL_ID?.trim() || undefined,
-  });
+  await requireApplicationDatabaseAuthority(authorityClient);
 } finally {
-  migrationClient.release();
+  authorityClient.release();
 }
 
 const server = createServer((request, response) => {
