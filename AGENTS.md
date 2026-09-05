@@ -104,3 +104,21 @@ standard. For developer documentation, also use the Google developer
 documentation style guide. Project-specific terminology and rules take
 precedence. Preserve exact API, schema, environment-variable, and Kubernetes
 identifiers.
+
+## Scope-first reviews
+
+Apply this to the CodeOps critic and every external reviewer brief:
+
+- State the original user outcome, acceptance criteria, mandatory safety
+  invariants, and explicit non-goals. Prior corrections do not redefine need.
+- Before correctness findings, ask: is the cumulative mechanism necessary and
+  proportionate; is there a simpler existing alternative? A safety property
+  is not its implementation. Removing machinery is a valid remedy; never
+  weaken mandatory isolation or demand adjacent roadmap work.
+- Tie findings to a violated requirement or concrete impact and the smallest
+  sufficient remedy. Reassess cumulative scope across correction rounds.
+- Reviewers are advisory. The supervisor adjudicates simplify, retire, or
+  justify before another correction round; suggestions do not create gates.
+- Preserve the structured review contract and existing lenses. Keep generated
+  inventories and receipts as artifacts unless product behavior needs them
+  versioned.

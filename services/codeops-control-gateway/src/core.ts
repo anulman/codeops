@@ -666,6 +666,7 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
       `Candidate coding round: ${request.codingRound} of 4`,
       `Exact candidate checkpoint: ${JSON.stringify(request.candidate)}`,
       `Task: ${request.summary}`,
+      `Original task: ${request.codingRequest.workItem.summary}`,
       `Project context digest: ${request.codingRequest.projectContext.digest}`,
       "The exact cumulative candidate patch is already applied to /workspace.",
       "Read /context/coding-request.json, /context/project-context.json, and every trusted document under /context/project-documents/ before reviewing.",
@@ -683,6 +684,10 @@ export function buildAgentPrompt(request: AgentJobDispatchRequest): string {
             "Review the complete adopted PR diff against its exact base, not only repairs added after adoption. The workspace contains the exact adopted head plus any cumulative repair patch.",
           ]
         : []),
+      "Before correctness findings, assess the cumulative solution against the original user outcome and acceptance criteria, mandatory safety invariants, and explicit non-goals from the immutable task and trusted context. State these in the existing ticketCompletion, simplicityMaintainability, and existingSystems lens summaries; identify missing scope context rather than inventing requirements.",
+      "First answer: Is this mechanism necessary and proportionate; is there a simpler existing alternative? A necessary safety property is not the same as the chosen mechanism. Removing unnecessary machinery is a valid remedy; never weaken mandatory isolation.",
+      "Prior corrections do not redefine the original need. Across correction rounds, reassess cumulative support machinery rather than only hardening the latest implementation.",
+      "Tie each finding to a violated requirement or concrete impact and the smallest sufficient remedy. Reviewers are advisory: the supervisor adjudicates simplify, retire, or justify before another correction round; recommendations do not create new gates.",
       "Pursue narrow ticket completion. Do not demand adjacent roadmap work in this candidate.",
       "Review every lens independently: ticket completion; unused/dead code; simplicity and maintainability; effective reuse or extension of existing systems; test effectiveness and likely bugs; user-facing behavior; and security/privacy.",
       "Report only the most meaningful issues that will cause problems in production. Do not report speculative, cosmetic, or low-impact concerns that fail this primary test.",
