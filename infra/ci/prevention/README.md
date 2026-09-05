@@ -35,11 +35,15 @@ verbatim. It omits unrelated Plane/Temporal/model services and adds a test-only
 PostgreSQL Deployment and writer. Template hashes identify this deliberate scope;
 it is not a full-stack chart-install claim.
 
-The job requires fresh install, alpha72 credential upgrade and prior initialization
-compatibility, invalid-input refusal before quiescence, alpha69's genuine nonempty
+The job requires fresh install, alpha72 credential upgrade and prior-writer DML restoration, invalid-input refusal before quiescence, alpha69's genuine nonempty
 migration, precommit failure/rollback, committed failure, explicit UID/resourceVersion
-writer restoration, and idempotent retry. SQL history is never fabricated. Failure
-in prior initialization compatibility is a real blocker; do not change it to pass.
+writer restoration, and idempotent retry. SQL history is never fabricated. Alpha72's API initializer always performs DDL:
+CI requires its specific PostgreSQL `42501` refusal after the application-role
+cutover AND success of the new read-only initializer. It does not grant schema
+administration to make an old binary start. Restarting an old API after this
+cutover is unsupported: use the prevention-aware image. Restoration tests before
+successful cutover retain the prior credential and prove that writer DML resumes.
+This distinction is not a blanket compatibility or automatic downgrade claim.
 Five independent restricted SQL connections exercise positive access plus refused
 DDL/escalation. A positive local DB connection pairs the CNI refusal. Kubernetes
 Pod-security, API, and outside-egress denials are separate assertions.

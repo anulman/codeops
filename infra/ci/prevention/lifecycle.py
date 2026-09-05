@@ -341,18 +341,27 @@ def run(candidate, canary):
         helm(ns, current, upgrade=True)
         if len(final) != 29 or ledger(ns) != final:
             raise AssertionError('Retry not idempotent')
-    # Exercise the prior runtime's actual initialization module, not just pg.
+    # This is an intentional authority break: old API startup performs DDL.
+    # Require its precise refusal; never grant CREATE to preserve that path.
     compatibility = """import fs from 'node:fs';import {createRequire} from 'node:module';
 const {Client}=createRequire(process.cwd()+'/services/codeops-control-gateway/package.json')('pg');
 const {migrateSessionBroker}=await import(process.cwd()+'/services/codeops-control-gateway/dist/session-broker-migration.js');
 const c=new Client({connectionString:fs.readFileSync('/db/database-url','utf8').trim()});
-await c.connect();try{await migrateSessionBroker(c);}finally{await c.end();}"""
+await c.connect();try{const {default:assert}=await import('node:assert/strict');
+await assert.rejects(migrateSessionBroker(c),e=>e.code==='42501');}finally{await c.end();}"""
     t = pod(image(c.PINS['alpha72']['image']), ['node', '--input-type=module', '-e', compatibility])
     t['spec']['volumes'] = [{'name': 'db', 'secret': {'secretName': 'codeops-session-secrets'}}]
     t['spec']['containers'][0]['volumeMounts'] = [{'name': 'db', 'mountPath': '/db', 'readOnly': True}]
-    job('prior72', 'prior-initialization-compatibility', t)
+    job('prior72', 'prior-schema-authority-refused', t)
+    current_init = compatibility.replace('migrateSessionBroker', 'requireApplicationDatabaseAuthority')
+    current_init = current_init.replace(
+        "const {default:assert}=await import('node:assert/strict');\nawait assert.rejects(requireApplicationDatabaseAuthority(c),e=>e.code==='42501');",
+        'await requireApplicationDatabaseAuthority(c);')
+    t['spec']['containers'][0].update(image=pinned, command=['node', '--input-type=module', '-e', current_init])
+    job('prior72', 'current-readonly-initialization', t)
     c.record('scope', {'freshInstall': True, 'prior72CredentialCutover': True,
         'prior69NonemptyTransition': True, 'invalidPreQuiescence': True,
         'precommitRollback': True, 'postcommitFailure': True, 'explicitRestore': True,
         'idempotentRetry': True, 'priorImageDml': True,
-        'notClaimed': ['full product stack startup', 'cross-node CNI', 'production authority', 'historical admission']})
+        'priorDdlInitializer': 'refused with 42501 after role cutover', 'currentReadonlyInitializer': True,
+        'notClaimed': ['old API restart after role cutover', 'full product stack startup', 'cross-node CNI', 'production authority', 'historical admission']})
