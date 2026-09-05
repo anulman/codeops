@@ -148,3 +148,84 @@ test("launch server functions bind the private UI context and no browser token",
   assert.match(identitySource, /identity\.displayName \?\? identity\.runId/);
   assert.doesNotMatch(routeSource, /cloneUrl|image|serviceAccount|token/i);
 });
+
+test("optional metadata refuses only transport outages, preserving auth and schema errors", async () => {
+  const { readOptionalLaunch } = await import("../src/lib/workspaceLaunch.server.ts");
+  const input = { launchId: launch.launchId, principalId: launch.principalId };
+  const client = (fetch) => createWorkspaceLaunchClient({baseUrl: new URL("https://launcher.example/"), token, fetch});
+  for (const status of [502,503,504]) {
+    assert.deepEqual(await readOptionalLaunch(client(async () => json({},status)), input), { unavailable:true, detail:null });
+  }
+  for (const error of [new DOMException("timeout", "TimeoutError"), new TypeError("fetch failed", {cause:{code:"ECONNREFUSED"}})]) {
+    assert.deepEqual(await readOptionalLaunch(client(async () => {throw error}), input), {unavailable:true,detail:null});
+  }
+  for (const status of [401,403,500]) {
+    await assert.rejects(readOptionalLaunch(client(async () => json({},status)),input), /returned status/);
+  }
+  await assert.rejects(readOptionalLaunch(client(async () => json({invalid:true})),input));
+  await assert.rejects(readOptionalLaunch(client(async () => {throw new TypeError("bug")}),input), /bug/);
+  assert.deepEqual(await readOptionalLaunch(client(async () => json({},404)),input), {unavailable:false,detail:null});
+  assert.deepEqual(await readOptionalLaunch(client(async () => json(launchDetail)),input), {unavailable:false,detail:launchDetail});
+});
+
+test("optional metadata handles body reset and its own body timeout", async () => {
+  const { readOptionalLaunch } = await import("../src/lib/workspaceLaunch.server.ts");
+  const input = { launchId: launch.launchId, principalId: launch.principalId };
+  for (const failure of ["reset", "timeout"]) {
+    let requestSignal;
+    const client = createWorkspaceLaunchClient({
+      baseUrl: new URL("https://launcher.example/"), token,
+      async fetch(_url, init) {
+        requestSignal = init.signal;
+        return new Response(new ReadableStream({
+          start(controller) {
+            if (failure === "reset") {
+              controller.error(new TypeError("terminated", { cause: { code: "ECONNRESET" } }));
+            } else {
+              init.signal.addEventListener("abort", () => {
+                controller.error(new DOMException("body aborted", "AbortError"));
+              }, { once: true });
+            }
+          },
+        }), { headers: { "content-type": "application/json" } });
+      },
+    });
+    // AbortSignal.timeout uses an unref'ed timer; keep this body-stall fixture alive.
+    const keepAlive = setTimeout(() => {}, 5_000);
+    try {
+      assert.deepEqual(await readOptionalLaunch(client, input), { unavailable: true, detail: null });
+      assert.equal(requestSignal.aborted, failure === "timeout");
+      if (failure === "timeout") assert.equal(requestSignal.reason.name, "TimeoutError");
+    } finally { clearTimeout(keepAlive); }
+  }
+});
+
+test("body fallback preserves unrelated aborts, programming and response validation failures", async () => {
+  const { readOptionalLaunch } = await import("../src/lib/workspaceLaunch.server.ts");
+  const input = { launchId: launch.launchId, principalId: launch.principalId };
+  const client = (fetch) => createWorkspaceLaunchClient({ baseUrl: new URL("https://launcher.example/"), token, fetch });
+  for (const error of [new DOMException("unrelated abort", "AbortError"), new TypeError("body bug")]) {
+    const c = client(async () => new Response(new ReadableStream({
+      start(controller) { controller.error(error); },
+    }), { headers: { "content-type": "application/json" } }));
+    await assert.rejects(readOptionalLaunch(c, input), (actual) => actual === error);
+  }
+  for (const response of [
+    () => new Response("{", { headers: { "content-type": "application/json" } }),
+    () => json({ invalid: true }),
+    () => new Response("not JSON", { headers: { "content-type": "text/plain" } }),
+    () => new Response("{}", { headers: { "content-type": "application/json", "content-length": "1048577" } }),
+    () => new Response(" ".repeat(1048577), { headers: { "content-type": "application/json" } }),
+  ]) await assert.rejects(readOptionalLaunch(client(async () => response()), input));
+  for (const status of [401, 403]) {
+    let bodyRead = false;
+    await assert.rejects(readOptionalLaunch(client(async () => ({
+      status, text() { bodyRead = true; throw new DOMException("timeout", "TimeoutError"); },
+    })), input), /returned status/);
+    assert.equal(bodyRead, false);
+  }
+  const reset = new TypeError("terminated", { cause: { code: "ECONNRESET" } });
+  await assert.rejects(client(async () => new Response(new ReadableStream({
+    start(controller) { controller.error(reset); },
+  }), { headers: { "content-type": "application/json" } })).getCatalog(), (actual) => actual === reset);
+});

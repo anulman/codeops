@@ -14,6 +14,29 @@ import { parseSessionBrokerBaseUrl } from "./sessionBroker.server.ts";
 
 const MAX_RESPONSE_BYTES = 1024 * 1024;
 const REQUEST_TIMEOUT_MS = 10_000;
+export class WorkspaceLaunchUnavailableError extends Error {}
+
+export async function readOptionalLaunch(client: WorkspaceLaunchClient, input: {
+  readonly launchId: string; readonly principalId: string;
+}) {
+  try {
+    return { unavailable: false, detail: await client.getLaunch(input) };
+  } catch (error) {
+    if (error instanceof WorkspaceLaunchUnavailableError) {
+      return { unavailable: true, detail: null };
+    }
+    throw error;
+  }
+}
+
+function unavailableTransport(error: unknown, signal: AbortSignal): boolean {
+  if (!(error instanceof Error)) return false;
+  if (error.name === "TimeoutError") return true;
+  if (error.name === "AbortError" && signal.aborted &&
+      signal.reason instanceof Error && signal.reason.name === "TimeoutError") return true;
+  const code = (error.cause as { code?: string } | undefined)?.code;
+  return ["ECONNREFUSED", "ECONNRESET", "ETIMEDOUT", "EHOSTUNREACH", "ENETUNREACH", "EAI_AGAIN", "ENOTFOUND", "UND_ERR_CONNECT_TIMEOUT", "UND_ERR_SOCKET"].includes(code ?? "");
+}
 const launchIdSchema = z
   .string()
   .min(1)
@@ -55,6 +78,13 @@ export function createWorkspaceLaunchClient(input: {
       readonly allowMissing?: boolean;
     } = {},
   ): Promise<unknown> => {
+    const signal = AbortSignal.timeout(options.allowMissing ? 2_000 : REQUEST_TIMEOUT_MS);
+    const transportFailure = (error: unknown): never => {
+      if (options.allowMissing && unavailableTransport(error, signal)) {
+        throw new WorkspaceLaunchUnavailableError("Launch metadata is temporarily unavailable");
+      }
+      throw error;
+    };
     const response = await (input.fetch ?? fetch)(new URL(path, input.baseUrl), {
       method: options.method ?? "GET",
       headers: {
@@ -68,8 +98,11 @@ export function createWorkspaceLaunchClient(input: {
       body: options.body,
       redirect: "error",
       cache: "no-store",
-      signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-    });
+      signal,
+    }).catch(transportFailure);
+    if (options.allowMissing && [502, 503, 504].includes(response.status)) {
+      throw new WorkspaceLaunchUnavailableError("Launch metadata is temporarily unavailable");
+    }
     if (options.allowMissing && response.status === 404) return null;
     if (response.status !== (options.expectedStatus ?? 200)) {
       throw new Error(`workspace launcher returned status ${response.status}`);
@@ -81,7 +114,7 @@ export function createWorkspaceLaunchClient(input: {
     if (Number.isFinite(declaredLength) && declaredLength > MAX_RESPONSE_BYTES) {
       throw new Error("workspace launcher response exceeds the size limit");
     }
-    const responseBody = await response.text();
+    const responseBody = await response.text().catch(transportFailure);
     if (Buffer.byteLength(responseBody) > MAX_RESPONSE_BYTES) {
       throw new Error("workspace launcher response exceeds the size limit");
     }

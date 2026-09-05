@@ -28,6 +28,8 @@ const legacyWorkspaceFixture = JSON.parse(
   ),
 );
 const legacySessionId = legacyWorkspaceFixture.snapshot.sessionId;
+const workspaceSessionId = `ses_${"2".repeat(24)}`;
+let unavailableLaunch = false;
 
 function fleet() {
   return {
@@ -87,6 +89,19 @@ async function waitForUi(origin, child) {
 }
 
 const broker = createServer(async (request, response) => {
+  if (unavailableLaunch && request.url?.startsWith("/v1/workspace-launches/")) {
+    response.writeHead(503, { "content-type": "application/json" });
+    response.end(JSON.stringify({ status: "unavailable" }));
+    return;
+  }
+  if (unavailableLaunch && request.url?.startsWith(`/v1/sessions/${workspaceSessionId}`)) {
+    const events = request.url.includes("/events?");
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(JSON.stringify(events
+      ? { version: "codeops.session-events/v1", sessionId: workspaceSessionId, afterCursor: 0, nextCursor: 0, events: [] }
+      : { version: "codeops.session-detail/v1", session: { ...legacyWorkspaceFixture.snapshot, sessionId: workspaceSessionId, checkpoint: { ...legacyWorkspaceFixture.snapshot.checkpoint, sessionId: workspaceSessionId } } }));
+    return;
+  }
   brokerRequests.push({
     url: request.url,
     authorization: request.headers.authorization,
@@ -216,6 +231,20 @@ try {
   const origin = `http://127.0.0.1:${uiPort}`;
   try {
     await waitForUi(origin, ui);
+    unavailableLaunch = true;
+    for (const [id, expected, forbidden] of [
+      [workspaceSessionId, "Session activity remains available.", "Session not found."],
+      [`ses_${"3".repeat(24)}`, "Session availability could not be confirmed.", "Session not found."],
+      ["missing-legacy", "Session not found.", "Session availability could not be confirmed."],
+    ]) {
+      const response = await fetch(`${origin}/sessions/${id}`);
+      const html = await response.text();
+      if (response.status !== 200 || !html.includes(expected) || html.includes(forbidden)) {
+        throw new Error(`optional launch metadata rendering failed: ${id} ${response.status}`);
+      }
+    }
+    unavailableLaunch = false;
+    process.stdout.write("Session metadata outage SSR: 3 cases passed\n");
     await runAgentsUiSmoke({
       baseUrl: origin,
       sessionId: legacySessionId,
