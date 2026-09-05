@@ -186,7 +186,7 @@ test("fair discovery advances a durable cursor and admits released hibernation i
       return { rowCount: 1, rows: [{ last_session_id: cursor }] };
     }
     if (text.includes("FROM codeops.workspace_launches")) {
-      assert.deepEqual(values, ["ses_early", 100]);
+      assert.deepEqual(values, ["ses_early", 100, ["launch-222222222222222222222222"], ["ses_222222222222222222222222"]]);
       assert.match(text, /ORDER BY \(session\.session_id > \$1\) DESC/);
       assert.match(text, /'hibernated'/);
       assert.match(text, /admitted_child_materializations/);
@@ -462,4 +462,21 @@ test("progress registration preserves active and hibernated lease fencing", asyn
   } };
   assert.equal(await recordInteractiveRuntimeJobProgress(client, {
     candidate, job: job({ active: 1 }), observedAt }), "stale");
+});
+
+test("preserved incident identities refuse direct progress and retry before SQL", async () => {
+  const client = { async query() { assert.fail("preserved identity reached SQL"); } };
+  for (const identity of [
+    { runId: "launch-222222222222222222222222" },
+    { sessionId: "ses_222222222222222222222222" },
+  ]) {
+    assert.equal(await recordInteractiveRuntimeJobProgress(client, {
+      candidate: { ...candidate, ...identity }, job: job(), observedAt,
+    }), "stale");
+    for (const type of ["failed", "completed"]) {
+      assert.equal(await reconcileInteractiveRuntimeTerminal(client, {
+        ...observation(type), ...identity,
+      }, { configured: runtimeRelease, observed: runtimeRelease }), "stale");
+    }
+  }
 });

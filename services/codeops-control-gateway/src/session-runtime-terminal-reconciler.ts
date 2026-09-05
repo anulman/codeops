@@ -1,3 +1,4 @@
+import { isRetainedIncidentIdentity, retainedLaunchIds, retainedSessionIds } from "./retained-incident-identities.js";
 import { createHash } from "node:crypto";
 import {
   canonicalJsonText,
@@ -127,13 +128,15 @@ export async function listInteractiveRuntimeCandidates(
           AND dispatch.admission_id=materialization.admission_id
          WHERE materialization.state IN ('success-finalizing','ready')
        ) session
-       WHERE session.snapshot_json->>'state' IN
+       WHERE NOT (session.launch_id = ANY($3::text[]))
+         AND NOT (session.session_id = ANY($4::text[]))
+         AND session.snapshot_json->>'state' IN
              ('running','waiting_permission','checkpointing','hibernated')
          AND session.snapshot_json->'identity'->>'version'=
              'codeops.session-workspace-identity/v1'
        ORDER BY (session.session_id > $1) DESC,session.session_id ASC
        LIMIT $2`,
-      [lastSessionId, limit],
+      [lastSessionId, limit, retainedLaunchIds, retainedSessionIds],
     );
     const candidates = result.rows.map(interactiveRuntimeCandidate);
     if (candidates.length > 0) {
@@ -309,6 +312,7 @@ export async function recordInteractiveRuntimeJobProgress(
     readonly observedAt: string;
   },
 ): Promise<"registered" | "advanced" | "duplicate" | "stale"> {
+  if (isRetainedIncidentIdentity(input.candidate.runId, input.candidate.sessionId)) return "stale";
   const job = requireJobIdentity(input.candidate, input.job);
   requireRfc3339Timestamp(input.observedAt);
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
@@ -577,6 +581,7 @@ export async function reconcileInteractiveRuntimeTerminal(
   runtimeAttestation?: { readonly configured: string; readonly observed: string | null },
 ): Promise<"committed" | "duplicate" | "stale" | "already_terminal"> {
   const observation = sessionRuntimeTerminalObservationSchema.parse(rawObservation);
+  if (isRetainedIncidentIdentity(observation.runId, observation.sessionId)) return "stale";
   if (observation.cause.type === "failed" && runtimeAttestation !== undefined) {
     const retry = await reconcileFailedWorkItemAttempt(client, observation, runtimeAttestation);
     if (retry !== null) return retry.disposition === "created" ? "committed" : "duplicate";

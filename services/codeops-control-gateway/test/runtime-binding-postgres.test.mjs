@@ -1,3 +1,5 @@
+import { listInteractiveRuntimeCandidates, recordInteractiveRuntimeJobProgress, reconcileInteractiveRuntimeTerminal } from "../dist/session-runtime-terminal-reconciler.js";
+import { reconcileWorkspaceLaunch } from "../dist/workspace-launch-controller.js";
 import { requireDisposablePostgres } from "../../../infra/scripts/disposable-postgres.mjs";
 import assert from "node:assert/strict";
 import test, {before, after} from "node:test";
@@ -19,7 +21,7 @@ import { buildSessionRuntimeDispatch } from "../dist/session-broker-runtime.js";
 import { claimSessionRuntimeDispatch } from "../dist/session-broker-runtime-outbox.js";
 import { initializeSessionFromJob } from "../dist/session-job-initialization.js";
 import { bindWorkspaceLaunchRuntime } from "../dist/workspace-launch.js";
-import { updateWorkspaceLaunch } from "../dist/workspace-launch-store.js";
+import { listActiveWorkspaceLaunchIds, updateWorkspaceLaunch } from "../dist/workspace-launch-store.js";
 
 const databaseUrl = process.env.CODEOPS_TEST_POSTGRES_URL?.trim();
 if (databaseUrl !== undefined) await requireDisposablePostgres(databaseUrl);
@@ -1367,4 +1369,43 @@ test("normal-role PostgreSQL binds every root and lineage producer and rejects r
     }
     await connection.end();
   }
+});
+
+test("retained incident stays unchanged across selectors and direct reconcilers", { skip }, async () => {
+  const connection = new Client({ connectionString: databaseUrl });
+  await connection.connect();
+  const retained = "launch-222222222222222222222222";
+  const retainedSession = "ses_222222222222222222222222";
+  const clean = "launch-333333333333333333333333";
+  try {
+    await connection.query("DROP SCHEMA IF EXISTS codeops CASCADE");
+    await migrateSessionBroker(connection);
+    for (const [id, uuid] of [[retained, "26262626-2626-4262-8262-262626262626"],
+      [clean, "27272727-2727-4272-8272-272727272727"]]) {
+      const value = { ...preUpgradeLaunch, launchId: id, idempotencyKey: uuid,
+        runtimeRequirements: requirements, runtimeRequirementDigest: requirementDigest, runtimeLaunchBinding: launchBinding, state: "provisioning", sessionId: id === retained ? retainedSession : "ses_333333333333333333333333" };
+      await connection.query(`INSERT INTO codeops.workspace_launches
+        (launch_id,principal_id,idempotency_key,request_digest,request_json,launch_json,state,created_at,updated_at,runtime_requirements_json,runtime_requirement_digest,runtime_launch_binding_json)
+        VALUES($1,$2,$3,$4,'{}',$5,'provisioning',$6,$6,$7,$8,$9)`,
+        [id,value.principalId,uuid,value.requestDigest,JSON.stringify(value),value.createdAt,JSON.stringify(requirements),requirementDigest,JSON.stringify(launchBinding)]);
+    }
+    await insertDispatch(connection, snapshot(retainedSession, retained),
+      "46464646-4646-4646-8646-464646464646", "47474747-4747-4747-8747-474747474747");
+    assert.ok(await claimSessionRuntimeDispatch(connection, runtimeClaimInput(snapshot(retainedSession, retained), "fixture-worker", "48484848-4848-4848-8848-484848484848")));
+    const read = async () => (await connection.query(`SELECT
+      (SELECT jsonb_agg(to_jsonb(x)) FROM codeops.workspace_launches x WHERE launch_id=$1) launches,
+      (SELECT jsonb_agg(to_jsonb(x)) FROM codeops.sessions x) sessions,
+      (SELECT jsonb_agg(to_jsonb(x)) FROM codeops.session_runtime_outbox x) outbox`, [retained])).rows[0];
+    for (const nextAttemptAt of [null, "2099-01-01T00:00:00Z"]) {
+      await connection.query(`UPDATE codeops.workspace_launches SET launch_json =
+        launch_json || jsonb_build_object('nextAttemptAt',$2::text) WHERE launch_id=$1`, [retained,nextAttemptAt]);
+      const before = await read();
+      assert.deepEqual(await listActiveWorkspaceLaunchIds(connection), [clean]);
+      assert.deepEqual(await listInteractiveRuntimeCandidates(connection), []);
+      assert.equal(await reconcileWorkspaceLaunch(retained, new Proxy({}, { get() { assert.fail("unexpected effect"); } })), null);
+      const candidate = { sessionId: retainedSession, runId: retained, generation: 1, leaseId };
+      assert.equal(await recordInteractiveRuntimeJobProgress(connection, {candidate, job: {}, observedAt: "2026-09-05T00:00:00Z"}), "stale");
+      assert.deepEqual(await read(), before);
+    }
+  } finally { await connection.end(); }
 });
