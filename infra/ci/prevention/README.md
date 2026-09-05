@@ -1,8 +1,8 @@
 # Disposable prevention CI
 
-`Disposable prevention` is a manual, single-node GitHub-hosted job. It is not a
+`Disposable prevention` is a single-node GitHub-hosted PR check (also manually runnable). It is not a
 production rollout, ledger recovery, supervisor admission, or an Astra gate.
-Review the exact workflow/controller diff before its first dispatch. Preserve
+The workflow runs only same-repository PRs; review the exact controller diff. Preserve
 human merge and deployment gates. PR134's placement harness is not a dependency.
 
 ## Boundary
