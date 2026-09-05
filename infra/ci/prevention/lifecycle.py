@@ -120,7 +120,7 @@ def new_case(ns):
                   {'name': 'POSTGRES_PASSWORD', 'valueFrom': {'secretKeyRef': {'name': 'codeops-postgres', 'key': 'password'}}}]
     ctr['volumeMounts'] = [{'name': 'data', 'mountPath': '/var/lib/postgresql/data'}, {'name': 'socket', 'mountPath': '/var/run/postgresql'}]
     t['spec']['volumes'] = [{'name': 'data', 'emptyDir': {'sizeLimit': '1Gi'}}, {'name': 'socket', 'emptyDir': {'sizeLimit': '16Mi'}}]
-    ctr['readinessProbe'] = {'exec': {'command': ['pg_isready', '-U', 'agents', '-d', 'agents']}, 'periodSeconds': 2}
+    ctr['readinessProbe'] = {'exec': {'command': ['pg_isready', '-h', '127.0.0.1', '-U', 'agents', '-d', 'agents']}, 'periodSeconds': 2}
     c.apply(obj('Deployment', 'db', ns, spec={'replicas': 1, 'selector': {'matchLabels': {'app': 'db'}}, 'template': t}),
             obj('Service', 'codeops-database', ns, spec={'selector': {'app': 'db'}, 'ports': [{'port': 5432}]}))
     try:
