@@ -36,6 +36,31 @@ export interface RuntimeProfileRegistry {
   selectCompatible(requirements: RuntimeRequirements): RuntimeProfile;
 }
 
+const supportedRuntimeModels = new Set(["gpt-5.6-sol", "gpt-6-astra"]);
+type RuntimeModel = "gpt-5.6-sol" | "gpt-6-astra";
+
+export function runtimeProfileModel(profile: RuntimeProfile): RuntimeModel {
+  const declared = profile.capabilities
+    .filter((capability) => capability.startsWith("model:"))
+    .map((capability) => capability.slice("model:".length));
+  if (declared.length === 0) return "gpt-5.6-sol";
+  if (declared.length !== 1 || !supportedRuntimeModels.has(declared[0]!)) {
+    throw new Error("runtime profile model capability is invalid");
+  }
+  const model = declared[0]! as RuntimeModel;
+  if (model === "gpt-6-astra") {
+    const routes = profile.capabilities.filter((capability) =>
+      capability.startsWith("provider-route:"));
+    const fallbacks = profile.capabilities.filter((capability) =>
+      capability.startsWith("api-key-fallback:"));
+    if (routes.length !== 1 || routes[0] !== "provider-route:chatgpt-primary" ||
+        fallbacks.length !== 1 || fallbacks[0] !== "api-key-fallback:false") {
+      throw new Error("Astra runtime profile provider authority is invalid");
+    }
+  }
+  return model;
+}
+
 function rejection(profile: RuntimeProfile, requirements: RuntimeRequirements): RuntimeCompatibilityRejection | null {
   if (profile.compatibilityPolicyRevision !== requirements.compatibilityPolicyRevision) return "policy-revision-mismatch";
   if (requirements.capabilities.some((capability) => !profile.capabilities.includes(capability))) return "capability-unsatisfied";

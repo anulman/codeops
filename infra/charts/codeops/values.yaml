@@ -330,6 +330,7 @@ postgresql:
 
 runtime:
   profileId: standard-v1
+  model: gpt-5.6-sol
   releaseDigest: ""
   compatibilityPolicyRevision: compatible-substitution-v1
   workspaceStorageClassName: ""

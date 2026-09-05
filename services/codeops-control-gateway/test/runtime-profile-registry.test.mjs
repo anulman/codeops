@@ -5,6 +5,7 @@ import {
   RuntimeCompatibilityError,
   createRuntimeProfileRegistry,
   resolveWorkspaceRuntimeLaunchBinding,
+  runtimeProfileModel,
 } from "../dist/runtime-profile-registry.js";
 
 const requirements = {
@@ -84,6 +85,22 @@ test("selects only a capability, resource, authority, and policy compatible prof
       (error) => error instanceof RuntimeCompatibilityError && error.code === code,
     );
   }
+});
+
+test("accepts only the subscription-only no-fallback Astra profile authority", () => {
+  const astra = (capabilities) => profile("7", {
+    profileId: "gpt-6-astra",
+    capabilities: [...capabilities].sort(),
+    capabilityDigest: sha256CanonicalJsonDigest([...capabilities].sort()),
+  });
+  assert.equal(runtimeProfileModel(astra([
+    "acp", "api-key-fallback:false", "model:gpt-6-astra",
+    "provider-route:chatgpt-primary",
+  ])), "gpt-6-astra");
+  for (const capabilities of [
+    ["acp", "api-key-fallback:true", "model:gpt-6-astra", "provider-route:chatgpt-primary"],
+    ["acp", "api-key-fallback:false", "model:gpt-6-astra", "provider-route:api-key"],
+  ]) assert.throws(() => runtimeProfileModel(astra(capabilities)), /provider authority/);
 });
 
 test("replays the complete stored profile across a same-ID release rollover", () => {

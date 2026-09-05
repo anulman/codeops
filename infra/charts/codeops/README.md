@@ -285,6 +285,16 @@ not mount it. The broker falls back only before subscription inference starts
 or after an explicit 401, 403, or 429 response. It does not replay an ambiguous
 transport failure or a 5xx response.
 
+The `gpt-6-astra` runtime profile is subscription-only. Set
+`runtime.profileId=gpt-6-astra`, `runtime.model=gpt-6-astra`,
+`modelProxy.provider.primary=chatgpt-primary`, and
+`modelProxy.provider.chatgptAuthClaimName` to the dedicated OAuth PVC. Keep
+`modelProxy.provider.apiKeyFallback=false`. The chart rejects Astra with an API
+key route or fallback. `codeopsctl deploy` resets to the new chart defaults and
+then reuses installed overrides during an upgrade, so the provider selection
+and external auth-PVC name remain stable while release image pins advance.
+Its compensating Helm rollback restores the preceding release revision.
+
 Coding agents use cached Codex web search for ordinary research. Codex
 auto-review evaluates exceptional command-level network requests without a
 human prompt for each request. Kubernetes NetworkPolicies continue to deny
@@ -312,8 +322,9 @@ and checkpoint artifacts. Digest-only evidence is not a recoverability
 boundary.
 
 The model proxy records token subject, status, latency, request size, request
-count, and concurrency. It does not record request bodies. It accepts only
-`gpt-5.6-sol` Responses API requests. It adds or enforces a 32,768 output-token
+count, and concurrency. It does not record request bodies. It accepts only the
+qualified `gpt-5.6-sol`, `gpt-5.4-nano-2026-03-17`, and `gpt-6-astra` Responses
+API requests. It adds or enforces a 32,768 output-token
 ceiling and permits at most 200 requests for one short-lived run token. It
 warns at 4 MiB per request, 4 concurrent requests per token, or 8 concurrent
 requests globally. It uses high stop-loss limits of 20 MiB per request, 8

@@ -529,6 +529,30 @@ function snapshotPvcs(resources) {
     .sort((left, right) => left.name.localeCompare(right.name));
 }
 
+export function referencedPersistentVolumeClaimNames(resources) {
+  return [...new Set(resources.flatMap((resource) =>
+    (resource.spec?.template?.spec?.volumes ?? [])
+      .map((volume) => volume.persistentVolumeClaim?.claimName)
+      .filter((name) => typeof name === "string" && name !== ""),
+  ))].sort();
+}
+
+function snapshotReferencedPvcs(resources, namespace) {
+  return referencedPersistentVolumeClaimNames(resources).map((name) =>
+    identity(kubectlJson([
+      "get", "persistentvolumeclaim", name,
+      "--namespace", namespace, "--output", "json",
+    ])));
+}
+
+function snapshotPreservedPvcs(resources, namespace) {
+  return [...new Map([
+    ...snapshotPvcs(resources),
+    ...snapshotReferencedPvcs(resources, namespace),
+  ].map((entry) => [entry.name, entry])).values()]
+    .sort((left, right) => left.name.localeCompare(right.name));
+}
+
 function snapshotSecrets(names, namespace) {
   return names
     .map((name) => {
@@ -660,6 +684,33 @@ export function buildCompensatingRollbackPlan({
   ];
 }
 
+export function buildHelmUpgradeArguments({
+  release,
+  chartPath,
+  namespace,
+  valuesPath,
+  helmTimeout,
+  preserveInstalledValues,
+}) {
+  return [
+    "upgrade",
+    "--install",
+    release,
+    chartPath,
+    "--namespace",
+    namespace,
+    "--create-namespace",
+    ...(preserveInstalledValues ? ["--reset-then-reuse-values"] : []),
+    "--values",
+    valuesPath,
+    "--atomic",
+    "--wait",
+    "--wait-for-jobs",
+    "--timeout",
+    helmTimeout,
+  ];
+}
+
 async function deploy(options, lock, policy, directory) {
   const verification = await verify(options, lock, directory);
   const apiIp = execute("kubectl", ["get", "service", "kubernetes", "--output", "jsonpath={.spec.clusterIP}"]).trim();
@@ -683,26 +734,18 @@ async function deploy(options, lock, policy, directory) {
   const previousRelease = namespaceExists
     ? kubectlHelmRelease(options.release, options.namespace)
     : undefined;
-  const pvcsBefore = snapshotPvcs(beforeResources);
+  const pvcsBefore = snapshotPreservedPvcs(beforeResources, options.namespace);
   const secretsBefore = snapshotSecrets(policy.requiredSecrets, options.namespace);
   execute(
     "helm",
-    [
-      "upgrade",
-      "--install",
-      options.release,
-      verification.prepared.chartPath,
-      "--namespace",
-      options.namespace,
-      "--create-namespace",
-      "--values",
-      options.values,
-      "--atomic",
-      "--wait",
-      "--wait-for-jobs",
-      "--timeout",
-      policy.helmTimeout,
-    ],
+    buildHelmUpgradeArguments({
+      release: options.release,
+      chartPath: verification.prepared.chartPath,
+      namespace: options.namespace,
+      valuesPath: options.values,
+      helmTimeout: policy.helmTimeout,
+      preserveInstalledValues: previousRelease !== undefined,
+    }),
     { timeout: durationMilliseconds(policy.helmTimeout) + 5 * 60_000 },
   );
   try {
@@ -717,7 +760,11 @@ async function deploy(options, lock, policy, directory) {
     }
     const smokeReport = buildSmokeReport(options.release, options.namespace, afterResources, installed);
     if (!smokeReport.ok) throw new Error("one or more CodeOps resources are not ready");
-    sameIdentities(pvcsBefore, snapshotPvcs(afterResources), "PVC");
+    sameIdentities(
+      pvcsBefore,
+      snapshotPreservedPvcs(afterResources, options.namespace),
+      "PVC",
+    );
     sameIdentities(secretsBefore, snapshotSecrets(policy.requiredSecrets, options.namespace), "Secret");
     compareImageSets(new Set(verification.prepared.expectedImages), actualCodeOpsImages(afterResources));
     for (const check of policy.postDeployHttpChecks ?? []) {
@@ -765,7 +812,11 @@ async function deploy(options, lock, policy, directory) {
           throw new Error("compensating rollback did not restore the prior release identity");
         }
         const restoredResources = releaseResources(options.release, options.namespace);
-        sameIdentities(pvcsBefore, snapshotPvcs(restoredResources), "rollback PVC");
+        sameIdentities(
+          pvcsBefore,
+          snapshotPreservedPvcs(restoredResources, options.namespace),
+          "rollback PVC",
+        );
         sameIdentities(secretsBefore, snapshotSecrets(policy.requiredSecrets, options.namespace), "rollback Secret");
       }
     } catch (rollbackError) {

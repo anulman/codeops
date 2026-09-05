@@ -1,5 +1,8 @@
 apiVersion: apps/v1
 kind: Deployment
+{{- if not (has .Values.runtime.model (list "gpt-5.6-sol" "gpt-6-astra")) }}
+{{- fail "runtime.model must be gpt-5.6-sol or gpt-6-astra" }}
+{{- end }}
 {{- if not (has .Values.modelProxy.provider.primary (list "api-key" "chatgpt-primary")) }}
 {{- fail "modelProxy.provider.primary must be api-key or chatgpt-primary" }}
 {{- end }}
@@ -8,6 +11,15 @@ kind: Deployment
 {{- end }}
 {{- if and (eq .Values.modelProxy.provider.primary "chatgpt-primary") (empty .Values.modelProxy.provider.chatgptAuthClaimName) }}
 {{- fail "modelProxy.provider.chatgptAuthClaimName is required for chatgpt-primary auth" }}
+{{- end }}
+{{- if and (eq .Values.runtime.model "gpt-6-astra") (ne .Values.runtime.profileId "gpt-6-astra") }}
+{{- fail "gpt-6-astra requires runtime.profileId=gpt-6-astra" }}
+{{- end }}
+{{- if and (eq .Values.runtime.model "gpt-6-astra") (ne .Values.modelProxy.provider.primary "chatgpt-primary") }}
+{{- fail "gpt-6-astra requires modelProxy.provider.primary=chatgpt-primary" }}
+{{- end }}
+{{- if and (eq .Values.runtime.model "gpt-6-astra") .Values.modelProxy.provider.apiKeyFallback }}
+{{- fail "gpt-6-astra forbids modelProxy.provider.apiKeyFallback" }}
 {{- end }}
 metadata:
   name: {{ include "codeops.fullname" . }}-model-proxy
@@ -49,9 +61,11 @@ spec:
           image: {{ include "codeops.image" .Values.modelProxy.image | quote }}
           imagePullPolicy: IfNotPresent
           env:
+            {{- if or (eq .Values.modelProxy.provider.primary "api-key") .Values.modelProxy.provider.apiKeyFallback }}
             - name: OPENAI_API_KEY
               valueFrom:
                 secretKeyRef: { name: {{ .Values.modelProxy.secretName }}, key: openai-api-key }
+            {{- end }}
             - { name: CODEOPS_MODEL_PROVIDER_PRIMARY, value: {{ .Values.modelProxy.provider.primary | quote }} }
             - { name: CODEOPS_MODEL_API_KEY_FALLBACK, value: {{ .Values.modelProxy.provider.apiKeyFallback | quote }} }
             {{- if eq .Values.modelProxy.provider.primary "chatgpt-primary" }}

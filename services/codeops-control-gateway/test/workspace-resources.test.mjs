@@ -5,6 +5,11 @@ import {
   assertWorkspaceResources,
   buildWorkspaceResources,
 } from "../dist/workspace-resources.js";
+import { admitWorkspaceLaunch } from "../dist/workspace-launch.js";
+import {
+  createRuntimeProfileRegistry,
+  runtimeProfileModel,
+} from "../dist/runtime-profile-registry.js";
 import { sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
 
 const sha = "a".repeat(40);
@@ -297,6 +302,82 @@ test("binds workspace mounts and Codex configuration to the immutable session po
   );
   assert.equal(reviewCodexConfig.model, "gpt-5.6-sol");
   assert.equal(reviewCodexConfig.model_reasoning_effort, "high");
+});
+
+test("binds Astra configuration to the exact signed runtime profile", () => {
+  const astra = config();
+  astra.policy.modelPolicy.model = "gpt-6-astra";
+  astra.runtimeLaunchBinding = structuredClone(runtimeLaunchBinding);
+  astra.runtimeLaunchBinding.profile.profileId = "gpt-6-astra";
+  astra.runtimeLaunchBinding.profile.capabilities = [
+    "acp", "api-key-fallback:false", "model:gpt-6-astra",
+    "provider-route:chatgpt-primary",
+  ].sort();
+  astra.runtimeLaunchBinding.profile.capabilityDigest =
+    sha256CanonicalJsonDigest(astra.runtimeLaunchBinding.profile.capabilities);
+  const runtime = buildWorkspaceResources(astra)[3];
+  const agent = runtime.spec.template.spec.containers[1];
+  assert.equal(JSON.parse(agent.env.find(({ name }) => name === "CODEX_CONFIG").value).model,
+    "gpt-6-astra");
+
+  astra.runtimeLaunchBinding.profile.capabilities = [
+    "acp", "api-key-fallback:false", "model:gpt-5.6-sol",
+    "provider-route:chatgpt-primary",
+  ].sort();
+  astra.runtimeLaunchBinding.profile.capabilityDigest =
+    sha256CanonicalJsonDigest(astra.runtimeLaunchBinding.profile.capabilities);
+  assert.throws(() => buildWorkspaceResources(astra), /signed runtime profile/);
+});
+
+test("admits and renders Astra from one server-selected signed profile", async () => {
+  const astraProfile = structuredClone(runtimeLaunchBinding.profile);
+  astraProfile.profileId = "gpt-6-astra";
+  astraProfile.capabilities = [
+    "acp", "api-key-fallback:false", "model:gpt-6-astra",
+    "provider-route:chatgpt-primary",
+  ].sort();
+  astraProfile.capabilityDigest = sha256CanonicalJsonDigest(astraProfile.capabilities);
+  const selectedProfile = createRuntimeProfileRegistry({
+    version: "codeops.runtime-profile-registry/v1",
+    profiles: [astraProfile],
+  }).selectCompatible(runtimeRequirements);
+  const launch = await admitWorkspaceLaunch({
+    request: {
+      version: "codeops.workspace-launch-request/v1",
+      idempotencyKey: "44444444-4444-4444-8444-444444444444",
+      mode: "implement",
+      prompt: "Run the isolated Astra smoke.",
+      sources: [],
+    },
+    principalId: "astra@example.com",
+    resolver: { resolve: async () => { throw new Error("unexpected source"); } },
+    store: {
+      findByIdempotencyKey: async () => null,
+      admit: async ({ launch: admitted }) => admitted,
+    },
+    runtimeRequirements,
+    runtimeModel: runtimeProfileModel(selectedProfile),
+    now: () => new Date("2026-08-13T12:00:00.000Z"),
+  });
+  const resources = buildWorkspaceResources({
+    ...config(),
+    requestDigest: launch.requestDigest,
+    policy: launch.policy,
+    contextAttachments: launch.contextAttachments,
+    workspace: launch.workspace,
+    runtimeLaunchBinding: {
+      version: "codeops.runtime-launch-binding/v1",
+      requirementDigest: launch.runtimeRequirementDigest,
+      selectedAt: "2026-08-13T12:00:01.000Z",
+      profile: selectedProfile,
+    },
+  });
+  const agent = resources[3].spec.template.spec.containers[1];
+  assert.equal(launch.policy.modelPolicy.model, "gpt-6-astra");
+  assert.equal(
+    JSON.parse(agent.env.find(({ name }) => name === "CODEX_CONFIG").value).model,
+    "gpt-6-astra",
+  );
 });
 
 test("binds workspace authority and resources to the admitted runtime profile", () => {

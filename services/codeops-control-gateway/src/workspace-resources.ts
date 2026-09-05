@@ -18,7 +18,10 @@ import {
   assertAgentModelProxyRouting,
   assertAgentModelProxySessionVolume,
 } from "./model-proxy-routing.js";
-import { createRuntimeProfileRegistry } from "./runtime-profile-registry.js";
+import {
+  createRuntimeProfileRegistry,
+  runtimeProfileModel,
+} from "./runtime-profile-registry.js";
 
 const dnsLabel = /^[a-z0-9](?:[-a-z0-9]{0,61}[a-z0-9])?$/;
 const digestImage = /^.+@sha256:[0-9a-f]{64}$/;
@@ -304,6 +307,9 @@ export function buildWorkspaceResources(
   const proxyEnvironment = runtimeEgressProxyEnvironment(raw);
   if (policy.modelPolicy.provider !== "openai") {
     throw new Error("interactive workspace runtime requires one model policy");
+  }
+  if (policy.modelPolicy.model !== runtimeProfileModel(runtimeProfile)) {
+    throw new Error("workspace model policy does not match the signed runtime profile");
   }
   const workspaceReadOnly = policy.workspaceAccess === "read-only" ||
     runtimeProfile.authority.workspaceAccess === "read-only";

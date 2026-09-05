@@ -203,11 +203,13 @@ export {
 } from "./session-budget.js";
 export {
   interactiveSessionModeSchema,
+  sessionModelSchema,
   sessionModeSchema,
   sessionPolicyForMode,
   sessionPolicySchema,
   type InteractiveSessionMode,
   type SessionMode,
+  type SessionModel,
   type SessionPolicy,
 } from "./session-policy.js";
 export {
