@@ -1,0 +1,47 @@
+name: Disposable prevention
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: disposable-prevention
+  cancel-in-progress: false
+jobs:
+  lifecycle:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ed0bd370616086029993d9dbc86de2a0136aa37d
+          path: prior72
+          persist-credentials: false
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: b829c8cbff3572c4d3c7cdcb1845e1944569a862
+          path: prior69
+          persist-credentials: false
+      - name: Disposable cluster and real lifecycle
+        shell: bash
+        run: |
+          set -euo pipefail
+          # The controller receives neither the checkout token nor runner home.
+          # Package/source code runs only in BuildKit network=none or fenced Pods.
+          /usr/bin/python3 -m venv "$RUNNER_TEMP/prevention-controller"
+          "$RUNNER_TEMP/prevention-controller/bin/pip" install --only-binary=:all: --no-deps --require-hashes \
+            -r infra/ci/prevention/controller-requirements.txt
+          timeout --signal=TERM --kill-after=30s 40m env -i \
+            PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+            RUNNER_TEMP="$RUNNER_TEMP" GITHUB_ACTIONS=true RUNNER_ENVIRONMENT=github-hosted \
+            "$RUNNER_TEMP/prevention-controller/bin/python" infra/ci/prevention/cluster.py
+      - name: Bounded non-secret receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: prevention-${{ github.run_id }}-${{ github.run_attempt }}
+          path: prevention-evidence/*.json
+          if-no-files-found: error
+          retention-days: 14
