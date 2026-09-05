@@ -310,8 +310,9 @@ export async function grantSessionRuntimeReceiptAccess(
     );
     const verb = existing.rows[0] ? "ALTER" : "CREATE";
     await client.query(
-      `${verb} ROLE ${identifier} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+      `${verb} ROLE ${identifier} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`,
     );
+    await requireUnownedDatabaseRole(client, role);
     await client.query(`REVOKE ALL ON SCHEMA codeops FROM ${identifier}`);
     await client.query(`REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM ${identifier}`);
     await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA codeops FROM ${identifier}`);
@@ -350,7 +351,8 @@ export async function grantLifecycleRelayAccess(
       [role],
     );
     const verb = existing.rows[0] ? "ALTER" : "CREATE";
-    await client.query(`${verb} ROLE ${identifier} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`);
+    await client.query(`${verb} ROLE ${identifier} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`);
+    await requireUnownedDatabaseRole(client, role);
     await client.query(`REVOKE ALL ON SCHEMA codeops FROM ${identifier}`);
     await client.query(`REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM ${identifier}`);
     await client.query(`REVOKE ALL ON ALL SEQUENCES IN SCHEMA codeops FROM ${identifier}`);
@@ -394,8 +396,9 @@ export async function grantModelProxyLedgerAccess(
     );
     const verb = existing.rows[0] ? "ALTER" : "CREATE";
     await client.query(
-      `${verb} ROLE ${identifier} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION`,
+      `${verb} ROLE ${identifier} LOGIN PASSWORD '${password}' NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT NOREPLICATION NOBYPASSRLS`,
     );
+    await requireUnownedDatabaseRole(client, role);
     await client.query(`REVOKE ALL ON SCHEMA codeops FROM ${identifier}`);
     await client.query(
       `REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM ${identifier}`,
@@ -500,4 +503,79 @@ export function modelProxyDatabaseCredentials(
       { cause: error },
     );
   }
+}
+
+/** Read-only startup check. Runtime must never migrate or own database objects. */
+export async function requireApplicationDatabaseAuthority(client: TransactionClient): Promise<void> {
+  const unsafe = await client.query(`SELECT r.rolname FROM pg_roles r
+    WHERE pg_has_role(current_user, r.oid, 'MEMBER') AND (
+      r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls
+      OR r.oid = (SELECT datdba FROM pg_database WHERE datname = current_database())
+      OR r.oid IN (SELECT nspowner FROM pg_namespace WHERE nspname = 'codeops')
+      OR r.oid IN (SELECT c.relowner FROM pg_class c JOIN pg_namespace n ON n.oid=c.relnamespace WHERE n.nspname='codeops')
+      OR r.oid IN (SELECT p.proowner FROM pg_proc p JOIN pg_namespace n ON n.oid=p.pronamespace WHERE n.nspname='codeops')
+    )`);
+  if (unsafe.rows.length) throw new Error('Application database authority permits ownership or administration');
+  const privilege = await client.query<{ unsafe: boolean }>(`SELECT
+    has_schema_privilege(current_user, 'codeops', 'CREATE') OR
+    has_database_privilege(current_user, current_database(), 'CREATE') AS unsafe`);
+  if (privilege.rows[0]?.unsafe !== false) throw new Error('Application database authority permits schema creation');
+  const applied = await client.query<{ migration_name: string; sha256: string }>(
+    'SELECT migration_name, sha256 FROM codeops.schema_migrations');
+  for (const migration of migrations) {
+    const row = applied.rows.find(row => row.migration_name === migration.name);
+    if (!row || row.sha256 !== migrationDigest(await readFile(migration.url, 'utf8'))) {
+      throw new Error('Deployment migration is required before application startup');
+    }
+  }
+}
+
+/** Deployment-only provisioning. Never grant role membership to runtime identities. */
+export async function grantApplicationDatabaseAccess(
+  client: TransactionClient, role: string, password: string,
+): Promise<void> {
+  if (role !== 'codeops_app' || !/^[A-Za-z0-9._~-]{32,256}$/.test(password)) {
+    throw new Error('Application database credentials are invalid');
+  }
+  await client.query('BEGIN');
+  try {
+    await client.query("SELECT pg_advisory_xact_lock(hashtextextended('codeops.application-role', 0))");
+    const existing = await client.query('SELECT 1 FROM pg_roles WHERE rolname = $1', [role]);
+    if (!existing.rows.length) await client.query('CREATE ROLE codeops_app LOGIN');
+    await client.query(`ALTER ROLE codeops_app NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS PASSWORD '${password}'`);
+    await requireUnownedDatabaseRole(client, 'codeops_app');
+    await client.query('REVOKE CREATE ON SCHEMA public FROM PUBLIC');
+    await client.query('REVOKE ALL ON SCHEMA codeops FROM PUBLIC');
+    await client.query('REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM PUBLIC');
+    await client.query('REVOKE ALL ON ALL SEQUENCES IN SCHEMA codeops FROM PUBLIC');
+    await client.query('REVOKE ALL ON SCHEMA codeops FROM codeops_app');
+    await client.query('GRANT USAGE ON SCHEMA codeops TO codeops_app');
+    await client.query('REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM codeops_app');
+    await client.query('GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA codeops TO codeops_app');
+    await client.query('REVOKE INSERT, UPDATE, DELETE ON codeops.schema_migrations FROM codeops_app');
+    await client.query('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA codeops TO codeops_app');
+    await client.query('REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA codeops FROM PUBLIC');
+    const inspector = await client.query("SELECT 1 FROM pg_roles WHERE rolname='codeops_inspector'");
+    if (!inspector.rows.length) await client.query('CREATE ROLE codeops_inspector NOLOGIN');
+    await requireUnownedDatabaseRole(client, 'codeops_inspector');
+    await client.query('ALTER ROLE codeops_inspector NOSUPERUSER NOCREATEDB NOCREATEROLE NOREPLICATION NOBYPASSRLS');
+    await client.query('REVOKE ALL ON SCHEMA codeops FROM codeops_inspector');
+    await client.query('GRANT USAGE ON SCHEMA codeops TO codeops_inspector');
+    await client.query('REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM codeops_inspector');
+    await client.query('GRANT SELECT ON ALL TABLES IN SCHEMA codeops TO codeops_inspector');
+    await client.query('REVOKE ALL ON ALL SEQUENCES IN SCHEMA codeops FROM codeops_inspector');
+    await client.query('REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA codeops FROM codeops_inspector');
+    await client.query('ALTER ROLE codeops_inspector SET default_transaction_read_only = on');
+    await client.query('COMMIT');
+  } catch (error) { await client.query('ROLLBACK'); throw error; }
+}
+
+async function requireUnownedDatabaseRole(client: TransactionClient, role: string): Promise<void> {
+  const unsafe = await client.query(`SELECT r.oid FROM pg_roles r WHERE r.rolname=$1 AND (
+    EXISTS (SELECT 1 FROM pg_auth_members WHERE member=r.oid) OR
+    EXISTS (SELECT 1 FROM pg_namespace WHERE nspowner=r.oid) OR
+    EXISTS (SELECT 1 FROM pg_class WHERE relowner=r.oid) OR
+    EXISTS (SELECT 1 FROM pg_proc WHERE proowner=r.oid) OR
+    EXISTS (SELECT 1 FROM pg_database WHERE datdba=r.oid))`, [role]);
+  if (unsafe.rows.length) throw new Error('Runtime database role must have no ownership or memberships');
 }

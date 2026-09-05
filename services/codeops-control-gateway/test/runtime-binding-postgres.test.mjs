@@ -1,5 +1,6 @@
+import { requireDisposablePostgres } from "../../../infra/scripts/disposable-postgres.mjs";
 import assert from "node:assert/strict";
-import test from "node:test";
+import test, {before, after} from "node:test";
 import { readFile } from "node:fs/promises";
 import { setTimeout as delay } from "node:timers/promises";
 import { Client } from "pg";
@@ -21,9 +22,18 @@ import { bindWorkspaceLaunchRuntime } from "../dist/workspace-launch.js";
 import { updateWorkspaceLaunch } from "../dist/workspace-launch-store.js";
 
 const databaseUrl = process.env.CODEOPS_TEST_POSTGRES_URL?.trim();
+if (databaseUrl !== undefined) await requireDisposablePostgres(databaseUrl);
 const skip = databaseUrl === undefined
   ? "CODEOPS_TEST_POSTGRES_URL is not configured"
   : false;
+let suiteLock;
+before(async () => {
+  if (skip !== false) return;
+  suiteLock = new Client({connectionString: databaseUrl});
+  await suiteLock.connect();
+  await suiteLock.query("SELECT pg_advisory_lock(hashtext('codeops-control-gateway-postgres-tests'))");
+});
+after(async () => { if (suiteLock) await suiteLock.end(); });
 const launchId = "launch-0123456789abcdef01234567";
 const leaseId = "11111111-1111-4111-8111-111111111111";
 const requirements = {

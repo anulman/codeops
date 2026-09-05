@@ -111,7 +111,7 @@ test("renders one portable CodeOps package with immutable images", () => {
     ...(candidate.spec?.template?.spec?.containers ?? []),
     ...(candidate.spec?.template?.spec?.initContainers ?? []),
   ]).map((container) => container.image).filter(Boolean);
-  assert.equal(images.length, 12);
+  assert.equal(images.length, 11); // Relay no longer duplicates the migration container.
   assert.equal(new Set(images).size, 7);
   assert.ok(images.every((image) => /@sha256:[0-9a-f]{64}$/.test(image)));
 
@@ -179,6 +179,8 @@ test("renders one portable CodeOps package with immutable images", () => {
     undefined,
   );
   assert.equal(migration.spec.backoffLimit, 0);
+  assert.equal(migration.spec.template.spec.serviceAccountName, "team-a-codeops-session-migration");
+  assert.equal(resource(resources, "ServiceAccount", "team-a-codeops-session-migration").metadata.annotations["helm.sh/hook-weight"], "-13");
   assert.equal(migration.spec.template.spec.automountServiceAccountToken, false);
   assert.equal(
     migration.spec.template.spec.initContainers[0].image,
@@ -206,14 +208,14 @@ test("renders one portable CodeOps package with immutable images", () => {
   );
   const relay = resource(resources, "Deployment", "team-a-codeops-lifecycle-relay");
   assert.equal(relay.spec.template.spec.containers[0].image, controlGateway.spec.template.spec.containers[0].image);
-  assert.equal(
-    relay.spec.template.spec.initContainers[0].image,
-    "ghcr.io/anulman/codeops/session-control-gateway@sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
-  );
-  assert.deepEqual(
-    relay.spec.template.spec.volumes.find(({ name }) => name === "migration-authority").secret.items.map(({ key }) => key).sort(),
-    ["database-url", "runtime-database-role", "runtime-database-url"],
-  );
+  assert.equal(relay.spec.template.spec.initContainers, undefined);
+  assert.equal(relay.spec.template.spec.volumes.some(({name}) => name === "migration-authority"), false);
+  const ownerSecret = migration.spec.template.spec.volumes.find(({name}) => name === "migration-authority").secret;
+  assert.equal(ownerSecret.secretName, "codeops-migration-secrets");
+  assert.deepEqual(ownerSecret.items, [{key: "database-url", path: "database-url"}]);
+  for (const app of resources.filter(item => item.kind === "Deployment")) {
+    assert.equal((app.spec.template.spec.volumes ?? []).some(volume => volume.secret?.secretName === ownerSecret.secretName), false);
+  }
   assert.deepEqual(
     relay.spec.template.spec.volumes.find(({ name }) => name === "relay-authority").secret.items.map(({ key }) => key).sort(),
     ["database-role", "database-url", "nats-token"],
@@ -221,10 +223,6 @@ test("renders one portable CodeOps package with immutable images", () => {
   assert.equal(
     relay.spec.template.spec.containers[0].volumeMounts.some(({ name }) => name === "migration-authority"),
     false,
-  );
-  assert.equal(
-    relay.spec.template.spec.initContainers[0].volumeMounts.some(({ name }) => name === "model-proxy-authority"),
-    true,
   );
   assert.match(JSON.stringify(relay), /CODEOPS_JETSTREAM_MANAGE_STREAM/);
   assert.equal(resources.some(({ metadata }) => metadata?.name === "team-a-codeops-codex-auth"), false);
@@ -324,7 +322,7 @@ test("runs migration as an ordinary install Job and a pre-upgrade hook", () => {
   );
   assert.equal(migration.metadata.annotations["helm.sh/hook-weight"], "-10");
   assert.equal(migration.spec.template.spec.serviceAccountName,
-    "team-a-codeops-control-gateway");
+    "team-a-codeops-session-migration");
   assert.equal(migration.spec.template.spec.automountServiceAccountToken, true);
   const env = Object.fromEntries(migration.spec.template.spec.containers[0].env
     .map(({ name, value }) => [name, value]));
@@ -381,13 +379,13 @@ test("runs migration as an ordinary install Job and a pre-upgrade hook", () => {
   assert.equal(role.metadata.annotations["helm.sh/hook-weight"], "-12");
   assert.deepEqual(role.rules, [
     { apiGroups: ["apps"], resources: ["deployments", "deployments/scale"],
-      verbs: ["get", "patch"] },
+      resourceNames: ["team-a-codeops-session-gateway"], verbs: ["get", "patch"] },
     { apiGroups: [""], resources: ["pods"], verbs: ["get", "list"] },
   ]);
   const binding = resource(resources, "RoleBinding",
     "team-a-codeops-session-migration-quiesce");
   assert.equal(binding.metadata.annotations["helm.sh/hook-weight"], "-11");
-  assert.equal(binding.subjects[0].name, "team-a-codeops-control-gateway");
+  assert.equal(binding.subjects[0].name, "team-a-codeops-session-migration");
   const migrationPolicy = resource(resources, "NetworkPolicy",
     "team-a-codeops-session-migration");
   assert.ok(JSON.stringify(migrationPolicy).includes("10.43.0.1/32"));
@@ -923,7 +921,7 @@ test("defaults to deny and opens only explicit component paths", () => {
 test("creates a complete one-repository quickstart from one values file", () => {
   const resources = renderQuickstart();
   const secrets = resources.filter(({ kind }) => kind === "Secret");
-  assert.equal(secrets.length, 17);
+  assert.equal(secrets.length, 18); // Dedicated deployment-only owner Secret.
   assert.equal(
     secrets.every((secret) => secret.metadata.annotations["helm.sh/resource-policy"] === "keep"),
     true,
@@ -934,13 +932,16 @@ test("creates a complete one-repository quickstart from one values file", () => 
   const session = resource(resources, "Secret", "codeops-session-secrets");
   assert.match(
     session.stringData["database-url"],
-    /^postgresql:\/\/agents:[A-Za-z0-9]{48}@codeops-database:5432\/agents$/,
+    /^postgresql:\/\/codeops_app:[A-Za-z0-9]{48}@codeops-database:5432\/agents$/,
   );
   assert.match(
     session.stringData["runtime-database-url"],
     /^postgresql:\/\/codeops_runtime_receipts:[A-Za-z0-9]{48}@codeops-database:5432\/agents$/,
   );
   assert.equal(session.stringData["runtime-database-role"], "codeops_runtime_receipts");
+  const migrationSecret = resource(resources, "Secret", "codeops-migration-secrets");
+  assert.match(migrationSecret.stringData["database-url"], /^postgresql:\/\/agents:[A-Za-z0-9]{48}@codeops-database:5432\/agents$/);
+  assert.notEqual(migrationSecret.stringData["database-url"], session.stringData["database-url"]);
   const modelProxy = resource(resources, "Secret", "codeops-model-proxy-credentials");
   assert.match(
     modelProxy.stringData["database-password"],
@@ -1130,4 +1131,8 @@ test("accepts arbitrary namespaces and fails closed on invalid configuration", (
       ...extra,
     ]));
   }
+});
+
+test("rejects a shared migration and application secret", () => {
+  assert.throws(() => render(["--set", "migration.secretName=team-a-codeops-session-secrets"]), /must be separate/);
 });

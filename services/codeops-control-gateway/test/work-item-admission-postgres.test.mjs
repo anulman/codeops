@@ -1,3 +1,4 @@
+import { requireDisposablePostgres } from "../../../infra/scripts/disposable-postgres.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -31,6 +32,7 @@ import { claimAdmittedChildMaterialization,
   "../dist/admitted-child-materialization-controller.js";
 
 const databaseUrl = process.env.CODEOPS_TEST_POSTGRES_URL?.trim();
+if (databaseUrl !== undefined) await requireDisposablePostgres(databaseUrl);
 const skip = databaseUrl === undefined ? "CODEOPS_TEST_POSTGRES_URL is not configured" : false;
 
 function requireDedicatedDatabase() {

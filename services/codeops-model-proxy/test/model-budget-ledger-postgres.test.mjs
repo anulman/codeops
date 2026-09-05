@@ -1,3 +1,4 @@
+import { requireDisposablePostgres } from "../../../infra/scripts/disposable-postgres.mjs";
 import assert from "node:assert/strict";
 import { createHash, randomUUID } from "node:crypto";
 import test from "node:test";
@@ -10,6 +11,16 @@ import {
 const ledgerDatabaseUrl = process.env.CODEOPS_TEST_MODEL_BUDGET_DATABASE_URL;
 const ownerDatabaseUrl =
   process.env.CODEOPS_TEST_MODEL_BUDGET_OWNER_DATABASE_URL;
+if (ownerDatabaseUrl || ledgerDatabaseUrl) {
+  await requireDisposablePostgres(ownerDatabaseUrl);
+  const ledger = new URL(ledgerDatabaseUrl);
+  const owner = new URL(ownerDatabaseUrl);
+  if (ledger.protocol !== owner.protocol || ledger.host !== owner.host ||
+      ledger.pathname !== owner.pathname || ledger.search || ledger.hash) {
+    throw new Error("Model ledger must use the disposable PostgreSQL target");
+  }
+}
+
 const canonical = (value) => JSON.stringify(value, (_, nested) =>
   nested !== null && typeof nested === "object" && !Array.isArray(nested)
     ? Object.fromEntries(Object.entries(nested).sort(([left], [right]) => left.localeCompare(right)))

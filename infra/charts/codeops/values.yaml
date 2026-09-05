@@ -97,6 +97,8 @@ modelProxy:
 
 migration:
   enabled: true
+  # Deployment-only owner connection; never mount in an application Pod.
+  secretName: codeops-migration-secrets
 
 sessionOwner:
   # Required on the first upgrade that finds existing session rows.

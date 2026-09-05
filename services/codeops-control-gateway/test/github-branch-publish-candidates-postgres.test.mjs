@@ -1,3 +1,4 @@
+import { requireDisposablePostgres } from "../../../infra/scripts/disposable-postgres.mjs";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -21,6 +22,7 @@ import { migrateSessionBroker } from "../dist/session-broker-migration.js";
 import { sessionCapabilitiesFor } from "../dist/session-broker-transitions.js";
 
 const databaseUrl = process.env.CODEOPS_TEST_POSTGRES_URL?.trim();
+if (databaseUrl !== undefined) await requireDisposablePostgres(databaseUrl);
 const skip = databaseUrl === undefined
   ? "CODEOPS_TEST_POSTGRES_URL is not configured"
   : false;

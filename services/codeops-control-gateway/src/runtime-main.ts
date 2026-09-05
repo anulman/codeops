@@ -53,7 +53,7 @@ import {
   resolveRepositoryRoute,
 } from "./repository-registry.js";
 import { loadRuntimeProfileRegistryFile, resolveWorkspaceRuntimeLaunchBinding } from "./runtime-profile-registry.js";
-import { migrateSessionBroker } from "./session-broker-migration.js";
+import { requireApplicationDatabaseAuthority } from "./session-broker-migration.js";
 import {
   InvalidSessionCommandRequestError,
   executeLocalSessionCommandTransaction,
@@ -148,7 +148,6 @@ import {
 } from "./workspace-launch-controller.js";
 import {
   listInteractiveRuntimeCandidates,
-  listRetainedInteractiveRuntimeJobUids,
   attestInteractiveRuntimeRelease,
   observeInteractiveRuntimeTerminal,
   recordInteractiveRuntimeJobProgress,
@@ -569,24 +568,11 @@ const reconcileGitHubMutation = createGitHubMutationReconciler({
   resolve: (repository) => repositoryRegistry.resolve(repository),
   loadBranchCandidate,
 });
-if (runtimeRole === "api") {
-  const migrationClient = await database.connect();
-  try {
-    const retainedRuntimeJobUids =
-      await listRetainedInteractiveRuntimeJobUids(
-        migrationClient,
-        (name) => kubernetes.getJob(name),
-      );
-    await migrateSessionBroker(migrationClient, {
-      legacySessionOwnerPrincipalId:
-        process.env.CODEOPS_LEGACY_SESSION_OWNER_PRINCIPAL_ID?.trim() || undefined,
-      ...(retainedRuntimeJobUids === undefined
-        ? {}
-        : { retainedRuntimeJobUids }),
-    });
-  } finally {
-    migrationClient.release();
-  }
+const authorityClient = await database.connect();
+try {
+  await requireApplicationDatabaseAuthority(authorityClient);
+} finally {
+  authorityClient.release();
 }
 const configuredSessionRuntimeWorkerImage = requireDigestImage("CODEOPS_SESSION_RUNTIME_WORKER_IMAGE");
 const run = runtimeRole === "file-dispatcher" ? createAgentJobRunner({

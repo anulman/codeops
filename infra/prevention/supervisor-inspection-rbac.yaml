@@ -1,0 +1,38 @@
+# Prepared only. Apply with the separately reviewed operator-identity cutover.
+# This identity cannot read secrets, exec into Pods, create workloads or migrate.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codeops-supervisor-inspector
+  namespace: agents-system
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: codeops-supervisor-inspector
+  namespace: agents-system
+rules:
+  - apiGroups: [""]
+    resources: [pods, services, events]
+    verbs: [get, list, watch]
+  - apiGroups: [apps]
+    resources: [deployments, statefulsets, replicasets]
+    verbs: [get, list, watch]
+  - apiGroups: [batch]
+    resources: [jobs, cronjobs]
+    verbs: [get, list, watch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: codeops-supervisor-inspector
+  namespace: agents-system
+subjects:
+  - kind: ServiceAccount
+    name: codeops-supervisor-inspector
+    namespace: agents-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: codeops-supervisor-inspector

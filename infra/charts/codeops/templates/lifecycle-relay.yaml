@@ -32,31 +32,6 @@ spec:
         fsGroup: 1000
         fsGroupChangePolicy: OnRootMismatch
         seccompProfile: { type: RuntimeDefault }
-      initContainers:
-        - name: migrate
-          image: {{ include "codeops.image" .Values.gateway.image | quote }}
-          imagePullPolicy: IfNotPresent
-          command: [node, services/codeops-control-gateway/dist/session-migrate-main.js]
-          env:
-            - { name: CODEOPS_DATABASE_URL_FILE, value: /var/run/secrets/codeops-migration/database-url }
-            - { name: CODEOPS_RUNTIME_DATABASE_URL_FILE, value: /var/run/secrets/codeops-migration/runtime-database-url }
-            - { name: CODEOPS_RUNTIME_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops-migration/runtime-database-role }
-            - { name: CODEOPS_LIFECYCLE_RELAY_DATABASE_URL_FILE, value: /var/run/secrets/codeops-relay/database-url }
-            - { name: CODEOPS_LIFECYCLE_RELAY_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops-relay/database-role }
-            - { name: CODEOPS_MODEL_PROXY_DATABASE_URL_FILE, value: /var/run/secrets/codeops-model-proxy/database-url }
-            - { name: CODEOPS_MODEL_PROXY_DATABASE_ROLE_FILE, value: /var/run/secrets/codeops-model-proxy/database-role }
-          resources:
-            requests: { cpu: 25m, memory: 64Mi }
-            limits: { cpu: 250m, memory: 256Mi }
-          securityContext:
-            allowPrivilegeEscalation: false
-            readOnlyRootFilesystem: true
-            capabilities: { drop: [ALL] }
-          volumeMounts:
-            - { name: migration-authority, mountPath: /var/run/secrets/codeops-migration, readOnly: true }
-            - { name: relay-authority, mountPath: /var/run/secrets/codeops-relay, readOnly: true }
-            - { name: model-proxy-authority, mountPath: /var/run/secrets/codeops-model-proxy, readOnly: true }
-            - { name: temp, mountPath: /tmp }
       containers:
         - name: lifecycle-relay
           image: {{ include "codeops.image" .Values.lifecycleRelay.image | quote }}
@@ -89,14 +64,6 @@ spec:
             - { name: relay-authority, mountPath: /var/run/secrets/codeops-relay, readOnly: true }
             - { name: temp, mountPath: /tmp }
       volumes:
-        - name: migration-authority
-          secret:
-            secretName: {{ .Values.gateway.secretName }}
-            defaultMode: 256
-            items:
-              - { key: database-url, path: database-url }
-              - { key: runtime-database-url, path: runtime-database-url }
-              - { key: runtime-database-role, path: runtime-database-role }
         - name: relay-authority
           secret:
             secretName: {{ .Values.lifecycleRelay.secretName }}
@@ -105,13 +72,6 @@ spec:
               - { key: {{ .Values.lifecycleRelay.databaseUrlKey }}, path: database-url }
               - { key: {{ .Values.lifecycleRelay.databaseRoleKey }}, path: database-role }
               - { key: {{ .Values.lifecycleRelay.natsTokenKey }}, path: nats-token }
-        - name: model-proxy-authority
-          secret:
-            secretName: {{ .Values.modelProxy.secretName }}
-            defaultMode: 256
-            items:
-              - { key: {{ .Values.modelProxy.databaseUrlKey }}, path: database-url }
-              - { key: {{ .Values.modelProxy.databaseRoleKey }}, path: database-role }
         - name: temp
           emptyDir: { sizeLimit: 32Mi }
 {{- end }}
