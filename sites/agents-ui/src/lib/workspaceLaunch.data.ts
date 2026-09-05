@@ -5,7 +5,7 @@ import {
 } from "@codeops/codeops-contracts";
 import { z } from "zod";
 import { sessionOwnerContextMiddleware } from "./sessionOwnerContext";
-import { workspaceLaunchClient } from "./workspaceLaunch.server";
+import { workspaceLaunchClient, readOptionalLaunch } from "./workspaceLaunch.server";
 
 const launchIdSchema = z
   .string()
@@ -44,7 +44,7 @@ export const getWorkspaceLaunch = createServerFn({ method: "GET" })
   )
   .handler(async ({ data, context }) => {
     protectResponse();
-    return (await workspaceLaunchClient()).getLaunch({
+    return readOptionalLaunch(await workspaceLaunchClient(), {
       launchId: data.launchId,
       principalId: context.sessionOwnerPrincipal,
     });

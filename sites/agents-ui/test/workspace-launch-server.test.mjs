@@ -148,3 +148,22 @@ test("launch server functions bind the private UI context and no browser token",
   assert.match(identitySource, /identity\.displayName \?\? identity\.runId/);
   assert.doesNotMatch(routeSource, /cloneUrl|image|serviceAccount|token/i);
 });
+
+test("optional metadata refuses only transport outages, preserving auth and schema errors", async () => {
+  const { readOptionalLaunch } = await import("../src/lib/workspaceLaunch.server.ts");
+  const input = { launchId: launch.launchId, principalId: launch.principalId };
+  const client = (fetch) => createWorkspaceLaunchClient({baseUrl: new URL("https://launcher.example/"), token, fetch});
+  for (const status of [502,503,504]) {
+    assert.deepEqual(await readOptionalLaunch(client(async () => json({},status)), input), { unavailable:true, detail:null });
+  }
+  for (const error of [new DOMException("timeout", "TimeoutError"), new TypeError("fetch failed", {cause:{code:"ECONNREFUSED"}})]) {
+    assert.deepEqual(await readOptionalLaunch(client(async () => {throw error}), input), {unavailable:true,detail:null});
+  }
+  for (const status of [401,403,500]) {
+    await assert.rejects(readOptionalLaunch(client(async () => json({},status)),input), /returned status/);
+  }
+  await assert.rejects(readOptionalLaunch(client(async () => json({invalid:true})),input));
+  await assert.rejects(readOptionalLaunch(client(async () => {throw new TypeError("bug")}),input), /bug/);
+  assert.deepEqual(await readOptionalLaunch(client(async () => json({},404)),input), {unavailable:false,detail:null});
+  assert.deepEqual(await readOptionalLaunch(client(async () => json(launchDetail)),input), {unavailable:false,detail:launchDetail});
+});

@@ -23,19 +23,20 @@ export const Route = createFileRoute("/sessions/$sessionId")({
         : Promise.resolve(null),
     ]);
     return {
+      launchUnavailable: launchDetail?.unavailable ?? false,
       session,
       events,
       fleet,
-      launch: launchDetail?.launch ?? null,
-      initialPrompt: launchDetail?.initialPrompt ?? null,
-      initialPromptStatus: launchDetail?.initialPromptStatus ?? null,
+      launch: launchDetail?.detail?.launch ?? null,
+      initialPrompt: launchDetail?.detail?.initialPrompt ?? null,
+      initialPromptStatus: launchDetail?.detail?.initialPromptStatus ?? null,
     };
   },
   component: SessionCockpit,
 });
 
 function SessionCockpit() {
-  const { session, events, fleet, launch, initialPrompt, initialPromptStatus } = Route.useLoaderData();
+  const { session, events, fleet, launch, initialPrompt, initialPromptStatus, launchUnavailable } = Route.useLoaderData();
   const router = useRouter();
   const [optimisticPrompt, setOptimisticPrompt] = useState<{
     readonly idempotencyKey: string;
@@ -71,7 +72,7 @@ function SessionCockpit() {
     optimisticPromptRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [optimisticPrompt?.idempotencyKey]);
   if (!session && launch) return <ProvisioningSession launch={launch} initialPrompt={initialPrompt} sessions={fleet} />;
-  if (!session) return <AppShell sessions={fleet}><main {...sx("grid min-h-[calc(100dvh-52px)] place-items-center px-4 text-sm text-white/42 lg:min-h-dvh")}>Session not found.</main></AppShell>;
+  if (!session) return <AppShell sessions={fleet}><main {...sx("grid min-h-[calc(100dvh-52px)] place-items-center px-4 text-sm text-white/42 lg:min-h-dvh")}>{launchUnavailable ? "Session availability could not be confirmed. Launch metadata is temporarily unavailable. Please retry." : "Session not found."}</main></AppShell>;
   const relatedSessions = fleet.filter((item) => item.identity.workflowId === session.identity.workflowId && item.sessionId !== session.sessionId).slice(0, 6);
   const comparisonCandidates = fleet.filter((item) =>
     item.sessionId !== session.sessionId &&
@@ -89,6 +90,7 @@ function SessionCockpit() {
       <main {...sx("min-h-[calc(100dvh-52px)] bg-[#111113] lg:min-h-dvh xl:grid xl:grid-cols-[minmax(0,1fr)_320px]")}>
         <section {...sx("relative min-w-0 xl:flex xl:h-dvh xl:min-h-0 xl:flex-col")}>
           <CockpitHeader session={session} />
+          {launchUnavailable ? <p role="status">Launch metadata is temporarily unavailable. Session activity remains available.</p> : null}
           <div role="group" {...sx("no-scrollbar flex gap-1 overflow-x-auto border-b border-white/[0.06] bg-[#131315] px-3 py-2 sm:px-5")} aria-label="Session actions">
             {session.capabilities.map((capability) => ["prompt", "respond_permission"].includes(capability.action) ? null : <ActionButton key={capability.action} capability={capability} session={session} />)}
           </div>
