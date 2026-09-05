@@ -173,12 +173,13 @@ def chart(source, name, gateway_image):
     (directory / 'values.yaml').write_text(yaml.safe_dump(values))
     # Use the actual prior image with application credentials after cutover.
     t = pod(image(c.PINS['alpha72']['image']), ['node', '-e', WRITER], {'app.kubernetes.io/name': 'fixture-session-gateway'})
-    t['spec'].update(restartPolicy='Always', volumes=[{'name': 'db', 'secret': {'secretName': 'codeops-session-secrets'}}])
+    t['spec'].update(restartPolicy='Always', serviceAccountName='fixture-session-gateway', volumes=[{'name': 'db', 'secret': {'secretName': 'codeops-session-secrets'}}])
     t['spec']['containers'][0]['volumeMounts'] = [{'name': 'db', 'mountPath': '/db', 'readOnly': True}]
     t['spec']['containers'][0]['readinessProbe'] = {'exec': {'command': ['node', '-e', WRITER.split('setInterval')[0] + 'tick().then(()=>process.exit(0)).catch(()=>process.exit(1));']}, 'periodSeconds': 2, 'timeoutSeconds': 3}
     deployment = obj('Deployment', 'fixture-session-gateway', spec={'replicas': 1,
         'selector': {'matchLabels': t['metadata']['labels']}, 'template': t})
-    (directory / 'templates/writer.yaml').write_text(yaml.safe_dump(deployment))
+    account = obj('ServiceAccount', 'fixture-session-gateway', automountServiceAccountToken=False)
+    (directory / 'templates/writer.yaml').write_text(yaml.safe_dump(account) + '\n---\n' + yaml.safe_dump(deployment))
     c.record(name + '-template-inputs', hashes)
     return directory
 

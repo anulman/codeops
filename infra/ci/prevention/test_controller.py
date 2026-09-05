@@ -35,6 +35,8 @@ class ControllerChecks(unittest.TestCase):
                 self.assertEqual(migrate['command'], ['node', 'services/codeops-control-gateway/dist/session-migrate-main.js'])
                 self.assertEqual(migrate['image'], image)
                 self.assertEqual(spec['automountServiceAccountToken'], upgrade)
+                accounts = {d['metadata']['name'] for d in docs if d['kind'] == 'ServiceAccount'}
+                self.assertIn(spec['serviceAccountName'], accounts)
                 if name == 'current':
                     env = {e['name']: e.get('value') for e in migrate['env']}
                     self.assertIn('CODEOPS_APPLICATION_DATABASE_URL_FILE', env)
