@@ -13,8 +13,8 @@ REVOKE ALL ON ALL TABLES IN SCHEMA codeops FROM :"proxy_role";
 REVOKE ALL ON ALL SEQUENCES IN SCHEMA codeops FROM :"proxy_role";
 
 GRANT USAGE ON SCHEMA codeops TO :"proxy_role";
-GRANT EXECUTE ON FUNCTION codeops.reserve_session_dispatch_model_budget(
-  uuid, text, text, text, bigint, uuid, uuid, text, text, text, bigint, bigint
+GRANT EXECUTE ON FUNCTION codeops.reserve_session_phase_model_budget(
+  uuid, text, text, text, bigint, uuid, uuid, bigint, text, text, text, bigint, bigint
 ) TO :"proxy_role";
 GRANT EXECUTE ON FUNCTION codeops.settle_session_model_budget(
   uuid, text, text, bigint, bigint, bigint, text

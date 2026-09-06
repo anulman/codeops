@@ -6,6 +6,7 @@ import pg from "pg";
 import {
   createModelBudgetLedger,
   ModelBudgetExhaustedError,
+  ModelBudgetSignalError,
 } from "../src/model-budget-ledger.mjs";
 
 const ledgerDatabaseUrl = process.env.CODEOPS_TEST_MODEL_BUDGET_DATABASE_URL;
@@ -395,3 +396,77 @@ test(
     }
   },
 );
+
+test("phase reservations serialize checkpoint and closeout fences without spending the reserve",
+  { skip: !ledgerDatabaseUrl || !ownerDatabaseUrl }, async () => {
+    const owner = new pg.Pool({ connectionString: ownerDatabaseUrl });
+    const first = new pg.Pool({ connectionString: ledgerDatabaseUrl, max: 1 });
+    const second = new pg.Pool({ connectionString: ledgerDatabaseUrl, max: 1 });
+    const sessionId = "ses_phase_budget_proof";
+    const leaseId = randomUUID();
+    const dispatchId = randomUUID();
+    const snapshot = { version: "codeops.session-snapshot/v1", sessionId, generation: 7,
+      state: "running", lease: { leaseId, generation: 7, status: "active" },
+      pendingPermission: null, updatedAt: "2026-08-15T18:25:00.000Z",
+      budget: { limits: { phase: "implementation", providerRequests: 420 } } };
+    const input = () => ({ reservationId: randomUUID(), modelTokenId: `sha256:${"a".repeat(64)}`,
+      sessionId, budgetId: sessionId, generation: 7, leaseId, dispatchId, claimCount: 1,
+      provider: "openai", model: "gpt-5.6-sol", reasoningEffort: "high",
+      requestedOutputTokens: 10, reservedOutputTokens: 10 });
+    const ledger = createModelBudgetLedger(first);
+    const settle = reservation => ledger.settle({ reservationId: reservation.reservationId,
+      state: "settled", providerRequestId: null, provedInputTokens: 0,
+      provedOutputTokens: 1, provedTotalTokens: 1, failureClass: null });
+    try {
+      await owner.query(`INSERT INTO codeops.sessions (session_id,generation,lease_id,snapshot_json,
+        updated_at,owner_principal_id,runtime_requirements_json,runtime_requirement_digest,runtime_launch_binding_json)
+        VALUES ($1,7,$2,$3::jsonb,($3::jsonb->>'updatedAt')::timestamptz,'codeops:model-proxy-test',$4::jsonb,$5,$6::jsonb)`,
+        [sessionId, leaseId, canonical(snapshot), ...runtimeOwnerValues]);
+      await insertClaimedDispatch(owner, { sessionId, generation: 7, leaseId, dispatchId });
+      await owner.query(`INSERT INTO codeops.session_model_budgets
+        (session_id,budget_id,started_at,provider_requests_limit,output_tokens_limit,updated_at)
+        VALUES ($1,$1,clock_timestamp(),420,1000000,clock_timestamp())`, [sessionId]);
+      for (let count = 1; count < 320; count++) {
+        const result = await ledger.reserve(input());
+        assert.equal(result.phase, "implementation");
+        assert.equal(result.budgetState, count < 240 ? "normal" : "warning");
+        await settle(result);
+      }
+      const concurrent = await Promise.allSettled([
+        ledger.reserve(input()), createModelBudgetLedger(second).reserve(input()),
+      ]);
+      assert.equal(concurrent.filter(r => r.status === "fulfilled").length, 1);
+      assert.equal(concurrent.find(r => r.status === "rejected").reason.state, "checkpoint_required");
+      const last = concurrent.find(r => r.status === "fulfilled").value;
+      assert.equal(last.budgetState, "checkpoint_required");
+      // Concurrent duplicate settlement must not return capacity twice.
+      await Promise.all([settle(last), settle(last)]);
+      await assert.rejects(ledger.reserve(input()), e =>
+        e instanceof ModelBudgetSignalError && e.state === "checkpoint_required");
+      await owner.query(`UPDATE codeops.sessions SET snapshot_json = jsonb_set(snapshot_json,
+        '{checkpoint}', jsonb_build_object('generation',7,'createdAt',clock_timestamp()))
+        WHERE session_id=$1`, [sessionId]);
+      for (let count = 321; count <= 360; count++) await settle(await ledger.reserve(input()));
+      const stopped = await Promise.allSettled([ledger.reserve(input()),
+        createModelBudgetLedger(second).reserve(input())]);
+      for (const result of stopped) {
+        assert.equal(result.status, "rejected");
+        assert.equal(result.reason.state, "closeout");
+      }
+      const { rows: [budget] } = await owner.query(`SELECT committed_provider_requests,
+        reserved_output_tokens,settled_output_tokens FROM codeops.session_model_budgets
+        WHERE session_id=$1`, [sessionId]);
+      assert.deepEqual(budget, { committed_provider_requests: "360",
+        reserved_output_tokens: "0", settled_output_tokens: "360" });
+      // Authority validation still precedes a budget stop.
+      for (const drift of [{ generation: 8 }, { leaseId: randomUUID() }, { claimCount: 2 }]) {
+        await assert.rejects(ledger.reserve({ ...input(), ...drift }), /authority is invalid/);
+      }
+    } finally {
+      await owner.query("DELETE FROM codeops.session_model_budget_reservations WHERE session_id=$1", [sessionId]);
+      await owner.query("DELETE FROM codeops.session_model_budgets WHERE session_id=$1", [sessionId]);
+      await owner.query("DELETE FROM codeops.session_runtime_outbox WHERE session_id=$1", [sessionId]);
+      await owner.query("DELETE FROM codeops.sessions WHERE session_id=$1", [sessionId]);
+      await Promise.all([owner.end(), first.end(), second.end()]);
+    }
+  });

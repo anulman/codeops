@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   DEFAULT_SESSION_BUDGET_LIMITS,
+  initialSessionBudgetLimits,
+  sessionBudgetPhaseForIdentity,
+  sessionBudgetSignal,
   DEFAULT_SESSION_BUDGET_V2_LIMITS,
   projectSessionBudget,
   projectSessionBudgetV2,
@@ -118,4 +121,31 @@ test("rejects forged remaining values and exhausted limits", () => {
     ...exact,
     exhaustedLimit: "total_tokens",
   }), /exhausted limit/);
+});
+
+for (const [phase, normal] of Object.entries({ plan: 200, review: 200, implementation: 400,
+  correction: 400, explore: 200, validate: 200 })) {
+  test(`phase ${phase} has an explicit allocation and exact normal-tranche thresholds`, () => {
+    const limits = initialSessionBudgetLimits(phase);
+    assert.equal(limits.providerRequests, normal + 20);
+    assert.equal(limits.outputTokens, 1_000_000);
+    for (const [used, state] of [[0, "normal"], [normal * .6 - 1, "normal"],
+      [normal * .6, "warning"], [normal * .8 - 1, "warning"],
+      [normal * .8, "checkpoint_required"], [normal * .9 - 1, "checkpoint_required"],
+      [normal * .9, "closeout"], [normal + 20, "closeout"]]) {
+      assert.deepEqual(sessionBudgetSignal(limits, used), {
+        phase, normalRequests: normal, closeoutRequests: 20, state,
+      });
+    }
+  });
+}
+
+test("phase comes from admitted policy and correction role", () => {
+  assert.equal(sessionBudgetPhaseForIdentity({ policy: { mode: "plan" } }), "plan");
+  assert.equal(sessionBudgetPhaseForIdentity({ agentRole: "critic", round: 3 }), "review");
+  assert.equal(sessionBudgetPhaseForIdentity({ agentRole: "coding", round: 2 }), "correction");
+  assert.equal(sessionBudgetPhaseForIdentity({ agentRole: "revision" }), "correction");
+  assert.equal(sessionBudgetPhaseForIdentity({ agentRole: "coding", round: 1 }), "implementation");
+  assert.throws(() => initialSessionBudgetLimits("unknown"));
+  assert.throws(() => sessionBudgetSignal(initialSessionBudgetLimits("plan"), -1));
 });

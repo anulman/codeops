@@ -220,6 +220,7 @@ export const sessionRuntimeCompletionSchema = z.discriminatedUnion("type", [
       material: z
         .object({
           response: z.string().max(200_000),
+          checkpoint: sessionRuntimeCheckpointMaterialSchema.optional(),
           stopReason: promptStopReason,
           updates: z
             .array(sessionTimelineUpdateSchema)

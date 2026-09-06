@@ -700,6 +700,25 @@ export function recoverableModelFailure(error: unknown): RecoverableModelFailure
   return null;
 }
 
+/** Only typed proxy budget signals trigger a deterministic completion. */
+export function runtimeBudgetStop(error: unknown): string | null {
+  const seen = new Set<unknown>();
+  const pending: unknown[] = [error];
+  let inspected = "";
+  while (pending.length > 0 && inspected.length < 16_384 && seen.size < 128) {
+    const value = pending.shift();
+    if (value == null || seen.has(value)) continue;
+    seen.add(value);
+    if (typeof value === "string") inspected += value.slice(0, 16_384);
+    else if (typeof value === "object") {
+      for (const field of ["message", "code", "data", "cause"]) {
+        if (field in value) pending.push((value as Record<string, unknown>)[field]);
+      }
+    }
+  }
+  return inspected.match(/\bcodeops_budget_(checkpoint_required|closeout|exhausted)\b/u)?.[1] ?? null;
+}
+
 export async function forkOrCreateAcpSession(input: {
   readonly fork: () => Promise<string>;
   readonly create: () => Promise<string>;
@@ -1351,17 +1370,45 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   }
 
   async prompt(dispatch: PromptDispatch): Promise<RuntimeExecutionResult> {
-    const material = await this.#connectWithModelRecovery(dispatch, async (agent) => {
-      const sessionId = await this.#activeAcpSession(dispatch, agent);
-      return agent.prompt(
-        sessionId,
-        workspacePromptContentBlocks(
-          dispatch.command.prompt,
-          dispatch.command.contextAttachments ?? [],
-          dispatch.snapshot.identity,
-        ),
-      );
-    });
+    let material: Extract<RuntimeExecutionResult, { type: "prompt" }>["material"];
+    try {
+      material = await this.#connectWithModelRecovery(dispatch, async (agent) => {
+        const sessionId = await this.#activeAcpSession(dispatch, agent);
+        return agent.prompt(
+          sessionId,
+          workspacePromptContentBlocks(
+            dispatch.command.prompt,
+            dispatch.command.contextAttachments ?? [],
+            dispatch.snapshot.identity,
+          ),
+        );
+      });
+    } catch (error) {
+      const stop = runtimeBudgetStop(error);
+      if (stop === null) throw error;
+      const established = (await this.#state.get(dispatch.command.sessionId)) ??
+        dispatch.snapshot.checkpoint?.acpSessionId;
+      if (established == null) {
+        return { type: "prompt", material: {
+          response: `Budget ${stop}. No model work started; no progress was made.`,
+          stopReason: "max_turn_requests",
+        } };
+      }
+      const checkpoint = await this.#checkpoint(dispatch, "checkpoint");
+      if (checkpoint.type !== "checkpoint") throw new Error("budget checkpoint type drifted");
+      return { type: "prompt", material: {
+        response: `Budget ${stop}. Work is checkpointed and resumable from checkpoint ${checkpoint.material.checkpointId}. Validation and staging are pending unless recorded in the saved work. No completion of the feature or merge is claimed.`,
+        stopReason: "max_turn_requests", checkpoint: checkpoint.material,
+      } };
+    }
+    // Save even when a turn ends exactly on a threshold, before the next
+    // reservation can return the stop signal.
+    if (dispatch.snapshot.budget?.version === "codeops.session-budget/v2" &&
+        dispatch.snapshot.budget.limits.phase !== undefined) {
+      const checkpoint = await this.#checkpoint(dispatch, "checkpoint");
+      if (checkpoint.type !== "checkpoint") throw new Error("budget checkpoint type drifted");
+      return { type: "prompt", material: { ...material, checkpoint: checkpoint.material } };
+    }
     return { type: "prompt", material };
   }
 
@@ -1436,13 +1483,26 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
       this.#captureRoot,
     );
     const patchDigest = `sha256:${createHash("sha256").update(patch).digest("hex")}`;
+    const checkpointId = this.#uuid();
+    const artifactId = `artifact:${checkpointId}:source:repository`;
+    if (this.#artifacts !== undefined) {
+      await this.#artifacts.put({
+        artifactId, sessionId: dispatch.command.sessionId,
+        generation: dispatch.command.generation, checkpointId,
+        kind: "source-patch", catalogKey: "repository", digest: patchDigest,
+        content: Buffer.from(patch),
+      });
+    } else if (dispatch.snapshot.budget?.version === "codeops.session-budget/v2" &&
+               dispatch.snapshot.budget.limits.phase !== undefined) {
+      throw new Error("phase budget checkpoint requires durable artifact storage");
+    }
     return {
       type,
       material: {
-        checkpointId: this.#uuid(),
+        checkpointId,
         patchDigest,
         acpSessionId,
-        evidenceReferences: [`patch-${patchDigest.slice(7, 23)}`],
+        evidenceReferences: [this.#artifacts === undefined ? `patch-${patchDigest.slice(7, 23)}` : artifactId],
       },
     };
   }

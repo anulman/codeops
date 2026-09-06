@@ -165,6 +165,10 @@ const migrations = [
     name: "work-item-retry-v1",
     url: new URL("../sql/work-item-retry-v1.sql", import.meta.url),
   },
+  {
+    name: "session-phase-model-budget-v1",
+    url: new URL("../sql/session-phase-model-budget-v1.sql", import.meta.url),
+  },
 ] as const;
 
 const ownerPrincipalPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
@@ -408,7 +412,7 @@ export async function grantModelProxyLedgerAccess(
     );
     await client.query(`GRANT USAGE ON SCHEMA codeops TO ${identifier}`);
     await client.query(
-      `GRANT EXECUTE ON FUNCTION codeops.reserve_session_dispatch_model_budget(uuid, text, text, text, bigint, uuid, uuid, bigint, text, text, text, bigint, bigint) TO ${identifier}`,
+      `GRANT EXECUTE ON FUNCTION codeops.reserve_session_phase_model_budget(uuid, text, text, text, bigint, uuid, uuid, bigint, text, text, text, bigint, bigint) TO ${identifier}`,
     );
     await client.query(
       `GRANT EXECUTE ON FUNCTION codeops.settle_session_model_budget(uuid, text, text, bigint, bigint, bigint, text) TO ${identifier}`,

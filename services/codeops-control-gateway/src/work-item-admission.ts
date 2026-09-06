@@ -7,6 +7,8 @@ import {
   createTransitionId,
   isWorkspaceSessionIdentity,
   projectSessionBudgetV2,
+  initialSessionBudgetLimits,
+  sessionBudgetPhaseForIdentity,
   sessionCommandResultSchema,
   sessionCommandSchema,
   sessionEventSchema,
@@ -574,7 +576,9 @@ export async function admitSessionRuntimeWorkItem(client: TransactionClient, inp
         holderId: request.child.holderId, acquiredAt: admittedAt, expiresAt: parentLease.expiresAt },
       checkpoint: null, pendingPermission: null,
       budget: projectSessionBudgetV2({ budgetId: request.child.sessionId, revision: 1, startedAt: admittedAt,
-        observedAt: admittedAt, limits: parentBudget.limits }), eventCursor: 1,
+        observedAt: admittedAt, limits: { ...initialSessionBudgetLimits(sessionBudgetPhaseForIdentity(childIdentity)),
+          outputTokens: Math.min(1_000_000, parentBudget.limits.outputTokens),
+          elapsedSeconds: parentBudget.limits.elapsedSeconds, activeChildren: parentBudget.limits.activeChildren } }), eventCursor: 1,
       capabilities: sessionCapabilitiesFor("running", false), updatedAt: admittedAt });
     if (child.budget?.version !== "codeops.session-budget/v2") throw new WorkItemAdmissionConflictError("child session did not retain its durable model budget");
     if (child.lease?.status !== "active") throw new WorkItemAdmissionConflictError("child session did not retain its active lease");
