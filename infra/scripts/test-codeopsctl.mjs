@@ -512,3 +512,59 @@ test("legacy deploy keeps atomic rollback while upgrade is forward-only", () => 
   assert.ok(buildHelmUpgradeArguments(input).includes("--atomic"));
   assert.equal(buildHelmUpgradeArguments({ ...input, operationId: "binding" }).includes("--atomic"), false);
 });
+
+for (const phase of ["pending acknowledgement", "interrupted effect"]) {
+  test(`durable recovery after legacy temporary log loss: ${phase}`, async (t) => {
+    const { options, adapters, calls } = await upgradeFixture(t);
+    adapters.deliver = async (_url, event) => { calls.delivery.push(event); return false; };
+    if (phase === "interrupted effect") {
+      const apply = adapters.deploy;
+      adapters.deploy = async (input) => { await apply(input); throw new Error("interrupted"); };
+    }
+    await runUpgrade(options, adapters);
+    const file = path.join(options.operation_dir, "state.json");
+    const before = JSON.parse(await readFile(file));
+    assert.equal(path.dirname(before.logDirectory), options.operation_dir);
+    assert.equal((await stat(before.logDirectory)).mode & 0o777, 0o700);
+    const legacy = await mkdtemp(path.join(tmpdir(), "legacy-upgrade-"));
+    await rm(legacy, { recursive: true });
+    await rm(before.logDirectory, { recursive: true });
+    await writeFile(file, JSON.stringify({ ...before, logDirectory: legacy }));
+    adapters.reconcile = async () => "complete";
+    if (before.event) adapters.target = () => { throw new Error("no cluster access for ack recovery"); };
+    const pending = await runUpgrade({ ...options, resume: true }, adapters);
+    assert.equal(pending.notification, "pending");
+    const recovered = JSON.parse(await readFile(file));
+    assert.deepEqual(recovered.before, before.before);
+    assert.equal(recovered.operationId, before.operationId);
+    assert.equal(recovered.event.eventId, before.event?.eventId ?? `${before.operationId}:complete`);
+    assert.equal(recovered.diagnosticHistoryMissing, true);
+    assert.equal(path.dirname(recovered.logDirectory), options.operation_dir);
+    assert.match(await readFile(path.join(recovered.logDirectory, "diagnostics.jsonl"), "utf8"), /historical diagnostics unavailable/);
+    assert.equal((await stat(path.join(recovered.logDirectory, "diagnostics.jsonl"))).mode & 0o777, 0o600);
+    adapters.deliver = async (_url, event) => { calls.delivery.push(event); return true; };
+    await runUpgrade({ ...options, resume: true }, adapters);
+    assert.equal(calls.deploy, 1);
+    assert.equal(new Set(calls.delivery.map((event) => event.eventId)).size, 1);
+    await assert.rejects(stat(recovered.logDirectory), { code: "ENOENT" });
+  });
+}
+
+test("durable recovery preserves existing legacy diagnostics", async (t) => {
+  const { options, adapters, calls } = await upgradeFixture(t);
+  adapters.deliver = async () => false;
+  await runUpgrade(options, adapters);
+  const file = path.join(options.operation_dir, "state.json");
+  const before = JSON.parse(await readFile(file));
+  const legacy = await mkdtemp(path.join(tmpdir(), "legacy-upgrade-"));
+  t.after(() => rm(legacy, { recursive: true, force: true }));
+  await writeFile(path.join(legacy, "diagnostics.jsonl"), '{"retained":true}\n', { mode: 0o600 });
+  await writeFile(file, JSON.stringify({ ...before, logDirectory: legacy }));
+  await runUpgrade({ ...options, resume: true }, adapters);
+  const after = JSON.parse(await readFile(file));
+  assert.equal(path.dirname(after.logDirectory), options.operation_dir);
+  assert.match(await readFile(path.join(after.logDirectory, "diagnostics.jsonl"), "utf8"), /"retained":true/);
+  assert.equal(await readFile(path.join(legacy, "diagnostics.jsonl"), "utf8"), '{"retained":true}\n');
+  assert.deepEqual(after.event, before.event);
+  assert.equal(calls.deploy, 1);
+});
