@@ -555,6 +555,8 @@ export async function grantApplicationDatabaseAccess(
     await client.query('REVOKE INSERT, UPDATE, DELETE ON codeops.schema_migrations FROM codeops_app');
     await client.query('GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA codeops TO codeops_app');
     await client.query('REVOKE EXECUTE ON ALL FUNCTIONS IN SCHEMA codeops FROM PUBLIC');
+    // Invoker-rights lineage lookup is required by the outbox INSERT/claim guard.
+    await client.query('GRANT EXECUTE ON FUNCTION codeops.session_runtime_owner_binding(text) TO codeops_app');
     const inspector = await client.query("SELECT 1 FROM pg_roles WHERE rolname='codeops_inspector'");
     if (!inspector.rows.length) await client.query('CREATE ROLE codeops_inspector NOLOGIN');
     await requireUnownedDatabaseRole(client, 'codeops_inspector');

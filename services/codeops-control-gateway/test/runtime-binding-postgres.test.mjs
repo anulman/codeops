@@ -16,6 +16,7 @@ import { workspaceLaunchSessionId } from "@codeops/codeops-contracts/workspace-l
 import {
   applySessionBrokerMigration,
   migrateSessionBroker,
+  grantApplicationDatabaseAccess,
 } from "../dist/session-broker-migration.js";
 import { buildSessionRuntimeDispatch } from "../dist/session-broker-runtime.js";
 import { claimSessionRuntimeDispatch } from "../dist/session-broker-runtime-outbox.js";
@@ -1408,4 +1409,32 @@ test("retained incident stays unchanged across selectors and direct reconcilers"
       assert.deepEqual(await read(), before);
     }
   } finally { await connection.end(); }
+});
+
+
+test("application role can enqueue and claim with the invoker-rights owner binding", { skip }, async () => {
+  const owner = new Client({ connectionString: databaseUrl });
+  await owner.connect();
+  let app;
+  try {
+    await owner.query('DROP SCHEMA IF EXISTS codeops CASCADE');
+    await migrateSessionBroker(owner);
+    const { randomBytes } = await import('node:crypto');
+    await grantApplicationDatabaseAccess(owner, 'codeops_app', randomBytes(32).toString('hex'));
+    const target = new URL(databaseUrl); target.username = 'codeops_app';
+    app = new Client({ connectionString: target.toString() }); await app.connect();
+    const current = await insertDispatch(app, snapshot('app-owned-root', 'app-owned-run'),
+      '41414141-4141-4141-8141-414141414141', '42424242-4242-4242-8242-424242424242', true);
+    const claim = await claimSessionRuntimeDispatch(app, {
+      workerId: 'worker:app-owned', sessionId: current.sessionId, generation: 1,
+      leaseId, identity: current.identity, runtimeProfileId: profile.profileId,
+      runtimeReleaseDigest: profile.releaseDigest, runtimeCapabilityDigest: profile.capabilityDigest,
+      runtimeProfile: profile, leaseMs: 60_000, now: () => new Date('2026-08-31T08:02:00.000Z'),
+    });
+    assert.equal(claim?.dispatch.command.sessionId, current.sessionId);
+    const guard = (await owner.query("SELECT prosecdef, provolatile FROM pg_proc WHERE oid='codeops.session_runtime_owner_binding(text)'::regprocedure")).rows[0];
+    assert.deepEqual(guard, { prosecdef: false, provolatile: 's' });
+    assert.equal((await app.query("SELECT has_schema_privilege(current_user,'codeops','CREATE') AS allowed")).rows[0].allowed, false);
+    assert.equal((await app.query("SELECT has_function_privilege('codeops_inspector','codeops.session_runtime_owner_binding(text)','EXECUTE') AS allowed")).rows[0].allowed, false);
+  } finally { if (app) await app.end(); await owner.end(); }
 });
