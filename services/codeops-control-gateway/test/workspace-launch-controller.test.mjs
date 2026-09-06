@@ -811,3 +811,8 @@ test("replay never deletes a replacement Job identity", async () => {
   assert.deepEqual(removed, [{ role: "source-authority", requestDigest: launch.requestDigest,
     ...bindings.sourceAuthority }]);
 });
+
+test("preserved incident launch is held before loading or effects", async () => {
+  const noEffects = new Proxy({}, { get() { throw new Error("unexpected effect"); } });
+  assert.equal(await reconcileWorkspaceLaunch("launch-222222222222222222222222", noEffects), null);
+});

@@ -1,3 +1,4 @@
+import { retainedLaunchIds } from "./retained-incident-identities.js";
 import {
   workspaceLaunchRequestSchema,
   workspaceLaunchDetailSchema,
@@ -194,13 +195,14 @@ export async function listActiveWorkspaceLaunchIds(
     `SELECT launch_id
       FROM codeops.workspace_launches
       WHERE state IN ('queued', 'provisioning')
+        AND NOT (launch_id = ANY($2::text[]))
         AND (
           launch_json->>'nextAttemptAt' IS NULL
           OR (launch_json->>'nextAttemptAt')::timestamptz <= clock_timestamp()
         )
       ORDER BY created_at ASC, launch_id ASC
       LIMIT $1`,
-    [limit],
+    [limit, retainedLaunchIds],
   );
   return result.rows.map(({ launch_id }) => {
     if (typeof launch_id !== "string") {

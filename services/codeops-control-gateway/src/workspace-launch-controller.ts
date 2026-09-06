@@ -1,3 +1,4 @@
+import { isRetainedIncidentIdentity } from "./retained-incident-identities.js";
 import { createHash } from "node:crypto";
 import type {
   SessionRuntimeDispatch,
@@ -167,6 +168,7 @@ export async function reconcileWorkspaceLaunch(
   launchId: string,
   dependencies: WorkspaceLaunchControllerDependencies,
 ): Promise<WorkspaceLaunch | null> {
+  if (isRetainedIncidentIdentity(launchId)) return null;
   const stored = await dependencies.load(launchId);
   if (stored === null) return null;
   let launch = stored.launch;
