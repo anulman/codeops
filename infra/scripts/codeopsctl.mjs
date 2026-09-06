@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
 
-import { spawnSync } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { validateCodeOpsReleaseVersion } from "./codeops-release-version.mjs";
 import {
@@ -11,7 +11,11 @@ import {
   readFile,
   rm,
   writeFile,
+  open,
+  rename,
+  lstat,
 } from "node:fs/promises";
+import { appendFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -29,6 +33,9 @@ function usage() {
   codeopsctl verify --lock <file> --values <file> [--chart-path <file>] [--manifest-path <file>]
   codeopsctl deploy --lock <file> --values <file> --policy <file> [--release <name>] [--namespace <name>]
   codeopsctl smoke [--release <name>] [--namespace <name>]
+  codeopsctl upgrade --lock <file> --values <file> --policy <file> --operation-dir <private-dir> --notification-url <https-url> [--stage verify|preflight|deploy|notify] [--resume]
+  codeopsctl upgrade --operation-dir <private-dir> --status
+  codeopsctl upgrade --lock <file> --values <file> --policy <file> --plan
 
 The verify and deploy commands emit ${EVIDENCE_SCHEMA} JSON.
 The smoke command emits ${SMOKE_SCHEMA} JSON.
@@ -55,8 +62,8 @@ export function formatError(error) {
 
 export function parseArguments(argv) {
   const [command, ...rest] = argv;
-  if (!command || !["verify", "deploy", "smoke"].includes(command)) {
-    throw new Error("command must be verify, deploy, or smoke");
+  if (!command || !["verify", "deploy", "smoke", "upgrade"].includes(command)) {
+    throw new Error("command must be verify, deploy, smoke, or upgrade");
   }
   const options = {
     command,
@@ -72,9 +79,14 @@ export function parseArguments(argv) {
     "chart-path",
     "manifest-path",
     "output-dir",
+    ...(command === "upgrade" ? ["operation-dir", "notification-url", "stage"] : []),
   ]);
   for (let index = 0; index < rest.length; index += 1) {
     const argument = rest[index];
+    if (command === "upgrade" && ["--plan", "--dry-run", "--status", "--resume", "--stream"].includes(argument)) {
+      options[argument.slice(2).replace("dry-run", "plan")] = true;
+      continue;
+    }
     if (argument === "--help" || argument === "-h") {
       options.help = true;
       continue;
@@ -96,14 +108,34 @@ export function parseArguments(argv) {
   ]) {
     if (!DNS_LABEL.test(value)) throw new Error(`${name} must be a Kubernetes DNS label`);
   }
-  if (command !== "smoke") {
+  if (command !== "smoke" && !options.status) {
     if (!options.lock) throw new Error("--lock is required");
     if (!options.values) throw new Error("--values is required");
   }
   if (command === "deploy" && !options.policy) {
     throw new Error("--policy is required for deploy");
   }
+  if (command === "upgrade") {
+    if (!options.status && !options.policy) throw new Error("--policy is required for upgrade");
+    if (!options.plan && !options.operation_dir) throw new Error("--operation-dir is required");
+    if (!options.plan && !options.status && !options.notification_url) throw new Error("--notification-url is required");
+    if (options.stage && !["verify", "preflight", "deploy", "notify"].includes(options.stage)) throw new Error("invalid upgrade stage");
+    if (options.status && (options.plan || options.resume || options.stage)) throw new Error("status cannot be combined with execution options");
+    if (options.plan && (options.resume || options.stage)) throw new Error("plan cannot be combined with execution options");
+    if (options.output_dir) throw new Error("upgrade uses --operation-dir");
+  }
   return options;
+}
+
+let upgradeLog;
+let upgradeStream = false;
+function recordUpgradeDiagnostic(entry) {
+  const line = `${JSON.stringify(entry)}\n`;
+  if (upgradeLog) appendFileSync(upgradeLog, line, { mode: 0o600 });
+  if (upgradeStream) process.stderr.write(line);
+}
+function recordCommand(name, status, bytes = 0) {
+  if (upgradeLog) recordUpgradeDiagnostic({ tool: name, status, bytes, output: "redacted" });
 }
 
 function execute(name, args, { env = process.env, input, timeout = 120_000 } = {}) {
@@ -114,6 +146,8 @@ function execute(name, args, { env = process.env, input, timeout = 120_000 } = {
     maxBuffer: 32 * 1024 * 1024,
     timeout,
   });
+  recordCommand(name, result.status, (result.stdout?.length ?? 0) + (result.stderr?.length ?? 0));
+  if (upgradeLog && (result.error || result.status !== 0)) throw new Error(`${name} failed; inspect operation diagnostics`);
   if (result.error) throw result.error;
   if (result.status !== 0) {
     const detail = result.stderr.trim() || result.stdout.trim();
@@ -129,6 +163,8 @@ function executeCombined(name, args, { env = process.env, timeout = 120_000 } = 
     maxBuffer: 32 * 1024 * 1024,
     timeout,
   });
+  recordCommand(name, result.status, (result.stdout?.length ?? 0) + (result.stderr?.length ?? 0));
+  if (upgradeLog && (result.error || result.status !== 0)) throw new Error(`${name} failed; inspect operation diagnostics`);
   if (result.error) throw result.error;
   const output = `${result.stdout}${result.stderr}`;
   if (result.status !== 0) {
@@ -396,13 +432,15 @@ function validateManifest(lock, bytes) {
 async function prepareRelease(options, lock, directory) {
   const manifestPath = path.join(directory, lock.release.manifestAsset);
   const chartPath = path.join(directory, lock.chart.asset);
-  if (options.manifest_path) await copyFile(options.manifest_path, manifestPath);
-  else await downloadReleaseAsset(lock, lock.release.manifestAsset, manifestPath);
+  if (options.manifest_path) {
+    if (path.resolve(options.manifest_path) !== path.resolve(manifestPath)) await copyFile(options.manifest_path, manifestPath);
+  }
+  else if (!options.operationId || !await regularFileExists(manifestPath)) await downloadReleaseAsset(lock, lock.release.manifestAsset, manifestPath);
 
   let pulledDigest = lock.chart.digest;
   if (options.chart_path) {
-    await copyFile(options.chart_path, chartPath);
-  } else {
+    if (path.resolve(options.chart_path) !== path.resolve(chartPath)) await copyFile(options.chart_path, chartPath);
+  } else if (!options.operationId || !await regularFileExists(chartPath)) {
     const registryRoot = path.join(directory, "anonymous-registry");
     const home = path.join(registryRoot, "home");
     const docker = path.join(registryRoot, "docker");
@@ -448,6 +486,12 @@ function renderedCodeOpsImages(rendered) {
   );
 }
 
+export function buildHelmRenderArguments(options, chartPath) {
+  return ["template", options.release, chartPath, "--namespace", options.namespace,
+    "--values", options.values,
+    ...(options.operationId ? ["--is-upgrade", "--dry-run=server"] : [])];
+}
+
 async function verify(options, lock, directory) {
   const prepared = await prepareRelease(options, lock, directory);
   await Promise.all(Object.values(prepared.manifest.images).map(anonymousImageCheck));
@@ -459,16 +503,10 @@ async function verify(options, lock, directory) {
   if (!new RegExp(`^appVersion: [\"']?${lock.release.sourceSha}[\"']?$`, "m").test(metadata)) {
     throw new Error("chart source SHA does not match the lock");
   }
-  execute("helm", ["lint", prepared.chartPath, "--values", options.values]);
-  const rendered = execute("helm", [
-    "template",
-    options.release,
-    prepared.chartPath,
-    "--namespace",
-    options.namespace,
-    "--values",
-    options.values,
-  ]);
+  // Upgrade templates use live, read-only lookup and upgrade migration hooks.
+  // Offline lint cannot resolve execution-namespace credential references.
+  if (!options.operationId) execute("helm", ["lint", prepared.chartPath, "--values", options.values]);
+  const rendered = execute("helm", buildHelmRenderArguments(options, prepared.chartPath));
   const releaseImages = expectedRuntimeImages(prepared.manifest);
   const expectedImages = renderedCodeOpsImages(rendered);
   if (expectedImages.size === 0) throw new Error("rendered chart contains no CodeOps images");
@@ -691,6 +729,7 @@ export function buildHelmUpgradeArguments({
   valuesPath,
   helmTimeout,
   preserveInstalledValues,
+  operationId,
 }) {
   return [
     "upgrade",
@@ -700,10 +739,10 @@ export function buildHelmUpgradeArguments({
     "--namespace",
     namespace,
     "--create-namespace",
-    ...(preserveInstalledValues ? ["--reset-then-reuse-values"] : []),
+    ...(operationId ? ["--reset-values", "--description", `codeops-upgrade:${operationId}`] : preserveInstalledValues ? ["--reset-then-reuse-values"] : []),
     "--values",
     valuesPath,
-    "--atomic",
+    ...(operationId ? [] : ["--atomic"]),
     "--wait",
     "--wait-for-jobs",
     "--timeout",
@@ -712,7 +751,7 @@ export function buildHelmUpgradeArguments({
 }
 
 async function deploy(options, lock, policy, directory) {
-  const verification = await verify(options, lock, directory);
+  const verification = options.upgradeVerification ?? await verify(options, lock, directory);
   const apiIp = execute("kubectl", ["get", "service", "kubernetes", "--output", "jsonpath={.spec.clusterIP}"]).trim();
   if (!policy.cluster.kubernetesServiceCidrs.includes(`${apiIp}/32`)) {
     throw new Error("Kubernetes Service ClusterIP is outside the consumer policy");
@@ -734,9 +773,11 @@ async function deploy(options, lock, policy, directory) {
   const previousRelease = namespaceExists
     ? kubectlHelmRelease(options.release, options.namespace)
     : undefined;
+  if (options.operationId && previousRelease?.status !== "deployed") throw new Error("upgrade requires an existing deployed release");
   const pvcsBefore = snapshotPreservedPvcs(beforeResources, options.namespace);
   const secretsBefore = snapshotSecrets(policy.requiredSecrets, options.namespace);
-  execute(
+  if (options.beforeUpgrade) await options.beforeUpgrade({ previousRelease, pvcsBefore, secretsBefore });
+  await (options.operationId ? executeUpgrade : execute)(
     "helm",
     buildHelmUpgradeArguments({
       release: options.release,
@@ -745,8 +786,9 @@ async function deploy(options, lock, policy, directory) {
       valuesPath: options.values,
       helmTimeout: policy.helmTimeout,
       preserveInstalledValues: previousRelease !== undefined,
+      operationId: options.operationId,
     }),
-    { timeout: durationMilliseconds(policy.helmTimeout) + 5 * 60_000 },
+    { timeout: durationMilliseconds(policy.helmTimeout) + 5 * 60_000, options },
   );
   try {
     const afterResources = releaseResources(options.release, options.namespace);
@@ -790,6 +832,9 @@ async function deploy(options, lock, policy, directory) {
       postDeployHttpChecks: policy.postDeployHttpChecks?.length ?? 0,
     };
   } catch (deploymentError) {
+    // Application-role cutover is forward-only. Upgrade must leave the failed
+    // effect for reconciliation, never restart an older API or regrant its role.
+    if (options.operationId) throw deploymentError;
     try {
       for (const [name, args] of buildCompensatingRollbackPlan({
         release: options.release,
@@ -831,8 +876,390 @@ async function deploy(options, lock, policy, directory) {
   }
 }
 
+const UPGRADE_SCHEMA = "codeops.upgrade/v1";
+const UPGRADE_STAGES = ["verify", "preflight", "deploy", "notify"];
+
+async function regularFileExists(file) {
+  try {
+    const stat = await lstat(file);
+    if (!stat.isFile()) throw new Error("operation artifact must be a regular file");
+    return true;
+  } catch (error) {
+    if (error.code === "ENOENT") return false;
+    throw error;
+  }
+}
+
+// Write-ahead receipts survive process interruption. This directory is local
+// operator state, never a source artifact or a claim of deployment authority.
+async function saveUpgrade(directory, state) {
+  if (upgradeLog) recordUpgradeDiagnostic({ stage: state.stage, status: state.status });
+  const temporary = path.join(directory, "state.next");
+  const handle = await open(temporary, "w", 0o600);
+  try {
+    await handle.writeFile(`${JSON.stringify(state)}\n`);
+    await handle.sync();
+  } finally { await handle.close(); }
+  await rename(temporary, path.join(directory, "state.json"));
+  const parent = await open(directory, "r");
+  try { await parent.sync(); } finally { await parent.close(); }
+}
+
+export function upgradeBinding({ lockBytes, valuesBytes, policyBytes, target, notificationUrl }) {
+  return sha256(JSON.stringify({
+    lock: sha256(lockBytes), values: sha256(valuesBytes), policy: sha256(policyBytes),
+    target, notificationUrl,
+  }));
+}
+
+export function upgradeSummary(state) {
+  const exitCode = state.status === "unknown" ? 4
+    : state.event && !state.acknowledged ? 5
+    : state.status === "failed" ? 3 : 0;
+  return {
+    schemaVersion: UPGRADE_SCHEMA, operationId: state.operationId,
+    status: state.status, stage: state.stage, ok: exitCode === 0, exitCode,
+    notification: state.event ? (state.acknowledged ? "acknowledged" : "pending") : "not-ready",
+    ...(state.status !== "complete" || !state.acknowledged ? { diagnosticPath: state.logDirectory } : {}),
+  };
+}
+
+export function validateUpgradeProof(report, lock, manifest) {
+  const proof = report.artifactProof;
+  if (report.version !== "codeops.golden-release-report/v2" || report.passed !== true ||
+      report.sourceSha !== lock.release.sourceSha ||
+      report.sourceProof?.evidence?.kind !== "simulated-provider" ||
+      report.sourceProof?.evidence?.providerMode !== "fake" ||
+      proof?.evidence?.kind !== "released-image" || proof.evidence.sourceCheckout !== false ||
+      proof.evidence.immutableImageRefs !== true || proof.chartVersion !== lock.chart.version ||
+      proof.chartDigest !== lock.chart.digest || proof.smokeStatus !== "passed" ||
+      proof.rollbackStatus !== "passed" || proof.cleanupStatus !== "passed") {
+    throw new Error("published release qualification does not match the lock");
+  }
+  const expected = Object.entries(manifest.images).map(([name, image]) => `${name}:${image.immutableRef}`).sort();
+  const actual = (proof.images ?? []).map(({ name, immutableRef }) => `${name}:${immutableRef}`).sort();
+  if (JSON.stringify(expected) !== JSON.stringify(actual)) throw new Error("qualified image digests differ");
+}
+
+// Only fixed Kubernetes reason codes leave the subprocess boundary. Messages,
+// Pod specs, events and container logs can contain arbitrary credential values.
+export function startupDiagnostics(pods) {
+  const fatal = new Set(["CreateContainerConfigError", "InvalidImageName", "ErrImageNeverPull", "RunContainerError"]);
+  const reasons = new Set([...fatal, "CrashLoopBackOff", "ImagePullBackOff", "ErrImagePull", "OOMKilled", "Error", "Completed", "ContainerCreating", "PodInitializing"]);
+  return (pods.items ?? []).slice(0, 40).map((pod) => ({
+    uid: /^[a-f0-9-]{36}$/.test(pod.metadata?.uid ?? "") ? pod.metadata.uid : null,
+    containers: [...(pod.status?.initContainerStatuses ?? []), ...(pod.status?.containerStatuses ?? [])].slice(0, 20).map((container) => {
+      const reason = container.state?.waiting?.reason ?? container.state?.terminated?.reason;
+      return { reason: reasons.has(reason) ? reason : "Other", fatal: fatal.has(reason), ready: container.ready === true };
+    }),
+  }));
+}
+
+function captureStartup(options) {
+  const pods = kubectlJson(["get", "pods", "--namespace", options.namespace,
+    "--selector", `app.kubernetes.io/instance=${options.release}`, "--request-timeout=5s", "--output", "json"]);
+  const diagnostics = startupDiagnostics(pods);
+  if (upgradeLog) recordUpgradeDiagnostic({ startup: diagnostics });
+  return diagnostics.some((pod) => !options.priorPodUids?.has(pod.uid) && pod.containers.some((container) => container.fatal));
+}
+
+async function executeUpgrade(name, args, { timeout, options }) {
+  const priorPods = kubectlJson(["get", "pods", "--namespace", options.namespace,
+    "--selector", `app.kubernetes.io/instance=${options.release}`, "--request-timeout=5s", "--output", "json"]);
+  options = { ...options, priorPodUids: new Set((priorPods.items ?? []).map((pod) => pod.metadata?.uid)) };
+  // Drain bounded chunks without retaining raw output or streaming to the agent.
+  // Helm can print rendered Secret values even on its error path.
+  await new Promise((resolve, reject) => {
+    const child = spawn(name, args, { stdio: ["ignore", "pipe", "pipe"], timeout });
+    let bytes = 0;
+    let fatal = false;
+    let finished = false;
+    child.stdout.on("data", (chunk) => { bytes += chunk.length; });
+    child.stderr.on("data", (chunk) => { bytes += chunk.length; });
+    const timer = setInterval(() => {
+      try {
+        if (captureStartup(options)) {
+          fatal = true;
+          child.kill("SIGTERM");
+        }
+      } catch { /* An API outage is unknown, never a confirmed startup failure. */ }
+    }, 2_000);
+    const finish = (error, code) => {
+      if (finished) return;
+      finished = true;
+      clearInterval(timer);
+      try { captureStartup(options); } catch { /* Preserve the existing diagnostic log. */ }
+      recordCommand(name, code, bytes);
+      if (error || code !== 0 || fatal) reject(new Error("upgrade effect requires reconciliation"));
+      else resolve();
+    };
+    child.once("error", (error) => finish(error, null));
+    child.once("close", (code) => finish(null, code));
+  });
+}
+
+function upgradeTarget(options) {
+  if (!process.env.KUBECONFIG) throw new Error("explicit KUBECONFIG is required");
+  // Namespace UID prevents an operation from crossing cluster replacement.
+  const namespace = kubectlJson(["get", "namespace", options.namespace, "--output", "json"]);
+  const system = kubectlJson(["get", "namespace", "kube-system", "--output", "json"]);
+  return { release: options.release, namespace: options.namespace,
+    namespaceUid: namespace.metadata.uid, clusterUid: system.metadata.uid };
+}
+
+function upgradePreflight(options, policy, verification) {
+  const apiIp = execute("kubectl", ["get", "service", "kubernetes", "--output", "jsonpath={.spec.clusterIP}"]).trim();
+  if (!policy.cluster.kubernetesServiceCidrs.includes(`${apiIp}/32`)) throw new Error("cluster network policy mismatch");
+  const nodes = kubectlJson(["get", "nodes", "--selector", policy.cluster.readyNodeSelector, "--output", "json"]);
+  if (!(nodes.items ?? []).some((node) => node.status?.conditions?.some((c) => c.type === "Ready" && c.status === "True"))) throw new Error("no matching Ready node");
+  for (const resource of ["secrets", "configmaps", "services", "deployments.apps", "statefulsets.apps", "jobs.batch", "serviceaccounts", "roles.rbac.authorization.k8s.io", "rolebindings.rbac.authorization.k8s.io", "networkpolicies.networking.k8s.io", "persistentvolumeclaims"]) {
+    for (const verb of ["get", "list", "create", "update", "patch", "delete"]) {
+      if (execute("kubectl", ["auth", "can-i", verb, resource, "--namespace", options.namespace]).trim() !== "yes") throw new Error("deployment RBAC prerequisite missing");
+    }
+  }
+  snapshotSecrets(policy.requiredSecrets, options.namespace);
+  const rendered = execute("helm", buildHelmRenderArguments(options, verification.prepared.chartPath));
+  const list = JSON.parse(execute("kubectl", ["create", "--dry-run=client", "--validate=false", "--filename", "-", "--output", "json"], { input: rendered }));
+  const resources = list.kind === "List" ? list.items : [list];
+  const resourceNames = { Namespace: "namespaces", Secret: "secrets", ConfigMap: "configmaps", Service: "services",
+    Deployment: "deployments.apps", StatefulSet: "statefulsets.apps", Job: "jobs.batch", ServiceAccount: "serviceaccounts",
+    Role: "roles.rbac.authorization.k8s.io", RoleBinding: "rolebindings.rbac.authorization.k8s.io",
+    NetworkPolicy: "networkpolicies.networking.k8s.io", PersistentVolumeClaim: "persistentvolumeclaims", Ingress: "ingresses.networking.k8s.io" };
+  const permissions = new Set();
+  for (const resource of resources) {
+    const name = resourceNames[resource.kind];
+    if (!name) throw new Error("unsupported upgrade resource kind");
+    const scope = resource.kind === "Namespace" ? [] : ["--namespace", resource.metadata?.namespace ?? options.namespace];
+    for (const verb of ["get", "create", "update", "patch", "delete"]) {
+      const args = ["auth", "can-i", verb, name, ...scope];
+      if (permissions.has(JSON.stringify(args))) continue;
+      permissions.add(JSON.stringify(args));
+      if (execute("kubectl", args).trim() !== "yes") throw new Error("rendered resource RBAC prerequisite missing");
+    }
+  }
+  const supplied = new Map(resources.map((r) => [`${r.kind}/${r.metadata?.namespace ?? options.namespace}/${r.metadata?.name}`, r]));
+  const lookup = (kind, name, namespace) => supplied.get(`${kind}/${namespace}/${name}`)
+    ?? kubectlJson(["get", kind.toLowerCase(), name, "--namespace", namespace, "--output", "json"]);
+  for (const resource of resources) {
+    const namespace = resource.metadata?.namespace ?? options.namespace;
+    const pod = resource.spec?.template?.spec ?? (resource.kind === "Pod" ? resource.spec : undefined);
+    if (!pod) continue;
+    lookup("ServiceAccount", pod.serviceAccountName ?? "default", namespace);
+    const check = (kind, name, key) => {
+      const referenced = lookup(kind, name, namespace);
+      if (key && !(key in (referenced.data ?? {})) && !(key in (referenced.stringData ?? {}))) throw new Error("required credential or configuration key missing");
+    };
+    for (const volume of pod.volumes ?? []) {
+      if (volume.secret && !volume.secret.optional) {
+        check("Secret", volume.secret.secretName);
+        for (const item of volume.secret.items ?? []) check("Secret", volume.secret.secretName, item.key);
+      }
+      if (volume.configMap && !volume.configMap.optional) {
+        check("ConfigMap", volume.configMap.name);
+        for (const item of volume.configMap.items ?? []) check("ConfigMap", volume.configMap.name, item.key);
+      }
+      for (const source of volume.projected?.sources ?? []) {
+        for (const [field, kind] of [["secret", "Secret"], ["configMap", "ConfigMap"]]) {
+          const ref = source[field];
+          if (ref && !ref.optional) {
+            check(kind, ref.name);
+            for (const item of ref.items ?? []) check(kind, ref.name, item.key);
+          }
+        }
+      }
+    }
+    for (const ref of pod.imagePullSecrets ?? []) check("Secret", ref.name);
+    for (const container of [...(pod.initContainers ?? []), ...(pod.containers ?? [])]) {
+      for (const env of container.env ?? []) {
+        for (const [field, kind] of [["secretKeyRef", "Secret"], ["configMapKeyRef", "ConfigMap"]]) {
+          const ref = env.valueFrom?.[field];
+          if (ref && !ref.optional) check(kind, ref.name, ref.key);
+        }
+      }
+      for (const env of container.envFrom ?? []) {
+        if (env.secretRef && !env.secretRef.optional) check("Secret", env.secretRef.name);
+        if (env.configMapRef && !env.configMapRef.optional) check("ConfigMap", env.configMapRef.name);
+      }
+    }
+  }
+  execute("helm", ["upgrade", "--install", options.release, verification.prepared.chartPath,
+    "--namespace", options.namespace, "--reset-values", "--values", options.values, "--dry-run=server", "--hide-secret"]);
+}
+
+export function reconcileUpgradeIdentity(state, history) {
+  const revision = Number(state.before.previousRelease?.revision ?? 0) + 1;
+  const effect = history.find((item) => Number(item.revision) === revision);
+  if (!effect || effect.description !== `codeops-upgrade:${state.operationId}`) return "unknown";
+  if (effect.status === "failed" || effect.status === "superseded") return "failed";
+  if (effect.status !== "deployed" || Number(history.at(-1)?.revision) !== revision) return "unknown";
+  return "validate";
+}
+
+async function reconcileUpgrade(options, state, lock, policy) {
+  const history = JSON.parse(execute("helm", ["history", options.release, "--namespace", options.namespace, "--output", "json"]));
+  const result = reconcileUpgradeIdentity(state, history);
+  if (result !== "validate") return result;
+  const installed = kubectlHelmRelease(options.release, options.namespace);
+  const resources = releaseResources(options.release, options.namespace);
+  if (installed?.chart !== `codeops-${lock.chart.version}` || installed?.app_version !== lock.release.sourceSha ||
+      !buildSmokeReport(options.release, options.namespace, resources, installed).ok) return "unknown";
+  compareImageSets(new Set(state.expectedImages), actualCodeOpsImages(resources));
+  sameIdentities(state.before.pvcsBefore, snapshotPreservedPvcs(resources, options.namespace), "PVC");
+  sameIdentities(state.before.secretsBefore, snapshotSecrets(policy.requiredSecrets, options.namespace), "Secret");
+  for (const check of policy.postDeployHttpChecks ?? []) {
+    const response = await fetch(check.url, { redirect: "manual", signal: AbortSignal.timeout(policy.httpTimeoutMs) });
+    await response.body?.cancel();
+    if (!check.acceptedStatuses.includes(response.status)) return "unknown";
+  }
+  return "complete";
+}
+
+export async function deliverUpgradeEvent(url, event, send = fetch) {
+  // The receiver deduplicates eventId and acknowledges only after durable storage.
+  // A lost acknowledgement causes the same event, never another deployment.
+  const response = await send(url, { method: "POST", redirect: "manual",
+    signal: AbortSignal.timeout(15_000), headers: { "content-type": "application/json", "idempotency-key": event.eventId },
+    body: JSON.stringify(event) });
+  if (!response.ok) { await response.body?.cancel(); return false; }
+  const bytes = await boundedResponseBytes(response, "notification", 4096);
+  return JSON.parse(bytes).eventId === event.eventId;
+}
+
+export async function runUpgrade(options, adapters = {}) {
+  // Fixed effect boundaries permit credential-free regression tests.
+  const targetFor = adapters.target ?? upgradeTarget;
+  const verifyRelease = adapters.verify ?? verify;
+  const preflight = adapters.preflight ?? upgradePreflight;
+  const applyRelease = adapters.deploy ?? deploy;
+  const reconcile = adapters.reconcile ?? reconcileUpgrade;
+  const getProof = adapters.downloadProof ?? downloadReleaseAsset;
+  const deliver = adapters.deliver ?? deliverUpgradeEvent;
+  const diagnostics = adapters.diagnostics ?? captureStartup;
+  const directory = options.operation_dir && path.resolve(options.operation_dir);
+  if (options.status) return upgradeSummary(JSON.parse(await readFile(path.join(directory, "state.json"), "utf8")));
+  const [lockBytes, valuesBytes, policyBytes] = await Promise.all([options.lock, options.values, options.policy].map((file) => readFile(file)));
+  const lock = validateLock(JSON.parse(lockBytes));
+  const policy = validatePolicy(JSON.parse(policyBytes));
+  if (options.plan) return { schemaVersion: UPGRADE_SCHEMA, ok: true, status: "planned", stages: UPGRADE_STAGES,
+    sourceSha: lock.release.sourceSha, chartDigest: lock.chart.digest,
+    valuesSha256: sha256(valuesBytes), policySha256: sha256(policyBytes), release: options.release, namespace: options.namespace };
+  const destination = new URL(options.notification_url);
+  if (destination.protocol !== "https:" || destination.username || destination.password || destination.search || destination.hash) throw new Error("notification URL must be credential-free HTTPS");
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  const stat = await lstat(directory);
+  if (!stat.isDirectory() || (stat.mode & 0o077) !== 0 || stat.uid !== process.getuid()) throw new Error("operation directory must be private and operator-owned");
+  const guard = await open(path.join(directory, "active"), "wx", 0o600);
+  let state;
+  try {
+    await guard.writeFile(`${process.pid}\n`);
+    try { state = JSON.parse(await readFile(path.join(directory, "state.json"), "utf8")); }
+    catch (error) { if (error.code !== "ENOENT") throw error; }
+    if (state && !options.resume) throw new Error("existing operation requires --resume");
+    if (!state && options.resume) throw new Error("cannot resume missing operation");
+    // Log directory is private even when the caller's umask is permissive.
+    if (!state) {
+      const logDirectory = await mkdtemp(path.join(tmpdir(), "codeops-upgrade-"));
+      state = { schemaVersion: UPGRADE_SCHEMA, operationId: null, status: "preparing", stage: "verify", logDirectory };
+    }
+    // Completion may have removed transient logs before an acknowledgement retry.
+    if (!(state.status === "complete" && state.acknowledged)) {
+      upgradeLog = path.join(state.logDirectory, "diagnostics.jsonl");
+      upgradeStream = options.stream === true;
+    }
+    // Notification-only recovery must survive a cluster outage. It has no
+    // Kubernetes effects and remains bound to the recorded target and inputs.
+    const target = state.event ? state.target : targetFor(options);
+    const binding = upgradeBinding({ lockBytes, valuesBytes, policyBytes, target, notificationUrl: destination.href });
+    if (state.operationId && state.operationId !== binding) throw new Error("operation input or cluster identity drift");
+    state.operationId = binding;
+    state.target = target;
+    await saveUpgrade(directory, state);
+    if (state.status === "complete" && state.acknowledged) {
+      await rm(state.logDirectory, { recursive: true, force: true });
+      return upgradeSummary(state);
+    }
+    const localOptions = { ...options, values: path.join(directory, "values.yaml"), operationId: binding };
+    // Freeze bytes used by both rendering and Helm, rather than rereading the caller's path.
+    await writeFile(localOptions.values, valuesBytes, { mode: 0o600 });
+    try {
+      if (state.before && !state.event) {
+        state.status = await reconcile(localOptions, state, lock, policy);
+      } else if (!state.event) {
+        if (options.stage === "notify") throw new Error("notification requires a terminal effect");
+        state.stage = "verify";
+        const artifacts = path.join(directory, "artifacts");
+        await mkdir(artifacts, { recursive: true, mode: 0o700 });
+        const cached = state.verified ? { chart_path: path.join(artifacts, lock.chart.asset), manifest_path: path.join(artifacts, lock.release.manifestAsset) } : {};
+        const verification = await verifyRelease({ ...localOptions, ...cached }, lock, artifacts);
+        const proofPath = path.join(artifacts, "golden-release-report.json");
+        if (!await regularFileExists(proofPath)) await getProof(lock, "golden-release-report.json", proofPath);
+        const proofBytes = await readFile(proofPath);
+        validateUpgradeProof(JSON.parse(proofBytes), lock, verification.prepared.manifest);
+        if (state.proofSha256 && state.proofSha256 !== sha256(proofBytes)) throw new Error("qualification evidence drift");
+        state.proofSha256 = sha256(proofBytes);
+        state.expectedImages = verification.prepared.expectedImages;
+        state.verified = true;
+        state.status = "verified";
+        await saveUpgrade(directory, state);
+        if (options.stage === "verify") return upgradeSummary(state);
+        state.stage = "preflight";
+        await preflight(localOptions, policy, verification);
+        state.status = "preflight-passed";
+        await saveUpgrade(directory, state);
+        if (options.stage === "preflight") return upgradeSummary(state);
+        state.stage = "deploy";
+        await applyRelease({ ...localOptions, upgradeVerification: verification,
+          beforeUpgrade: async (before) => {
+            // Repeat prerequisites immediately before the write-ahead intent and cutover.
+            if (JSON.stringify(targetFor(localOptions)) !== JSON.stringify(target)) throw new Error("target drift before cutover");
+            await preflight(localOptions, policy, verification);
+            state.before = before;
+            state.status = "unknown";
+            await saveUpgrade(directory, state);
+          },
+        }, lock, policy, artifacts);
+        state.status = "complete";
+      }
+    } catch {
+      state.status = state.before ? "unknown" : "failed";
+      try { diagnostics(localOptions); } catch { /* Never overwrite the original failure. */ }
+      if (state.before) {
+        try { state.status = await reconcile(localOptions, state, lock, policy); }
+        catch { /* Ambiguous effects stay unknown; never retry Helm here. */ }
+      }
+    }
+    if (["complete", "failed"].includes(state.status) && !state.event) {
+      state.event = { schemaVersion: "codeops.upgrade-event/v1", eventId: `${binding}:${state.status}`,
+        operationId: binding, status: state.status, sourceSha: lock.release.sourceSha, chartDigest: lock.chart.digest };
+      state.acknowledged = false;
+    }
+    await saveUpgrade(directory, state);
+    if (state.event && options.stage !== "deploy") {
+      state.stage = "notify";
+      for (let attempt = 0; attempt < 3 && !state.acknowledged; attempt += 1) {
+        try { state.acknowledged = await deliver(destination.href, state.event); }
+        catch { state.acknowledged = false; }
+      }
+      await saveUpgrade(directory, state);
+    }
+    if (state.status === "complete" && state.acknowledged) await rm(state.logDirectory, { recursive: true, force: true });
+    return upgradeSummary(state);
+  } catch (error) {
+    // Do not expose provider errors, URLs, input bytes or subprocess output.
+    if (state) error.upgradeResult = { schemaVersion: UPGRADE_SCHEMA, ok: false, exitCode: 2,
+      status: "request-blocked", operationId: state.operationId, diagnosticPath: state.logDirectory };
+    throw error;
+  } finally {
+    upgradeLog = undefined;
+    upgradeStream = false;
+    await guard.close();
+    await rm(path.join(directory, "active"));
+  }
+}
+
 export async function run(options) {
   if (options.help) return { help: usage() };
+  if (options.command === "upgrade") return runUpgrade(options);
   if (options.command === "smoke") return smoke(options);
   const lock = validateLock(JSON.parse(await readFile(options.lock, "utf8")));
   const policy = options.policy
@@ -860,13 +1287,15 @@ async function main() {
     const printable = structuredClone(result);
     if (printable.prepared) delete printable.prepared;
     process.stdout.write(`${JSON.stringify(printable, null, 2)}\n`);
-    if (printable.ok === false) process.exitCode = 1;
+    if (printable.ok === false) process.exitCode = printable.exitCode ?? 1;
   }
 }
 
 if (import.meta.url === pathToFileURL(process.argv[1] ?? "").href) {
   main().catch((error) => {
-    process.stderr.write(`${formatError(error)}\n`);
-    process.exitCode = 1;
+    process.stderr.write(process.argv[2] === "upgrade"
+      ? `${JSON.stringify(error.upgradeResult ?? { schemaVersion: UPGRADE_SCHEMA, ok: false, status: "invalid-request", exitCode: 2 })}\n`
+      : `${formatError(error)}\n`);
+    process.exitCode = process.argv[2] === "upgrade" ? 2 : 1;
   });
 }

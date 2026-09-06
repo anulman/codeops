@@ -144,3 +144,143 @@ repositories whose names normalize to the same key.
 
 Quickstart mode creates and retains the launch token automatically. Existing-
 Secret mode never creates or changes the consumer's Secret data.
+
+## One-stop upgrade (COAUTO-49)
+
+Use the released `codeopsctl.mjs` from the approved target release. Verify its
+`SHA256SUMS` first. An upgrade consumes an existing immutable release; release
+publication and human environment approvals remain in their existing workflows.
+It does not build, retag, publish, or grant itself authority.
+
+Recommended noninteractive agent invocation, after approval and provisioning
+an explicit `KUBECONFIG`:
+
+```sh
+node codeopsctl.mjs upgrade \
+  --lock infra/codeops/codeops-consumer-lock.json \
+  --values infra/codeops/values.yaml \
+  --policy infra/codeops/policy.json \
+  --release codeops --namespace codeops \
+  --operation-dir /private/operator-state/codeops-upgrade \
+  --notification-url https://events.example.com/codeops-upgrades
+```
+
+Use complete non-secret values with external credential references. Upgrade
+uses Helm `--reset-values`; it does not inherit unspecified installed values.
+The namespace and a deployed Helm release must already exist. The operator
+needs the chart's Kubernetes
+permissions, including permissions in its execution namespace. Preserve the
+consumer workflow's approval and per-installation concurrency gate. The local
+operation lock is not a distributed installation lock.
+
+The command verifies the existing release's golden report against the exact
+source, chart, and image digests. It renders the chart and checks cluster network
+configuration, Ready nodes, RBAC, service accounts, and required Secret and
+ConfigMap references and keys. It repeats preflight immediately before cutover.
+Upgrade is forward-only: it uses neither Helm `--atomic` nor compensating
+rollback, uninstall, or database-owner role regrant on failure. After application-
+role cutover, restarting an older API or downgrading Helm is unsupported. Failed
+effects retain diagnostics and an unknown or failed state for explicit forward
+reconciliation. Review migration and release compatibility before authorization.
+The separate `deploy` command retains its existing rollback behavior; do not use
+it as a recovery shortcut across this cutover.
+
+The operation directory must be operator-owned, mode `0700`, outside source
+control, and on durable local storage. Receipts use mode `0600` and atomic,
+synced replacement. The identity binds exact lock, values and policy bytes,
+release name, namespace UID, cluster UID, and notification destination. Retain
+this directory and its artifact cache across invocations. Do not edit its state.
+No historical authority is inferred from a receipt.
+
+### Plan, compose, and recover
+
+Add `--plan` (alias `--dry-run`) to inspect the stages and input hashes without
+network access, subprocesses, or file writes. A plan is not a live preflight.
+The operation directory and notification destination are optional for a plan.
+
+Stages are `verify`, `preflight`, `deploy`, and `notify`. Add `--stage <name>`
+to stop at that boundary; necessary earlier checks still run. For example, run
+`--stage preflight`, then the same inputs with `--resume --stage deploy`, then
+`--resume --stage notify`. Existing `verify`, `deploy`, and `smoke` commands and
+their JSON contracts remain available.
+
+Read status without cluster access:
+
+```sh
+node codeopsctl.mjs upgrade \
+  --operation-dir /private/operator-state/codeops-upgrade --status
+```
+
+After interruption, repeat the recommended invocation with `--resume`, the
+same files and destination, and the same cluster. Resume reconciles the recorded
+next Helm revision and operation description, then checks release identity,
+readiness, exact images, preservation, and HTTP policy. It never issues a second
+Helm upgrade after recorded intent. If the outcome remains unknown, retain the
+logs and reconcile with the release owner. Even an interruption between intent
+and Helm requires reconciliation; absence of a revision is not proof that it
+is safe to repeat a write. Do not delete the operation directory to bypass this.
+
+An unclean process exit retains the `active` lock. Before an operator removes
+that file, they must establish that the recorded PID, its Helm child, and any
+other writer have stopped. Then use `--resume`. Do not clear it based on age.
+A failed terminal operation is not restarted by resume. Resolve its cause and
+obtain any required authority before beginning a new operation.
+
+### Output and delivery
+
+Upgrade emits a bounded `codeops.upgrade/v1` JSON summary with an operation ID.
+It makes no model calls and never prompts. Exit codes are:
+
+| Code | Meaning |
+| --- | --- |
+| 0 | Requested stage completed; a complete upgrade also has an acknowledgement. |
+| 2 | Invalid inputs, operation lock, or identity/prerequisite admission blocked. |
+| 3 | Known failure; failure event acknowledged. |
+| 4 | Effect outcome unknown; reconciliation required. |
+| 5 | Terminal event awaits acknowledgement, including deliberate stop after deploy. |
+
+Subprocesses do not stream output. Private per-operation temporary logs record
+command status, output byte counts, and bounded startup diagnostics. Raw command
+output is fully redacted, including Helm output that can contain Secret values.
+Diagnostics retain only known Kubernetes reason codes and Pod UIDs, never
+container logs, event messages, or raw workload objects. Inspect the private
+`diagnosticPath` directly for interactive diagnosis. A human can add `--stream`
+to stream the same redacted diagnostics to stderr; agents should omit it.
+There is no raw-stream option. Confirmed configuration/startup failures stop Helm
+early; ambiguous image pulls and API outages do not count as confirmed failures.
+The command captures diagnostics while Helm runs and retains them on failure.
+It leaves failed workloads for explicit forward reconciliation and any later
+authorized cleanup.
+
+A successful, acknowledged upgrade removes transient logs and retains operation
+receipts and artifacts. Failure, interruption, unknown outcomes, and pending
+acknowledgements retain logs. Preserve them until reconciliation; private
+permissions are not a substitute for redaction.
+
+The configured HTTPS receiver must durably deduplicate `eventId` and return
+`{"eventId":"<the received event ID>"}` only after storage. The command sends
+`codeops.upgrade-event/v1` with an `Idempotency-Key` header, refuses redirects,
+and makes up to three bounded attempts. A lost acknowledgement leaves the same
+event pending. Schedule the ordinary invocation with `--resume --stage notify`
+in the existing credential-scoped operator runner to retry delivery without
+model polling. A pending terminal notification does not require cluster access.
+A success HTTP status alone is not an acknowledgement. URLs must
+contain no credential, query, or fragment. This command does not install a
+notification service or background worker.
+
+### Isolated qualification
+
+Run the focused source regressions with
+`node --test infra/scripts/test-codeopsctl.mjs`, then `nub run check:chart` and
+`nub run verify` in the established credential-free isolated runner and hosted
+CI. Existing release workflows retain the same gates and package this CLI file;
+no additional release asset or dependency is required.
+
+Before production use, qualify the real Helm path in disposable infrastructure
+with production-shaped values, synthetic credentials, and no production network
+access. Exercise missing Secret keys, execution-namespace RBAC denial, wrong
+network policy, startup configuration failure, interruption immediately before
+and after Helm, and acknowledgement loss. Assert exact tested/deployed digests,
+no duplicate Helm revision on resume, failure-log retention, and success cleanup.
+The published golden report proves the existing released-image lane; it does not
+claim to test the consumer's production-specific configuration.
