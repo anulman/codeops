@@ -70,6 +70,7 @@ function job(status = {}, metadata = {}) {
     labels: { "codeops.example/resource-role": "workspace-runtime",
       "codeops.example/session-id": sessionId, "codeops.example/run-id": runId },
     annotations: { "codeops.example/request-digest": requestDigest,
+      "codeops.example/resource-configuration-digest": `sha256:${"d".repeat(64)}`,
       "codeops.example/principal-digest": "b".repeat(64),
       "codeops.example/session-generation": String(generation),
       "codeops.example/session-lease-id": leaseId,
@@ -267,7 +268,8 @@ test("later Sessions progress beyond a full batch and the durable cursor wraps",
 
 class ReconciliationClient {
   constructor(current, jobProgress = { lease_id: leaseId, run_id: runId,
-    job_name: jobName, job_uid: jobUid, job_resource_version: "42" }) {
+    job_name: jobName, job_uid: jobUid, job_resource_version: "42",
+    resource_configuration_digest: null }) {
     this.current = current;
     this.calls = [];
     this.jobProgress = jobProgress;
@@ -278,6 +280,10 @@ class ReconciliationClient {
     this.calls.push({ text, values });
     if (text.includes("FROM codeops.sessions") && text.includes("FOR UPDATE")) {
       return { rowCount: 1, rows: [{ snapshot_json: this.current }] };
+    }
+    if (text.includes("SET resource_configuration_digest=NULL")) {
+      this.jobProgress.resource_configuration_digest = null;
+      return { rowCount: 1, rows: [] };
     }
     if (text.includes("FROM codeops.session_runtime_job_progress")) {
       return { rowCount: this.jobProgress === null ? 0 : 1,
@@ -290,7 +296,8 @@ class ReconciliationClient {
     }
     if (text.includes("INSERT INTO codeops.session_runtime_job_progress")) {
       this.jobProgress = { lease_id: values[2], run_id: values[3],
-        job_name: values[4], job_uid: values[5], job_resource_version: values[6] };
+        job_name: values[4], job_uid: values[5], job_resource_version: values[6],
+        resource_configuration_digest: values[8] };
       return { rowCount: 1, rows: [] };
     }
     if (text.includes("FROM codeops.session_runtime_terminal_observations")) {
@@ -479,4 +486,25 @@ test("preserved incident identities refuse direct progress and retry before SQL"
       }, { configured: runtimeRelease, observed: runtimeRelease }), "stale");
     }
   }
+});
+
+test("checkpoint Job binding requires canonical configuration, without blocking legacy terminal observation", async () => {
+  const { kubernetesResourceConfigurationDigest } = await import("../dist/kubernetes.js");
+  const resource = { ...job(), apiVersion: "batch/v1", kind: "Job",
+    metadata: { ...job().metadata, namespace: "checkpoint-test" },
+    spec: { template: { metadata: { labels: {} }, spec: { restartPolicy: "Never",
+      containers: [{ name: "runtime", image: runtimeRelease }] } } } };
+  const digest = kubernetesResourceConfigurationDigest(resource);
+  resource.metadata.annotations["codeops.example/resource-configuration-digest"] = digest;
+  const client = new ReconciliationClient(snapshot(), null);
+  assert.equal(await recordInteractiveRuntimeJobProgress(client, { candidate, job: resource, observedAt }), "registered");
+  assert.equal(client.jobProgress.job_uid, jobUid);
+  assert.equal(client.jobProgress.resource_configuration_digest, digest);
+  const tampered = structuredClone(resource);
+  tampered.spec.template.spec.containers[0].image = `example/changed@sha256:${"f".repeat(64)}`;
+  assert.equal(await recordInteractiveRuntimeJobProgress(client, { candidate, job: tampered, observedAt }), "advanced");
+  assert.equal(client.jobProgress.resource_configuration_digest, null);
+  const legacy = new ReconciliationClient(snapshot(), null);
+  assert.equal(await recordInteractiveRuntimeJobProgress(legacy, { candidate, job: job(), observedAt }), "registered");
+  assert.equal(legacy.jobProgress.resource_configuration_digest, null);
 });

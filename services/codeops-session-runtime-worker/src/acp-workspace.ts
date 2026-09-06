@@ -9,6 +9,7 @@ import {
   open,
   readFile,
   readdir,
+  realpath,
   rename,
   rm,
   writeFile,
@@ -21,9 +22,12 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import {
   canonicalJsonText,
+  checkpointDescriptorSchema,
+  checkpointPathEntrySchema,
   isWorkspaceSessionIdentity,
   sessionPermissionOperationSchema,
   sessionTimelineUpdateSchema,
+  sha256CanonicalJsonDigest,
   workspaceManifestSchema,
   type SessionPermissionOperation,
   type SessionContentBlock,
@@ -619,6 +623,8 @@ export function createAcpPermissionRelay(input: {
 interface StoredAcpState {
   readonly version: "codeops.acp-session-state/v1";
   readonly sessions: Readonly<Record<string, string>>;
+  readonly workspaces?: Readonly<Record<string, { readonly path: string;
+    readonly generation: number; readonly operationId: string }>>;
 }
 
 export interface AcpAgentSessionConnection {
@@ -802,7 +808,21 @@ function parseState(raw: unknown): StoredAcpState {
       return [sessionId, acpSessionId];
     }),
   );
-  return { version: "codeops.acp-session-state/v1", sessions };
+  const workspaces = (raw as StoredAcpState).workspaces;
+  if (workspaces !== undefined) {
+    if (workspaces === null || typeof workspaces !== "object" || Array.isArray(workspaces)) {
+      throw new Error("ACP workspace state is invalid");
+    }
+    for (const [sessionId, entry] of Object.entries(workspaces)) {
+      if (!(sessionId in sessions) || !entry || typeof entry.path !== "string" ||
+          !path.isAbsolute(entry.path) || !Number.isSafeInteger(entry.generation) ||
+          entry.generation < 2 || !/^[0-9a-f-]{36}$/.test(entry.operationId)) {
+        throw new Error("ACP workspace state contains invalid restore identity");
+      }
+    }
+  }
+  return { version: "codeops.acp-session-state/v1", sessions,
+    ...(workspaces === undefined ? {} : { workspaces }) };
 }
 
 export class AcpSessionStateStore {
@@ -831,11 +851,15 @@ export class AcpSessionStateStore {
     return (await this.read()).sessions[sessionId] ?? null;
   }
 
-  async set(sessionId: string, acpSessionId: string): Promise<void> {
+  async set(sessionId: string, acpSessionId: string,
+    workspace?: { path: string; generation: number; operationId: string }): Promise<void> {
     const current = await this.read();
     const next = parseState({
       ...current,
       sessions: { ...current.sessions, [sessionId]: acpSessionId },
+      ...(workspace === undefined ? {} : {
+        workspaces: { ...current.workspaces, [sessionId]: workspace },
+      }),
     });
     await mkdir(path.dirname(this.#statePath), { recursive: true });
     const temporary = `${this.#statePath}.${process.pid}.${randomUUID()}.tmp`;
@@ -945,6 +969,8 @@ interface ScratchBundleEntry {
   readonly type: "directory" | "file";
   readonly executable?: boolean;
   readonly contentBase64?: string;
+  readonly bytes?: number;
+  readonly digest?: string;
 }
 
 async function collectScratchEntry(
@@ -1023,11 +1049,14 @@ async function collectScratchEntry(
     chunks.push(buffer.subarray(0, bytesRead));
     position += bytesRead;
   }
+  const content = Buffer.concat(chunks);
   entries.push({
     path: relative,
     type: "file",
     executable: (stat.mode & 0o111) !== 0,
-    contentBase64: Buffer.concat(chunks).toString("base64"),
+    contentBase64: content.toString("base64"),
+    bytes: content.byteLength,
+    digest: `sha256:${createHash("sha256").update(content).digest("hex")}`,
   });
 }
 
@@ -1084,7 +1113,7 @@ export async function captureScratchArtifactDigest(
   return (await captureScratchArtifact(scratchRoot)).digest;
 }
 
-async function captureWorkspaceCheckpointArtifacts(
+export async function captureWorkspaceCheckpointArtifacts(
   workspaceRoot: string,
   rawManifest: WorkspaceManifest,
   captureRoot: string,
@@ -1107,13 +1136,90 @@ async function captureWorkspaceCheckpointArtifacts(
     });
   }
   const scratch = await captureScratchArtifact(path.join(root, manifest.scratchPath));
+  const scratchBundle = JSON.parse(scratch.content.toString("utf8")) as {
+    readonly entries: readonly ScratchBundleEntry[];
+  };
   return {
-    workspaceManifestDigest: `sha256:${createHash("sha256")
-      .update(JSON.stringify(manifest))
-      .digest("hex")}`,
+    workspaceManifestDigest: sha256CanonicalJsonDigest(manifest),
     sourcePatches,
     scratch,
+    pathSet: [
+      ...sourcePatches.map((source) => ({
+        path: manifest.sources.find(({ catalogKey }) =>
+          catalogKey === source.catalogKey)!.checkoutPath,
+        type: "file" as const,
+        bytes: source.content.byteLength,
+        digest: source.patchDigest,
+        executable: false,
+      })),
+      ...scratchBundle.entries.flatMap((entry) => entry.path === "." ? [] : [{
+        path: path.posix.join(manifest.scratchPath, entry.path),
+        type: entry.type,
+        bytes: entry.type === "file" ? entry.bytes! : 0,
+        ...(entry.type === "file" ? {
+          digest: entry.digest!, executable: entry.executable ?? false,
+        } : {}),
+      }]),
+    ],
   };
+}
+
+export async function captureVerifiedWorkspaceCheckpoint(input: {
+  readonly workspaceRoot: string;
+  readonly manifest: WorkspaceManifest;
+  readonly captureRoot: string;
+  readonly checkpointId: string;
+  readonly sessionId: string;
+  readonly generation: number;
+  readonly workspaceJobUid: string;
+  readonly resourceConfigurationDigest: string;
+  readonly workspaceConfigurationDigest: string;
+  readonly capturedAt: string;
+}) {
+  const captured = await captureWorkspaceCheckpointArtifacts(
+    input.workspaceRoot, input.manifest, input.captureRoot,
+  );
+  const sourcePatches = captured.sourcePatches.map((source) => ({
+    artifactId: `artifact:${input.checkpointId}:source:${source.catalogKey}`,
+    catalogKey: source.catalogKey,
+    repository: source.repository,
+    checkoutPath: input.manifest.sources.find(({ catalogKey }) =>
+      catalogKey === source.catalogKey)!.checkoutPath,
+    baseSha: source.baseSha,
+    bytes: source.content.byteLength,
+    digest: source.patchDigest,
+  }));
+  const scratchArtifact = {
+    artifactId: `artifact:${input.checkpointId}:scratch`,
+    bytes: captured.scratch.content.byteLength,
+    digest: captured.scratch.digest,
+  };
+  const manifest = {
+    version: "codeops.checkpoint-manifest/v1" as const,
+    checkpointId: input.checkpointId,
+    binding: {
+      version: "codeops.checkpoint-workspace-binding/v1" as const,
+      sessionId: input.sessionId,
+      generation: input.generation,
+      workspaceJobUid: input.workspaceJobUid,
+      resourceConfigurationDigest: input.resourceConfigurationDigest,
+      workspaceConfigurationDigest: input.workspaceConfigurationDigest,
+      workspaceManifestDigest: captured.workspaceManifestDigest,
+    },
+    sourcePatches,
+    scratchArtifact,
+    pathSetDigest: sha256CanonicalJsonDigest(captured.pathSet.map(entry => checkpointPathEntrySchema.parse(entry))),
+    pathCount: captured.pathSet.length,
+    totalBytes: sourcePatches.reduce((sum, source) => sum + source.bytes, 0) +
+      scratchArtifact.bytes,
+    capturedAt: input.capturedAt,
+  };
+  const descriptor = checkpointDescriptorSchema.parse({
+    version: "codeops.checkpoint-descriptor/v1",
+    manifest,
+    manifestDigest: sha256CanonicalJsonDigest(manifest),
+  });
+  return { descriptor, captured };
 }
 
 export async function captureWorkspaceCheckpoint(
@@ -1144,7 +1250,7 @@ export async function captureWorkspaceCheckpoint(
 
 export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   readonly #socketPath: string;
-  readonly #workspace: string;
+  #workspace: string;
   readonly #state: AcpSessionStateStore;
   readonly #permissions: AcpPermissionRelay;
   readonly #socketTimeoutMs: number;
@@ -1156,6 +1262,16 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   readonly #prepareModelAuthority?: () => Promise<void>;
   readonly #providerCooldownMs: number;
   readonly #delay: (milliseconds: number) => Promise<void>;
+  readonly #checkpointWorkspace?: () => Promise<{
+    readonly jobUid: string;
+    readonly resourceConfigurationDigest: string;
+    readonly workspaceConfigurationDigest: string;
+  }>;
+  readonly #restoreCheckpoint?: (dispatch: SessionRuntimeDispatch) => Promise<{
+    readonly workspace: string;
+    readonly verification: { readonly operationId: string;
+      readonly descriptor: ReturnType<typeof checkpointDescriptorSchema.parse> };
+  }>;
 
   constructor(input: {
     readonly socketPath: string;
@@ -1170,6 +1286,16 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     readonly prepareModelAuthority?: () => Promise<void>;
     readonly providerCooldownMs?: number;
     readonly delay?: (milliseconds: number) => Promise<void>;
+    readonly checkpointWorkspace?: () => Promise<{
+      readonly jobUid: string;
+      readonly resourceConfigurationDigest: string;
+      readonly workspaceConfigurationDigest: string;
+    }>;
+    readonly restoreCheckpoint?: (dispatch: SessionRuntimeDispatch) => Promise<{
+      readonly workspace: string;
+      readonly verification: { readonly operationId: string;
+        readonly descriptor: ReturnType<typeof checkpointDescriptorSchema.parse> };
+    }>;
   }) {
     this.#socketPath = boundedAbsolutePath("ACP socket path", input.socketPath);
     this.#workspace = boundedAbsolutePath("workspace", input.workspace);
@@ -1184,6 +1310,8 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     this.#prepareModelAuthority = input.prepareModelAuthority;
     this.#providerCooldownMs = input.providerCooldownMs ?? 5_000;
     this.#delay = input.delay ?? ((milliseconds) => delay(milliseconds));
+    this.#checkpointWorkspace = input.checkpointWorkspace;
+    this.#restoreCheckpoint = input.restoreCheckpoint;
     if (
       !Number.isSafeInteger(this.#socketTimeoutMs) ||
       this.#socketTimeoutMs < 1_000 ||
@@ -1331,10 +1459,30 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     }
   }
 
+  async #selectWorkspace(dispatch: SessionRuntimeDispatch): Promise<void> {
+    const stored = (await this.#state.read()).workspaces?.[dispatch.command.sessionId];
+    if (!stored) return;
+    if (stored.generation !== dispatch.command.generation) {
+      throw new Error("ACP restored workspace generation drifted");
+    }
+    const root = await realpath(stored.path);
+    const stat = await lstat(stored.path);
+    const captureRoot = await realpath(this.#captureRoot);
+    if (root !== path.resolve(stored.path) || !stat.isDirectory() ||
+        stat.isSymbolicLink() || stat.uid !== process.getuid?.() ||
+        (stat.mode & 0o077) !== 0 ||
+        !root.startsWith(`${captureRoot}${path.sep}`) ||
+        !path.basename(root).startsWith(`.codeops-restore-${stored.operationId}-`)) {
+      throw new Error("ACP restored workspace is outside its private runtime state root");
+    }
+    this.#workspace = root;
+  }
+
   async #activeAcpSession(
     dispatch: SessionRuntimeDispatch,
     agent: AcpAgentSessionConnection,
   ): Promise<string> {
+    await this.#selectWorkspace(dispatch);
     const brokerSessionId = dispatch.command.sessionId;
     const stored =
       (await this.#state.get(brokerSessionId)) ??
@@ -1369,6 +1517,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     dispatch: SessionRuntimeDispatch,
     type: "checkpoint" | "hibernate",
   ): Promise<RuntimeExecutionResult> {
+    await this.#selectWorkspace(dispatch);
     const acpSessionId =
       (await this.#state.get(dispatch.command.sessionId)) ??
       dispatch.snapshot.checkpoint?.acpSessionId ??
@@ -1384,11 +1533,29 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
         throw new Error("workspace checkpoint requires durable artifact storage");
       }
       const checkpointId = this.#uuid();
-      const captured = await captureWorkspaceCheckpointArtifacts(
-        this.#workspace,
-        dispatch.snapshot.identity.workspace,
-        this.#captureRoot,
-      );
+      const checkpointWorkspace = this.#checkpointWorkspace === undefined
+        ? undefined : await this.#checkpointWorkspace();
+      const verified = this.#checkpointWorkspace === undefined ? undefined :
+        await captureVerifiedWorkspaceCheckpoint({
+          workspaceRoot: this.#workspace,
+          manifest: dispatch.snapshot.identity.workspace,
+          captureRoot: this.#captureRoot,
+          checkpointId,
+          sessionId: dispatch.command.sessionId,
+          generation: dispatch.command.generation,
+          workspaceJobUid: checkpointWorkspace!.jobUid,
+          resourceConfigurationDigest:
+            checkpointWorkspace!.resourceConfigurationDigest,
+          workspaceConfigurationDigest:
+            checkpointWorkspace!.workspaceConfigurationDigest,
+          capturedAt: this.#now().toISOString(),
+        });
+      const captured = verified?.captured ??
+        await captureWorkspaceCheckpointArtifacts(
+          this.#workspace,
+          dispatch.snapshot.identity.workspace,
+          this.#captureRoot,
+        );
       const evidenceReferences = [];
       for (const patch of captured.sourcePatches) {
         const artifactId = `artifact:${checkpointId}:source:${patch.catalogKey}`;
@@ -1417,7 +1584,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
       evidenceReferences.push(scratchArtifactId);
       return {
         type,
-        material: {
+        material: verified === undefined ? {
           version: "codeops.session-workspace-checkpoint-material/v1",
           checkpointId,
           workspaceManifestDigest: captured.workspaceManifestDigest,
@@ -1425,6 +1592,11 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
             ({ content: _content, ...patch }) => patch,
           ),
           scratchArtifactDigest: captured.scratch.digest,
+          acpSessionId,
+          evidenceReferences,
+        } : {
+          version: "codeops.session-workspace-checkpoint-material/v2",
+          descriptor: verified.descriptor,
           acpSessionId,
           evidenceReferences,
         },
@@ -1458,10 +1630,16 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   async resume(dispatch: SessionRuntimeDispatch): Promise<RuntimeExecutionResult> {
     const acpSessionId = dispatch.snapshot.checkpoint?.acpSessionId;
     if (!acpSessionId) throw new Error("resume requires an ACP checkpoint");
+    const restored = this.#restoreCheckpoint === undefined ? undefined :
+      await this.#restoreCheckpoint(dispatch);
+    if (restored !== undefined) this.#workspace = restored.workspace;
     await this.#connectWithModelRecovery(dispatch, async (agent) => {
       await agent.loadSession(acpSessionId, this.#workspace);
     });
-    await this.#state.set(dispatch.command.sessionId, acpSessionId);
+    await this.#state.set(dispatch.command.sessionId, acpSessionId,
+      restored === undefined ? undefined : { path: restored.workspace,
+        generation: dispatch.command.generation + 1,
+        operationId: restored.verification.operationId });
     const acquiredAt = this.#now();
     return {
       type: "resume",
@@ -1470,11 +1648,15 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
         holderId: `session-runtime:${dispatch.command.sessionId}`,
         acquiredAt: acquiredAt.toISOString(),
         expiresAt: new Date(acquiredAt.getTime() + 60 * 60_000).toISOString(),
+        ...(restored === undefined ? {} : {
+          restoreVerification: restored.verification,
+        }),
       },
     };
   }
 
   async fork(dispatch: SessionRuntimeDispatch): Promise<RuntimeExecutionResult> {
+    await this.#selectWorkspace(dispatch);
     const parentAcpSessionId = dispatch.snapshot.checkpoint?.acpSessionId;
     if (!parentAcpSessionId) throw new Error("fork requires an ACP checkpoint");
     const childBrokerSessionId = `ses_${this.#uuid().replaceAll("-", "")}`;

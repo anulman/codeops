@@ -66,6 +66,7 @@ export function validateClaimedDispatchAuthority(
     readonly now: Date;
     readonly sessionSnapshot?: unknown;
     readonly requireClaimCount?: boolean;
+    readonly allowedCommandTypes?: readonly SessionRuntimeDispatch["command"]["type"][];
   },
 ): ClaimedDispatchAuthority {
   if (!workerPattern.test(input.workerId)) {
@@ -132,7 +133,9 @@ export function validateClaimedDispatchAuthority(
   }
   if (
     dispatch.dispatchId !== input.dispatchId ||
-    !["prompt", "resume"].includes(dispatch.command.type)
+    !(input.allowedCommandTypes ?? ["prompt", "resume"]).includes(
+      dispatch.command.type,
+    )
   ) {
     throw new ClaimedDispatchAuthorityConflictError(
       "authority belongs only to the exact claimed prompt or resume dispatch",
@@ -167,6 +170,7 @@ export async function loadClaimedDispatchAuthority(
     readonly claimToken: string;
     readonly now?: () => Date;
     readonly requireClaimCount?: boolean;
+    readonly allowedCommandTypes?: readonly SessionRuntimeDispatch["command"]["type"][];
   },
 ): Promise<ClaimedDispatchAuthority> {
   const result = await client.query<ClaimedDispatchRow>(
@@ -196,6 +200,7 @@ export async function loadClaimedDispatchAuthority(
     claimToken: input.claimToken,
     now: (input.now ?? (() => new Date()))(),
     requireClaimCount: input.requireClaimCount,
+    allowedCommandTypes: input.allowedCommandTypes,
   });
 }
 

@@ -1,7 +1,8 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
 import {
+  isWorkspaceSessionIdentity,
   runtimeProfileSchema,
   sessionJobInitializationRequestSchema,
 } from "@codeops/codeops-contracts";
@@ -17,6 +18,7 @@ import {
 } from "./initialization.js";
 import { PostgresRuntimeExecutionReceiptStore } from "./postgres-receipts.js";
 import { PostgresWorkspaceCheckpointArtifactStore } from "./workspace-artifacts.js";
+import { restoreVerifiedWorkspaceCheckpoint, materializeCheckpointBase } from "./workspace-recovery.js";
 import { runSessionRuntimeWorker } from "./runner.js";
 import { SessionRuntimeTransport } from "./transport.js";
 import type { RuntimeExecutor } from "./transport.js";
@@ -187,6 +189,67 @@ try {
       socketTimeoutMs,
       permissions: createAcpPermissionRelay({ context }),
       artifacts: workspaceArtifacts,
+      checkpointWorkspace: () => context.checkpointWorkspaceBinding(),
+      restoreCheckpoint: async (dispatch) => {
+        if (!isWorkspaceSessionIdentity(dispatch.snapshot.identity)) {
+          throw new Error("checkpoint recovery requires a workspace Session identity");
+        }
+        const recovery = await context.readCheckpointRecovery();
+        if (!("descriptor" in recovery)) {
+          throw new Error("checkpoint recovery descriptor is missing");
+        }
+        const descriptor = recovery.descriptor;
+        const expectedArtifacts = [...descriptor.manifest.sourcePatches,
+          descriptor.manifest.scratchArtifact];
+        const reader = { get: async (artifactId: string) => {
+          const expected = expectedArtifacts.find((artifact) =>
+            artifact.artifactId === artifactId);
+          if (expected === undefined) return null;
+          const chunks: Buffer[] = [];
+          let offset = 0;
+          while (offset < expected.bytes) {
+            const chunk = await context.readCheckpointRecovery({ artifactId, offset });
+            if (!("content" in chunk) || chunk.bytes !== expected.bytes ||
+                chunk.digest !== expected.digest || chunk.nextOffset <= offset ||
+                chunk.nextOffset > expected.bytes || chunk.content.byteLength > 512 * 1024) {
+              throw new Error("checkpoint recovery artifact chunk drifted");
+            }
+            chunks.push(chunk.content);
+            offset = chunk.nextOffset;
+            if (chunk.complete !== (offset === expected.bytes)) {
+              throw new Error("checkpoint recovery completion marker drifted");
+            }
+          }
+          const source = descriptor.manifest.sourcePatches.find((artifact) =>
+            artifact.artifactId === artifactId);
+          return { artifactId, sessionId: descriptor.manifest.binding.sessionId,
+            generation: descriptor.manifest.binding.generation,
+            checkpointId: descriptor.manifest.checkpointId,
+            kind: source === undefined ? "scratch-bundle" as const :
+              "source-patch" as const,
+            ...(source === undefined ? {} : { catalogKey: source.catalogKey }),
+            digest: expected.digest, content: Buffer.concat(chunks) };
+        } };
+        const privateRoot = await mkdtemp(path.join(path.dirname(statePath), ".codeops-recovery-"));
+        const restored = await restoreVerifiedWorkspaceCheckpoint({
+          descriptor, workspaceManifest: dispatch.snapshot.identity.workspace,
+          artifacts: reader, privateRoot,
+          restoreOperationId: recovery.restoreOperationId,
+          restoredWorkspaceJobUid: recovery.workspaceBinding.jobUid,
+          restoredResourceConfigurationDigest:
+            recovery.workspaceBinding.resourceConfigurationDigest,
+          restoredWorkspaceConfigurationDigest:
+            recovery.workspaceBinding.workspaceConfigurationDigest,
+          restoredGeneration: dispatch.command.generation + 1,
+          restoredAt: new Date().toISOString(),
+          materializeBase: ({ source, target }) => materializeCheckpointBase({
+            source, target, materializedWorkspace: workspace,
+          }),
+        });
+        return { workspace: restored.workspace, verification: {
+          operationId: recovery.restoreOperationId, descriptor,
+        } };
+      },
       prepareModelAuthority: async () => {
         const authority = await context.issueModelAuthority();
         await publishModelProxyToken(

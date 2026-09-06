@@ -1,5 +1,6 @@
 import {
   canonicalJsonText,
+  checkpointDescriptorSchema,
   githubMutationResultSchema,
   githubBranchPublishCandidateManifestRequestSchema,
   githubBranchPublishCandidateChunkRequestSchema,
@@ -43,6 +44,7 @@ import {
   type GitHubBranchPublishCandidateChunkRequest,
   type GitHubReadResult,
   type SessionIdentity,
+  type CheckpointDescriptor,
   type RuntimeProfile,
   type SessionRuntimeCompletion,
   type SessionRuntimeDispatch,
@@ -156,6 +158,20 @@ export type RuntimeGitHubMutationRequest =
 
 export interface RuntimeExecutionContext {
   readonly isAdmittedInitialDispatch: boolean;
+  checkpointWorkspaceBinding(): Promise<{ readonly jobUid: string;
+    readonly resourceConfigurationDigest: string;
+    readonly workspaceConfigurationDigest: string }>;
+  readCheckpointRecovery(input?: { readonly artifactId: string;
+    readonly offset: number }): Promise<
+      { readonly descriptor: CheckpointDescriptor;
+        readonly restoreOperationId: string;
+        readonly workspaceBinding: { readonly jobUid: string;
+          readonly resourceConfigurationDigest: string;
+          readonly workspaceConfigurationDigest: string } } |
+      { readonly artifactId: string; readonly offset: number;
+        readonly content: Buffer; readonly nextOffset: number;
+        readonly complete: boolean; readonly bytes: number;
+        readonly digest: string }>;
   issueModelAuthority(): Promise<SessionRuntimeModelAuthorityResponse>;
   bindGitHubMutationOperationId?(
     operation: GitHubMutationOperation,
@@ -639,6 +655,94 @@ export class SessionRuntimeTransport {
     return result;
   }
 
+  async #checkpointRead(
+    claim: SessionRuntimeDispatchClaimV2,
+    suffix: "checkpoint-binding" | "checkpoint-recovery",
+    body: Readonly<Record<string, unknown>>,
+    now: () => Date,
+  ): Promise<unknown> {
+    // Retry only these exact idempotent reads within the existing transport.
+    // Never repeat an ACP effect or discard an incomplete execution receipt.
+    for (let attempt = 0; ; attempt++) {
+      if (now().getTime() >= Date.parse(claim.claimExpiresAt)) {
+        throw new SessionRuntimeTransportError("checkpoint read claim expired");
+      }
+      try {
+        return await this.#post(`/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/${suffix}`,
+          { claimToken: claim.claimToken, ...body });
+      } catch (error) {
+        if (attempt >= 3 || !(error instanceof SessionRuntimeRequestFailureError ||
+            error instanceof SessionRuntimeHttpStatusError && [502, 503, 504].includes(error.status))) {
+          throw error;
+        }
+        await delay([100, 250, 1000][attempt]);
+      }
+    }
+  }
+
+  async #checkpointWorkspaceBinding(
+    claim: SessionRuntimeDispatchClaimV2,
+    now: () => Date,
+  ): Promise<{ readonly jobUid: string;
+    readonly resourceConfigurationDigest: string;
+    readonly workspaceConfigurationDigest: string }> {
+    if (!['checkpoint', 'hibernate'].includes(claim.dispatch.command.type) ||
+        now().getTime() >= Date.parse(claim.claimExpiresAt)) {
+      throw new SessionRuntimeTransportError(
+        "only one live claimed checkpoint may read its workspace binding",
+      );
+    }
+    return z.object({
+      version: z.literal("codeops.checkpoint-workspace-binding-result/v1"),
+      jobUid: z.string().uuid(),
+      resourceConfigurationDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+      workspaceConfigurationDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+    }).strict().parse(await this.#checkpointRead(claim, "checkpoint-binding", {}, now));
+  }
+
+  async #readCheckpointRecovery(
+    claim: SessionRuntimeDispatchClaimV2,
+    input: { readonly artifactId: string; readonly offset: number } | undefined,
+    now: () => Date,
+  ): Promise<Awaited<ReturnType<RuntimeExecutionContext["readCheckpointRecovery"]>>> {
+    if (claim.dispatch.command.type !== "resume" ||
+        now().getTime() >= Date.parse(claim.claimExpiresAt)) {
+      throw new SessionRuntimeTransportError(
+        "only one live claimed resume may read checkpoint recovery data",
+      );
+    }
+    const raw = await this.#checkpointRead(claim, "checkpoint-recovery", input ?? {}, now);
+    if (input === undefined) {
+      const parsed = z.object({
+        version: z.literal("codeops.checkpoint-recovery-read/v1"),
+        descriptor: checkpointDescriptorSchema,
+        restoreOperationId: z.string().uuid(),
+        workspaceBinding: z.object({
+          jobUid: z.string().uuid(),
+          resourceConfigurationDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+          workspaceConfigurationDigest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+        }).strict(),
+      }).strict().parse(raw);
+      return { descriptor: parsed.descriptor,
+        restoreOperationId: parsed.restoreOperationId,
+        workspaceBinding: parsed.workspaceBinding };
+    }
+    const parsed = z.object({
+      version: z.literal("codeops.checkpoint-recovery-read/v1"),
+      artifactId: z.string(), offset: z.number().int().nonnegative(),
+      contentBase64: z.string(), nextOffset: z.number().int().nonnegative(),
+      complete: z.boolean(), bytes: z.number().int().nonnegative(),
+      digest: z.string().regex(/^sha256:[0-9a-f]{64}$/),
+    }).strict().parse(raw);
+    const content = Buffer.from(parsed.contentBase64, "base64");
+    if (content.toString("base64") !== parsed.contentBase64 ||
+        parsed.artifactId !== input.artifactId || parsed.offset !== input.offset ||
+        parsed.nextOffset !== parsed.offset + content.byteLength) {
+      throw new SessionRuntimeTransportError("checkpoint recovery chunk drifted");
+    }
+    return { ...parsed, content };
+  }
+
   async #createWorkItem(
     claim: SessionRuntimeDispatchClaimV2,
     input: {
@@ -833,6 +937,10 @@ export class SessionRuntimeTransport {
     try {
       execution = await input.execute(claim.dispatch, {
       isAdmittedInitialDispatch: claim.isAdmittedInitialDispatch,
+      checkpointWorkspaceBinding: () =>
+        this.#checkpointWorkspaceBinding(claim, now),
+      readCheckpointRecovery: (request) =>
+        this.#readCheckpointRecovery(claim, request, now),
       // Claim authority remains captured inside the transport callback. The
       // ACP/workspace executor receives neither bearer nor claim token.
       bindGitHubMutationOperationId: (operation, mutationInput) =>

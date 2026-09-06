@@ -12,7 +12,7 @@ import {
 } from "@codeops/codeops-contracts";
 import type { TransactionClient } from "./session-broker-repository.js";
 import { sessionCapabilitiesFor } from "./session-broker-transitions.js";
-import { kubernetesIdentityLabel } from "./kubernetes.js";
+import { kubernetesIdentityLabel, observedResourceConfigurationMatches } from "./kubernetes.js";
 import { reconcileFailedWorkItemAttempt } from "./work-item-retry.js";
 
 export interface InteractiveRuntimeCandidate {
@@ -201,11 +201,15 @@ function resourceIdentity(value: Record<string, unknown>): {
 function requireJobIdentity(
   candidate: InteractiveRuntimeCandidate,
   job: Record<string, unknown>,
-): ReturnType<typeof resourceIdentity> & { readonly legacy: boolean } {
+): ReturnType<typeof resourceIdentity> & { readonly legacy: boolean;
+  readonly resourceConfigurationDigest: string | null } {
   const jobIdentity = resourceIdentity(job);
   const metadata = record(job.metadata);
   const labels = record(metadata?.labels);
   const annotations = record(metadata?.annotations);
+  const resourceConfigurationDigest = string(
+    annotations?.["codeops.example/resource-configuration-digest"],
+  );
   const identityAnnotationKeys = [
     "codeops.example/session-generation",
     "codeops.example/session-lease-id",
@@ -243,7 +247,13 @@ function requireJobIdentity(
   ) {
     throw new Error("Kubernetes runtime Job identity drifted from the Session");
   }
-  return { ...jobIdentity, legacy: completeLegacyIdentity };
+  return { ...jobIdentity, legacy: completeLegacyIdentity,
+    resourceConfigurationDigest: resourceConfigurationDigest !== null &&
+      typeof job.apiVersion === "string" && job.kind === "Job" &&
+      /^sha256:[0-9a-f]{64}$/.test(resourceConfigurationDigest) &&
+      observedResourceConfigurationMatches(
+        job as unknown as Parameters<typeof observedResourceConfigurationMatches>[0],
+        resourceConfigurationDigest) ? resourceConfigurationDigest : null };
 }
 
 export async function listRetainedInteractiveRuntimeJobUids(
@@ -302,6 +312,7 @@ interface StoredJobProgressRow extends Record<string, unknown> {
   readonly job_name: unknown;
   readonly job_uid: unknown;
   readonly job_resource_version: unknown;
+  readonly resource_configuration_digest: unknown;
 }
 
 export async function recordInteractiveRuntimeJobProgress(
@@ -338,7 +349,8 @@ export async function recordInteractiveRuntimeJobProgress(
       return "stale";
     }
     const existing = await client.query<StoredJobProgressRow>(
-      `SELECT lease_id, run_id, job_name, job_uid, job_resource_version
+      `SELECT lease_id, run_id, job_name, job_uid, job_resource_version,
+              resource_configuration_digest
          FROM codeops.session_runtime_job_progress
         WHERE session_id = $1 AND generation = $2
         FOR UPDATE`,
@@ -353,6 +365,22 @@ export async function recordInteractiveRuntimeJobProgress(
         row.job_uid !== job.uid
       ) {
         throw new Error("durable runtime Job identity drifted from Kubernetes");
+      }
+      if (row.resource_configuration_digest != null &&
+          row.resource_configuration_digest !== job.resourceConfigurationDigest) {
+        // Invalidate live checkpoint authority on configuration drift. Keeping
+        // the last valid digest would let cleanup use stale configuration.
+        // Immutable checkpoint evidence retains the original binding. Legacy
+        // progress with a null digest is never promoted by observation alone.
+        await client.query(`UPDATE codeops.session_runtime_job_progress
+          SET resource_configuration_digest=NULL,
+              job_resource_version=GREATEST(job_resource_version,$3::numeric),
+              observed_at=$4::timestamptz
+          WHERE session_id=$1 AND generation=$2 AND job_uid=$5`,
+        [input.candidate.sessionId, input.candidate.generation,
+          job.resourceVersion, input.observedAt, job.uid]);
+        await client.query("COMMIT");
+        return "advanced";
       }
       const storedVersion = BigInt(String(row.job_resource_version));
       const observedVersion = BigInt(job.resourceVersion);
@@ -392,11 +420,12 @@ export async function recordInteractiveRuntimeJobProgress(
     await client.query(
       `INSERT INTO codeops.session_runtime_job_progress
          (session_id, generation, lease_id, run_id, job_name, job_uid,
-          job_resource_version, observed_at)
-       VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8::timestamptz)`,
+          job_resource_version, observed_at, resource_configuration_digest)
+       VALUES ($1, $2, $3, $4, $5, $6, $7::numeric, $8::timestamptz, $9)`,
       [input.candidate.sessionId, input.candidate.generation,
         input.candidate.leaseId, input.candidate.runId, input.candidate.jobName,
-        job.uid, job.resourceVersion, input.observedAt],
+        job.uid, job.resourceVersion, input.observedAt,
+        job.resourceConfigurationDigest],
     );
     await client.query("COMMIT");
     return "registered";

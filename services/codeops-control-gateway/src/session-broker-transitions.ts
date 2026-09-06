@@ -16,6 +16,7 @@ import {
   type SessionSnapshot,
   type SessionState,
   type SessionTimelineUpdate,
+  type CheckpointDescriptor,
 } from "@codeops/codeops-contracts";
 
 type LocalLifecycleCommand = Extract<
@@ -63,9 +64,17 @@ export interface WorkspaceRuntimeCheckpointMaterial {
   readonly evidenceReferences: readonly string[];
 }
 
+export interface VerifiedWorkspaceRuntimeCheckpointMaterial {
+  readonly version: "codeops.session-workspace-checkpoint-material/v2";
+  readonly descriptor: CheckpointDescriptor;
+  readonly acpSessionId: string;
+  readonly evidenceReferences: readonly string[];
+}
+
 export type RuntimeCheckpointMaterial =
   | LegacyRuntimeCheckpointMaterial
-  | WorkspaceRuntimeCheckpointMaterial;
+  | WorkspaceRuntimeCheckpointMaterial
+  | VerifiedWorkspaceRuntimeCheckpointMaterial;
 
 export interface RuntimeLeaseMaterial {
   readonly leaseId: string;
@@ -432,10 +441,32 @@ export function applyCheckpointSessionTransition(
     throw new Error("checkpoint material must match the session workspace identity");
   }
   if (isWorkspaceSessionIdentity(snapshot.identity) && workspaceMaterial) {
+    const normalized = material.version ===
+      "codeops.session-workspace-checkpoint-material/v2" ? {
+        version: "codeops.session-workspace-checkpoint-material/v1" as const,
+        checkpointId: material.descriptor.manifest.checkpointId,
+        workspaceManifestDigest:
+          material.descriptor.manifest.binding.workspaceManifestDigest,
+        sourcePatches: material.descriptor.manifest.sourcePatches.map((source) => ({
+          catalogKey: source.catalogKey,
+          repository: source.repository,
+          baseSha: source.baseSha,
+          patchDigest: source.digest,
+        })),
+        scratchArtifactDigest: material.descriptor.manifest.scratchArtifact.digest,
+        acpSessionId: material.acpSessionId,
+        evidenceReferences: material.evidenceReferences,
+      } : material;
+    if (material.version === "codeops.session-workspace-checkpoint-material/v2" && (
+      material.descriptor.manifest.binding.sessionId !== snapshot.sessionId ||
+      material.descriptor.manifest.binding.generation !== snapshot.generation
+    )) {
+      throw new Error("verified checkpoint descriptor drifted from the Session identity");
+    }
     const expected = snapshot.identity.workspace.sources;
     if (
-      material.sourcePatches.length !== expected.length ||
-      material.sourcePatches.some((patch, index) => {
+      normalized.sourcePatches.length !== expected.length ||
+      normalized.sourcePatches.some((patch, index) => {
         const source = expected[index];
         return source === undefined ||
           patch.catalogKey !== source.catalogKey ||
@@ -449,7 +480,20 @@ export function applyCheckpointSessionTransition(
   const checkpoint = sessionCheckpointSchema.parse(
     workspaceIdentity && workspaceMaterial
       ? {
-          ...material,
+          ...(material.version === "codeops.session-workspace-checkpoint-material/v2"
+            ? {
+                checkpointId: material.descriptor.manifest.checkpointId,
+                workspaceManifestDigest:
+                  material.descriptor.manifest.binding.workspaceManifestDigest,
+                sourcePatches: material.descriptor.manifest.sourcePatches.map((source) => ({
+                  catalogKey: source.catalogKey, repository: source.repository,
+                  baseSha: source.baseSha, patchDigest: source.digest,
+                })),
+                scratchArtifactDigest: material.descriptor.manifest.scratchArtifact.digest,
+                acpSessionId: material.acpSessionId,
+                evidenceReferences: material.evidenceReferences,
+              }
+            : material),
           version: SESSION_BROKER_VERSION.workspaceCheckpoint,
           sessionId: snapshot.sessionId,
           generation: snapshot.generation,
@@ -545,7 +589,10 @@ export function applyResumeSessionTransition(
     generation,
     state: "running",
     lease: {
-      ...lease,
+      leaseId: lease.leaseId,
+      holderId: lease.holderId,
+      acquiredAt: lease.acquiredAt,
+      expiresAt: lease.expiresAt,
       generation,
       status: "active",
     },

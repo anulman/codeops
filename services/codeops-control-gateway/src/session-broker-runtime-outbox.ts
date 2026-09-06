@@ -28,6 +28,8 @@ import {
 import { resolveSessionRuntimeCompletionSnapshot } from "./session-runtime-permissions.js";
 import { cleanupNoReceiptGitHubBranchCandidatesForDispatch } from "./github-branch-publish-candidates.js";
 import { RuntimeCompatibilityError } from "./runtime-profile-registry.js";
+import { finalizeVerifiedCheckpoint,
+  recordRestoreReceiptInCompletionTransaction } from "./checkpoint-recovery.js";
 
 const workerPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;
 
@@ -803,6 +805,27 @@ export async function completeSessionRuntimeDispatch(
     client,
     { dispatch, claimToken: input.claimToken },
   );
+  const verifiedDescriptor =
+    (completion.type === "checkpoint" || completion.type === "hibernate") &&
+    "version" in completion.material && completion.material.version ===
+      "codeops.session-workspace-checkpoint-material/v2"
+      ? completion.material.descriptor
+      : null;
+  const restoreEvidence = completion.type === "resume" &&
+    completion.material.restoreVerification !== undefined
+    ? { checkpointId: completion.material.restoreVerification.descriptor.manifest.checkpointId,
+        dispatchId: dispatch.dispatchId }
+    : null;
+  if (completion.type === "resume") {
+    const expectedCheckpoint = dispatch.snapshot.checkpoint?.checkpointId;
+    const verified = await client.query(`SELECT checkpoint_id
+      FROM codeops.workspace_checkpoint_descriptors WHERE checkpoint_id=$1`,
+    [expectedCheckpoint]);
+    if (verified.rows.length > 0 && restoreEvidence === null ||
+        restoreEvidence !== null && restoreEvidence.checkpointId !== expectedCheckpoint) {
+      throw new Error("resume requires exact verified checkpoint restore evidence");
+    }
+  }
 
   return executeSessionCommandTransaction(client, {
     command: dispatch.command,
@@ -824,5 +847,21 @@ export async function completeSessionRuntimeDispatch(
       dispatchJson: dispatch,
       completionJson: completion,
     },
+    ...(verifiedDescriptor === null && restoreEvidence === null ? {} : {
+          finalize: async (transaction: TransactionClient,
+            result: SessionCommandResult, committedAt: string) => {
+            if (!["committed", "duplicate"].includes(result.disposition)) return;
+            if (verifiedDescriptor !== null) {
+              await finalizeVerifiedCheckpoint(transaction, {
+                descriptor: verifiedDescriptor, result, finalizedAt: committedAt,
+              });
+            }
+            if (restoreEvidence !== null) {
+              await recordRestoreReceiptInCompletionTransaction(
+                transaction, restoreEvidence,
+              );
+            }
+          },
+        }),
   });
 }

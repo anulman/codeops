@@ -998,6 +998,11 @@ test("persists actual source patches and scratch files before committing a works
     permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
     uuid: () => "99999999-9999-4999-8999-999999999999",
     artifacts: { put: async (artifact) => artifacts.push(artifact) },
+    checkpointWorkspace: async () => ({
+      jobUid: "88888888-8888-4888-8888-888888888888",
+      resourceConfigurationDigest: `sha256:${"b".repeat(64)}`,
+      workspaceConfigurationDigest: `sha256:${"a".repeat(64)}`,
+    }),
     connect: async (_runtimeDispatch, operation) => operation({
       newSession: async () => "acp-workspace-session",
       loadSession: async () => {},
@@ -1030,8 +1035,14 @@ test("persists actual source patches and scratch files before committing a works
   assert.equal(artifacts.length, 2);
   assert.match(artifacts[0].content.toString("utf8"), /\+after/);
   assert.match(artifacts[1].content.toString("utf8"), /Y29uc29sZS5sb2coJ2R1cmFibGUnKQo=/);
-  assert.equal(artifacts[0].digest, checkpoint.material.sourcePatches[0].patchDigest);
-  assert.equal(artifacts[1].digest, checkpoint.material.scratchArtifactDigest);
+  assert.equal(checkpoint.material.version,
+    "codeops.session-workspace-checkpoint-material/v2");
+  assert.equal(artifacts[0].digest,
+    checkpoint.material.descriptor.manifest.sourcePatches[0].digest);
+  assert.equal(artifacts[1].digest,
+    checkpoint.material.descriptor.manifest.scratchArtifact.digest);
+  assert.equal(checkpoint.material.descriptor.manifest.totalBytes,
+    artifacts[0].content.byteLength + artifacts[1].content.byteLength);
 });
 
 test("executes prompt, checkpoint, hibernate, resume, and fork through ACP identity", async () => {
@@ -1181,4 +1192,51 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
     ["fork", "acp-session-parent", root],
     ["fork", "acp-session-parent", root],
   ]);
+});
+
+test("restores verified workspace bytes before loading ACP on the production resume path", async () => {
+  const order = [];
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-resume-path-"));
+  const fresh = path.join(root, ".runtime", ".codeops-restore-cccccccc-cccc-4ccc-8ccc-cccccccccccc-test");
+  await mkdir(fresh, { recursive: true, mode: 0o700 });
+  const lifecycle = new SocketAcpWorkspaceLifecycle({
+    socketPath: "/run/codeops/agent.sock", workspace: root,
+    statePath: path.join(root, ".runtime/state.json"),
+    permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
+    now: () => new Date("2026-09-04T12:00:00.000Z"),
+    uuid: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    restoreCheckpoint: async () => {
+      order.push("restore");
+      return { workspace: fresh, verification: {
+        operationId: "cccccccc-cccc-4ccc-8ccc-cccccccccccc", descriptor: {} } };
+    },
+    connect: async (_dispatch, operation) => operation({
+      newSession: async () => assert.fail(),
+      loadSession: async (_id, cwd) => order.push(`load:${cwd}`),
+      prompt: async () => assert.fail(), forkSession: async () => assert.fail(),
+    }),
+  });
+  const state = { ...snapshot(), state: "hibernated",
+    checkpoint: { checkpointId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      acpSessionId: "acp-restored" } };
+  const result = await lifecycle.resume(dispatch("resume", {
+    checkpointId: state.checkpoint.checkpointId,
+  }, state));
+  assert.deepEqual(order, ["restore", `load:${fresh}`]);
+  assert.equal(result.material.restoreVerification.operationId, "cccccccc-cccc-4ccc-8ccc-cccccccccccc");
+  assert.equal("restoredPathSetDigest" in result.material, false);
+  const next = new SocketAcpWorkspaceLifecycle({
+    socketPath: "/run/codeops/agent.sock", workspace: root,
+    statePath: path.join(root, ".runtime/state.json"),
+    permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
+    connect: async (_dispatch, operation) => operation({
+      loadSession: async (_id, cwd) => order.push(`reload:${cwd}`),
+      newSession: async () => assert.fail(), forkSession: async () => assert.fail(),
+      prompt: async () => ({ response: "continued", stopReason: "end_turn" }),
+    }),
+  });
+  await next.prompt(dispatch("prompt", { generation: 2, prompt: "Continue." }, {
+    ...state, generation: 2, state: "running",
+  }));
+  assert.equal(order.at(-1), `reload:${fresh}`);
 });

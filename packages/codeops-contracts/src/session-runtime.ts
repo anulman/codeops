@@ -10,6 +10,7 @@ import {
   type SessionCommand,
 } from "./session-broker.js";
 import { runtimeBindingSchema, runtimeProfileSchema } from "./runtime-profile.js";
+import { checkpointDescriptorSchema } from "./checkpoint-recovery.js";
 export { sessionRuntimeTerminalObservationSchema } from "./session-broker.js";
 
 const uuid = z.string().uuid();
@@ -161,9 +162,28 @@ export const workspaceSessionRuntimeCheckpointMaterialSchema = z
     "workspace checkpoint source patches must be unique",
   );
 
+export const verifiedWorkspaceSessionRuntimeCheckpointMaterialSchema = z
+  .object({
+    version: z.literal("codeops.session-workspace-checkpoint-material/v2"),
+    descriptor: checkpointDescriptorSchema,
+    acpSessionId: z.string().min(1).max(500),
+    evidenceReferences: z.array(identifier).min(1).max(5),
+  })
+  .strict()
+  .refine((material) => {
+    const artifacts = [
+      ...material.descriptor.manifest.sourcePatches.map(({ artifactId }) => artifactId),
+      material.descriptor.manifest.scratchArtifact.artifactId,
+    ];
+    return material.evidenceReferences.length === artifacts.length &&
+      new Set(material.evidenceReferences).size === artifacts.length &&
+      material.evidenceReferences.every((reference) => artifacts.includes(reference));
+  }, "verified checkpoint evidence must name every exact artifact");
+
 export const sessionRuntimeCheckpointMaterialSchema = z.union([
   legacySessionRuntimeCheckpointMaterialSchema,
   workspaceSessionRuntimeCheckpointMaterialSchema,
+  verifiedWorkspaceSessionRuntimeCheckpointMaterialSchema,
 ]);
 
 const leaseFields = {
@@ -174,7 +194,13 @@ const leaseFields = {
 } as const;
 
 export const sessionRuntimeLeaseMaterialSchema = z
-  .object(leaseFields)
+  .object({
+    ...leaseFields,
+    restoreVerification: z.object({
+      operationId: uuid,
+      descriptor: checkpointDescriptorSchema,
+    }).strict().optional(),
+  })
   .strict()
   .refine(
     (lease) => Date.parse(lease.expiresAt) > Date.parse(lease.acquiredAt),
