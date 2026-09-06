@@ -72,6 +72,8 @@ test('database roles refuse schema destruction and supervisor writes', {skip: !u
         if (role === 'codeops_app') {
           await requireApplicationDatabaseAuthority(connection);
           await connection.query('DELETE FROM codeops.sessions WHERE false');
+          assert.equal((await connection.query("SELECT codeops.session_runtime_owner_binding('missing-session') AS binding")).rows[0].binding, null);
+          assert.equal((await connection.query("SELECT has_function_privilege(current_user, 'codeops.charge_stale_session_model_budget_reservations()', 'EXECUTE') AS allowed")).rows[0].allowed, false);
         }
         for (const statement of [
           'DROP SCHEMA codeops CASCADE', 'DROP TABLE codeops.sessions',
