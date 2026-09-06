@@ -85,3 +85,13 @@ The quickstart example selects managed PostgreSQL, Temporal, and JetStream with
 an external Plane instance. The default chart profile remains `full-managed`.
 Managed Plane uses a two-stage onboarding flow because Plane must create human
 and project identities before CodeOps can receive their IDs and API authority.
+
+For an approved upgrade of an existing installation, use the one-stop
+[`codeopsctl upgrade` invocation](operations/consumer-deployment.md#one-stop-upgrade-coauto-49).
+Keep its private operation directory across retries. Agent output is bounded
+JSON; subprocess output is redacted into private diagnostics without live
+streaming. Use `--status`, then the same inputs with `--resume` for recovery.
+Preserve failure and interruption diagnostics until reconciliation. Qualify
+source changes only in the credential-free isolated runner; test clusters must
+have no production network access. Upgrade does not replace human release or
+environment approval.
