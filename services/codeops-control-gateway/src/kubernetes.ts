@@ -896,7 +896,9 @@ export function createInClusterKubernetesClient(input: {
           return list.items.map((item) => {
             const podRecord = record(item);
             if (podRecord === undefined) throw new Error("Kubernetes Pod response shape is invalid");
-            const pod = resourceRecord(podRecord);
+            // Kubernetes typed lists omit TypeMeta on items. Inherit only absent
+            // fields from the verified v1 PodList; explicit mismatches still fail.
+            const pod = resourceRecord({ apiVersion: "v1", kind: "Pod", ...podRecord });
             if (pod.apiVersion !== "v1" || pod.kind !== "Pod" ||
                 pod.metadata.namespace !== input.namespace) {
               throw new Error("Kubernetes Pod response identity is invalid");

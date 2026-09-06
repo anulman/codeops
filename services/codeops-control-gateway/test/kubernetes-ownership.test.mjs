@@ -822,3 +822,30 @@ test("refuses foreign namespace effects before credentials or requests", async (
   }
   assert.equal(touched, 0);
 });
+
+
+test("PodList items inherit absent TypeMeta without weakening identity checks", async () => {
+  const item = { metadata: { name: "workspace-pod", namespace: "codeops-execution",
+    uid: "live-pod-uid", labels: { "codeops.example/run-id": "run-1" } },
+    spec: { containers: [{ name: "runtime-worker", image: "registry/runtime@sha256:" + "a".repeat(64) }] },
+    status: { podIP: "10.2.0.176", phase: "Running" } };
+  const list = (items, extra = {}) => ({ apiVersion: "v1", kind: "PodList", items, ...extra });
+  const client = (body) => createInClusterKubernetesClient({ namespace: "codeops-execution",
+    host: "unused", port: 443, token: "unused", ca: Buffer.alloc(0),
+    request: async () => ({ status: 200, text: JSON.stringify(body) }) });
+  for (const candidate of [item, { ...item, apiVersion: "v1" },
+    { ...item, kind: "Pod" }, { ...item, apiVersion: "v1", kind: "Pod" }]) {
+    const [pod] = await client(list([candidate])).listRunPods("run-1");
+    assert.deepEqual(pod, { apiVersion: "v1", kind: "Pod", ...item });
+  }
+  for (const malformed of [null, [], { ...item, kind: "Secret" },
+    { ...item, apiVersion: "apps/v1" }, { ...item, kind: null },
+    { ...item, apiVersion: null }, { ...item, metadata: { ...item.metadata, namespace: "agents-system" } },
+    { ...item, metadata: { ...item.metadata, name: undefined } }]) {
+    await assert.rejects(client(list([malformed])).listRunPods("run-1"), KubernetesResponseError);
+  }
+  for (const malformed of [list([item], { kind: "List" }),
+    list([item], { apiVersion: "apps/v1" }), list({})]) {
+    await assert.rejects(client(malformed).listRunPods("run-1"), KubernetesResponseError);
+  }
+});
