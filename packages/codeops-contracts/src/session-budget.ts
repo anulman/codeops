@@ -141,8 +141,52 @@ const sessionModelBudgetId = z
   .string()
   .regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/);
 
+export const sessionBudgetPhaseSchema = z.enum([
+  "plan", "review", "implementation", "correction", "explore", "validate",
+]);
+export type SessionBudgetPhase = z.infer<typeof sessionBudgetPhaseSchema>;
+export const SESSION_CLOSEOUT_REQUESTS = 20;
+const initialNormalRequests: Record<SessionBudgetPhase, number> = {
+  plan: 200, review: 200, implementation: 400, correction: 400,
+  explore: 200, validate: 200,
+};
+
+/** Select only from admitted identity, never from model request headers. */
+export function sessionBudgetPhaseForIdentity(identity: {
+  readonly repository?: string;
+  readonly version?: string;
+  readonly agentRole?: string;
+  readonly round?: number;
+  readonly policy?: { readonly mode: string };
+}): SessionBudgetPhase {
+  if (identity.agentRole === "critic") return "review";
+  if (identity.agentRole === "revision" || (identity.round ?? 1) > 1) return "correction";
+  const mode = identity.policy?.mode;
+  if (mode === "plan" || mode === "review" || mode === "explore" || mode === "validate") return mode;
+  return "implementation";
+}
+
+export function initialSessionBudgetLimits(phase: SessionBudgetPhase): SessionBudgetV2Limits {
+  return {
+    ...DEFAULT_SESSION_BUDGET_V2_LIMITS,
+    phase: sessionBudgetPhaseSchema.parse(phase),
+    providerRequests: initialNormalRequests[phase] + SESSION_CLOSEOUT_REQUESTS,
+  };
+}
+
+export function sessionBudgetSignal(limits: SessionBudgetV2Limits, usedRequests: number) {
+  sessionBudgetV2LimitsSchema.parse(limits);
+  boundedCount.parse(usedRequests);
+  const normalRequests = Math.max(0, limits.providerRequests - (limits.phase === undefined ? 0 : SESSION_CLOSEOUT_REQUESTS));
+  const state = usedRequests >= Math.ceil(normalRequests * 0.9) ? "closeout"
+    : usedRequests >= Math.ceil(normalRequests * 0.8) ? "checkpoint_required"
+    : usedRequests >= Math.ceil(normalRequests * 0.6) ? "warning" : "normal";
+  return { phase: limits.phase, normalRequests, closeoutRequests: limits.phase === undefined ? 0 : SESSION_CLOSEOUT_REQUESTS, state } as const;
+}
+
 export const sessionBudgetV2LimitsSchema = z
   .object({
+    phase: sessionBudgetPhaseSchema.optional(),
     elapsedSeconds: z.number().int().positive().max(24 * 60 * 60),
     providerRequests: z.number().int().positive().max(1_000),
     outputTokens: z.number().int().positive().max(10_000_000),

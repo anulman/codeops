@@ -90,6 +90,7 @@ export const runtimeExecutionResultSchema = z.discriminatedUnion("type", [
       material: z
         .object({
           response: z.string().max(200_000),
+          checkpoint: sessionRuntimeCheckpointMaterialSchema.optional(),
           stopReason: z.enum([
             "end_turn",
             "max_tokens",
@@ -433,6 +434,14 @@ export class SessionRuntimeTransport {
         },
         body: JSON.stringify(body),
       });
+      if (response.status === 409 && path.endsWith("/model-authority")) {
+        const failure = await boundedJson(response);
+        if (failure !== null && typeof failure === "object" &&
+            "status" in failure && failure.status === "model-budget-exhausted") {
+          throw new SessionRuntimeTransportError("codeops_budget_exhausted");
+        }
+        throw new SessionRuntimeHttpStatusError(response.status);
+      }
       requireSuccess(response);
       return await boundedJson(response);
     } catch (error) {

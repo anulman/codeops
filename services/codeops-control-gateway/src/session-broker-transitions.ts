@@ -31,6 +31,7 @@ type ForkCommand = Extract<SessionCommand, { readonly type: "fork" }>;
 type PromptCommand = Extract<SessionCommand, { readonly type: "prompt" }>;
 
 export interface RuntimePromptMaterial {
+  readonly checkpoint?: RuntimeCheckpointMaterial;
   readonly response: string;
   readonly stopReason:
     | "end_turn"
@@ -398,15 +399,18 @@ export function applyPromptSessionTransition(
     eventCursor: eventBodies.at(-1)!.cursor,
     updatedAt: occurredAt,
   });
+  const checkpointed = material.checkpoint === undefined ? null : applyCheckpointSessionTransition(
+    nextSnapshot, { ...command, type: "checkpoint" }, material.checkpoint, occurredAt,
+  );
   return {
-    snapshot: nextSnapshot,
-    events: eventBodies.map((body) =>
+    snapshot: checkpointed?.snapshot ?? nextSnapshot,
+    events: [...eventBodies.map((body) =>
       sessionEventSchema.parse({
         version: SESSION_BROKER_VERSION.event,
         eventId: eventId(body),
         ...body,
       }),
-    ),
+    ), ...(checkpointed?.events ?? [])],
   };
 }
 

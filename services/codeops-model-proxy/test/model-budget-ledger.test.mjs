@@ -5,6 +5,7 @@ import {
   ModelBudgetAuthorityError,
   ModelBudgetConflictError,
   ModelBudgetExhaustedError,
+  ModelBudgetSignalError,
 } from "../src/model-budget-ledger.mjs";
 
 const reservation = {
@@ -67,7 +68,7 @@ test("uses the dispatch-fenced ledger function for claimed authority", async () 
   });
   assert.match(
     database.calls[0].text,
-    /codeops\.reserve_session_dispatch_model_budget/,
+    /codeops\.reserve_session_phase_model_budget/,
   );
   assert.equal(database.calls[0].values[5], "11111111-1111-4111-8111-111111111111");
   assert.equal(database.calls[0].values[6], "22222222-2222-4222-8222-222222222222");
@@ -155,5 +156,18 @@ test("maps stable database denials without exposing SQL details", async () => {
       },
     });
     await assert.rejects(ledger.reserve(reservation), ErrorType);
+  }
+});
+
+test("checkpoint and closeout stops remain typed and are never retried by the ledger", async () => {
+  for (const state of ["checkpoint_required", "closeout"]) {
+    let calls = 0;
+    const ledger = createModelBudgetLedger({ query: async () => {
+      calls++;
+      throw new Error(`CODEOPS_MODEL_BUDGET_SIGNAL:${state}`);
+    } });
+    await assert.rejects(ledger.reserve(reservation), error =>
+      error instanceof ModelBudgetSignalError && error.state === state);
+    assert.equal(calls, 1);
   }
 });

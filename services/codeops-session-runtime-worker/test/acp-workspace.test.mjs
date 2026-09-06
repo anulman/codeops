@@ -18,10 +18,14 @@ import {
   mergeAcpPermissionToolCall,
   renderAcpPermissionOperation,
   recoverableModelFailure,
+  runtimeBudgetStop,
   SocketAcpWorkspaceLifecycle,
   waitForAcpSocket,
   workspacePromptContentBlocks,
 } from "../dist/acp-workspace.js";
+
+import { initialSessionBudgetLimits, projectSessionBudgetV2 } from "@codeops/codeops-contracts";
+import { createSessionRuntimeLifecycleExecutor } from "../dist/lifecycle.js";
 
 const execFileAsync = promisify(execFile);
 const leaseId = "11111111-1111-4111-8111-111111111111";
@@ -1181,4 +1185,73 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
     ["fork", "acp-session-parent", root],
     ["fork", "acp-session-parent", root],
   ]);
+});
+
+test("long implementation checkpoints and returns a completion before the request wall", async () => {
+  const root = await workspace();
+  const { stdout } = await execFileAsync("git", ["-C", root, "rev-parse", "HEAD"]);
+  const artifacts = [];
+  const durableRoot = await mkdtemp(path.join(os.tmpdir(), "codeops-budget-receipt-"));
+  const receiptPath = path.join(durableRoot, "receipt.json");
+  let requests = 0;
+  const lifecycle = new SocketAcpWorkspaceLifecycle({
+    socketPath: "/run/codeops/agent.sock", workspace: root,
+    statePath: path.join(root, ".runtime", "sessions.json"),
+    permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
+    artifacts: { put: async artifact => {
+      await writeFile(path.join(durableRoot, artifact.checkpointId + ".patch"), artifact.content);
+      artifacts.push(artifact);
+    } },
+    connect: async (_dispatch, operation) => operation({
+      newSession: async () => "acp-long-implementation", loadSession: async () => {},
+      prompt: async () => {
+        // No provider or production network: simulate productive model turns.
+        while (requests < 320) requests++;
+        await writeFile(path.join(root, "README.md"), "useful implementation at request 320\n");
+        throw { data: { code: "codeops_budget_checkpoint_required" } };
+      },
+    }),
+  });
+  const original = dispatch("prompt", { prompt: "Implement a long task." });
+  const runtimeDispatch = { ...original, snapshot: {
+    ...original.snapshot, identity: { ...original.snapshot.identity, baseSha: stdout.trim() },
+    budget: projectSessionBudgetV2({ budgetId: original.command.sessionId, revision: 1,
+      startedAt: original.dispatchedAt, observedAt: original.dispatchedAt,
+      limits: initialSessionBudgetLimits("implementation") }),
+  } };
+  const execute = createSessionRuntimeLifecycleExecutor({ lifecycle, receipts: {
+    read: async () => {
+      try { return JSON.parse(await readFile(receiptPath, "utf8")); }
+      catch (error) { if (error.code === "ENOENT") return null; throw error; }
+    },
+    reserve: async input => {
+      const reservation = { ...input, result: null };
+      await writeFile(receiptPath, JSON.stringify(reservation), { flag: "wx" });
+      return { acquired: true, reservation };
+    },
+    complete: async receipt => {
+      await writeFile(receiptPath, JSON.stringify(receipt));
+      return JSON.parse(await readFile(receiptPath, "utf8"));
+    },
+  } });
+  const result = await execute(runtimeDispatch);
+  assert.deepEqual(await execute(runtimeDispatch), result);
+  assert.deepEqual(JSON.parse(await readFile(receiptPath, "utf8")).result, result);
+  assert.equal(requests, 320);
+  assert.ok(requests < 400);
+  assert.equal(result.type, "prompt");
+  assert.equal(result.material.stopReason, "max_turn_requests");
+  assert.match(result.material.response, /checkpointed and resumable/);
+  assert.match(result.material.response, /Validation and staging are pending/);
+  assert.equal(artifacts.length, 1);
+  assert.match(artifacts[0].content.toString(), /useful implementation at request 320/);
+  assert.deepEqual(result.material.checkpoint.evidenceReferences, [artifacts[0].artifactId]);
+});
+
+test("runtime recognizes only typed budget stops, including nested ACP errors", () => {
+  for (const state of ["checkpoint_required", "closeout", "exhausted"]) {
+    assert.equal(runtimeBudgetStop({ data: { code: `codeops_budget_${state}` } }), state);
+  }
+  assert.equal(runtimeBudgetStop(new Error("connection reset")), null);
+  assert.equal(runtimeBudgetStop(new Error("model authority invalid")), null);
 });

@@ -1238,7 +1238,10 @@ test("PostgreSQL reverts and reapplies retry authority around unchanged ordinary
       "SELECT count(*)::integer count FROM codeops.work_item_admissions")).rows[0].count, 1);
     assert.equal((await connection.query(`SELECT count(*)::integer count FROM codeops.schema_migrations
       WHERE migration_name='work-item-retry-v1'`)).rows[0].count, 0);
-    assert.deepEqual((await migrateSessionBroker(connection)).at(-1), "applied");
+    const reapplied = await migrateSessionBroker(connection);
+    assert.deepEqual(reapplied.slice(-2), ["applied", "current"]);
+    assert.equal((await connection.query(`SELECT count(*)::integer count FROM codeops.schema_migrations
+      WHERE migration_name='work-item-retry-v1'`)).rows[0].count, 1);
     const restored = (await connection.query(`SELECT root_admission_id,attempt,retry_disposition_id
       FROM codeops.work_item_admissions WHERE admission_id=$1`, [seed.admission.admission_id])).rows[0];
     assert.deepEqual(restored, { root_admission_id: seed.admission.admission_id,

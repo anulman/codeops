@@ -11,7 +11,7 @@ import {
   MODEL_PROXY_UPSTREAM_TIMEOUT_MS,
   validateModelProxyToken,
 } from "../src/core.mjs";
-import { ModelBudgetExhaustedError } from "../src/model-budget-ledger.mjs";
+import { ModelBudgetExhaustedError, ModelBudgetSignalError } from "../src/model-budget-ledger.mjs";
 import {
   createProviderBroker,
   providerBrokerConstants,
@@ -632,6 +632,7 @@ test("returns a stable budget error and makes zero provider calls", async () => 
       assert.equal(response.status, 429);
       assert.deepEqual(await response.json(), {
         error: "model budget exhausted",
+        code: "codeops_budget_exhausted",
         limit: "output_tokens",
       });
     },
@@ -1123,4 +1124,24 @@ test("cancels abandoned upstream work and promptly releases concurrency", async 
     logs.some((entry) => entry.event === "model_proxy_downstream_cancel"),
     true,
   );
+});
+
+test("checkpoint and closeout errors cannot forward exploration to the provider", async () => {
+  for (const state of ["checkpoint_required", "closeout"]) {
+    await withProxy(createModelProxyRequestListener({
+      signingKey, now: () => now, log: () => {},
+      modelBudgetLedger: {
+        reserve: async () => { throw new ModelBudgetSignalError(state); },
+        settle: async () => assert.fail("no reservation was committed"),
+      },
+      fetch: async () => assert.fail("protected capacity must not reach a provider"),
+    }), async origin => {
+      const response = await fetch(`${origin}/v1/responses`, {
+        method: "POST", headers: { Authorization: `Bearer ${token()}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ model: "gpt-5.6-sol", input: "Explore more", reasoning: { effort: "high" } }),
+      });
+      assert.equal(response.status, 409);
+      assert.equal((await response.json()).code, `codeops_budget_${state}`);
+    });
+  }
 });
