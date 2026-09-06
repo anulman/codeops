@@ -1,0 +1,145 @@
+name: Alpha73 startup reproduction
+'on':
+  pull_request:
+    paths:
+    - .github/workflows/alpha73-startup.yml
+    - infra/ci/prevention/alpha73-diagnose.py
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: alpha73-startup-diagnostic
+  cancel-in-progress: false
+jobs:
+  diagnose:
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-24.04
+    timeout-minutes: 35
+    steps:
+    - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+      with:
+        persist-credentials: false
+    - uses: azure/setup-helm@bf6a7d304bc2fdb57e0331155b7ebf2c504acf0a
+      with:
+        version: v3.19.2
+    - uses: azure/setup-kubectl@c0c8b32d33a5244f1e5947304550403b63930415
+      with:
+        version: v1.36.1
+    - name: Install kind
+      env:
+        KIND_VERSION: v0.32.0
+      run: |
+        set -euo pipefail
+        curl -fsSLo /tmp/kind-linux-amd64 "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64"
+        curl -fsSLo /tmp/kind.sha256sum "https://kind.sigs.k8s.io/dl/${KIND_VERSION}/kind-linux-amd64.sha256sum"
+        (cd /tmp && sha256sum --check kind.sha256sum)
+        sudo install /tmp/kind-linux-amd64 /usr/local/bin/kind
+    - name: Create disposable cluster
+      run: |
+        kind create cluster --name codeops-registry --image kindest/node:v1.36.1 --wait 120s
+        kubectl label node --all codeops.dev/operator=true
+    - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+      with:
+        name: codeops-release-0.5.0-alpha.73-0b75e6f92e90c10d14becbb256ee05aa0b512df9
+        run-id: 33986066266
+        github-token: ${{ github.token }}
+        path: /tmp/codeops-release
+    - name: Create isolated quickstart values
+      run: |
+        set -euo pipefail
+        api_ip=$(kubectl get service kubernetes --output jsonpath='{.spec.clusterIP}')
+        api_cidrs=$(kubectl get endpoints kubernetes --output json | jq -ce --arg service "$api_ip" '
+          [$service, (.subsets[]?.addresses[]?.ip)] | unique | map(. + "/32")
+        ')
+        API_CIDRS="$api_cidrs" node --input-type=module -e '
+          import { writeFileSync } from "node:fs";
+          const apiCidrs = JSON.parse(process.env.API_CIDRS);
+          const values = {
+            profile: "custom",
+            nodeSelector: { "codeops.dev/operator": "true" },
+            agentsUi: { access: { issuer: "https://example.cloudflareaccess.com" } },
+            controlGateway: { kubernetesApiCidrs: apiCidrs },
+            temporal: { enabled: false, driver: "none", deployment: "none" },
+            jetstream: { enabled: false, driver: "none", deployment: "none" },
+            plane: {
+              enabled: false,
+              deployment: "none",
+              adapter: { enabled: false, onboardingRequired: false },
+            },
+            quickstart: {
+              enabled: true,
+              openaiApiKey: "proof-openai-key-00000000000000000001",
+              access: {
+                audience: "proof-cloudflare-access-audience",
+                allowedEmails: ["operator@example.com"],
+              },
+              repository: {
+                identity: "example/codeops-proof",
+                github: {
+                  readToken: "proof-github-read-token-000000000000001",
+                  writeToken: "proof-github-write-token-00000000000001",
+                  webhookSecret: "proof-github-webhook-secret-00000000001",
+                  reviewerIds: [12345678],
+                },
+                plane: {
+                  apiOrigin: "https://plane.example.com",
+                  workspaceSlug: "engineering",
+                  workspaceId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                  projectId: "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                  apiKey: "proof-plane-api-key-000000000000000001",
+                  webhookSecret: "proof-plane-webhook-secret-00000000001",
+                  humanActorIds: ["cccccccc-cccc-4ccc-8ccc-cccccccccccc"],
+                  stateIds: {
+                    ready: "dddddddd-dddd-4ddd-8ddd-dddddddddddd",
+                    inProgress: "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+                    needsAttention: "ffffffff-ffff-4fff-8fff-ffffffffffff",
+                    complete: "11111111-1111-4111-8111-111111111111",
+                  },
+                  personas: [
+                    { handle: "@ai-web", userId: "20000000-0000-4000-8000-000000000001" },
+                    { handle: "@ai-security", userId: "20000000-0000-4000-8000-000000000002" },
+                    { handle: "@ai-database", userId: "20000000-0000-4000-8000-000000000003" },
+                    { handle: "@ai-infra", userId: "20000000-0000-4000-8000-000000000004" },
+                    { handle: "@ai-design", userId: "20000000-0000-4000-8000-000000000005" },
+                    { handle: "@ai-product", userId: "20000000-0000-4000-8000-000000000006" },
+                    { handle: "@ai-ml", userId: "20000000-0000-4000-8000-000000000007" },
+                  ],
+                },
+                context: {
+                  directory: "codeops-proof",
+                  agents: "# Agent instructions\nUse the repository instructions.",
+                  currentState: "# Current state\nThis proof repository is active.",
+                  decisions: "# Decisions\nKeep authority fail closed.",
+                  domain: "# Domain\nThe repository contains one proof service.",
+                  product: "# Product\nThe fixture validates registry onboarding.",
+                  sourceMap: "# Source map\nApplication sources are under src/.",
+                  soul: "# Soul\nUse short, direct technical language.",
+                },
+              },
+            },
+          };
+          writeFileSync("/tmp/codeops-quickstart.json", `${JSON.stringify(values)}\n`, { mode: 0o600 });
+          writeFileSync("/tmp/codeops-consumer-policy.json", `${JSON.stringify({
+            schemaVersion: "codeops.consumer-policy/v1",
+            helmTimeout: "20m",
+            httpTimeoutMs: 15000,
+            requiredSecrets: [],
+            cluster: {
+              kubernetesServiceCidrs: apiCidrs,
+              readyNodeSelector: "codeops.dev/operator=true",
+            },
+            postDeployHttpChecks: [],
+          })}\n`, { mode: 0o600 });
+        '
+    - name: Exact fenced alpha73 reproduction with pre-cleanup logs
+      run: timeout --signal=TERM --kill-after=30s 25m env -i PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+        KUBECONFIG=/home/runner/.kube/config HOME=/tmp/alpha73-home python3 infra/ci/prevention/alpha73-diagnose.py
+    - if: always()
+      uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+      with:
+        name: alpha73-startup-${{ github.run_id }}-${{ github.run_attempt }}
+        path: /tmp/alpha73-diagnostics/*
+        retention-days: 14
+        if-no-files-found: error
+    - if: always()
+      run: kind delete cluster --name codeops-registry
