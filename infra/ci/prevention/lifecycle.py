@@ -394,7 +394,8 @@ def run(candidate, canary):
     fresh = 'fresh'
     new_case(fresh)
     helm(fresh, current)
-    if len(ledger(fresh)) != 29:
+    current_ledger = ledger(fresh)
+    if len(current_ledger) != 30:
         raise AssertionError('Fresh schema incomplete')
     probes(fresh, pinned, canary)
     # Invalid mounted application identity must fail BEFORE writer quiescence.
@@ -408,8 +409,8 @@ def run(candidate, canary):
     c.kubectl('-n', ns, 'patch', 'secret', 'codeops-application-database', '--type=merge',
               '-p', json.dumps({'stringData': {'application-database-password': uuid.uuid4().hex + uuid.uuid4().hex[:16]}}))
     helm(ns, current, upgrade=True)
-    if ledger(ns) != before:
-        raise AssertionError('Same-schema cutover altered history')
+    if ledger(ns) != current_ledger or not set(before).issubset(current_ledger):
+        raise AssertionError('Upgrade did not preserve prior history and apply the exact current ledger')
     for committed in (False, True):
         ns = 'committed' if committed else 'rollback'
         new_case(ns); helm(ns, prior69)
@@ -423,7 +424,7 @@ def run(candidate, canary):
             sql(ns, "CREATE FUNCTION public.fixture_fail() RETURNS event_trigger LANGUAGE plpgsql AS $$BEGIN RAISE EXCEPTION 'fixture precommit failure'; END$$; CREATE EVENT TRIGGER fixture_fail ON ddl_command_start WHEN TAG IN ('DROP FUNCTION') EXECUTE FUNCTION public.fixture_fail();")
         helm(ns, current, upgrade=True, success=False)
         after = ledger(ns)
-        if writer(ns) != (uid, 0) or (len(after) != 29 if committed else after != before):
+        if writer(ns) != (uid, 0) or (after != current_ledger if committed else after != before):
             raise AssertionError('Failure phase/schema/writer mismatch')
         if committed:
             sql(ns, 'REVOKE fixture_parent FROM codeops_app;')
@@ -433,7 +434,7 @@ def run(candidate, canary):
         helm(ns, current, upgrade=True)
         final = ledger(ns)
         helm(ns, current, upgrade=True)
-        if len(final) != 29 or ledger(ns) != final:
+        if final != current_ledger or ledger(ns) != final:
             raise AssertionError('Retry not idempotent')
     # This is an intentional authority break: old API startup performs DDL.
     # Require its precise refusal; never grant CREATE to preserve that path.

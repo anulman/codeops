@@ -205,6 +205,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "applied",
     "applied",
     "applied",
+    "applied",
   ]);
   const inserts = client.calls
     .filter(({ text }) => text.includes("INSERT INTO codeops.schema_migrations"))
@@ -239,6 +240,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "runtime-permission-consumption-v1",
     "admitted-child-materializations-v1",
     "work-item-retry-v1",
+    "verified-checkpoint-recovery-v1",
   ]);
 });
 
@@ -274,6 +276,7 @@ test("grants the runtime role only receipt and checkpoint-artifact access", asyn
   assert.match(sql, /GRANT UPDATE \(status, result_json, completed_at\)/);
   assert.match(sql, /GRANT SELECT \(artifact_id, session_id, generation, checkpoint_id/);
   assert.match(sql, /GRANT INSERT \(artifact_id, session_id, generation, checkpoint_id/);
+  assert.doesNotMatch(sql, /GRANT SELECT \([^)]*artifact_content/);
   assert.doesNotMatch(sql, /session_runtime_outbox/);
   assert.equal(client.calls.at(-1).text, "COMMIT");
   const existing = fakeClient(undefined, true);

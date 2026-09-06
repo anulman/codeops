@@ -736,3 +736,21 @@ test("ignores unrelated methods and paths", async () => {
   assert.equal(await request({ method: "GET" }).promise, null);
   assert.equal(await request({ url: "/v1/sessions" }).promise, null);
 });
+
+test("checkpoint reads retain worker authentication and strict claim-only inputs", async () => {
+  const calls = [];
+  const base = { method: "POST", url: `/v1/session-runtime/dispatches/${dispatchId}/checkpoint-recovery`,
+    headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+    token, workerId: "runtime-worker:checkpoint", readBody: async () => ({ claimToken }),
+    readCheckpointRecovery: async input => { calls.push(input); return { status: "read" }; } };
+  assert.equal((await serveSessionRuntime(base)).status, 200);
+  assert.deepEqual(calls, [{ dispatchId, claimToken, workerId: base.workerId }]);
+  assert.equal((await serveSessionRuntime({ ...base, headers: {
+    authorization: `Bearer ${"x".repeat(32)}`, "content-type": "application/json" },
+  })).status, 401);
+  for (const body of [{ claimToken, offset: 0 }, { claimToken, artifactId: "anything" },
+    { claimToken, workspaceJobUid: "caller-controlled" }, { claimToken, now: "2099-01-01" }]) {
+    await assert.rejects(serveSessionRuntime({ ...base, readBody: async () => body }), InvalidSessionRuntimeRequestError);
+  }
+  assert.equal(calls.length, 1);
+});
