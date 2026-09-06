@@ -1156,15 +1156,29 @@ export async function runUpgrade(options, adapters = {}) {
     catch (error) { if (error.code !== "ENOENT") throw error; }
     if (state && !options.resume) throw new Error("existing operation requires --resume");
     if (!state && options.resume) throw new Error("cannot resume missing operation");
-    // Log directory is private even when the caller's umask is permissive.
     if (!state) {
-      const logDirectory = await mkdtemp(path.join(tmpdir(), "codeops-upgrade-"));
-      state = { schemaVersion: UPGRADE_SCHEMA, operationId: null, status: "preparing", stage: "verify", logDirectory };
+      state = { schemaVersion: UPGRADE_SCHEMA, operationId: null, status: "preparing", stage: "verify" };
     }
-    // Completion may have removed transient logs before an acknowledgement retry.
     if (!(state.status === "complete" && state.acknowledged)) {
+      // Diagnostics belong to the durable operation, not the host's temporary
+      // filesystem. Migrate legacy diagnostics without deleting their originals.
+      const previous = state.logDirectory;
+      const durable = previous && path.dirname(previous) === directory;
+      if (!durable || !await regularFileExists(path.join(previous, "diagnostics.jsonl"))) {
+        let history;
+        if (previous) {
+          const file = path.join(previous, "diagnostics.jsonl");
+          if (await regularFileExists(file)) history = await readFile(file);
+          else state.diagnosticHistoryMissing = true;
+        }
+        state.logDirectory = await mkdtemp(path.join(directory, "logs-"));
+        await writeFile(path.join(state.logDirectory, "diagnostics.jsonl"), history ?? "", { mode: 0o600 });
+      }
+      const logStat = await lstat(state.logDirectory);
+      if (!logStat.isDirectory() || (logStat.mode & 0o077) !== 0 || logStat.uid !== process.getuid()) throw new Error("diagnostic directory must be private and operator-owned");
       upgradeLog = path.join(state.logDirectory, "diagnostics.jsonl");
       upgradeStream = options.stream === true;
+      if (state.diagnosticHistoryMissing) recordUpgradeDiagnostic({ diagnostics: "historical diagnostics unavailable", historyMissing: true });
     }
     // Notification-only recovery must survive a cluster outage. It has no
     // Kubernetes effects and remains bound to the recorded target and inputs.

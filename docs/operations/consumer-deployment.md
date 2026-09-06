@@ -239,7 +239,7 @@ It makes no model calls and never prompts. Exit codes are:
 | 4 | Effect outcome unknown; reconciliation required. |
 | 5 | Terminal event awaits acknowledgement, including deliberate stop after deploy. |
 
-Subprocesses do not stream output. Private per-operation temporary logs record
+Subprocesses do not stream output. Private logs beneath the durable operation directory record
 command status, output byte counts, and bounded startup diagnostics. Raw command
 output is fully redacted, including Helm output that can contain Secret values.
 Diagnostics retain only known Kubernetes reason codes and Pod UIDs, never
@@ -252,9 +252,9 @@ The command captures diagnostics while Helm runs and retains them on failure.
 It leaves failed workloads for explicit forward reconciliation and any later
 authorized cleanup.
 
-A successful, acknowledged upgrade removes transient logs and retains operation
+A successful, acknowledged upgrade removes diagnostic logs and retains operation
 receipts and artifacts. Failure, interruption, unknown outcomes, and pending
-acknowledgements retain logs. Preserve them until reconciliation; private
+acknowledgements retain logs. Resume migrates existing legacy temporary diagnostics without deleting originals; if legacy logs were removed, it records `diagnosticHistoryMissing` and continues from durable intent and the same notification event, without inventing missing history. Preserve them until reconciliation; private
 permissions are not a substitute for redaction.
 
 The configured HTTPS receiver must durably deduplicate `eventId` and return
