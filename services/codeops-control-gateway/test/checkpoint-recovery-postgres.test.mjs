@@ -17,6 +17,7 @@ import { authenticatedCheckpointOperator, authorizeCheckpointCleanup,
   loadClaimedCheckpointWorkspaceBinding, readClaimedCheckpointRecovery,
   recordRestoreReceipt, validateCleanupDecisionReadback } from "../dist/checkpoint-recovery.js";
 let captureVerifiedWorkspaceCheckpoint;
+let SocketAcpWorkspaceLifecycle;
 let restoreVerifiedWorkspaceCheckpoint;
 let PostgresWorkspaceCheckpointArtifactStore;
 let PostgresRuntimeExecutionReceiptStore;
@@ -30,7 +31,7 @@ before(async () => {
   if (skip) return;
   await requireDisposablePostgres(databaseUrl);
   // The qualification runner builds the worker before this cross-owner proof.
-  ({ captureVerifiedWorkspaceCheckpoint } = await import("../../codeops-session-runtime-worker/dist/acp-workspace.js"));
+  ({ captureVerifiedWorkspaceCheckpoint, SocketAcpWorkspaceLifecycle } = await import("../../codeops-session-runtime-worker/dist/acp-workspace.js"));
   ({ restoreVerifiedWorkspaceCheckpoint } = await import("../../codeops-session-runtime-worker/dist/workspace-recovery.js"));
   ({ PostgresWorkspaceCheckpointArtifactStore } = await import("../../codeops-session-runtime-worker/dist/workspace-artifacts.js"));
   ({ PostgresRuntimeExecutionReceiptStore } = await import("../../codeops-session-runtime-worker/dist/postgres-receipts.js"));
@@ -74,6 +75,7 @@ async function seedClaim(client, snapshot, type) {
       version: "codeops.session-command/v1", sessionId: snapshot.sessionId,
       generation: snapshot.generation, leaseId: snapshot.lease.leaseId,
       idempotencyKey: randomUUID(), type,
+      ...(type === "prompt" ? { prompt: "Continue bounded work." } : {}),
       ...(type === "resume" ? { checkpointId: snapshot.checkpoint.checkpointId } : {}),
     } });
   const claimToken = randomUUID();
@@ -101,7 +103,7 @@ async function finish(client, claim, result) {
     observedEventCursor: claim.dispatch.snapshot.eventCursor, completedAt: new Date().toISOString(), ...result };
   return completeSessionRuntimeDispatch(client, { ...claim, completion: claim.completion });
 }
-async function fixture(client, legacy = false) {
+async function fixture(client, legacy = false, captureType = "hibernate") {
   const now = new Date().toISOString();
   const sessionId = `ses_${randomUUID()}`;
   const leaseId = randomUUID();
@@ -133,10 +135,32 @@ async function fixture(client, legacy = false) {
     (session_id,generation,lease_id,run_id,job_name,job_uid,job_resource_version,observed_at,resource_configuration_digest)
     VALUES ($1,1,$2,'checkpoint-test',$3,$4,1,clock_timestamp(),$5)`,
   [sessionId,leaseId,`workspace-${jobUid}`,jobUid,digest("a")]);
-  const captureClaim = await seedClaim(client, snapshot, "hibernate");
+  const captureClaim = await seedClaim(client, snapshot, captureType);
   const binding = await loadClaimedCheckpointWorkspaceBinding(client, captureClaim);
   assert.equal(binding.jobUid, jobUid);
   const checkpointId = randomUUID();
+  if (captureType === "prompt") {
+    const lifecycle = new SocketAcpWorkspaceLifecycle({
+      socketPath: "/run/codeops/agent.sock", workspace,
+      statePath: path.join(privateRoot, "state.json"),
+      uuid: () => checkpointId,
+      permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
+      artifacts: new PostgresWorkspaceCheckpointArtifactStore(client),
+      checkpointWorkspace: () => loadClaimedCheckpointWorkspaceBinding(client, captureClaim),
+      connect: async (_dispatch, operation) => operation({
+        newSession: async () => "acp-budget-checkpoint", loadSession: async () => {},
+        prompt: async () => { throw { data: { code: "codeops_budget_checkpoint_required" } }; },
+      }),
+    });
+    const result = await lifecycle.prompt(captureClaim.dispatch);
+    assert.equal(result.material.checkpoint.version, "codeops.session-workspace-checkpoint-material/v2");
+    assert.match(result.material.response, new RegExp(checkpointId));
+    const completion = await finish(client, captureClaim, result);
+    assert.equal(completion.disposition, "committed");
+    assert.equal(completion.snapshot.state, "running");
+    assert.equal(completion.snapshot.checkpoint.checkpointId, checkpointId);
+    return { checkpointId, captureClaim, completion };
+  }
   const captured = await captureVerifiedWorkspaceCheckpoint({ workspaceRoot: workspace,
     manifest: snapshot.identity.workspace, captureRoot: privateRoot, checkpointId,
     sessionId, generation: 1, workspaceJobUid: binding.jobUid,
@@ -338,4 +362,18 @@ test("a cleanup snapshot begun behind an uncommitted hold cannot consume stale a
     release(); await Promise.allSettled([placing, deciding].filter(Boolean));
     await observer.end(); await contender.end(); await writer.end();
   }
+});
+
+
+test("budget prompt finalizes a verified checkpoint through the live claim and completion transaction", { skip }, async () => {
+  const client = await connect();
+  try {
+    const run = await fixture(client, false, "prompt");
+    const receipt = await client.query("SELECT checkpoint_id FROM codeops.workspace_checkpoint_descriptors WHERE checkpoint_id=$1", [run.checkpointId]);
+    assert.equal(receipt.rows.length, 1);
+    const replay = await completeSessionRuntimeDispatch(client, { ...run.captureClaim, completion: run.captureClaim.completion });
+    assert.equal(replay.disposition, "duplicate");
+    const repeated = await client.query("SELECT checkpoint_id FROM codeops.workspace_checkpoint_descriptors WHERE checkpoint_id=$1", [run.checkpointId]);
+    assert.equal(repeated.rows.length, 1);
+  } finally { await client.end(); }
 });

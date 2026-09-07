@@ -805,11 +805,14 @@ export async function completeSessionRuntimeDispatch(
     client,
     { dispatch, claimToken: input.claimToken },
   );
-  const verifiedDescriptor =
-    (completion.type === "checkpoint" || completion.type === "hibernate") &&
-    "version" in completion.material && completion.material.version ===
+  const checkpointMaterial = completion.type === "prompt"
+    ? completion.material.checkpoint
+    : completion.type === "checkpoint" || completion.type === "hibernate"
+      ? completion.material : undefined;
+  const verifiedDescriptor = checkpointMaterial !== undefined &&
+    "version" in checkpointMaterial && checkpointMaterial.version ===
       "codeops.session-workspace-checkpoint-material/v2"
-      ? completion.material.descriptor
+      ? checkpointMaterial.descriptor
       : null;
   const restoreEvidence = completion.type === "resume" &&
     completion.material.restoreVerification !== undefined

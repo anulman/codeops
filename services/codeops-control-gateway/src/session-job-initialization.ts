@@ -7,6 +7,8 @@ import {
   runtimeRequirementsSchema,
   SESSION_BROKER_VERSION,
   projectSessionBudgetV2,
+  initialSessionBudgetLimits,
+  sessionBudgetPhaseForIdentity,
   sessionEventSchema,
   sessionJobAdmittedInitializationRequestSchema,
   sessionJobBoundInitializationRequestSchema,
@@ -185,6 +187,7 @@ export async function initializeSessionFromJob(
     pendingPermission: null,
     budget: projectSessionBudgetV2({
       budgetId: request.sessionId,
+      limits: initialSessionBudgetLimits(sessionBudgetPhaseForIdentity(request.identity)),
       revision: 1,
       startedAt: initializedAt,
       observedAt: initializedAt,

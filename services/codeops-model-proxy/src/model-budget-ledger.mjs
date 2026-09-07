@@ -21,6 +21,13 @@ export class ModelBudgetExhaustedError extends Error {
   }
 }
 
+export class ModelBudgetSignalError extends Error {
+  constructor(state) {
+    super(`codeops_budget_${state}`);
+    this.state = state;
+  }
+}
+
 export class ModelBudgetAuthorityError extends Error {}
 export class ModelBudgetConflictError extends Error {}
 
@@ -36,6 +43,8 @@ function parseCount(value, name) {
 
 function translateDatabaseError(error) {
   if (!(error instanceof Error)) return error;
+  const signal = error.message.match(/CODEOPS_MODEL_BUDGET_SIGNAL:(checkpoint_required|closeout)/);
+  if (signal) return new ModelBudgetSignalError(signal[1]);
   const exhausted = error.message.match(
     /CODEOPS_MODEL_BUDGET_EXHAUSTED:(provider_requests|output_tokens)/,
   );
@@ -153,7 +162,7 @@ export function createModelBudgetLedger(database) {
         const dispatchBound = input.leaseId != null;
         const result = await database.query(
           dispatchBound
-            ? `SELECT * FROM codeops.reserve_session_dispatch_model_budget(
+            ? `SELECT * FROM codeops.reserve_session_phase_model_budget(
               $1::uuid, $2::text, $3::text, $4::text, $5::bigint,
               $6::uuid, $7::uuid, $8::bigint, $9::text, $10::text, $11::text,
               $12::bigint, $13::bigint
@@ -193,7 +202,13 @@ export function createModelBudgetLedger(database) {
         if (!row || result.rows.length !== 1) {
           throw new Error("model budget reservation result is invalid");
         }
+        if (dispatchBound && row.phase != null &&
+            (!["plan", "review", "implementation", "correction", "explore", "validate"].includes(row.phase) ||
+             !["normal", "warning", "checkpoint_required", "closeout"].includes(row.budget_state))) {
+          throw new Error("model budget phase signal is invalid");
+        }
         return {
+          ...(dispatchBound ? { phase: row.phase ?? null, budgetState: row.budget_state ?? "normal" } : {}),
           reservationId: row.reservation_id,
           reservedOutputTokens: parseCount(
             row.reserved_output_tokens,

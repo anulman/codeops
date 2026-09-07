@@ -3,6 +3,7 @@ import { Readable } from "node:stream";
 import {
   ModelBudgetAuthorityError,
   ModelBudgetExhaustedError,
+  ModelBudgetSignalError,
 } from "./model-budget-ledger.mjs";
 
 const MAX_BODY_BYTES = 20 * 1024 * 1024;
@@ -725,7 +726,7 @@ export function createModelProxyRequestListener(input) {
         const reservationId = authority.budgetId === null ? null : randomUUID();
         if (reservationId !== null) {
           try {
-            await input.modelBudgetLedger.reserve({
+            const reservation = await input.modelBudgetLedger.reserve({
               reservationId,
               modelTokenId: authority.modelTokenId,
               sessionId: authority.runId,
@@ -740,13 +741,27 @@ export function createModelProxyRequestListener(input) {
               requestedOutputTokens: admittedBody.max_output_tokens,
               reservedOutputTokens: admittedBody.max_output_tokens,
             });
+            if (reservation.phase != null) {
+              response.setHeader("X-CodeOps-Budget-Phase", reservation.phase);
+              response.setHeader("X-CodeOps-Budget-State", reservation.budgetState);
+              if (reservation.budgetState !== "normal") {
+                admittedBody.instructions = [admittedBody.instructions ?? "",
+                  `CodeOps budget: phase=${reservation.phase}; state=${reservation.budgetState}. Save productive work, summarize validation and pending checks, and finish with a durable completion. Normal exploration must not spend closeout capacity.`,
+                ].join("\n");
+              }
+            }
           } catch (error) {
+            if (error instanceof ModelBudgetSignalError) {
+              status = 409;
+              json(response, status, { error: error.message, code: error.message });
+              return;
+            }
             if (error instanceof ModelBudgetExhaustedError) {
               status = 429;
               json(
                 response,
                 status,
-                { error: "model budget exhausted", limit: error.limit },
+                { error: "model budget exhausted", code: "codeops_budget_exhausted", limit: error.limit },
                 { "Retry-After": "60" },
               );
               return;

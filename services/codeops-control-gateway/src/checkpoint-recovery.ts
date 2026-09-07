@@ -104,7 +104,7 @@ async function lockLiveWorkspace(client: TransactionClient, sessionId: string) {
 
 async function lockCheckpointClaim(client: TransactionClient,
   input: { dispatchId: string; claimToken: string; workerId: string },
-  allowedCommandTypes: readonly ("checkpoint" | "hibernate" | "resume")[]) {
+  allowedCommandTypes: readonly ("prompt" | "checkpoint" | "hibernate" | "resume")[]) {
   await client.query(`SELECT dispatch_id FROM codeops.session_runtime_outbox
     WHERE dispatch_id=$1 FOR UPDATE`, [input.dispatchId]);
   const now = await databaseClock(client);
@@ -132,7 +132,7 @@ export async function loadClaimedCheckpointWorkspaceBinding(
   readonly workspaceConfigurationDigest: string }> {
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
-    const { live } = await lockCheckpointClaim(client, input, ["checkpoint", "hibernate"]);
+    const { live } = await lockCheckpointClaim(client, input, ["prompt", "checkpoint", "hibernate"]);
     await client.query("COMMIT");
     return { jobUid: live.jobUid,
       resourceConfigurationDigest: live.resourceConfigurationDigest,

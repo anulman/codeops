@@ -528,3 +528,19 @@ test("uses legacy checkpoint and branch fork material for trusted Temporal v2 id
     /workspace identity/,
   );
 });
+
+test("budget-stop prompt completion commits its checkpoint in the same ordered history", () => {
+  const before = snapshot({ checkpoint: false });
+  const result = applyPromptSessionTransition(before, command("prompt", { prompt: "Implement." }), {
+    response: "Budget closeout. Work is checkpointed; validation remains pending.",
+    stopReason: "max_turn_requests",
+    checkpoint: { checkpointId, patchDigest: `sha256:${"b".repeat(64)}`,
+      acpSessionId: "acp-budget", evidenceReferences: [`artifact:${checkpointId}:source:repository`] },
+  }, occurredAt);
+  assert.equal(result.snapshot.checkpoint.checkpointId, checkpointId);
+  assert.equal(result.snapshot.checkpoint.generation, before.generation);
+  assert.equal(result.snapshot.lease.leaseId, before.lease.leaseId);
+  assert.equal(result.events.at(-1).type, "checkpoint_committed");
+  assert.equal(result.snapshot.eventCursor, result.events.at(-1).cursor);
+  assert.equal(result.events.at(-2).message.stopReason, "max_turn_requests");
+});
