@@ -951,7 +951,10 @@ export async function captureWorkspacePatch(
       GIT_CONFIG_NOSYSTEM: "1",
       GIT_DIR: captureDirectory,
       GIT_INDEX_FILE: path.join(captureDirectory, "index"),
-      GIT_OBJECT_DIRECTORY: objects,
+      // Intent-to-add can write an empty blob even for a clean checkout.
+      // Keep writes private; quote the validated read-only source as one alternate.
+      GIT_OBJECT_DIRECTORY: path.join(captureDirectory, "objects"),
+      GIT_ALTERNATE_OBJECT_DIRECTORIES: JSON.stringify(objects),
       GIT_OPTIONAL_LOCKS: "0",
       GIT_TERMINAL_PROMPT: "0",
       GIT_WORK_TREE: root,
