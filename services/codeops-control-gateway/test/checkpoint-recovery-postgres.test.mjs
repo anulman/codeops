@@ -159,7 +159,7 @@ async function fixture(client, legacy = false, captureType = "hibernate") {
     assert.equal(completion.disposition, "committed");
     assert.equal(completion.snapshot.state, "running");
     assert.equal(completion.snapshot.checkpoint.checkpointId, checkpointId);
-    return { checkpointId, captureClaim, completion };
+    return { checkpointId, jobUid, captureClaim, completion };
   }
   const captured = await captureVerifiedWorkspaceCheckpoint({ workspaceRoot: workspace,
     manifest: snapshot.identity.workspace, captureRoot: privateRoot, checkpointId,
@@ -377,3 +377,56 @@ test("budget prompt finalizes a verified checkpoint through the live claim and c
     assert.equal(repeated.rows.length, 1);
   } finally { await client.end(); }
 });
+
+
+for (const entrypoint of ["runtime-main", "session-control-main"]) {
+  test(`${entrypoint} serves authenticated checkpoint binding and recovery for the exact claim`, { skip }, async () => {
+    const { createServer } = await import("node:http");
+    const { entrypointRuntimeRoute } = await import("./entrypoint-runtime-route.mjs");
+    const client = await connect();
+    const token = "checkpoint-route-test-authority".repeat(2);
+    let acquired = 0;
+    let released = 0;
+    const route = await entrypointRuntimeRoute(entrypoint, { token, workerId, database: {
+      connect: async () => { acquired++; return { query: client.query.bind(client), release: () => { released++; } }; },
+    } });
+    const server = createServer((request, response) => {
+      void route(request, response).catch(() => { response.writeHead(500); response.end(); });
+    });
+    await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
+    const origin = `http://127.0.0.1:${server.address().port}`;
+    try {
+      const run = await fixture(client);
+      const running = await fixture(client, false, "prompt");
+      const bindingClaim = await seedClaim(client, running.completion.snapshot, "checkpoint");
+      let claim = run.resumeClaim;
+      const invoke = async (suffix, claimToken = claim.claimToken, authorization = `Bearer ${token}`) => {
+        const response = await fetch(`${origin}/v1/session-runtime/dispatches/${claim.dispatchId}/${suffix}`, {
+          method: "POST", headers: { authorization, "content-type": "application/json" },
+          body: JSON.stringify({ claimToken }),
+        });
+        return { status: response.status, body: await response.json() };
+      };
+      for (const suffix of ["checkpoint-binding", "checkpoint-recovery"]) {
+        claim = suffix === "checkpoint-binding" ? bindingClaim : run.resumeClaim;
+        const before = acquired;
+        assert.equal((await invoke(suffix, claim.claimToken, "Bearer invalid")).status, 401);
+        assert.equal(acquired, before, "unauthenticated requests must not reach the database");
+        assert.equal((await invoke(suffix, randomUUID())).status, 409);
+        const accepted = await invoke(suffix);
+        assert.equal(accepted.status, 200, JSON.stringify(accepted.body));
+        if (suffix === "checkpoint-binding") assert.equal(accepted.body.jobUid, running.jobUid);
+        else assert.equal(accepted.body.descriptor.manifest.checkpointId, run.checkpointId);
+      }
+      for (const suffix of ["checkpoint-binding", "checkpoint-recovery"]) {
+        claim = suffix === "checkpoint-binding" ? bindingClaim : run.resumeClaim;
+        await client.query("UPDATE codeops.session_runtime_outbox SET claimed_at=clock_timestamp()-interval '2 minutes', claim_expires_at=clock_timestamp()-interval '1 second' WHERE dispatch_id=$1", [claim.dispatchId]);
+        assert.equal((await invoke(suffix)).status, 409);
+      }
+      assert.equal(released, acquired, "success and rejection must release every connection");
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      await client.end();
+    }
+  });
+}

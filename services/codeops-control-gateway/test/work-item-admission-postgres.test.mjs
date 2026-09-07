@@ -1239,7 +1239,8 @@ test("PostgreSQL reverts and reapplies retry authority around unchanged ordinary
     assert.equal((await connection.query(`SELECT count(*)::integer count FROM codeops.schema_migrations
       WHERE migration_name='work-item-retry-v1'`)).rows[0].count, 0);
     const reapplied = await migrateSessionBroker(connection);
-    assert.deepEqual(reapplied.slice(-2), ["applied", "current"]);
+    // Later checkpoint migrations must remain current; only retry is reapplied.
+    assert.deepEqual(reapplied.filter((status) => status !== "current"), ["applied"]);
     assert.equal((await connection.query(`SELECT count(*)::integer count FROM codeops.schema_migrations
       WHERE migration_name='work-item-retry-v1'`)).rows[0].count, 1);
     const restored = (await connection.query(`SELECT root_admission_id,attempt,retry_disposition_id
