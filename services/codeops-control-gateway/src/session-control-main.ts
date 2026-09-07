@@ -109,6 +109,16 @@ import {
   storeGitHubBranchCandidateChunk,
 } from "./github-branch-publish-candidates.js";
 
+import {
+  loadClaimedCheckpointWorkspaceBinding,
+  readClaimedCheckpointRecovery,
+} from "./checkpoint-recovery.js";
+
+import {
+  ClaimedDispatchAuthorityConflictError,
+  ClaimedDispatchAuthorityNotFoundError,
+} from "./claimed-dispatch-authority.js";
+
 const MAX_BODY_BYTES = 1024 * 1024;
 
 function required(name: string): string {
@@ -536,6 +546,22 @@ const server = createServer((request, response) => {
             client.release();
           }
         },
+        checkpointWorkspaceBinding: async (bindingInput) => {
+          const client = await database.connect();
+          try {
+            return await loadClaimedCheckpointWorkspaceBinding(client, bindingInput);
+          } finally {
+            client.release();
+          }
+        },
+        readCheckpointRecovery: async (recoveryInput) => {
+          const client = await database.connect();
+          try {
+            return await readClaimedCheckpointRecovery(client, recoveryInput);
+          } finally {
+            client.release();
+          }
+        },
         submitPermission: async (input) => {
           const client = await database.connect();
           try {
@@ -670,7 +696,8 @@ const server = createServer((request, response) => {
       const status =
         error instanceof InvalidSessionRuntimeRequestError
           ? 400
-          : error instanceof SessionRuntimeDispatchNotFoundError ||
+          : error instanceof ClaimedDispatchAuthorityNotFoundError ||
+              error instanceof SessionRuntimeDispatchNotFoundError ||
               error instanceof SessionRuntimePermissionNotFoundError ||
               error instanceof SessionRuntimeGitHubReadNotFoundError ||
               error instanceof SessionRuntimeGitHubMutationNotFoundError
@@ -678,7 +705,8 @@ const server = createServer((request, response) => {
             ? 404
             : error instanceof SessionRuntimeWorkItemNotFoundError
               ? 404
-            : error instanceof ImmutableSessionRuntimeDispatchConflictError ||
+            : error instanceof ClaimedDispatchAuthorityConflictError ||
+                error instanceof ImmutableSessionRuntimeDispatchConflictError ||
                 error instanceof SessionRuntimeClaimConflictError ||
                 error instanceof SessionRuntimePermissionConflictError
                 || error instanceof SessionRuntimeWorkItemConflictError

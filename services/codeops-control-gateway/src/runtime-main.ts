@@ -185,6 +185,11 @@ import {
   runtimeRoleOwnsRequest,
 } from "./runtime-role.js";
 
+import {
+  ClaimedDispatchAuthorityConflictError,
+  ClaimedDispatchAuthorityNotFoundError,
+} from "./claimed-dispatch-authority.js";
+
 const MAX_BODY_BYTES = 1024 * 1024;
 const runtimeRole = controlGatewayRuntimeRole(
   process.env.CODEOPS_CONTROL_GATEWAY_RUNTIME_ROLE,
@@ -1453,11 +1458,13 @@ const server = createServer((request, response) => {
       const status =
         error instanceof InvalidSessionRuntimeRequestError
           ? 400
-          : error instanceof SessionRuntimeDispatchNotFoundError ||
+          : error instanceof ClaimedDispatchAuthorityNotFoundError ||
+              error instanceof SessionRuntimeDispatchNotFoundError ||
               error instanceof SessionRuntimePermissionNotFoundError ||
               error instanceof WorkItemAdmissionNotFoundError
             ? 404
-            : error instanceof ImmutableSessionRuntimeDispatchConflictError ||
+            : error instanceof ClaimedDispatchAuthorityConflictError ||
+                error instanceof ImmutableSessionRuntimeDispatchConflictError ||
                 error instanceof SessionRuntimeClaimConflictError ||
                 error instanceof SessionRuntimePermissionConflictError ||
                 error instanceof RevokedSessionModelAuthorityError

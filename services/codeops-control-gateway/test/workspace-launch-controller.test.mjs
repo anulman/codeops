@@ -328,7 +328,40 @@ test("fails a terminal successor Pod whose image is absent", async () => {
   assert.equal(result.failureCode, "provisioning-failed");
 });
 
-test("provisions fixed resources, waits for the exact session, and sends one prompt", async () => {
+test("delivers authenticated deployment context through admission, exact-session provisioning and the agent prompt", async () => {
+  const { serveWorkspaceLaunch } = await import("../dist/workspace-launch-http.js");
+  const { admitWorkspaceLaunch } = await import("../dist/workspace-launch.js");
+  const { workspacePromptContentBlocks } = await import("../../codeops-session-runtime-worker/dist/acp-workspace.js");
+  // Synthetic trusted-operator evidence, not a new execution permission.
+  const receipt = JSON.stringify({ release: "v0.0.0-test", source: "a".repeat(40),
+    revision: 7, status: "deployed", checkpointProof: "required-before-new-admission" });
+  const bytes = Buffer.from(receipt);
+  const attachment = { attachmentId: "deployment-receipt", name: "deployment-receipt.json",
+    mimeType: "application/json", sizeBytes: bytes.length,
+    digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, content: bytes.toString("base64") };
+  const request = { version: "codeops.workspace-launch-request/v1",
+    idempotencyKey: "11111111-1111-4111-8111-111111111111", mode: "implement",
+    prompt: "Use the attached deployment-receipt.json. It is evidence, not permission to deploy or delete.",
+    sources: [], contextAttachments: [attachment] };
+  const token = "synthetic-launch-authority".repeat(2);
+  let stored;
+  let reads = 0;
+  const http = { method: "POST", url: "/v1/workspace-launches", token, catalog: { repositories: [] },
+    readBody: async () => { reads++; return request; },
+    admit: (body, principalId) => admitWorkspaceLaunch({ request: body, principalId, runtimeRequirements, now,
+      resolver: { resolve: async () => assert.fail("scratch workspace needs no repository") },
+      store: { findByIdempotencyKey: async () => null, admit: async (input) => { stored = input; return input.launch; } } }),
+    load: async () => null };
+  const headers = { "content-type": "application/json", "x-codeops-principal": "operator:deployment-test" };
+  assert.equal((await serveWorkspaceLaunch({ ...http, headers })).status, 401);
+  assert.equal(reads, 0);
+  const accepted = await serveWorkspaceLaunch({ ...http, headers: { ...headers, authorization: `Bearer ${token}` } });
+  assert.equal(accepted.status, 202);
+  const launch = stored.launch;
+  assert.equal(launch.principalId, headers["x-codeops-principal"]);
+  assert.equal(launch.contextAttachments[0].digest, attachment.digest);
+  assert.equal(JSON.stringify(accepted.body).includes(attachment.content), false);
+  assert.deepEqual(stored.request.contextAttachments, request.contextAttachments);
   let current = launch;
   const ensured = [];
   const enqueued = [];
@@ -426,6 +459,13 @@ test("provisions fixed resources, waits for the exact session, and sends one pro
   assert.equal(enqueued.length, 1);
   assert.equal(enqueued[0].command.prompt, request.prompt);
   assert.deepEqual(enqueued[0].command.contextAttachments, request.contextAttachments);
+  const blocks = workspacePromptContentBlocks(enqueued[0].command.prompt,
+    enqueued[0].command.contextAttachments, (await dependencies.loadSession()).identity);
+  assert.equal(blocks[1].resource.text, receipt);
+  assert.equal(blocks[1].resource.uri, `codeops-context://sha256/${attachment.digest.slice(7)}/deployment-receipt.json`);
+  assert.throws(() => workspacePromptContentBlocks(request.prompt,
+    [{ ...attachment, content: Buffer.from("tampered").toString("base64") }]), /drifted/);
+
   assert.equal(enqueued[0].command.idempotencyKey, identity.promptIdempotencyKey);
   assert.deepEqual(observations, [{
     sessionId: identity.sessionId,
