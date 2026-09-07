@@ -9,6 +9,7 @@ import {
   realpath,
   readdir,
   rm,
+  statfs,
   writeFile,
 } from "node:fs/promises";
 import path from "node:path";
@@ -29,6 +30,16 @@ import type {
 } from "./workspace-artifacts.js";
 
 const execFileAsync = promisify(execFile);
+
+/** The builder mounts only this private PVC subtree, never worker state/secrets. */
+export async function createWorkspaceRecoveryRoot(backing: string): Promise<string> {
+  const stat = await lstat(backing);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || stat.uid !== process.getuid?.() ||
+      (stat.mode & 0o077) !== 0 || await realpath(backing) !== path.resolve(backing)) {
+    throw new Error("workspace recovery backing is not a private plain directory");
+  }
+  return mkdtemp(path.join(backing, ".codeops-recovery-"));
+}
 
 function exactDigest(content: Buffer): string {
   return `sha256:${createHash("sha256").update(content).digest("hex")}`;
@@ -332,12 +343,20 @@ export async function materializeCheckpointBase(input: {
   await writeFile(path.join(git, "config"),
     "[core]\n\trepositoryformatversion = 0\n\tbare = false\n\thooksPath = /dev/null\n", { flag: "wx" });
   const env = privateGitEnvironment(input.target);
-  const tree = (await execFileAsync("git", ["-C", input.target, "ls-tree", "-rz",
+  const tree = (await execFileAsync("git", ["-C", input.target, "ls-tree", "-rlz",
     input.source.resolvedSha], { env, encoding: "utf8", maxBuffer: 24_000_000 })).stdout;
+  let checkoutBytes = 0n;
   for (const entry of tree.split("\0").filter(Boolean)) {
-    const match = /^(100644|100755) blob [0-9a-f]{40}\t([\s\S]+)$/.exec(entry);
+    const match = /^(100644|100755) blob [0-9a-f]{40} +([0-9]+)\t([\s\S]+)$/.exec(entry);
     if (!match) throw new Error("base tree contains a symlink or special file");
-    safeRelativePath(match[2]);
+    checkoutBytes += BigInt(match[2]!);
+    safeRelativePath(match[3]);
+  }
+  // The copied object database already occupies the same workspace PVC.
+  // Check full base checkout size, not just the bounded checkpoint patch.
+  const capacity = await statfs(input.target, { bigint: true });
+  if (capacity.bavail * capacity.bsize < checkoutBytes) {
+    throw new Error("workspace recovery backing has insufficient base checkout capacity");
   }
   await execFileAsync("git", ["-C", input.target, "read-tree", "--reset", "-u",
     input.source.resolvedSha], { env });

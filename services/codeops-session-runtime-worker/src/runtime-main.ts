@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { Pool } from "pg";
 import {
@@ -18,7 +18,7 @@ import {
 } from "./initialization.js";
 import { PostgresRuntimeExecutionReceiptStore } from "./postgres-receipts.js";
 import { PostgresWorkspaceCheckpointArtifactStore } from "./workspace-artifacts.js";
-import { restoreVerifiedWorkspaceCheckpoint, materializeCheckpointBase } from "./workspace-recovery.js";
+import { restoreVerifiedWorkspaceCheckpoint, materializeCheckpointBase, createWorkspaceRecoveryRoot } from "./workspace-recovery.js";
 import { runSessionRuntimeWorker } from "./runner.js";
 import { SessionRuntimeTransport } from "./transport.js";
 import type { RuntimeExecutor } from "./transport.js";
@@ -79,6 +79,7 @@ const modelProxyTokenPath = path.join(
 );
 const workspace = required("CODEOPS_SESSION_RUNTIME_WORKSPACE");
 const statePath = required("CODEOPS_SESSION_RUNTIME_ACP_STATE_PATH");
+const recoveryRoot = required("CODEOPS_SESSION_RUNTIME_RECOVERY_ROOT");
 const claimLeaseMs = boundedInteger(
   "CODEOPS_SESSION_RUNTIME_CLAIM_LEASE_MS",
   15 * 60_000,
@@ -186,6 +187,7 @@ try {
       socketPath,
       workspace,
       statePath,
+      recoveryRoot,
       socketTimeoutMs,
       permissions: createAcpPermissionRelay({ context }),
       artifacts: workspaceArtifacts,
@@ -230,7 +232,7 @@ try {
             ...(source === undefined ? {} : { catalogKey: source.catalogKey }),
             digest: expected.digest, content: Buffer.concat(chunks) };
         } };
-        const privateRoot = await mkdtemp(path.join(path.dirname(statePath), ".codeops-recovery-"));
+        const privateRoot = await createWorkspaceRecoveryRoot(recoveryRoot);
         const restored = await restoreVerifiedWorkspaceCheckpoint({
           descriptor, workspaceManifest: dispatch.snapshot.identity.workspace,
           artifacts: reader, privateRoot,

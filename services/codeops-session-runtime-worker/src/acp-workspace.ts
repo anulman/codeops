@@ -1259,6 +1259,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   readonly #uuid: () => string;
   readonly #artifacts?: WorkspaceCheckpointArtifactStore;
   readonly #captureRoot: string;
+  readonly #recoveryRoot: string;
   readonly #prepareModelAuthority?: () => Promise<void>;
   readonly #providerCooldownMs: number;
   readonly #delay: (milliseconds: number) => Promise<void>;
@@ -1277,6 +1278,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     readonly socketPath: string;
     readonly workspace: string;
     readonly statePath: string;
+    readonly recoveryRoot?: string;
     readonly permissions: AcpPermissionRelay;
     readonly socketTimeoutMs?: number;
     readonly now?: () => Date;
@@ -1302,6 +1304,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     const statePath = boundedAbsolutePath("ACP state path", input.statePath);
     this.#state = new AcpSessionStateStore(statePath);
     this.#captureRoot = path.dirname(statePath);
+    this.#recoveryRoot = boundedAbsolutePath("recovery root", input.recoveryRoot ?? this.#captureRoot);
     this.#permissions = input.permissions;
     this.#socketTimeoutMs = input.socketTimeoutMs ?? 30_000;
     this.#now = input.now ?? (() => new Date());
@@ -1467,13 +1470,13 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     }
     const root = await realpath(stored.path);
     const stat = await lstat(stored.path);
-    const captureRoot = await realpath(this.#captureRoot);
+    const recoveryRoot = await realpath(this.#recoveryRoot);
     if (root !== path.resolve(stored.path) || !stat.isDirectory() ||
         stat.isSymbolicLink() || stat.uid !== process.getuid?.() ||
         (stat.mode & 0o077) !== 0 ||
-        !root.startsWith(`${captureRoot}${path.sep}`) ||
+        !root.startsWith(`${recoveryRoot}${path.sep}`) ||
         !path.basename(root).startsWith(`.codeops-restore-${stored.operationId}-`)) {
-      throw new Error("ACP restored workspace is outside its private runtime state root");
+      throw new Error("ACP restored workspace is outside its private recovery root");
     }
     this.#workspace = root;
   }

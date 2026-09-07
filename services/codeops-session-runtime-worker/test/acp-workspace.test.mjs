@@ -1197,11 +1197,12 @@ test("executes prompt, checkpoint, hibernate, resume, and fork through ACP ident
 test("restores verified workspace bytes before loading ACP on the production resume path", async () => {
   const order = [];
   const root = await mkdtemp(path.join(os.tmpdir(), "codeops-resume-path-"));
-  const fresh = path.join(root, ".runtime", ".codeops-restore-cccccccc-cccc-4ccc-8ccc-cccccccccccc-test");
+  const fresh = path.join(root, "shared-recovery", ".codeops-restore-cccccccc-cccc-4ccc-8ccc-cccccccccccc-test");
   await mkdir(fresh, { recursive: true, mode: 0o700 });
   const lifecycle = new SocketAcpWorkspaceLifecycle({
     socketPath: "/run/codeops/agent.sock", workspace: root,
     statePath: path.join(root, ".runtime/state.json"),
+    recoveryRoot: path.join(root, "shared-recovery"),
     permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
     now: () => new Date("2026-09-04T12:00:00.000Z"),
     uuid: () => "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
@@ -1228,6 +1229,7 @@ test("restores verified workspace bytes before loading ACP on the production res
   const next = new SocketAcpWorkspaceLifecycle({
     socketPath: "/run/codeops/agent.sock", workspace: root,
     statePath: path.join(root, ".runtime/state.json"),
+    recoveryRoot: path.join(root, "shared-recovery"),
     permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
     connect: async (_dispatch, operation) => operation({
       loadSession: async (_id, cwd) => order.push(`reload:${cwd}`),

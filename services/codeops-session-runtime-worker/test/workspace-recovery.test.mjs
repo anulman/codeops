@@ -15,7 +15,7 @@ const workspaceJobUid = "11111111-1111-4111-8111-111111111111";
 const restoredUid = "33333333-3333-4333-8333-333333333333";
 const configurationDigest = `sha256:${"a".repeat(64)}`;
 
-async function fixture(clean = false) {
+async function fixture(clean = false, baseBytes = 0) {
   const workspace = await mkdtemp(path.join(os.tmpdir(), "codeops-capture-source-"));
   const captureRoot = await mkdtemp(path.join(os.tmpdir(), "codeops-capture-private-"));
   const restoreRoot = await mkdtemp(path.join(os.tmpdir(), "codeops-restore-private-"));
@@ -26,7 +26,8 @@ async function fixture(clean = false) {
   await execFileAsync("git", ["-C", source, "config", "user.email", "test@example.com"]);
   await execFileAsync("git", ["-C", source, "config", "user.name", "Test"]);
   await writeFile(path.join(source, "README.md"), "base\n");
-  await execFileAsync("git", ["-C", source, "add", "README.md"]);
+  if (baseBytes > 0) await writeFile(path.join(source, "large-base.bin"), Buffer.alloc(baseBytes, 7));
+  await execFileAsync("git", ["-C", source, "add", "."]);
   await execFileAsync("git", ["-C", source, "commit", "-m", "base"]);
   const sha = (await execFileAsync("git", ["-C", source, "rev-parse", "HEAD"]))
     .stdout.trim();
@@ -232,4 +233,27 @@ test("restores a clean source with a zero-byte patch and nonempty scratch", asyn
   const restored = await restoreVerifiedWorkspaceCheckpoint(restoreInput(run));
   assert.equal(await readFile(path.join(restored.workspace, "sources/codeops/README.md"), "utf8"), "base\n");
   assert.equal(await readFile(path.join(restored.workspace, "scratch/nested/notes.txt"), "utf8"), "private scratch\n");
+});
+
+
+test("restored cwd supports a full base checkout larger than worker session-state", async () => {
+  const run = await fixture(false, 20 * 1024 * 1024);
+  const restored = await restoreVerifiedWorkspaceCheckpoint({
+    descriptor: run.descriptor, workspaceManifest: run.manifest,
+    artifacts: run.store, privateRoot: run.restoreRoot,
+    restoreOperationId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+    restoredWorkspaceJobUid: restoredUid,
+    restoredResourceConfigurationDigest: `sha256:${"f".repeat(64)}`,
+    restoredWorkspaceConfigurationDigest: configurationDigest,
+    restoredGeneration: 2, restoredAt: "2026-09-04T10:05:00.000Z",
+    materializeBase: run.materializeBase,
+  });
+  const result = await execFileAsync(process.execPath, ["-e", `
+    const fs = require('node:fs');
+    if (fs.statSync('sources/codeops/large-base.bin').size !== 20 * 1024 * 1024) process.exit(1);
+    if (fs.readFileSync('sources/codeops/README.md', 'utf8') !== 'restored exactly\\n') process.exit(2);
+    fs.writeFileSync('scratch/continued.txt', 'continued');
+  `], { cwd: restored.workspace });
+  assert.equal(result.stderr, "");
+  assert.equal(await readFile(path.join(restored.workspace, "scratch/continued.txt"), "utf8"), "continued");
 });
