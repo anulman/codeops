@@ -16,6 +16,10 @@ export interface WorkspaceCheckpointArtifactStore {
   put(artifact: WorkspaceCheckpointArtifact): Promise<void>;
 }
 
+export interface WorkspaceCheckpointArtifactReader {
+  get(artifactId: string): Promise<WorkspaceCheckpointArtifact | null>;
+}
+
 interface ArtifactRow {
   readonly artifact_id: unknown;
   readonly session_id: unknown;

@@ -185,6 +185,9 @@ function runtimeEgressProxyEnvironment(raw: WorkspaceResourceConfig) {
   ];
 }
 
+const recoveryMountPath = "/var/lib/codeops-recovery";
+const recoveryWorkspaceSubPath = ".codeops/recovery";
+
 const codexHomeMountPath = "/var/lib/codeops-agent/codex-home";
 const codexHomeWorkspaceSubPath = ".codeops/codex-home";
 
@@ -236,6 +239,8 @@ const run = (args, env = process.env) => {
 };
 mkdirSync("/workspace/sources", { recursive: true });
 mkdirSync("/workspace/scratch", { recursive: true });
+mkdirSync("/workspace/${recoveryWorkspaceSubPath}", { recursive: true });
+chmodSync("/workspace/${recoveryWorkspaceSubPath}", 0o700);
 mkdirSync("/workspace/${codexHomeWorkspaceSubPath}", { recursive: true });
 chmodSync("/workspace/${codexHomeWorkspaceSubPath}", 0o700);
 for (const source of input.sources) {
@@ -605,6 +610,7 @@ export function buildWorkspaceResources(
                 { name: "CODEOPS_DATABASE_URL_FILE", value: "/var/run/codeops-session/database-url" },
                 { name: "CODEOPS_SESSION_RUNTIME_ACP_SOCKET_PATH", value: "/run/codeops/agent.sock" },
                 { name: "CODEOPS_SESSION_RUNTIME_WORKSPACE", value: "/workspace" },
+                { name: "CODEOPS_SESSION_RUNTIME_RECOVERY_ROOT", value: recoveryMountPath },
                 { name: "CODEOPS_SESSION_RUNTIME_ACP_STATE_PATH", value: "/var/lib/codeops-session/state.json" },
                 { name: "CODEOPS_SESSION_WORKSPACE_JSON", value: JSON.stringify(workspace) },
                 { name: "CODEOPS_SESSION_POLICY_JSON", value: JSON.stringify(policy) },
@@ -654,6 +660,8 @@ export function buildWorkspaceResources(
                 { name: "workspace", mountPath: "/workspace", readOnly: workspaceReadOnly },
                 { name: "session", mountPath: "/run/codeops" },
                 { name: "session-state", mountPath: "/var/lib/codeops-session" },
+                { name: "workspace", mountPath: recoveryMountPath,
+                  subPath: recoveryWorkspaceSubPath, readOnly: false },
                 { name: "temp", mountPath: "/tmp" },
                 { name: "session-secrets", mountPath: "/var/run/codeops-session", readOnly: true },
               ],
@@ -699,6 +707,8 @@ export function buildWorkspaceResources(
                   subPath: codexHomeWorkspaceSubPath,
                   readOnly: false,
                 },
+                { name: "workspace", mountPath: recoveryMountPath,
+                  subPath: recoveryWorkspaceSubPath, readOnly: workspaceReadOnly },
                 { name: "session", mountPath: "/run/codeops" },
                 { name: "temp", mountPath: "/tmp" },
               ],

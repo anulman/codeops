@@ -294,6 +294,11 @@ interface ExecuteSessionCommandInput {
     readonly dispatchJson: unknown;
     readonly completionJson: unknown;
   };
+  readonly finalize?: (
+    client: TransactionClient,
+    result: SessionCommandResult,
+    committedAt: string,
+  ) => Promise<void>;
 }
 
 export interface SessionMutationContext {
@@ -843,6 +848,7 @@ export async function executeSessionCommandTransaction(
           committedAt,
         );
       }
+      await input.finalize?.(client, result, committedAt);
       await client.query("COMMIT");
       return result;
     }
@@ -961,6 +967,7 @@ export async function executeSessionCommandTransaction(
         committedAt,
       );
     }
+    await input.finalize?.(client, result, committedAt);
     await client.query("COMMIT");
     return result;
   } catch (error) {

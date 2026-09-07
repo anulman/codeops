@@ -66,3 +66,10 @@ test("rejects content or replay identity drift", async () => {
     /identity conflicts/,
   );
 });
+
+test("does not expose an unclaimed artifact-content read", () => {
+  const store = new PostgresWorkspaceCheckpointArtifactStore({
+    query: async () => assert.fail(),
+  });
+  assert.equal("get" in store, false);
+});

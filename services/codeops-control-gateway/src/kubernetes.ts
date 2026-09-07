@@ -445,7 +445,7 @@ function canonicalizeServerOwnedFields(existing: Record<string, unknown>,
   }
 }
 
-function observedResourceConfigurationMatches(resource: KubernetesResource,
+export function observedResourceConfigurationMatches(resource: KubernetesResource,
   expectedDigest: string): boolean {
   const configuration = structuredClone(immutableResourceConfiguration(resource));
   const existingSpec = record(configuration.spec);

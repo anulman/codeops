@@ -169,6 +169,10 @@ const migrations = [
     name: "session-phase-model-budget-v1",
     url: new URL("../sql/session-phase-model-budget-v1.sql", import.meta.url),
   },
+  {
+    name: "verified-checkpoint-recovery-v1",
+    url: new URL("../sql/verified-checkpoint-recovery-v1.sql", import.meta.url),
+  },
 ] as const;
 
 const ownerPrincipalPattern = /^[A-Za-z0-9][A-Za-z0-9._:@/-]{0,255}$/;

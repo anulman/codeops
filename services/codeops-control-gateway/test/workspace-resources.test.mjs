@@ -630,3 +630,30 @@ test("binds the immutable Secret name to principal, request, workspace, and auth
     name,
   );
 });
+
+
+test("recovery uses the durable workspace subtree in both containers without exposing worker state", () => {
+  for (const readOnly of [false, true]) {
+    const input = config();
+    if (readOnly) input.policy = { ...input.policy, mode: "review", workspaceAccess: "read-only",
+      modelPolicy: { ...input.policy.modelPolicy, reasoningEffort: "high" } };
+    const resources = buildWorkspaceResources(input);
+    const pvc = resources.find(r => r.kind === "PersistentVolumeClaim");
+    const materializer = resources[2];
+    const pod = resources[3].spec.template.spec;
+    const worker = pod.containers.find(c => c.name === "runtime-worker");
+    const agent = pod.containers.find(c => c.name === "coding-agent");
+    const root = worker.env.find(e => e.name === "CODEOPS_SESSION_RUNTIME_RECOVERY_ROOT").value;
+    const wm = worker.volumeMounts.find(m => m.mountPath === root);
+    const am = agent.volumeMounts.find(m => m.mountPath === root);
+    assert.deepEqual(wm, { name: "workspace", mountPath: root, subPath: ".codeops/recovery", readOnly: false });
+    assert.deepEqual(am, { ...wm, readOnly });
+    assert.equal(pod.volumes.find(v => v.name === wm.name).persistentVolumeClaim.claimName, pvc.metadata.name);
+    assert.equal(pvc.spec.resources.requests.storage, "10Gi");
+    assert.match(JSON.stringify(materializer), /\.codeops\/recovery/);
+    for (const name of ["session-state", "session-secrets"]) {
+      assert.equal(agent.volumeMounts.some(m => m.name === name), false);
+    }
+    assert.equal(agent.volumeMounts.find(m => m.mountPath === "/workspace").readOnly, readOnly);
+  }
+});

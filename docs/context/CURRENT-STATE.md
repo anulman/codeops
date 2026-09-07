@@ -38,6 +38,15 @@ eligible for terminal completion or failure under their durable released lease
 identity. Reconciliation is fair across polls and does not replace the runtime
 or release scheduler capacity.
 
+Workspace checkpoint capture stores bounded source patches and scratch bundles
+in PostgreSQL. New verified descriptors bind their exact Session generation,
+workspace UID and configuration, repositories, base commits, paths, bytes, and
+digests. Restore uses a fresh private workspace and issues a receipt only after
+an exact recapture. Cleanup authority is disabled until an operator configures
+a retention decision. The control plane records a fail-closed cleanup decision
+only when both receipts and current authority still match. Resource deletion is
+not part of this boundary.
+
 Interactive workspace admission binds immutable runtime requirements before
 effects. Root, fork, and admitted work-item execution resolves one durable
 launch profile. Claims prove the exact release and capability identities, and

@@ -68,6 +68,10 @@ const completionPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/completions$/i;
 const modelAuthorityPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/model-authority$/i;
+const checkpointBindingPath =
+  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/checkpoint-binding$/i;
+const checkpointRecoveryPath =
+  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/checkpoint-recovery$/i;
 const permissionSubmissionPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/permissions$/i;
 const permissionPollPath =
@@ -177,6 +181,17 @@ export async function serveSessionRuntime(input: {
     readonly claimToken: string;
     readonly workerId: string;
   }) => Promise<SessionRuntimeModelAuthorityResponse>;
+  readonly checkpointWorkspaceBinding?: (input: {
+    readonly dispatchId: string; readonly claimToken: string;
+    readonly workerId: string;
+  }) => Promise<{ readonly jobUid: string;
+    readonly resourceConfigurationDigest: string;
+    readonly workspaceConfigurationDigest: string }>;
+  readonly readCheckpointRecovery?: (input: {
+    readonly dispatchId: string; readonly claimToken: string;
+    readonly workerId: string; readonly artifactId?: string;
+    readonly offset?: number;
+  }) => Promise<Record<string, unknown>>;
   readonly submitPermission: (input: {
     readonly dispatchId: string;
     readonly workerId: string;
@@ -245,6 +260,8 @@ export async function serveSessionRuntime(input: {
   const completionMatch = url.pathname.match(completionPath);
   const claimRenewalMatch = url.pathname.match(claimRenewalPath);
   const modelAuthorityMatch = url.pathname.match(modelAuthorityPath);
+  const checkpointBindingMatch = url.pathname.match(checkpointBindingPath);
+  const checkpointRecoveryMatch = url.pathname.match(checkpointRecoveryPath);
   const permissionSubmissionMatch = url.pathname.match(permissionSubmissionPath);
   const permissionPollMatch = url.pathname.match(permissionPollPath);
   const workItemMatch = url.pathname.match(workItemPath);
@@ -258,6 +275,8 @@ export async function serveSessionRuntime(input: {
     completionMatch === null &&
     claimRenewalMatch === null &&
     modelAuthorityMatch === null &&
+    checkpointBindingMatch === null &&
+    checkpointRecoveryMatch === null &&
     permissionSubmissionMatch === null &&
     permissionPollMatch === null
     && workItemMatch === null
@@ -406,6 +425,47 @@ export async function serveSessionRuntime(input: {
       }
       throw error;
     }
+  }
+
+  if (checkpointBindingMatch !== null) {
+    if (input.checkpointWorkspaceBinding === undefined) {
+      return { status: 404, body: { status: "not-found" } };
+    }
+    const request = z.object({ claimToken: z.string().uuid() }).strict().safeParse(
+      await readRequestBody(input.readBody),
+    );
+    if (!request.success) throw new InvalidSessionRuntimeRequestError(
+      "session runtime checkpoint-binding body is invalid",
+    );
+    return { status: 200, body: {
+      version: "codeops.checkpoint-workspace-binding-result/v1",
+      ...(await input.checkpointWorkspaceBinding({
+        dispatchId: dispatchId.parse(checkpointBindingMatch[1]),
+        claimToken: request.data.claimToken, workerId: input.workerId,
+      })),
+    } };
+  }
+
+  if (checkpointRecoveryMatch !== null) {
+    if (input.readCheckpointRecovery === undefined) {
+      return { status: 404, body: { status: "not-found" } };
+    }
+    const request = z.object({
+      claimToken: z.string().uuid(),
+      artifactId: z.string().max(160).optional(),
+      offset: z.number().int().nonnegative().max(24_000_000).optional(),
+    }).strict().safeParse(await readRequestBody(input.readBody));
+    if (!request.success ||
+        (request.data.artifactId === undefined) !==
+          (request.data.offset === undefined)) {
+      throw new InvalidSessionRuntimeRequestError(
+        "session runtime checkpoint-recovery body is invalid",
+      );
+    }
+    return { status: 200, body: await input.readCheckpointRecovery({
+      dispatchId: dispatchId.parse(checkpointRecoveryMatch[1]),
+      workerId: input.workerId, ...request.data,
+    }) };
   }
 
   if (workItemMatch !== null) {

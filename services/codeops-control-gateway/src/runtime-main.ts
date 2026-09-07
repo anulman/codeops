@@ -89,6 +89,12 @@ import {
   completeSessionRuntimeDispatch,
   enqueueSessionRuntimeDispatch,
 } from "./session-broker-runtime-outbox.js";
+import { loadClaimedCheckpointWorkspaceBinding,
+  readClaimedCheckpointRecovery, authorizeCheckpointCleanup,
+  configureCheckpointRetention, placeCheckpointHold,
+  releaseCheckpointHold } from "./checkpoint-recovery.js";
+import { InvalidCheckpointControlRequestError,
+  serveCheckpointRecoveryControl } from "./checkpoint-recovery-http.js";
 import {
   pollSessionRuntimePermission,
   SessionRuntimePermissionConflictError,
@@ -1399,6 +1405,22 @@ const server = createServer((request, response) => {
             client.release();
           }
         },
+        checkpointWorkspaceBinding: async (bindingInput) => {
+          const client = await database.connect();
+          try {
+            return await loadClaimedCheckpointWorkspaceBinding(client, bindingInput);
+          } finally {
+            client.release();
+          }
+        },
+        readCheckpointRecovery: async (recoveryInput) => {
+          const client = await database.connect();
+          try {
+            return await readClaimedCheckpointRecovery(client, recoveryInput);
+          } finally {
+            client.release();
+          }
+        },
         submitPermission: async (permissionInput) => {
           const client = await database.connect();
           try {
@@ -1451,6 +1473,39 @@ const server = createServer((request, response) => {
                 ? "conflict"
                 : "unavailable",
       });
+      return;
+    }
+    try {
+      const checkpointControl = await serveCheckpointRecoveryControl({
+        method: request.method, url: request.url, headers: request.headers,
+        token: sessionBrokerWriteToken, readBody: () => readJson(request),
+        hold: async (holdInput) => {
+          const client = await database.connect();
+          try {
+            return holdInput.action === "placed"
+              ? await placeCheckpointHold(client, holdInput)
+              : await releaseCheckpointHold(client, holdInput);
+          } finally { client.release(); }
+        },
+        retention: async (retentionInput) => {
+          const client = await database.connect();
+          try { return await configureCheckpointRetention(client, retentionInput); }
+          finally { client.release(); }
+        },
+        cleanup: async (cleanupInput) => {
+          const client = await database.connect();
+          try { return await authorizeCheckpointCleanup(client, cleanupInput); }
+          finally { client.release(); }
+        },
+      });
+      if (checkpointControl !== null) {
+        json(response, checkpointControl.status, checkpointControl.body);
+        return;
+      }
+    } catch (error) {
+      json(response, error instanceof InvalidCheckpointControlRequestError ? 400 : 503,
+        { status: error instanceof InvalidCheckpointControlRequestError
+          ? "invalid-request" : "unavailable" });
       return;
     }
     try {
