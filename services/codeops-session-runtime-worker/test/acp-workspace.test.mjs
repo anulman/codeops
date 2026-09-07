@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, rename, mkdir, mkdtemp, readFile, readdir, symlink, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -880,6 +880,64 @@ test("renders exact command, MCP, and prior file-change permission details", () 
   }), /no safe operation renderer/);
 });
 
+
+async function sourceTreeSnapshot(root) {
+  const entries = [];
+  async function visit(relative) {
+    const target = path.join(root, relative);
+    const stat = await lstat(target);
+    entries.push([relative, stat.mode, stat.isFile()
+      ? createHash("sha256").update(await readFile(target)).digest("hex") : null]);
+    if (stat.isDirectory()) {
+      for (const name of (await readdir(target)).sort()) await visit(path.join(relative, name));
+    }
+  }
+  await visit(".");
+  return entries;
+}
+
+async function makeSourceReadOnly(root) {
+  for (const [relative, mode] of (await sourceTreeSnapshot(root)).reverse()) {
+    await chmod(path.join(root, relative), mode & ~0o222);
+  }
+  // A mode-bit assertion alone can pass as root; prove the kernel denies writes.
+  await assert.rejects(writeFile(path.join(root, ".git", "objects", "write-probe"), "denied"),
+    error => error.code === "EACCES" || error.code === "EROFS");
+}
+
+for (const packed of [false, true]) {
+  test(`captures changed read-only sources with ${packed ? "packed" : "loose"} objects`, async () => {
+    const original = await workspace();
+    // The alternate must remain one path even with Git's path-list separator.
+    const root = `${original}:quoted"source`;
+    await rename(original, root);
+    const privateRoot = await mkdtemp(path.join(os.tmpdir(), "codeops-private-capture-"));
+    const baseSha = (await execFileAsync("git", ["-C", root, "rev-parse", "HEAD"])).stdout.trim();
+    if (packed) await execFileAsync("git", ["-C", root, "gc", "--prune=now"]);
+    await writeFile(path.join(root, "README.md"), "after\n");
+    await writeFile(path.join(root, "new.bin"), Buffer.from([0, 1, 2, 255]));
+    await makeSourceReadOnly(root);
+    const before = await sourceTreeSnapshot(root);
+    const patch = await captureWorkspacePatch(root, baseSha, privateRoot);
+    assert.match(patch.toString(), /GIT binary patch/);
+    assert.match(patch.toString(), /\+after/);
+    assert.deepEqual(await captureWorkspacePatch(root, baseSha, privateRoot), patch);
+    assert.deepEqual(await sourceTreeSnapshot(root), before);
+    assert.deepEqual(await readdir(privateRoot), []);
+  });
+}
+
+test("rejects source object alternates and cleans private capture after an invalid base", async () => {
+  const root = await workspace();
+  const privateRoot = await mkdtemp(path.join(os.tmpdir(), "codeops-private-capture-"));
+  const baseSha = (await execFileAsync("git", ["-C", root, "rev-parse", "HEAD"])).stdout.trim();
+  await assert.rejects(captureWorkspacePatch(root, "f".repeat(40), privateRoot));
+  assert.deepEqual(await readdir(privateRoot), []);
+  await writeFile(path.join(root, ".git", "objects", "info", "alternates"), "/outside\n");
+  await assert.rejects(captureWorkspacePatch(root, baseSha, privateRoot), /alternates are not permitted/);
+  assert.deepEqual(await readdir(privateRoot), []);
+});
+
 test("captures tracked and untracked workspace changes in one bounded patch", async () => {
   const root = await workspace();
   const privateRoot = await mkdtemp(path.join(os.tmpdir(), "codeops-private-capture-"));
@@ -1038,6 +1096,104 @@ test("persists actual source patches and scratch files before committing a works
   ]);
   assert.equal(artifacts.length, 2);
   assert.match(artifacts[0].content.toString("utf8"), /\+after/);
+  assert.match(artifacts[1].content.toString("utf8"), /Y29uc29sZS5sb2coJ2R1cmFibGUnKQo=/);
+  assert.equal(checkpoint.material.version,
+    "codeops.session-workspace-checkpoint-material/v2");
+  assert.equal(artifacts[0].digest,
+    checkpoint.material.descriptor.manifest.sourcePatches[0].digest);
+  assert.equal(artifacts[1].digest,
+    checkpoint.material.descriptor.manifest.scratchArtifact.digest);
+  assert.equal(checkpoint.material.descriptor.manifest.totalBytes,
+    artifacts[0].content.byteLength + artifacts[1].content.byteLength);
+});
+
+test("completes an explore phase prompt with an exactly bound read-only checkpoint", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "codeops-workspace-artifacts-"));
+  const source = path.join(root, "sources", "repo-one");
+  const scratch = path.join(root, "scratch");
+  await mkdir(source, { recursive: true });
+  await mkdir(scratch, { recursive: true });
+  await execFileAsync("git", ["-C", source, "init"]);
+  await execFileAsync("git", ["-C", source, "config", "user.email", "test@example.com"]);
+  await execFileAsync("git", ["-C", source, "config", "user.name", "Test"]);
+  await writeFile(path.join(source, "README.md"), "before\n");
+  await execFileAsync("git", ["-C", source, "add", "README.md"]);
+  await execFileAsync("git", ["-C", source, "commit", "-m", "base"]);
+  const sha = (await execFileAsync("git", ["-C", source, "rev-parse", "HEAD"])).stdout.trim();
+  await makeSourceReadOnly(source);
+  const sourceBefore = await sourceTreeSnapshot(source);
+  await writeFile(path.join(scratch, "script.mjs"), "console.log('durable')\n");
+  const manifest = {
+    version: "codeops.workspace/v1",
+    sources: [{
+      catalogKey: "repo-one",
+      repository: "example-org/repo-one",
+      checkoutPath: "sources/repo-one",
+      requestedRef: "main",
+      resolvedSha: sha,
+    }],
+    scratchPath: "scratch",
+  };
+  const artifacts = [];
+  const lifecycle = new SocketAcpWorkspaceLifecycle({
+    socketPath: "/run/codeops/agent.sock",
+    workspace: root,
+    statePath: path.join(root, ".runtime", "sessions.json"),
+    permissions: { request: async () => ({ outcome: { outcome: "cancelled" } }) },
+    uuid: () => "99999999-9999-4999-8999-999999999999",
+    artifacts: { put: async (artifact) => artifacts.push(artifact) },
+    checkpointWorkspace: async () => ({
+      jobUid: "88888888-8888-4888-8888-888888888888",
+      resourceConfigurationDigest: `sha256:${"b".repeat(64)}`,
+      workspaceConfigurationDigest: `sha256:${"a".repeat(64)}`,
+    }),
+    connect: async (_runtimeDispatch, operation) => operation({
+      newSession: async () => "acp-workspace-session",
+      loadSession: async () => {},
+      prompt: async () => ({ response: "ready", stopReason: "end_turn" }),
+      forkSession: async () => "unused",
+    }),
+  });
+  const workspaceSnapshot = {
+    identity: {
+      version: "codeops.session-workspace-identity/v1",
+      workspace: manifest,
+      policy: { mode: "explore" },
+      workflowId: "workspace-launch",
+      runId: "launch-test",
+      parentSessionId: null,
+      forkedAtCursor: null,
+    },
+  };
+  const promptDispatch = dispatch(
+    "prompt",
+    { prompt: "Inspect the source without edits." },
+    workspaceSnapshot,
+  );
+  promptDispatch.snapshot.budget = projectSessionBudgetV2({
+    budgetId: promptDispatch.command.sessionId, revision: 1,
+    startedAt: promptDispatch.dispatchedAt, observedAt: promptDispatch.dispatchedAt,
+    limits: initialSessionBudgetLimits("implementation"),
+  });
+  const result = await lifecycle.prompt(promptDispatch);
+  assert.equal(result.type, "prompt");
+  assert.equal(result.material.response, "ready");
+  const checkpoint = { material: result.material.checkpoint };
+  assert.ok(checkpoint.material);
+  assert.deepEqual(await sourceTreeSnapshot(source), sourceBefore);
+  const binding = checkpoint.material.descriptor.manifest.binding;
+  assert.equal(binding.sessionId, promptDispatch.command.sessionId);
+  assert.equal(binding.generation, promptDispatch.command.generation);
+  assert.equal(binding.workspaceJobUid, "88888888-8888-4888-8888-888888888888");
+  assert.equal(binding.resourceConfigurationDigest, `sha256:${"b".repeat(64)}`);
+  assert.equal(binding.workspaceConfigurationDigest, `sha256:${"a".repeat(64)}`);
+  assert.equal(checkpoint.material.descriptor.manifest.sourcePatches[0].baseSha, sha);
+  assert.deepEqual(checkpoint.material.evidenceReferences, [
+    "artifact:99999999-9999-4999-8999-999999999999:source:repo-one",
+    "artifact:99999999-9999-4999-8999-999999999999:scratch",
+  ]);
+  assert.equal(artifacts.length, 2);
+  assert.equal(artifacts[0].content.byteLength, 0);
   assert.match(artifacts[1].content.toString("utf8"), /Y29uc29sZS5sb2coJ2R1cmFibGUnKQo=/);
   assert.equal(checkpoint.material.version,
     "codeops.session-workspace-checkpoint-material/v2");
