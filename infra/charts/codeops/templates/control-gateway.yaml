@@ -110,6 +110,10 @@ spec:
           imagePullPolicy: IfNotPresent
           env:
             - { name: CODEOPS_CONTROL_GATEWAY_RUNTIME_ROLE, value: api }
+            {{- if .Values.plane.adapter.enabled }}
+            - { name: CODEOPS_WORK_ITEM_PROVIDER_ORIGIN, value: http://{{ include "codeops.fullname" . }}-github-controller:8080 }
+            - { name: CODEOPS_WORK_ITEM_PROVIDER_TOKEN_FILE, value: /var/run/secrets/codeops-work-items/work-item-mutation-token }
+            {{- end }}
             - { name: CODEOPS_DEPLOYMENT_PROFILE, value: {{ .Values.profile | quote }} }
             - { name: CODEOPS_RELEASE, value: {{ .Chart.Version | quote }} }
             - { name: CODEOPS_EXECUTION_NAMESPACE, value: {{ include "codeops.executionNamespace" . | quote }} }
@@ -176,6 +180,9 @@ spec:
             readOnlyRootFilesystem: true
             capabilities: { drop: [ALL] }
           volumeMounts:
+            {{- if .Values.plane.adapter.enabled }}
+            - { name: work-item-provider-auth, mountPath: /var/run/secrets/codeops-work-items, readOnly: true }
+            {{- end }}
             - { name: control-gateway-auth, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-control-gateway, readOnly: true }
             - { name: session-secrets, mountPath: /var/run/secrets/codeops, readOnly: true }
             - { name: repository-registry, mountPath: /var/run/secrets/{{ include "codeops.fullname" . }}-runtime-repositories, readOnly: true }
@@ -189,6 +196,14 @@ spec:
             {{- end }}
             - { name: temp, mountPath: /tmp }
       volumes:
+        {{- if .Values.plane.adapter.enabled }}
+        - name: work-item-provider-auth
+          secret:
+            secretName: {{ .Values.githubController.secretName }}
+            defaultMode: 256
+            items:
+              - { key: work-item-mutation-token, path: work-item-mutation-token }
+        {{- end }}
         - name: control-gateway-auth
           secret:
             secretName: {{ .Values.controlGateway.secretName }}

@@ -1,3 +1,5 @@
+import { createWorkItemAdmissionAdapter, WorkItemAdmissionPermissionDeniedError, WorkItemAdmissionInactiveError } from "./work-item-admissions.js";
+import { ZodError } from "zod";
 import { createHash } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import {
@@ -47,6 +49,7 @@ export class WorkItemsBroker {
     | {
         readonly dispatch: SessionRuntimeDispatch;
         readonly context: RuntimeExecutionContext;
+        admit: ReturnType<typeof createWorkItemAdmissionAdapter>;
       }
     | undefined;
 
@@ -59,7 +62,7 @@ export class WorkItemsBroker {
   async #serve(request: IncomingMessage, response: ServerResponse): Promise<void> {
     const operation = request.url === "/v1/work-items"
       ? "create"
-      : request.url?.match(/^\/v1\/work-items\/(get|search|comment|update|relate)$/)?.[1];
+      : request.url?.match(/^\/v1\/work-items\/(get|search|comment|update|relate|admit)$/)?.[1];
     if (request.method !== "POST" || operation === undefined) {
       json(response, 404, { status: "not-found" });
       return;
@@ -75,6 +78,10 @@ export class WorkItemsBroker {
     }
     try {
       const raw = await readJson(request);
+      if (operation === "admit") {
+        json(response, 200, await active.admit(raw));
+        return;
+      }
       const schemas = {
         create: workItemCreateInputSchema,
         get: workItemGetInputSchema,
@@ -169,8 +176,11 @@ export class WorkItemsBroker {
           }));
           return;
       }
-    } catch {
-      json(response, 503, { status: "unavailable" });
+    } catch (error) {
+      const status = error instanceof WorkItemAdmissionPermissionDeniedError ? 403
+        : error instanceof WorkItemAdmissionInactiveError ? 409
+        : error instanceof SyntaxError || error instanceof ZodError ? 400 : 503;
+      json(response, status, { status: status === 403 ? "permission-denied" : status === 409 ? "no-active-prompt" : status === 400 ? "invalid-request" : "unavailable" });
     }
   }
 
@@ -198,7 +208,14 @@ export class WorkItemsBroker {
     operation: () => Promise<Result>,
   ): Promise<Result> {
     if (this.#active !== undefined) throw new Error("work-item broker is already active");
-    this.#active = { dispatch, context };
+    const active = { dispatch, context, admit: undefined as unknown as ReturnType<typeof createWorkItemAdmissionAdapter> };
+    // Lazily construct for admission only; other broker operations retain their existing dispatch contract.
+    let adapter: ReturnType<typeof createWorkItemAdmissionAdapter> | undefined;
+    active.admit = (raw) => {
+      adapter ??= createWorkItemAdmissionAdapter({ dispatch, context, isActive: () => this.#active === active });
+      return adapter(raw);
+    };
+    this.#active = active;
     try {
       return await operation();
     } finally {

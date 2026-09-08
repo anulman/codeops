@@ -776,6 +776,7 @@ export function createPlaneWebhookRequestListener(input: {
   };
   workItems?: {
     token: string;
+    membership?: (request: unknown) => Promise<import("@codeops/codeops-contracts").WorkItemMembership>;
     create: (request: unknown) => Promise<WorkItemCreateResult>;
     get: (request: unknown) => Promise<WorkItemProjection>;
     search: (request: unknown) => Promise<WorkItemSearchResult>;
@@ -875,6 +876,7 @@ export function createPlaneWebhookRequestListener(input: {
       [
         "/v1/work-items",
         "/v1/work-items/get",
+        "/v1/work-items/membership",
         "/v1/work-items/search",
         "/v1/work-items/comment",
         "/v1/work-items/update",
@@ -906,8 +908,9 @@ export function createPlaneWebhookRequestListener(input: {
             ? "create"
             : request.url.slice("/v1/work-items/".length);
         const handler = input.workItems[
-          operation as "create" | "get" | "search" | "comment" | "update" | "relate"
+          operation as "create" | "get" | "search" | "comment" | "update" | "relate" | "membership"
         ];
+        if (handler === undefined) { json(response, 404, { status: "not-found" }); return; }
         json(response, 200, await handler(body));
       } catch {
         json(response, 503, { status: "unavailable" });

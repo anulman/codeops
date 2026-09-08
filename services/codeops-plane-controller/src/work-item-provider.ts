@@ -3,6 +3,7 @@ import {
   workItemCommentResultSchema,
   workItemCreateResultSchema,
   workItemProjectionSchema,
+  workItemMembershipSchema,
   workItemProviderCommentRequestSchema,
   workItemProviderCreateRequestSchema,
   workItemProviderGetRequestSchema,
@@ -23,6 +24,7 @@ import {
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import type { PlaneApiClient } from "./plane-api.js";
+import { workItemSnapshotSchema, projectSnapshotSchema } from "./index.js";
 
 const uuid = z.string().uuid();
 const planeWorkItemSchema = z
@@ -168,10 +170,31 @@ export async function getPlaneWorkItem(input: {
   const item = planeWorkItemSchema.parse(
     await input.client.getWorkItemSnapshot(input.projectId, request.workItemId),
   );
-  if (item.project !== input.projectId) {
+  if (item.project !== input.projectId || item.id !== request.workItemId) {
     throw new Error("Plane work item escaped the configured project");
   }
   return projection({ repository: request.repository, item });
+}
+
+export async function getPlaneWorkItemMembership(input: {
+  readonly request: unknown;
+  readonly authority: { readonly repository: string; readonly workspaceId: string; readonly projectId: string };
+  readonly client: PlaneApiClient;
+}) {
+  const request = workItemProviderGetRequestSchema.parse(input.request);
+  if (request.repository !== input.authority.repository) throw new Error("Plane repository binding drifted");
+  assertPlane(request.provider);
+  const [rawItem, rawProject] = await Promise.all([
+    input.client.getWorkItemSnapshot(input.authority.projectId, request.workItemId),
+    input.client.getProjectSnapshot(input.authority.projectId),
+  ]);
+  const item = workItemSnapshotSchema.pick({ id: true, project: true, workspace: true }).parse(rawItem);
+  const project = projectSnapshotSchema.pick({ id: true, workspace: true }).parse(rawProject);
+  if (item.id !== request.workItemId || item.project !== input.authority.projectId ||
+      project.id !== input.authority.projectId || item.workspace !== input.authority.workspaceId ||
+      project.workspace !== input.authority.workspaceId) throw new Error("Plane work-item membership drifted");
+  return workItemMembershipSchema.parse({ repository: request.repository, workItemId: item.id,
+    provider: { kind: "plane", workspaceId: input.authority.workspaceId, projectId: input.authority.projectId } });
 }
 
 export async function searchPlaneWorkItems(input: {

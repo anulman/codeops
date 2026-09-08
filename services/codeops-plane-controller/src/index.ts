@@ -241,7 +241,7 @@ const planeCeIssueWebhookSchema = z
   })
   .strict();
 
-const workItemSnapshotSchema = z
+export const workItemSnapshotSchema = z
   .object({
     id: uuid,
     project: uuid,
@@ -260,7 +260,7 @@ const workItemSnapshotSchema = z
   })
   .passthrough();
 
-const projectSnapshotSchema = z
+export const projectSnapshotSchema = z
   .object({
     id: uuid,
     workspace: uuid,

@@ -4,6 +4,7 @@ import {
   commentOnPlaneWorkItem,
   createPlaneWorkItem,
   getPlaneWorkItem,
+  getPlaneWorkItemMembership,
   relatePlaneWorkItems,
   searchPlaneWorkItems,
   updatePlaneWorkItem,
@@ -243,3 +244,26 @@ test("updates only from the exact observed revision", async () => {
   assert.equal(retried.item.title, "Retried after reload");
   assert.equal(fake.updates.length, 2);
 });
+
+for (const mismatch of [null, "repository", "project", "work-item", "workspace", "project-workspace"]) {
+  test(`trusted admission membership rejects drift: ${mismatch ?? "exact success"}`, async () => {
+    const repository = "example-org/example-repository";
+    const request = { version: "codeops.work-item-provider-get-request/v1", provider: "plane",
+      operationId: "membership-fixture", payloadDigest: `sha256:${"a".repeat(64)}`, repository, workItemId,
+      provenance: { sessionId: "parent", dispatchId: "33333333-3333-4333-8333-333333333333", principalDigest: `sha256:${"b".repeat(64)}` } };
+    const authority = { repository: mismatch === "repository" ? "other/repository" : repository, projectId,
+      workspaceId: "44444444-4444-4444-8444-444444444444" };
+    const client = { async getWorkItemSnapshot(project, item) {
+      assert.equal(project, projectId); assert.equal(item, workItemId);
+      return { id: mismatch === "work-item" ? projectId : workItemId, project: mismatch === "project" ? workItemId : projectId,
+        workspace: mismatch === "workspace" ? projectId : authority.workspaceId };
+    }, async getProjectSnapshot(id) {
+      assert.equal(id, projectId);
+      return { id, workspace: mismatch === "project-workspace" ? projectId : authority.workspaceId };
+    } };
+    const operation = getPlaneWorkItemMembership({ request, authority, client });
+    if (mismatch) await assert.rejects(operation);
+    else assert.deepEqual(await operation, { repository, workItemId,
+      provider: { kind: "plane", workspaceId: authority.workspaceId, projectId } });
+  });
+}

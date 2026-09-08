@@ -754,3 +754,22 @@ test("checkpoint reads retain worker authentication and strict claim-only inputs
   }
   assert.equal(calls.length, 1);
 });
+
+test("admission-plan route authenticates the worker and accepts only a bounded proposal", async () => {
+  const body = { version: "codeops.work-item-admission-plan-request/v1", claimToken,
+    input: { repository: "example-org/example-repository", workItemId: claimToken, title: "Publish", prompt: "Publish exact bytes." } };
+  const received = [];
+  const stop = new Error("fixture handler reached");
+  const invoke = (request = body, authorization = `Bearer ${token}`) => serveSessionRuntime({
+    method: "POST", url: `/v1/session-runtime/dispatches/${dispatchId}/work-item-admission-plans`,
+    headers: { authorization, "content-type": "application/json" }, token, workerId: "fixture-worker",
+    readBody: async () => request, prepareWorkItemAdmission: async input => { received.push(input); throw stop; },
+  });
+  assert.equal((await invoke(body, "Bearer invalid")).status, 401);
+  for (const field of ["sourceSha", "provider", "child", "approval", "claimToken", "plan"]) {
+    await assert.rejects(invoke({ ...body, input: { ...body.input, [field]: "forged" } }), /invalid admission plan request/);
+  }
+  assert.deepEqual(received, []);
+  await assert.rejects(invoke(), error => error === stop);
+  assert.deepEqual(received, [{ dispatchId, workerId: "fixture-worker", request: body }]);
+});

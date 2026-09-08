@@ -1,3 +1,4 @@
+import { filterPersistedAdmissionPlans } from "./admission-plan-events.js";
 import { randomUUID } from "node:crypto";
 import {
   canonicalJsonText,
@@ -805,6 +806,9 @@ export async function completeSessionRuntimeDispatch(
     client,
     { dispatch, claimToken: input.claimToken },
   );
+  const appliedCompletion = completion.type === "prompt" ? { ...completion, material: { ...completion.material,
+    updates: await filterPersistedAdmissionPlans(client, dispatch, completion.material.updates ?? []),
+  } } : completion;
   const checkpointMaterial = completion.type === "prompt"
     ? completion.material.checkpoint
     : completion.type === "checkpoint" || completion.type === "hibernate"
@@ -838,7 +842,7 @@ export async function completeSessionRuntimeDispatch(
     mutate: (_snapshot, _command, context) =>
       applySessionRuntimeCompletion(
         dispatch,
-        completion,
+        appliedCompletion,
         context,
         completionSnapshot,
       ),

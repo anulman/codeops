@@ -178,7 +178,8 @@ function projectStoredSessionBudget(row: StoredSessionRow): SessionSnapshot {
         startedAt,
         observedAt,
         limits: {
-          ...(snapshot.budget?.version === "codeops.session-budget/v2"
+          ...(snapshot.budget?.version === "codeops.session-budget/v2" &&
+            snapshot.budget.limits.phase !== undefined
             ? { phase: snapshot.budget.limits.phase } : {}),
           elapsedSeconds,
           providerRequests: count(

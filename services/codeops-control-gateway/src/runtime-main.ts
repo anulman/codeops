@@ -1,3 +1,5 @@
+import { prepareSessionRuntimeWorkItemAdmission, admitPreparedSessionRuntimeWorkItem } from "./work-item-admission-plan.js";
+import { createWorkItemProviderClients } from "./session-runtime-work-items.js";
 import { readFile } from "node:fs/promises";
 import { createHash, randomUUID } from "node:crypto";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -104,7 +106,7 @@ import {
   SessionRuntimePermissionNotFoundError,
   submitSessionRuntimePermission,
 } from "./session-runtime-permissions.js";
-import { admitSessionRuntimeWorkItem, WorkItemAdmissionNotFoundError } from "./work-item-admission.js";
+import { WorkItemAdmissionConflictError, WorkItemAdmissionNotFoundError } from "./work-item-admission.js";
 import {
   ImmutableSessionCommandConflictError,
   SessionCompareAndSwapError,
@@ -511,6 +513,17 @@ if (proofPublisherToken !== null) controlGatewayAuthorities.push(proofPublisherT
 if (new Set(controlGatewayAuthorities).size !== controlGatewayAuthorities.length) {
   throw new Error("control gateway authorities must be mutually distinct");
 }
+const workItemProviderOrigin = process.env.CODEOPS_WORK_ITEM_PROVIDER_ORIGIN?.trim();
+const workItemProviderTokenFile = process.env.CODEOPS_WORK_ITEM_PROVIDER_TOKEN_FILE?.trim();
+if ((workItemProviderOrigin === undefined) !== (workItemProviderTokenFile === undefined)) {
+  throw new Error("work-item provider origin and token file must be configured together");
+}
+const workItemProviderToken = workItemProviderTokenFile === undefined ? undefined : await secretFile("CODEOPS_WORK_ITEM_PROVIDER_TOKEN_FILE");
+if (workItemProviderToken !== undefined && controlGatewayAuthorities.includes(workItemProviderToken)) {
+  throw new Error("work-item provider requires a distinct authority");
+}
+const configuredWorkItemProvider = workItemProviderOrigin === undefined || workItemProviderToken === undefined ? undefined :
+  createWorkItemProviderClients({ origin: workItemProviderOrigin, token: workItemProviderToken });
 const repositoryRegistry = await loadConfiguredRepositoryRegistry({
   registryFile: process.env.CODEOPS_REPOSITORY_REGISTRY_FILE,
   loadRegistryFile: loadRepositoryRegistryFile,
@@ -1457,10 +1470,21 @@ const server = createServer((request, response) => {
             client.release();
           }
         },
+        ...(configuredWorkItemProvider === undefined ? {} : {
+          prepareWorkItemAdmission: async (input: { dispatchId: string; workerId: string; request: unknown }) => {
+            const client = await database.connect();
+            try { return await prepareSessionRuntimeWorkItemAdmission(client, { ...input, membership: configuredWorkItemProvider.membership }); }
+            finally { client.release(); }
+          },
+        }),
         admitWorkItem: async (admissionInput) => {
           const client = await database.connect();
-          try { return await admitSessionRuntimeWorkItem(client, {
+          try { return await admitPreparedSessionRuntimeWorkItem(client, {
             ...admissionInput, materialization: admittedChildMaterialization,
+            membership: async (request) => {
+              if (!configuredWorkItemProvider) throw new Error("work-item provider is unavailable");
+              return configuredWorkItemProvider.membership(request);
+            },
           }); }
           finally { client.release(); }
         },
@@ -1482,6 +1506,7 @@ const server = createServer((request, response) => {
                 error instanceof ImmutableSessionRuntimeDispatchConflictError ||
                 error instanceof SessionRuntimeClaimConflictError ||
                 error instanceof SessionRuntimePermissionConflictError ||
+                error instanceof WorkItemAdmissionConflictError ||
                 error instanceof RevokedSessionModelAuthorityError
               ? 409
               : 503;

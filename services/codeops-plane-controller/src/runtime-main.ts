@@ -50,6 +50,7 @@ import {
   commentOnPlaneWorkItem,
   createPlaneWorkItem,
   getPlaneWorkItem,
+  getPlaneWorkItemMembership,
   relatePlaneWorkItems,
   searchPlaneWorkItems,
   updatePlaneWorkItem,
@@ -554,6 +555,11 @@ const listener = createPlaneWebhookRequestListener({
   },
   workItems: {
     token: workItemMutationToken,
+    membership: (request) => {
+      const parsed = workItemProviderGetRequestSchema.parse(request);
+      const { client, authority } = planeRuntimeForRepository(parsed.repository);
+      return getPlaneWorkItemMembership({ request: parsed, authority, client });
+    },
     create: (request) => {
       const parsed = workItemProviderCreateRequestSchema.parse(request);
       const { client, authority } = planeRuntimeForRepository(parsed.repository);
