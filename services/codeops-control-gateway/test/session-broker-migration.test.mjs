@@ -209,6 +209,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "applied",
     "applied",
     "applied",
+    "applied",
   ]);
   const inserts = client.calls
     .filter(({ text }) => text.includes("INSERT INTO codeops.schema_migrations"))
@@ -246,6 +247,7 @@ test("applies broker runtime, lifecycle journal, launches, and notifications in 
     "session-phase-model-budget-v1",
     "verified-checkpoint-recovery-v1",
     "retained-source-recovery-v1",
+    "workspace-retention-v1",
     "agent-messages-v1",
   ]);
 });

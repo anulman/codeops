@@ -177,6 +177,10 @@ const migrations = [
     name: "retained-source-recovery-v1",
     url: new URL("../sql/retained-source-recovery-v1.sql", import.meta.url),
   },
+  {
+    name: "workspace-retention-v1",
+    url: new URL("../sql/workspace-retention-v1.sql", import.meta.url),
+  },
   { name: "agent-messages-v1", url: new URL("../sql/agent-messages-v1.sql", import.meta.url) },
 ] as const;
 

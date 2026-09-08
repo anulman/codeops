@@ -2,6 +2,7 @@ import { readFile } from "node:fs/promises";
 import { createHash, createHmac } from "node:crypto";
 import https from "node:https";
 import { canonicalJsonText } from "@codeops/codeops-contracts";
+import { createWorkspaceRetentionResources } from "./workspace-retention-resources.js";
 
 interface KubernetesResource {
   readonly apiVersion: string;
@@ -25,6 +26,9 @@ const resourcePaths: Readonly<Record<string, string>> = {
 };
 
 export interface KubernetesClient {
+  workspaceRetentionResources?: (providerInventory:
+    Parameters<typeof createWorkspaceRetentionResources>[0]["providerInventory"]) =>
+    ReturnType<typeof createWorkspaceRetentionResources>;
   ensure(resource: KubernetesResource, requestDigest: string,
     expectedUid?: string, expectedConfigDigest?: string):
     Promise<{ readonly uid: string; readonly configDigest: string }>;
@@ -939,6 +943,23 @@ export function createInClusterKubernetesClient(input: {
           `api/v1/namespaces/${input.namespace}/pods/${encodeURIComponent(name)}/log?container=${encodeURIComponent(container)}`,
         )
       ).text;
+    },
+    workspaceRetentionResources(providerInventory) {
+      return createWorkspaceRetentionResources({ namespace: input.namespace, providerInventory,
+        verifyOwned(raw, target, resource) {
+          assertKubernetesResourceOwnership(raw as KubernetesResource, {
+            apiVersion: resource.kind === "Job" ? "batch/v1" : "v1", kind: resource.kind,
+            metadata: { name: resource.name, namespace: target.namespace },
+          }, target.requestDigest, resource.uid, resource.configDigest, input.secretProofKey);
+        },
+        async get(path) {
+          const response = await call("recover", "GET", path, undefined, [200, 404]);
+          return response.status === 404 ? null : JSON.parse(response.text);
+        },
+        async remove(path, options) {
+          await call("delete", "DELETE", path, options, [200, 202, 404]);
+        },
+      });
     },
     async delete(resource, requestDigest, expectedUid, expectedConfigDigest) {
       if (requestDigest === undefined || expectedUid === undefined ||
