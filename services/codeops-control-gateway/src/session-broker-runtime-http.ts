@@ -1,3 +1,4 @@
+import { agentMessageRequestSchema, type AgentMessageResult } from "@codeops/codeops-contracts";
 import type { IncomingHttpHeaders } from "node:http";
 import { z } from "zod";
 import {
@@ -206,6 +207,7 @@ export async function serveSessionRuntime(input: {
     readonly workerId: string;
     readonly poll: unknown;
   }) => Promise<SessionRuntimePermissionResult>;
+  readonly agentMessage?: (input: { dispatchId: string; workerId: string; request: unknown }) => Promise<AgentMessageResult>;
   readonly createWorkItem?: (input: {
     readonly dispatchId: string;
     readonly workerId: string;
@@ -270,6 +272,7 @@ export async function serveSessionRuntime(input: {
   const checkpointRecoveryMatch = url.pathname.match(checkpointRecoveryPath);
   const permissionSubmissionMatch = url.pathname.match(permissionSubmissionPath);
   const permissionPollMatch = url.pathname.match(permissionPollPath);
+  const messageMatch = url.pathname.match(/^\/v1\/session-runtime\/dispatches\/([0-9a-f-]{36})\/messages$/i);
   const workItemMatch = url.pathname.match(workItemPath);
   const workItemAdmissionPlanMatch = url.pathname.match(workItemAdmissionPlanPath);
   const workItemAdmissionMatch = url.pathname.match(workItemAdmissionPath);
@@ -286,6 +289,7 @@ export async function serveSessionRuntime(input: {
     checkpointRecoveryMatch === null &&
     permissionSubmissionMatch === null &&
     permissionPollMatch === null
+    && messageMatch === null
     && workItemMatch === null
     && workItemAdmissionMatch === null
     && workItemAdmissionPlanMatch === null
@@ -483,6 +487,14 @@ export async function serveSessionRuntime(input: {
     return { status: 200, body: workItemAdmissionPlanResultSchema.parse(await input.prepareWorkItemAdmission({
       dispatchId: dispatchId.parse(workItemAdmissionPlanMatch[1]), workerId: input.workerId, request: request.data,
     })) };
+  }
+
+  if (messageMatch !== null) {
+    if (!input.agentMessage) return { status: 404, body: { status: "not-found" } };
+    const request = agentMessageRequestSchema.parse(await readRequestBody(input.readBody));
+    return { status: 200, body: await input.agentMessage({
+      dispatchId: dispatchId.parse(messageMatch[1]), workerId: input.workerId, request,
+    }) };
   }
 
   if (workItemMatch !== null) {

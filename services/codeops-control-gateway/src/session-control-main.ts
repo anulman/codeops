@@ -1,3 +1,6 @@
+import { operateWorkerMessage, operateSupervisorMessage, parseSupervisorRoutes } from "./agent-messages.js";
+import { serveSupervisorMessages } from "./agent-message-http.js";
+import { startSupervisorMessageAdapter } from "./openclaw-supervisor-adapter.js";
 import { prepareSessionRuntimeWorkItemAdmission, admitPreparedSessionRuntimeWorkItem } from "./work-item-admission-plan.js";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
@@ -175,6 +178,9 @@ const secrets = validateSessionControlSecrets({
     "CODEOPS_SESSION_JOB_INITIALIZATION_TOKEN_FILE",
   ),
 });
+const supervisorRoutesFile = process.env.CODEOPS_SUPERVISOR_ROUTES_FILE?.trim();
+const supervisorRoutes = parseSupervisorRoutes(supervisorRoutesFile
+  ? JSON.parse(await readFile(supervisorRoutesFile, "utf8")) : [], Object.values(secrets));
 const repositorySteeringRegistryFile =
   process.env.CODEOPS_REPOSITORY_STEERING_REGISTRY_FILE?.trim();
 const repositorySteeringRegistry =
@@ -362,12 +368,26 @@ try {
   authorityClient.release();
 }
 
+const stopSupervisorMessages = startSupervisorMessageAdapter(database, supervisorRoutes);
+
 const server = createServer((request, response) => {
   void (async () => {
     if (request.method === "GET" && request.url === "/healthz") {
       json(response, 200, { status: "ok" });
       return;
     }
+    try {
+      const result = await serveSupervisorMessages({
+        method: request.method, url: request.url, headers: request.headers,
+        routes: supervisorRoutes, readBody: () => readJson(request),
+        operate: async (route, request) => {
+          const client = await database.connect();
+          try { return await operateSupervisorMessage(client, { route, request }); }
+          finally { client.release(); }
+        },
+      });
+      if (result) { json(response, result.status, result.body); return; }
+    } catch { json(response, 409, { status: "message-unavailable" }); return; }
     try {
       const result = await servePlaneSessionSteering({
         method: request.method,
@@ -578,6 +598,11 @@ const server = createServer((request, response) => {
           } finally {
             client.release();
           }
+        },
+        agentMessage: async (input) => {
+          const client = await database.connect();
+          try { return await operateWorkerMessage(client, { ...input, routes: supervisorRoutes }); }
+          finally { client.release(); }
         },
         admitWorkItem: async (input) => {
           const client = await database.connect();
@@ -875,7 +900,7 @@ if (!Number.isSafeInteger(port) || port < 1 || port > 65_535) {
   throw new Error("CODEOPS_HTTP_PORT must be valid");
 }
 const shutdown = () => {
-  server.close(() => void database.end());
+  server.close(() => { void stopSupervisorMessages().then(() => database.end()); });
 };
 process.once("SIGTERM", shutdown);
 process.once("SIGINT", shutdown);

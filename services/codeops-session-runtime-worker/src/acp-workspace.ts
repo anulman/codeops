@@ -1,3 +1,5 @@
+import { supervisorMessageContentBlocks } from "./agent-message-boundary.js";
+import { type AgentMessageResult } from "@codeops/codeops-contracts";
 import * as acp from "@agentclientprotocol/sdk";
 import { execFile } from "node:child_process";
 import { createHash, randomUUID } from "node:crypto";
@@ -1282,6 +1284,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   readonly #artifacts?: WorkspaceCheckpointArtifactStore;
   readonly #captureRoot: string;
   readonly #recoveryRoot: string;
+  readonly #messageInbox?: () => Promise<AgentMessageResult>;
   readonly #prepareModelAuthority?: () => Promise<void>;
   readonly #providerCooldownMs: number;
   readonly #delay: (milliseconds: number) => Promise<void>;
@@ -1307,6 +1310,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     readonly uuid?: () => string;
     readonly connect?: AcpConnectionFactory;
     readonly artifacts?: WorkspaceCheckpointArtifactStore;
+    readonly messageInbox?: () => Promise<AgentMessageResult>;
     readonly prepareModelAuthority?: () => Promise<void>;
     readonly providerCooldownMs?: number;
     readonly delay?: (milliseconds: number) => Promise<void>;
@@ -1332,6 +1336,7 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
     this.#now = input.now ?? (() => new Date());
     this.#uuid = input.uuid ?? randomUUID;
     this.#artifacts = input.artifacts;
+    this.#messageInbox = input.messageInbox;
     this.#prepareModelAuthority = input.prepareModelAuthority;
     this.#providerCooldownMs = input.providerCooldownMs ?? 5_000;
     this.#delay = input.delay ?? ((milliseconds) => delay(milliseconds));
@@ -1524,17 +1529,21 @@ export class SocketAcpWorkspaceLifecycle implements AcpWorkspaceLifecycle {
   }
 
   async prompt(dispatch: PromptDispatch): Promise<RuntimeExecutionResult> {
+    // Read only at an already-authorized prompt boundary. Never create a prompt,
+    // resume a Session, replace a claim, or treat a reply as a permission decision.
+    const messageBlocks = this.#messageInbox
+      ? supervisorMessageContentBlocks(await this.#messageInbox(), dispatch) : [];
     let material: Extract<RuntimeExecutionResult, { type: "prompt" }>["material"];
     try {
       material = await this.#connectWithModelRecovery(dispatch, async (agent) => {
         const sessionId = await this.#activeAcpSession(dispatch, agent);
         return agent.prompt(
           sessionId,
-          workspacePromptContentBlocks(
+          [...workspacePromptContentBlocks(
             dispatch.command.prompt,
             dispatch.command.contextAttachments ?? [],
             dispatch.snapshot.identity,
-          ),
+          ), ...messageBlocks],
         );
       });
     } catch (error) {

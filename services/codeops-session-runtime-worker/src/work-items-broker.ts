@@ -1,3 +1,4 @@
+import { agentMessageInputSchema } from "@codeops/codeops-contracts";
 import { createWorkItemAdmissionAdapter, WorkItemAdmissionPermissionDeniedError, WorkItemAdmissionInactiveError } from "./work-item-admissions.js";
 import { ZodError } from "zod";
 import { createHash } from "node:crypto";
@@ -60,7 +61,7 @@ export class WorkItemsBroker {
   }
 
   async #serve(request: IncomingMessage, response: ServerResponse): Promise<void> {
-    const operation = request.url === "/v1/work-items"
+    const operation = request.url === "/v1/messages" ? "message" : request.url === "/v1/work-items"
       ? "create"
       : request.url?.match(/^\/v1\/work-items\/(get|search|comment|update|relate|admit)$/)?.[1];
     if (request.method !== "POST" || operation === undefined) {
@@ -78,6 +79,11 @@ export class WorkItemsBroker {
     }
     try {
       const raw = await readJson(request);
+      if (operation === "message") {
+        if (!active.context.agentMessage) throw new Error("messaging is unavailable");
+        json(response, 200, await active.context.agentMessage(agentMessageInputSchema.parse(raw)));
+        return;
+      }
       if (operation === "admit") {
         json(response, 200, await active.admit(raw));
         return;

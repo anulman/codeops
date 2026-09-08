@@ -1,3 +1,4 @@
+import { notificationRetryDelayMs } from "./notification-delivery-policy.js";
 import { randomUUID } from "node:crypto";
 import * as webPush from "web-push";
 import {
@@ -187,10 +188,7 @@ export async function acknowledgeWebPushDelivery(input: {
       }
     } else {
       const exhausted = input.claim.attemptCount >= 8;
-      const retryAt = new Date(now.getTime() + Math.min(
-        300_000,
-        5_000 * 2 ** Math.max(0, input.claim.attemptCount - 1),
-      )).toISOString();
+      const retryAt = new Date(now.getTime() + notificationRetryDelayMs(input.claim.attemptCount)).toISOString();
       const updated = await input.database.query(
         `UPDATE codeops.session_notification_deliveries
             SET status = $5, available_at = $6::timestamptz,
