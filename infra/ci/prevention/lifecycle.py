@@ -395,7 +395,7 @@ def run(candidate, canary):
     new_case(fresh)
     helm(fresh, current)
     current_ledger = ledger(fresh)
-    if len(current_ledger) != 32:
+    if len(current_ledger) != 33:
         raise AssertionError('Fresh schema incomplete')
     probes(fresh, pinned, canary)
     # Invalid mounted application identity must fail BEFORE writer quiescence.

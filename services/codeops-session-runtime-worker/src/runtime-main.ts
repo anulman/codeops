@@ -252,6 +252,13 @@ try {
           operationId: recovery.restoreOperationId, descriptor,
         } };
       },
+      messageInbox: context.agentMessage === undefined ? undefined :
+        async () => {
+          // Optional message delivery cannot turn an existing authorized prompt
+          // into a blocking wait when the messaging service is unavailable.
+          try { return await context.agentMessage!({ operation: "inbox", limit: 20 }); }
+          catch { return { messages: [] }; }
+        },
       prepareModelAuthority: async () => {
         const authority = await context.issueModelAuthority();
         await publishModelProxyToken(
