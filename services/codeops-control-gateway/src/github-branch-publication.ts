@@ -1,3 +1,5 @@
+import type { GitHubBranchPublishCandidate } from "@codeops/codeops-contracts";
+
 export const GITHUB_BRANCH_PUBLICATION_CONCURRENCY = 4;
 export const GITHUB_BRANCH_PUBLICATION_READ_TIMEOUT_MS = 30_000;
 export const GITHUB_BRANCH_PUBLICATION_WRITE_TIMEOUT_MS = 120_000;
@@ -24,9 +26,7 @@ export type GitHubBranchPublicationRequest = {
   };
 };
 
-type GitHubBranchPublicationChange = {
-  readonly path: string; readonly oldText: string; readonly newText: string;
-};
+type GitHubBranchPublicationChange = GitHubBranchPublishCandidate["changes"][number];
 
 function invalidRequestCounts(): Error {
   return new Error("GitHub branch publication request counts are invalid");
@@ -284,8 +284,13 @@ export async function publishGitHubBranch(input: {
   readonly preflight: <T>(operation: () => Promise<T>) => Promise<T>;
   readonly effectText: (operationId: string) => string;
   readonly changes: readonly GitHubBranchPublicationChange[];
+  readonly binding?: GitHubBranchPublishCandidate["binding"];
 }): Promise<string> {
   const { provider, request } = input;
+  if (input.binding !== undefined && (input.binding.repository !== request.input.repository ||
+      input.binding.baseSha !== request.input.expectedHeadSha || request.input.mode === "fast_forward")) {
+    throw new Error("Exact publication repository or base binding changed");
+  }
   const baseCommit = await input.preflight(async () => {
     const reads: readonly (() => Promise<unknown>)[] = [
       () => provider.readBranch(request.input.baseBranch),
@@ -311,6 +316,9 @@ export async function publishGitHubBranch(input: {
     }
     if (commit.sha !== request.input.expectedHeadSha) {
       throw new Error("GitHub base commit identity changed before publication");
+    }
+    if (input.binding !== undefined && commit.tree.sha !== input.binding.baseTreeSha) {
+      throw new Error("Exact publication base tree changed");
     }
     return commit;
   });
@@ -338,6 +346,14 @@ export async function publishGitHubBranch(input: {
       readonly mode: string;
       readonly content: string;
     }> => {
+      if (change.exact !== undefined) {
+        const entry = await findTreeEntry(baseCommit.tree.sha, change.path, readTree, true);
+        if ((entry?.sha ?? null) !== change.exact.baseBlobSha ||
+            (entry?.mode ?? null) !== change.exact.baseMode) {
+          throw new Error("Exact publication base blob or mode changed");
+        }
+        return { path: change.path, mode: change.exact.mode, content: change.newText };
+      }
       if (change.oldText.length === 0) {
         const entry = await findTreeEntry(
           baseCommit.tree.sha,
@@ -392,6 +408,16 @@ export async function publishGitHubBranch(input: {
     }),
   );
   const treeSha = await provider.createTree(baseCommit.tree.sha, treeUpdates);
+  if (input.binding !== undefined && treeSha !== input.binding.treeSha) {
+    throw new Error("Exact publication result tree changed");
+  }
+  if (input.binding !== undefined) {
+    const currentBase = await provider.readBranch(request.input.baseBranch);
+    if (currentBase?.ref !== `refs/heads/${request.input.baseBranch}` ||
+        currentBase.object.type !== "commit" || currentBase.object.sha !== request.input.expectedHeadSha) {
+      throw new Error("GitHub base branch changed during publication");
+    }
+  }
   const commitSha = await provider.createCommit(
     `${request.input.commitMessage}\n\n${input.effectText(request.operationId)}`,
     treeSha,

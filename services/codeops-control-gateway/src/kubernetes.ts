@@ -518,6 +518,30 @@ export function observedResourceConfigurationMatches(resource: KubernetesResourc
       }
       if (changed) reviewedVariants.push(withWritableSubPaths);
     }
+    // Kubernetes omits false for the writable workspace root as well as
+    // subPath mounts. Retain both prior shapes and add only this known root;
+    // the exact digest still binds every mount and all other configuration.
+    for (const base of [configuration, ...reviewedVariants]) {
+      const withWritableRoot = structuredClone(base);
+      const podSpec = record(record(record(withWritableRoot.spec)?.template)?.spec);
+      let changed = false;
+      if (Array.isArray(podSpec?.containers)) {
+        for (const value of podSpec.containers) {
+          const mounts = record(value)?.volumeMounts;
+          if (!Array.isArray(mounts)) continue;
+          for (const mountValue of mounts) {
+            const mount = record(mountValue);
+            if (mount?.name === "workspace" && mount.mountPath === "/workspace" &&
+                mount.subPath === undefined && mount.subPathExpr === undefined &&
+                mount.readOnly === undefined) {
+              mount.readOnly = false;
+              changed = true;
+            }
+          }
+        }
+      }
+      if (changed) reviewedVariants.push(withWritableRoot);
+    }
     return [configuration, ...reviewedVariants].some((base) =>
       reviewedQuantityVariants(base).some((value) => digest(value) === expectedDigest));
   }

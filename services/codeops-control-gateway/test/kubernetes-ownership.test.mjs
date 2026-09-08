@@ -5,6 +5,7 @@ import {
   createInClusterKubernetesClient as createKubernetesClient,
   kubernetesIdentityLabel,
   kubernetesResourceConfigurationDigest,
+  observedResourceConfigurationMatches,
   KubernetesApiError,
   KubernetesResponseError,
   KubernetesResourceIdentityDriftError,
@@ -848,4 +849,45 @@ test("PodList items inherit absent TypeMeta without weakening identity checks", 
     list([item], { apiVersion: "apps/v1" }), list({})]) {
     await assert.rejects(client(malformed).listRunPods("run-1"), KubernetesResponseError);
   }
+});
+
+
+test("restores omitted writable workspace root without accepting configuration drift", () => {
+  const job = { apiVersion: "batch/v1", kind: "Job", metadata: expected.metadata,
+    spec: { template: { spec: { restartPolicy: "Never", imagePullSecrets: [],
+      containers: [{ name: "agent", image: `registry/agent@sha256:${"2".repeat(64)}`,
+        resources: { limits: { cpu: "1000m", memory: "1024Mi" } },
+        volumeMounts: [
+          { name: "workspace", mountPath: "/workspace", readOnly: false },
+          { name: "workspace", mountPath: "/var/lib/agent", subPath: ".agent", readOnly: false },
+          { name: "readonly", mountPath: "/inputs", readOnly: true },
+        ] }], volumes: [{ name: "workspace", persistentVolumeClaim: { claimName: "workspace" } }],
+    } } } };
+  const configDigest = kubernetesResourceConfigurationDigest(job);
+  const observed = structuredClone(job);
+  delete observed.spec.template.spec.imagePullSecrets;
+  const agent = observed.spec.template.spec.containers[0];
+  delete agent.volumeMounts[0].readOnly;
+  delete agent.volumeMounts[1].readOnly;
+  agent.resources.limits = { cpu: "1", memory: "1Gi" };
+  const before = structuredClone(observed);
+  assert.equal(observedResourceConfigurationMatches(observed, configDigest), true);
+  assert.deepEqual(observed, before);
+  for (const mutate of [
+    (pod) => { pod.containers[0].image += "-drift"; },
+    (pod) => { pod.containers[0].volumeMounts[0].readOnly = true; },
+    (pod) => { pod.containers[0].volumeMounts[0].mountPath = "/foreign"; },
+    (pod) => { pod.containers[0].volumeMounts[0].name = "foreign"; },
+    (pod) => { pod.containers[0].volumeMounts[0].subPath = "foreign"; },
+    (pod) => { pod.containers[0].volumeMounts[0].subPathExpr = "foreign"; },
+    (pod) => { delete pod.containers[0].volumeMounts[2].readOnly; },
+    (pod) => { pod.containers[0].resources.limits.memory = "2Gi"; },
+    (pod) => { pod.volumes[0].persistentVolumeClaim.claimName = "foreign"; },
+    (pod) => { pod.containers[0].volumeMounts.pop(); },
+  ]) {
+    const drifted = structuredClone(observed);
+    mutate(drifted.spec.template.spec);
+    assert.equal(observedResourceConfigurationMatches(drifted, configDigest), false);
+  }
+  assert.equal(observedResourceConfigurationMatches(observed, `sha256:${"0".repeat(64)}`), false);
 });

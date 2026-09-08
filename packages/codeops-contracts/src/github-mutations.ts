@@ -46,6 +46,8 @@ const repositoryPath = z
       !value.startsWith("/") &&
       !value.endsWith("/") &&
       !value.includes("\\") &&
+      !/[\x00-\x1f\x7f]/.test(value) &&
+      !value.split("/").some((part) => part.toLowerCase() === ".git") &&
       !value.split("/").some((part) => part === "" || part === "." || part === ".."),
     "GitHub repository path is invalid",
   );
@@ -112,8 +114,13 @@ const githubBranchPublishChangeSchema = z.object({
   path: repositoryPath,
   oldText: z.string().max(100_000),
   newText: z.string().max(100_000),
+  exact: z.object({
+    baseBlobSha: gitSha.nullable(),
+    baseMode: z.enum(["100644", "100755"]).nullable(),
+    mode: z.enum(["100644", "100755"]),
+  }).strict().optional(),
 }).strict().superRefine((change, context) => {
-  if (change.oldText.length === 0 && change.newText.length === 0) {
+  if (change.exact === undefined && change.oldText.length === 0 && change.newText.length === 0) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: "A new published file must not be empty",
@@ -125,7 +132,22 @@ const githubBranchPublishChangeSchema = z.object({
 export const githubBranchPublishCandidateSchema = z.object({
   version: z.literal("codeops.github-branch-publish-candidate/v1"),
   changes: z.array(githubBranchPublishChangeSchema).min(1).max(100),
+  binding: z.object({ repository, baseSha: gitSha, baseTreeSha: gitSha, treeSha: gitSha }).strict().optional(),
 }).strict().superRefine((candidate, context) => {
+  const paths = new Set(candidate.changes.map(({ path }) => path));
+  if (candidate.changes.some((change) => {
+    const parts = change.path.split("/");
+    return parts.some((_, index) => index > 0 && paths.has(parts.slice(0, index).join("/"))) ||
+      (candidate.binding !== undefined) !== (change.exact !== undefined) ||
+      (change.exact !== undefined && (change.oldText !== "" ||
+        change.newText.includes("\0") ||
+        new TextDecoder().decode(new TextEncoder().encode(change.newText)) !== change.newText ||
+        (change.exact.baseBlobSha === null) !== (change.exact.baseMode === null)));
+  })) context.addIssue({ code: z.ZodIssueCode.custom,
+    message: "Exact candidates require complete regular-file bindings and disjoint paths" });
+  if (candidate.binding !== undefined && candidate.binding.baseTreeSha === candidate.binding.treeSha) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Exact candidates must change the tree" });
+  }
   if (new Set(candidate.changes.map(({ path }) => path)).size !== candidate.changes.length) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -387,16 +409,26 @@ const providerMutationBase = z.object({
   permissionDigest: sha256Digest,
   provenance: z
     .object({
+      // These remain historical references when sourceRecoveryId is present.
+      sourceRecoveryId: uuid.optional(),
       sessionId: z.string().min(1).max(128),
       dispatchId: uuid,
-      admissionId: uuid,
+      admissionId: uuid.nullable(),
+      workspaceLaunchId: z.string().regex(/^launch-[0-9a-f]{24}$/).optional(),
       sessionGeneration: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
       sessionLeaseId: uuid,
       permissionRequestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
       authorizationExpiresAt: isoDateTime,
       principalDigest: sha256Digest,
     })
-    .strict(),
+    .strict().superRefine((provenance, context) => {
+      if (provenance.admissionId === null
+        ? provenance.sourceRecoveryId === undefined || provenance.workspaceLaunchId === undefined
+        : provenance.workspaceLaunchId !== undefined) {
+        context.addIssue({ code: z.ZodIssueCode.custom,
+          message: "Null admission requires explicit root WorkspaceLaunch recovery provenance" });
+      }
+    }),
 });
 
 function mutationRequestBranches<T extends z.ZodRawShape>(base: z.ZodObject<T>) {
@@ -445,7 +477,14 @@ export const sessionRuntimeGitHubMutationRequestSchema = z.discriminatedUnion(
 export const githubMutationProviderRequestSchema = z.discriminatedUnion(
   "operation",
   mutationRequestBranches(providerMutationBase),
-);
+).superRefine((request, context) => {
+  if (request.provenance.workspaceLaunchId !== undefined &&
+      !(request.operation === "pull_request_create" ||
+        (request.operation === "branch_publish" && request.input.mode !== "fast_forward"))) {
+    context.addIssue({ code: z.ZodIssueCode.custom,
+      message: "Root recovery provenance supports only exact source publication" });
+  }
+});
 
 export const githubMutationReconciliationProviderRequestSchema = z
   .object({

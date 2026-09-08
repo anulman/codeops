@@ -163,6 +163,7 @@ export function createGitHubMutationReconciler(input: { resolve: (repository: st
     if (request.operation !== "branch_publish" || request.input.mode !== "fast_forward") return base(request, attemptedAt, observedAt);
     if (!Number.isFinite(attemptedAt.getTime()) || !Number.isFinite(observedAt.getTime()) || observedAt < attemptedAt) throw new Error("GitHub reconciliation time identity is invalid");
     const candidate = await input.loadBranchCandidate(request);
+    if (candidate.binding !== undefined) throw new Error("Exact candidates require create publication");
     requireDigests(request, candidate);
     const authority = input.resolve(request.input.repository), p = provider(remote(authority, requestFetch));
     try {
@@ -187,6 +188,7 @@ export function createGitHubMutationAdapter(input: { resolve: (repository: strin
     if (request.operation !== "branch_publish" || request.input.mode !== "fast_forward") return base(request);
     const preflight = async <T>(operation: () => Promise<T>) => { try { return await operation(); } catch (error) { throw new GitHubMutationPreflightNoEffectError(`GitHub mutation preflight proved that no remote effect occurred: ${error instanceof Error ? error.message : "unknown preflight failure"}`, { cause: error }); } };
     const candidate = await preflight(() => input.loadBranchCandidate(request));
+    if (candidate.binding !== undefined) throw new Error("Exact candidates require create publication");
     requireDigests(request, candidate);
     await preflight(async () => preflightGitHubBranchPublicationRequest(request.input, candidate.changes));
     const authority = input.resolve(request.input.repository);

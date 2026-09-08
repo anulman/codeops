@@ -28,8 +28,11 @@ import { workspaceContextAttachmentDescriptors } from
 import { createGitHubReadAdapter } from "./github-reads-adapter.js";
 import {
   GitHubMutationPreflightNoEffectError,
+  requireOrdinaryGitHubMutationProvenance,
 } from "./github-mutations-adapter.js";
 import { createGitHubMutationAdapter, createGitHubMutationReconciler } from "./github-branch-fast-forward.js";
+import { loadRecoveredBranchCandidate, readRetainedSourceEvidence,
+  serveRetainedSourceRecovery } from "./retained-source-recovery.js";
 import {
   linkGitHubPullRequestStack,
   loadGitHubPullRequestStack,
@@ -562,6 +565,9 @@ const loadBranchCandidate = async (request: Extract<
 >) => {
   const client = await database.connect();
   try {
+    if (request.provenance.sourceRecoveryId !== undefined) {
+      return await loadRecoveredBranchCandidate(client, request);
+    }
     const candidate = await loadGitHubBranchCandidate(client, {
       manifestId: request.input.candidate.manifestId,
       dispatchId: request.provenance.dispatchId,
@@ -584,6 +590,15 @@ const reconcileGitHubMutation = createGitHubMutationReconciler({
   resolve: (repository) => repositoryRegistry.resolve(repository),
   loadBranchCandidate,
 });
+// Disabled until an operator installs an isolated verifier's public key and a
+// service-owned read-only evidence directory. No runtime can sign evidence.
+const retainedSourceKeyFile = process.env.CODEOPS_RETAINED_SOURCE_PUBLIC_KEY_FILE;
+const retainedSourceRoot = process.env.CODEOPS_RETAINED_SOURCE_EVIDENCE_ROOT;
+if ((retainedSourceKeyFile === undefined) !== (retainedSourceRoot === undefined)) {
+  throw new Error("Retained source recovery requires both evidence root and verifier key");
+}
+const retainedSourcePublicKey = retainedSourceKeyFile === undefined ? undefined :
+  await readFile(retainedSourceKeyFile, "utf8");
 const authorityClient = await database.connect();
 try {
   await requireApplicationDatabaseAuthority(authorityClient);
@@ -1483,6 +1498,21 @@ const server = createServer((request, response) => {
       return;
     }
     try {
+      if (retainedSourcePublicKey !== undefined && retainedSourceRoot !== undefined) {
+        const recovery = await serveRetainedSourceRecovery({
+          method: request.method, url: request.url, headers: request.headers,
+          token: sessionBrokerWriteToken, readBody: () => readJson(request),
+          connect: () => database.connect(),
+          loadEvidence: (digest) => readRetainedSourceEvidence(
+            retainedSourceRoot, digest, retainedSourcePublicKey),
+          resolveRepository: (repository) => repositoryRegistry.resolve(repository),
+          mutate: mutateGitHub, reconcile: reconcileGitHubMutation,
+        });
+        if (recovery !== null) {
+          json(response, recovery.status, recovery.body);
+          return;
+        }
+      }
       const checkpointControl = await serveCheckpointRecoveryControl({
         method: request.method, url: request.url, headers: request.headers,
         token: sessionBrokerWriteToken, readBody: () => readJson(request),
@@ -1701,6 +1731,7 @@ const server = createServer((request, response) => {
         const reconciliation = githubMutationReconciliationProviderRequestSchema.parse(
           await readJson(request),
         );
+        requireOrdinaryGitHubMutationProvenance(reconciliation.request);
         if (
           reconciliation.request.input.repository !==
           repositoryRoute.authority.repository
@@ -1743,6 +1774,7 @@ const server = createServer((request, response) => {
         const githubMutation = githubMutationProviderRequestSchema.parse(
           await readJson(request),
         );
+        requireOrdinaryGitHubMutationProvenance(githubMutation);
         if (
           githubMutation.input.repository !==
           repositoryRoute.authority.repository
