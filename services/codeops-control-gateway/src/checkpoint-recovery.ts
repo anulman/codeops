@@ -55,6 +55,10 @@ function requireOperator(value: AuthenticatedCheckpointOperator): void {
   }
 }
 
+export function requireCheckpointRetentionOperator(value: AuthenticatedCheckpointOperator): void {
+  requireOperator(value);
+}
+
 async function databaseClock(client: TransactionClient): Promise<string> {
   const value = (await client.query<{ database_now: unknown }>(
     "SELECT clock_timestamp() AS database_now")).rows[0]?.database_now;
@@ -863,20 +867,29 @@ export async function validateCleanupDecisionReadback(
 ): Promise<Extract<CheckpointCleanupDecision, { authorized: true }>> {
   await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
   try {
-    // Read the immutable pointer first; lock the evidence parent before the
-    // decision row, in the same order as authorization and policy writers.
-    const stored = (await client.query<{ decision_json: unknown }>(
-      `SELECT decision_json FROM codeops.workspace_checkpoint_cleanup_decisions
-        WHERE decision_id=$1`, [decisionId])).rows[0];
-    const decision = checkpointCleanupDecisionSchema.parse(stored?.decision_json);
-    if (!decision.authorized) throw new Error("cleanup decision is not authorized");
-    const evidence = await lockCleanupEvidence(client, decision.checkpointId);
-    const now = await databaseClock(client);
-    if (!evidence || !sameCleanupAuthority(decision,
-      evaluateCheckpointCleanup({ evidence, now, decisionId }))) {
-      throw new Error("cleanup authority drifted after its decision");
-    }
+    const decision = await lockCheckpointCleanupAuthority(client, decisionId);
     await client.query("COMMIT");
     return decision;
   } catch (error) { await client.query("ROLLBACK"); throw error; }
+}
+
+/** Caller owns the transaction and retains the existing authority locks through
+ * its effect. A durable receipt alone is never a deletion capability. */
+export async function lockCheckpointCleanupAuthority(
+  client: TransactionClient, decisionId: string,
+): Promise<Extract<CheckpointCleanupDecision, { authorized: true }>> {
+  // Read the immutable pointer first; lock the evidence parent before the
+  // decision row, in the same order as authorization and policy writers.
+  const stored = (await client.query<{ decision_json: unknown }>(
+    `SELECT decision_json FROM codeops.workspace_checkpoint_cleanup_decisions
+      WHERE decision_id=$1`, [decisionId])).rows[0];
+  const decision = checkpointCleanupDecisionSchema.parse(stored?.decision_json);
+  if (!decision.authorized) throw new Error("cleanup decision is not authorized");
+  const evidence = await lockCleanupEvidence(client, decision.checkpointId);
+  const now = await databaseClock(client);
+  if (!evidence || !sameCleanupAuthority(decision,
+    evaluateCheckpointCleanup({ evidence, now, decisionId }))) {
+    throw new Error("cleanup authority drifted after its decision");
+  }
+  return decision;
 }
