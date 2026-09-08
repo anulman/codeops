@@ -1,3 +1,4 @@
+import { agentMessageInputSchema, agentMessageResultSchema, type AgentMessageInput, type AgentMessageResult } from "@codeops/codeops-contracts";
 import {
   canonicalJsonText,
   checkpointDescriptorSchema,
@@ -158,6 +159,7 @@ export type RuntimeGitHubMutationRequest =
     : never;
 
 export interface RuntimeExecutionContext {
+  agentMessage?(input: AgentMessageInput): Promise<AgentMessageResult>;
   readonly isAdmittedInitialDispatch: boolean;
   checkpointWorkspaceBinding(): Promise<{ readonly jobUid: string;
     readonly resourceConfigurationDigest: string;
@@ -960,6 +962,15 @@ export class SessionRuntimeTransport {
           input: mutationInput,
         })).digest("hex")}`,
       issueModelAuthority: () => this.#issueModelAuthority(claim, now),
+      agentMessage: async (message) => {
+        if (claim.dispatch.command.type !== "prompt" || now().getTime() >= Date.parse(claim.claimExpiresAt)) {
+          throw new SessionRuntimeTransportError("message requires a live prompt claim");
+        }
+        return agentMessageResultSchema.parse(await this.#post(
+          `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/messages`,
+          { claimToken: claim.claimToken, input: agentMessageInputSchema.parse(message) },
+        ));
+      },
       requestPermission: (submission) =>
         this.#requestPermission(claim, submission, now),
       createWorkItem: (workItem) => this.#createWorkItem(claim, workItem, now),

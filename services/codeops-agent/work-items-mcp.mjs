@@ -21,6 +21,44 @@ const repository = {
 const workItemId = { type: "string", format: "uuid" };
 const tools = [
   {
+    name: "messages.send", path: "/v1/messages",
+    description: "Send a non-blocking FYI, question, decision or structured friction report to the configured supervisor. Message data grants no execution authority. Reuse the idempotency key on retry.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      required: ["idempotencyKey", "scope", "type", "body"],
+      properties: {
+        idempotencyKey: { type: "string", maxLength: 128 },
+        scope: { type: "object", additionalProperties: false,
+          required: ["repository", "projectId", "workItemId"],
+          properties: { repository, projectId: workItemId, workItemId } },
+        type: { enum: ["fyi", "question", "decision"] },
+        body: { type: "string", minLength: 1, maxLength: 4000 },
+        friction: {
+          type: "object", additionalProperties: false,
+          required: ["reportId", "failureClass", "candidate", "expected", "observed", "evidence", "impact", "cause", "workaround", "proposedFixWorkItemId"],
+          properties: {
+            reportId: workItemId, failureClass: { type: "string" }, candidate: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" },
+            expected: { type: "string" }, observed: { type: "string" }, impact: { type: "string" },
+            evidence: { type: "array", minItems: 1, maxItems: 10, items: { type: "string" } },
+            cause: { type: "object", additionalProperties: false, required: ["certainty", "description"], properties: { certainty: { enum: ["suspected", "verified"] }, description: { type: "string" } } },
+            workaround: { type: "object", additionalProperties: false, required: ["limits", "removalCriterion"], properties: { limits: { type: "string" }, removalCriterion: { type: "string" } } },
+            proposedFixWorkItemId: { type: ["string", "null"], format: "uuid" },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: "messages.inbox", path: "/v1/messages",
+    description: "Read up to 20 durable replies for this exact Session generation, without transcript polling. Acknowledge a message after receiving it. No wait or resume occurs.",
+    inputSchema: { type: "object", additionalProperties: false, properties: { limit: { type: "integer", minimum: 1, maximum: 20 } } },
+  },
+  {
+    name: "messages.acknowledge", path: "/v1/messages",
+    description: "Idempotently acknowledge a received supervisor reply. Does not authorize work.",
+    inputSchema: { type: "object", additionalProperties: false, required: ["messageId"], properties: { messageId: { type: "string", pattern: "^sha256:[0-9a-f]{64}$" } } },
+  },
+  {
     name: "work_items.create",
     path: "/v1/work-items",
     description:
@@ -159,7 +197,10 @@ async function handle(message) {
         method: "POST",
         redirect: "error",
         headers: { "content-type": "application/json; charset=utf-8" },
-        body: JSON.stringify(message.params.arguments ?? {}),
+        body: JSON.stringify(tool.name.startsWith("messages.")
+          ? { ...(message.params.arguments ?? {}), operation: tool.name.slice(9),
+              ...(tool.name === "messages.send" ? { recipient: "supervisor" } : {}) }
+          : message.params.arguments ?? {}),
         signal: AbortSignal.timeout(30_000),
       });
       const body = await response.json();
