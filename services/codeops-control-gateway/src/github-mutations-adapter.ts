@@ -34,6 +34,15 @@ export const GITHUB_MUTATION_WRITE_TIMEOUT_MS =
 export class GitHubMutationPreflightNoEffectError extends Error {}
 export class GitHubMutationProviderAmbiguousError extends Error {}
 
+/** Normal provider HTTP routes cannot exercise the signed recovery operation. */
+export function requireOrdinaryGitHubMutationProvenance(request: GitHubMutationProviderRequest): void {
+  if (request.provenance.sourceRecoveryId !== undefined ||
+      request.provenance.workspaceLaunchId !== undefined ||
+      !z.string().uuid().safeParse(request.provenance.admissionId).success) {
+    throw new Error("Ordinary GitHub mutations require work-item admission, without recovery provenance");
+  }
+}
+
 export function githubEffectMarker(operationId: string): string {
   if (!/^githubmutation-[0-9a-f]{64}$/.test(operationId)) {
     throw new Error("GitHub effect marker operation identity is invalid");

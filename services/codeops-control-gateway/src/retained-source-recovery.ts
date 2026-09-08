@@ -11,9 +11,11 @@ import {
   githubMutationReconciliationResultSchema, githubPullRequestCreateInputSchema,
   sessionPermissionOperationSchema, sessionRuntimeDispatchSchema, sessionSnapshotSchema,
   isWorkspaceSessionIdentity,
+  workspaceLaunchSchema, workspaceLaunchRequestSchema, workspaceLaunchSessionId,
   type GitHubMutationProviderRequest, type GitHubMutationResult,
   type GitHubMutationReconciliationResult,
 } from "@codeops/codeops-contracts";
+import { workspaceContextAttachmentDescriptors } from "@codeops/codeops-contracts/workspace-context-node";
 import { authenticatedCheckpointOperator } from "./checkpoint-recovery.js";
 import type { TransactionClient } from "./session-broker-repository.js";
 
@@ -28,6 +30,8 @@ const evidenceSchema = z.object({
   sourceManifestDigest: digest,
   historical: z.object({
     sessionId: text, dispatchId: uuid,
+    // Absent for the existing admitted origin; never an admission UUID.
+    workspaceLaunchId: z.string().regex(/^launch-[0-9a-f]{24}$/).optional(),
     // Digest of the read-only SQL projection in readHistory below.
     digest,
     checkpointBindingFailed: z.boolean(),
@@ -107,7 +111,18 @@ export async function readRetainedSourceEvidence(root: string, evidenceDigest: s
   } finally { await file.close(); }
 }
 
-async function readHistory(client: TransactionClient, evidence: RetainedSourceEvidence) {
+async function readHistory(client: TransactionClient, evidence: RetainedSourceEvidence,
+  current: Awaited<ReturnType<typeof requireCurrentAuthority>>) {
+  const launchId = evidence.historical.workspaceLaunchId;
+  // Preserve the admitted projection byte-for-byte. Root evidence additionally
+  // signs the actual full launch rows, including the persisted request. Read up
+  // to two matches so a second claimed Session origin cannot be hidden.
+  const rootProjection = launchId === undefined ? "" : ` || jsonb_build_object(
+       'workspaceLaunches', (SELECT COALESCE(jsonb_agg(to_jsonb(w) ORDER BY launch_id),'[]'::jsonb)
+         FROM (SELECT * FROM codeops.workspace_launches
+           WHERE launch_id=$3 OR launch_json->>'sessionId'=$1
+             OR launch_json#>>'{retryRuntime,sessionId}'=$1
+           ORDER BY launch_id LIMIT 2) w))`;
   const history = (await client.query<{ history: unknown }>(
     `SELECT jsonb_build_object(
        'session', (SELECT to_jsonb(s) FROM codeops.sessions s WHERE session_id=$1),
@@ -116,14 +131,15 @@ async function readHistory(client: TransactionClient, evidence: RetainedSourceEv
           FROM codeops.session_runtime_job_progress p WHERE session_id=$1),
        'checkpoints', (SELECT COALESCE(jsonb_agg(to_jsonb(c) ORDER BY checkpoint_id),'[]'::jsonb)
           FROM codeops.workspace_checkpoint_descriptors c WHERE session_id=$1)
-     ) AS history`, [evidence.historical.sessionId, evidence.historical.dispatchId])).rows[0]?.history;
+     )${rootProjection} AS history`, [evidence.historical.sessionId, evidence.historical.dispatchId,
+      ...(launchId === undefined ? [] : [launchId])])).rows[0]?.history;
   if (sha256CanonicalJsonDigest(history) !== evidence.historical.digest) {
     throw new Error("Retained historical evidence changed");
   }
   const parsed = z.object({
     session: z.object({ session_id: text }),
     dispatch: z.object({ dispatch_id: uuid, session_id: text,
-      admission_id: uuid, dispatch_json: sessionRuntimeDispatchSchema }),
+      admission_id: uuid.nullable(), dispatch_json: sessionRuntimeDispatchSchema }),
     progress: z.array(z.object({ resource_configuration_digest: digest.nullable() }).passthrough()),
   }).passthrough().parse(history);
   if (parsed.session.session_id !== evidence.historical.sessionId ||
@@ -140,7 +156,79 @@ async function readHistory(client: TransactionClient, evidence: RetainedSourceEv
     source.repository === binding.repository && source.resolvedSha === binding.baseSha)) {
     throw new Error("Retained source is outside its historical repository and base");
   }
-  return parsed.dispatch;
+  if (launchId === undefined) {
+    // The existing admitted path still requires its real admission UUID.
+    uuid.parse(parsed.dispatch.admission_id);
+  } else {
+    requireRootLaunchOrigin(history, evidence, current);
+  }
+  return { ...parsed.dispatch, workspaceLaunchId: launchId };
+}
+
+function rootUuid(value: string): string {
+  // The original root controller's deterministic identity, not a new identity.
+  const hex = createHash("sha256").update(value).digest("hex").slice(0, 32);
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}`;
+}
+
+function requireRootLaunchOrigin(history: unknown, evidence: RetainedSourceEvidence,
+  current: Awaited<ReturnType<typeof requireCurrentAuthority>>): void {
+  const parsed = z.object({
+    session: z.object({ session_id: text, owner_principal_id: text,
+      snapshot_json: sessionSnapshotSchema }),
+    dispatch: z.object({ dispatch_id: uuid, session_id: text, principal_id: text,
+      idempotency_key: uuid, admission_id: z.null(), dispatch_json: sessionRuntimeDispatchSchema }),
+    workspaceLaunches: z.array(z.object({ launch_id: text, principal_id: text,
+      idempotency_key: uuid, request_digest: digest, request_json: z.unknown(),
+      launch_json: workspaceLaunchSchema, state: text })).length(1),
+  }).parse(history);
+  const row = parsed.workspaceLaunches[0]!;
+  const launch = row.launch_json;
+  const request = workspaceLaunchRequestSchema.parse(row.request_json);
+  const dispatch = parsed.dispatch.dispatch_json;
+  const identity = dispatch.snapshot.identity;
+  const session = parsed.session.snapshot_json;
+  const expectedLaunchId = `launch-${sha256CanonicalJsonDigest({
+    principalId: row.principal_id, idempotencyKey: row.idempotency_key,
+  }).slice(7, 31)}`;
+  const sessionId = workspaceLaunchSessionId(expectedLaunchId);
+  const same = (a: unknown, b: unknown) => canonicalJsonText(a) === canonicalJsonText(b);
+  if (row.launch_id !== evidence.historical.workspaceLaunchId ||
+      row.launch_id !== expectedLaunchId || launch.launchId !== row.launch_id ||
+      launch.principalId !== row.principal_id || row.principal_id !== evidence.authority.principalId ||
+      parsed.session.owner_principal_id !== row.principal_id ||
+      parsed.dispatch.principal_id !== row.principal_id || dispatch.principalId !== row.principal_id ||
+      request.idempotencyKey !== row.idempotency_key || launch.idempotencyKey !== row.idempotency_key ||
+      row.request_digest !== sha256CanonicalJsonDigest(row.request_json) ||
+      launch.requestDigest !== row.request_digest || launch.promptDigest !== sha256CanonicalJsonDigest(request.prompt) ||
+      launch.state !== row.state || launch.retryRuntime !== undefined || dispatch.retryAuthority !== undefined ||
+      sessionId !== evidence.historical.sessionId || parsed.session.session_id !== sessionId ||
+      session.sessionId !== sessionId || parsed.dispatch.session_id !== sessionId ||
+      dispatch.snapshot.sessionId !== sessionId || dispatch.command.sessionId !== sessionId ||
+      parsed.dispatch.dispatch_id !== rootUuid(`${row.launch_id}:dispatch`) ||
+      dispatch.dispatchId !== parsed.dispatch.dispatch_id ||
+      parsed.dispatch.dispatch_id !== evidence.historical.dispatchId ||
+      parsed.dispatch.idempotency_key !== rootUuid(`${row.launch_id}:prompt`) ||
+      dispatch.command.idempotencyKey !== parsed.dispatch.idempotency_key ||
+      dispatch.command.type !== "prompt" || dispatch.command.prompt !== request.prompt ||
+      !same(dispatch.command.contextAttachments ?? [], request.contextAttachments ?? []) ||
+      dispatch.command.leaseId !== rootUuid(`${row.launch_id}:lease`) ||
+      dispatch.snapshot.lease?.leaseId !== dispatch.command.leaseId ||
+      dispatch.command.generation !== dispatch.snapshot.generation ||
+      (launch.state === "ready" && (launch.sessionId !== sessionId ||
+        launch.initialPromptCommandId !== dispatch.command.idempotencyKey)) ||
+      !isWorkspaceSessionIdentity(identity) || identity.parentSessionId !== null ||
+      identity.forkedAtCursor !== null || identity.workflowId !== "workspace-launch" ||
+      identity.runId !== row.launch_id || !same(identity.workspace, launch.workspace) ||
+      !same(session.identity, identity) || !same(identity.policy, launch.policy) ||
+      launch.policy.mode !== request.mode || launch.title !== request.title ||
+      !same(launch.contextAttachments, workspaceContextAttachmentDescriptors(request.contextAttachments ?? [])) ||
+      !same(identity.contextAttachments ?? [], launch.contextAttachments) ||
+      !same(request.sources.map(({ catalogKey }) => catalogKey),
+        launch.workspace.sources.map(({ catalogKey }) => catalogKey)) ||
+      !isWorkspaceSessionIdentity(current.identity) || !same(current.identity.workspace, launch.workspace)) {
+    throw new Error("Retained source root WorkspaceLaunch origin does not match persisted authority");
+  }
 }
 
 async function requireCurrentAuthority(client: TransactionClient,
@@ -163,6 +251,7 @@ async function requireCurrentAuthority(client: TransactionClient,
       (!readOnly && Date.parse(evidence.authority.expiresAt) <= now.getTime())) {
     throw new Error("Retained source requires current repository operator authority");
   }
+  return snapshot;
 }
 
 type Step = "branch" | "pull-request";
@@ -214,6 +303,9 @@ function publicationRequest(evidence: RetainedSourceEvidence,
       sourceRecoveryId: evidence.recoveryId,
       sessionId: evidence.historical.sessionId, dispatchId: evidence.historical.dispatchId,
       admissionId: historical.admission_id,
+      ...(historical.workspaceLaunchId === undefined ? {} : {
+        workspaceLaunchId: historical.workspaceLaunchId,
+      }),
       sessionGeneration: dispatch.snapshot.generation,
       sessionLeaseId: dispatch.snapshot.lease?.leaseId,
       permissionRequestId: `recovery-${evidence.recoveryId}-${step}`,
@@ -263,8 +355,8 @@ export async function serveRetainedSourceRecovery(input: RetainedSourceRecoveryD
   const step: Step = match[2]!.endsWith("pull-request") ? "pull-request" : "branch";
   try {
     await client.query("BEGIN ISOLATION LEVEL SERIALIZABLE");
-    await requireCurrentAuthority(client, evidence, principalId, reconcile);
-    const historical = await readHistory(client, evidence);
+    const current = await requireCurrentAuthority(client, evidence, principalId, reconcile);
+    const historical = await readHistory(client, evidence, current);
     const priorEffects = await client.query(`SELECT effect_id FROM codeops.provider_effect_receipts
       WHERE (dispatch_id=$1 OR target_id=$3) AND repository=$2
         AND operation IN ('branch_publish','pull_request_create') LIMIT 1`,

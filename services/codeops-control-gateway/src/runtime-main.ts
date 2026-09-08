@@ -28,6 +28,7 @@ import { workspaceContextAttachmentDescriptors } from
 import { createGitHubReadAdapter } from "./github-reads-adapter.js";
 import {
   GitHubMutationPreflightNoEffectError,
+  requireOrdinaryGitHubMutationProvenance,
 } from "./github-mutations-adapter.js";
 import { createGitHubMutationAdapter, createGitHubMutationReconciler } from "./github-branch-fast-forward.js";
 import { loadRecoveredBranchCandidate, readRetainedSourceEvidence,
@@ -1730,8 +1731,8 @@ const server = createServer((request, response) => {
         const reconciliation = githubMutationReconciliationProviderRequestSchema.parse(
           await readJson(request),
         );
+        requireOrdinaryGitHubMutationProvenance(reconciliation.request);
         if (
-          reconciliation.request.provenance.sourceRecoveryId !== undefined ||
           reconciliation.request.input.repository !==
           repositoryRoute.authority.repository
         ) {
@@ -1773,8 +1774,8 @@ const server = createServer((request, response) => {
         const githubMutation = githubMutationProviderRequestSchema.parse(
           await readJson(request),
         );
+        requireOrdinaryGitHubMutationProvenance(githubMutation);
         if (
-          githubMutation.provenance.sourceRecoveryId !== undefined ||
           githubMutation.input.repository !==
           repositoryRoute.authority.repository
         ) {

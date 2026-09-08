@@ -413,14 +413,22 @@ const providerMutationBase = z.object({
       sourceRecoveryId: uuid.optional(),
       sessionId: z.string().min(1).max(128),
       dispatchId: uuid,
-      admissionId: uuid,
+      admissionId: uuid.nullable(),
+      workspaceLaunchId: z.string().regex(/^launch-[0-9a-f]{24}$/).optional(),
       sessionGeneration: z.number().int().positive().max(Number.MAX_SAFE_INTEGER),
       sessionLeaseId: uuid,
       permissionRequestId: z.string().regex(/^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$/),
       authorizationExpiresAt: isoDateTime,
       principalDigest: sha256Digest,
     })
-    .strict(),
+    .strict().superRefine((provenance, context) => {
+      if (provenance.admissionId === null
+        ? provenance.sourceRecoveryId === undefined || provenance.workspaceLaunchId === undefined
+        : provenance.workspaceLaunchId !== undefined) {
+        context.addIssue({ code: z.ZodIssueCode.custom,
+          message: "Null admission requires explicit root WorkspaceLaunch recovery provenance" });
+      }
+    }),
 });
 
 function mutationRequestBranches<T extends z.ZodRawShape>(base: z.ZodObject<T>) {
@@ -469,7 +477,14 @@ export const sessionRuntimeGitHubMutationRequestSchema = z.discriminatedUnion(
 export const githubMutationProviderRequestSchema = z.discriminatedUnion(
   "operation",
   mutationRequestBranches(providerMutationBase),
-);
+).superRefine((request, context) => {
+  if (request.provenance.workspaceLaunchId !== undefined &&
+      !(request.operation === "pull_request_create" ||
+        (request.operation === "branch_publish" && request.input.mode !== "fast_forward"))) {
+    context.addIssue({ code: z.ZodIssueCode.custom,
+      message: "Root recovery provenance supports only exact source publication" });
+  }
+});
 
 export const githubMutationReconciliationProviderRequestSchema = z
   .object({

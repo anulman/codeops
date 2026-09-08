@@ -51,6 +51,13 @@ accepted qualification and review records only when their exact candidate
 identity is unchanged. It must not infer historical runtime success from those
 records. A changed candidate requires new qualification and review.
 
+For corrected retained source, recorded correction provenance must establish
+the lineage from the original retained collection to the exact corrected
+candidate. Its own exact qualification and independent review are also required.
+Qualification and review alone do not establish source origin. The verifier
+must check this recorded lineage in the service-owned evidence referenced by
+the bundle; it must not infer it from matching repository and base alone.
+
 `retained-source-recovery.ts` defines the strict
 `codeops.retained-source-evidence/v1` schema. It includes:
 
@@ -61,12 +68,16 @@ records. A changed candidate requires new qualification and review.
   the `readHistory` SQL projection. That projection includes the complete
   Session and dispatch rows, all Job progress rows ordered by generation, and
   checkpoint descriptor rows ordered by checkpoint ID. The verifier must use
-  the same PostgreSQL JSON projection, not a timestamp reserialization.
+  the same PostgreSQL JSON projection, not a timestamp reserialization. For
+  root origin, `historical.workspaceLaunchId` is required and the projection
+  also contains `workspaceLaunches`, described below. For admitted origin,
+  omit that field; the original four-key projection remains unchanged.
 - `authority`: current principal, Session, generation, lease and expiration.
   Current and historical workspace identities must admit the exact repository
-  and base. An admitted historical dispatch with its real admission and lease
-  is required. No admission or lease is synthesized for older unsupported
-  histories.
+  and base. The historical origin must be either a dispatch with its real
+  work-item admission UUID, or a genuinely persisted root WorkspaceLaunch with
+  a null admission. Both retain their actual historical lease. No admission,
+  lease, launch record, or historical success is synthesized.
 - `candidate` and its canonical JSON SHA-256 `candidateDigest`.
 - `sourceManifestDigest`: the original retained source manifest identity. The
   verifier proves that its repository/base/tree/content/mode set equals the new
@@ -92,6 +103,37 @@ The verifier is an explicit prerequisite outside the runtime trust boundary.
 An operator cannot substitute assertions of approval or source success in the
 HTTP request. An evidence bundle may reference existing accepted checks; it
 does not create those checks.
+
+### Root WorkspaceLaunch evidence
+
+Set `historical.workspaceLaunchId` to the actual `launch-<24 lowercase hex>`
+identity. Use the `readHistory` SQL with parameters for the historical Session,
+dispatch, and launch IDs. It adds `workspaceLaunches` to the original history
+object: an array of complete `to_jsonb(w)` rows from `codeops.workspace_launches`,
+ordered by `launch_id`. The selection matches the supplied launch ID, the
+persisted `launch_json.sessionId`, or `launch_json.retryRuntime.sessionId`.
+The query reads at most two rows and validation requires exactly one. Hash
+this complete object, including the actual persisted `request_json` and
+`launch_json`, into `historical.digest` before signing. Do not create a launch
+projection from verifier assertions or omit fields from the persisted rows.
+
+The gateway independently checks the launch ID derived from its principal and
+request idempotency key, request digest and prompt, requested catalog sources,
+policy, context attachments, and complete workspace. It checks the deterministic
+root Session, initial prompt, dispatch and lease IDs against the actual outbox
+row and embedded dispatch. The launch principal must own the historical Session
+and match both dispatch principal fields and the current signed operator. The
+historical Session identity must match the dispatch identity; the complete
+workspace must also match the current authorized Session. Repository and base
+checks still apply to the signed exact candidate.
+
+This branch supports the original root launch and initial prompt only. A
+`retryRuntime`, fork, mixed admission/launch origin, absent launch, or ambiguous
+launch match fails closed. A ready launch must also bind its persisted Session
+and initial prompt command IDs. Root launch state does not establish worker
+success: independent termination and source-origin evidence remain required.
+A pending outbox with a prior claim and a terminal failed worker can qualify
+without changing status, claim, lease, progress, or checkpoint records.
 
 ## Requests
 
@@ -125,12 +167,19 @@ reconciliation path. The new operation never adopts or retries that effect.
 
 The separate recovery effect table stores the existing GitHub provider request,
 payload/permission digests, attempt identity and existing result contracts.
-`provenance.sourceRecoveryId` identifies the recovery. Its Session, dispatch,
-admission, generation and lease fields are historical references, not a new
-runtime claim. Current authority is bound by the immutable signed recovery
-evidence and the deterministic operation ID. Normal provider HTTP routes reject
+`provenance.sourceRecoveryId` identifies the recovery. Admitted recovery retains
+its actual `admissionId` UUID and omits `workspaceLaunchId`. Root recovery uses
+`admissionId: null` and its actual `workspaceLaunchId`; that launch ID is never
+an admission UUID. Its Session, dispatch, generation and lease fields are
+historical references, not a new runtime claim. Current authority is bound by
+the immutable signed recovery evidence and the deterministic operation ID.
+Normal provider HTTP routes reject
 recovery provenance; only this authenticated operation invokes it. Publication
 uses the existing GitHub adapter and its repository-scoped credentials.
+Ordinary mutation and reconciliation routes require their existing admission
+UUID and reject both admitted and root recovery metadata. Runtime request
+contracts do not accept recovery metadata. Root provider provenance is limited
+to branch creation and PR creation through this signed operation.
 
 An attempted effect is durable before any provider call. An ambiguous call
 returns `202` with `state: "unknown"`; repeating the effect cannot write again.

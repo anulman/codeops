@@ -1,12 +1,17 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { mkdtemp, writeFile, symlink, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
-import { canonicalJsonText, sha256CanonicalJsonDigest } from "@codeops/codeops-contracts";
+import { canonicalJsonText, sha256CanonicalJsonDigest,
+  githubMutationProviderRequestSchema, githubMutationReconciliationProviderRequestSchema,
+  sessionRuntimeGitHubMutationRequestSchema } from "@codeops/codeops-contracts";
 import { verifyRetainedSourceEvidence, readRetainedSourceEvidence,
   serveRetainedSourceRecovery } from "../dist/retained-source-recovery.js";
+import { requireOrdinaryGitHubMutationProvenance } from "../dist/github-mutations-adapter.js";
+import { admitWorkspaceLaunch, readyWorkspaceLaunch } from "../dist/workspace-launch.js";
+import { workspaceLaunchRuntimeIdentity } from "../dist/workspace-launch-controller.js";
 
 const uuid = (n) => `${n.repeat(8)}-${n.repeat(4)}-4${n.repeat(3)}-8${n.repeat(3)}-${n.repeat(12)}`;
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
@@ -115,15 +120,26 @@ test("service evidence reads reject symlinks, traversal, digest drift and unsign
   } finally { await rm(root, { recursive: true, force: true }); }
 });
 
-function service() {
-  const f = fixture(), rows = new Map(), effects = new Map(), writes = [];
+function service(f = fixture()) {
+  const rows = new Map(), effects = new Map(), writes = [];
   let clock = "2026-09-08T01:00:00.000Z", providerCalls = 0, priorEffects = [];
   let fail = false;
   const client = { release() {}, async query(sql, values = []) {
     if (/^(BEGIN|COMMIT|ROLLBACK)/.test(sql)) return { rows: [] };
     if (sql.includes("SELECT snapshot_json")) return { rows: values[1] === "operator:alice"
       ? [{ snapshot_json: f.snapshot, database_now: clock }] : [] };
-    if (sql.includes("jsonb_build_object")) return { rows: [{ history: f.history }] };
+    if (sql.includes("jsonb_build_object")) {
+      if (f.evidence.historical.workspaceLaunchId === undefined) {
+        assert.doesNotMatch(sql, /workspace_launches/);
+        assert.equal(values.length, 2);
+      } else {
+        assert.match(sql, /jsonb_agg\(to_jsonb\(w\) ORDER BY launch_id\)/);
+        assert.match(sql, /FROM codeops\.workspace_launches/);
+        assert.match(sql, /ORDER BY launch_id LIMIT 2/);
+        assert.equal(values[2], f.evidence.historical.workspaceLaunchId);
+      }
+      return { rows: [{ history: f.history }] };
+    }
     if (sql.includes("FROM codeops.provider_effect_receipts")) return { rows: priorEffects };
     if (sql.includes("SELECT clock_timestamp()")) return { rows: [{ now: clock }] };
     if (/^(INSERT|UPDATE|DELETE)/.test(sql)) {
@@ -232,4 +248,203 @@ test("stale authority, old source, historical effects and user approval assertio
   await assert.rejects(f.call("finalize", "operator:mallory"));
   await assert.rejects(f.call("finalize", "operator:alice", { evidenceDigest: sha256CanonicalJsonDigest(f.evidence), approved: true }));
   assert.equal(f.writes.length, 0);
+});
+
+// Build the persisted launch through the real root admission code, with only
+// its repository resolver and store replaced. No DB, Kubernetes or provider IO.
+async function rootFixture() {
+  const f = fixture();
+  const request = { version: "codeops.workspace-launch-request/v1", idempotencyKey: uuid("7"),
+    mode: "implement", prompt: "Prepare a candidate.", sources: [{ catalogKey: "project" }],
+    contextAttachments: [{ attachmentId: "context-brief", name: "brief.txt", mimeType: "text/plain",
+      sizeBytes: 4, digest: `sha256:${createHash("sha256").update("root").digest("hex")}`,
+      content: Buffer.from("root").toString("base64") }] };
+  let stored;
+  const launch = await admitWorkspaceLaunch({ request, principalId: "operator:alice",
+    resolver: { resolve: async () => structuredClone(f.snapshot.identity.workspace.sources[0]) },
+    store: { findByIdempotencyKey: async () => null,
+      admit: async (input) => { stored = input; return input.launch; } },
+    runtimeRequirements: {
+      version: "codeops.runtime-requirements/v1", capabilities: ["acp", "checkpoint"],
+      minimumResources: { cpuMillis: 600, memoryMiB: 1280, ephemeralStorageMiB: 1280 },
+      requiredAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+      maximumAuthority: { workspaceAccess: "bounded-writes", publicNetwork: true, brokeredProviderEffects: true },
+      compatibilityPolicyRevision: "compatible-substitution-v1",
+    }, now: () => new Date("2026-09-08T00:00:00.000Z"),
+  });
+  const runtime = workspaceLaunchRuntimeIdentity(launch);
+  const hex = createHash("sha256").update(`${launch.launchId}:dispatch`).digest("hex").slice(0, 32);
+  const dispatchId = `${hex.slice(0, 8)}-${hex.slice(8, 12)}-4${hex.slice(13, 16)}-8${hex.slice(17, 20)}-${hex.slice(20)}`;
+  Object.assign(f.snapshot, { sessionId: runtime.sessionId });
+  Object.assign(f.snapshot.identity, { workflowId: runtime.workflowId, runId: runtime.runId,
+    workspace: launch.workspace, policy: launch.policy, contextAttachments: launch.contextAttachments });
+  f.snapshot.lease.leaseId = runtime.leaseId;
+  const dispatch = f.history.dispatch.dispatch_json;
+  Object.assign(dispatch, { dispatchId, snapshot: structuredClone(f.snapshot) });
+  Object.assign(dispatch.command, { sessionId: runtime.sessionId, leaseId: runtime.leaseId,
+    idempotencyKey: runtime.promptIdempotencyKey, contextAttachments: request.contextAttachments });
+  Object.assign(f.snapshot, { state: "failed", capabilities: f.snapshot.capabilities.map(({ action }) =>
+    ({ action, availability: "disabled", reason: "Runtime terminated." })) });
+  f.snapshot.lease = { leaseId: runtime.leaseId, generation: 1, status: "released",
+    releasedAt: "2026-09-08T00:30:00.000Z" };
+  Object.assign(f.history.session, { session_id: runtime.sessionId, owner_principal_id: launch.principalId,
+    snapshot_json: structuredClone(f.snapshot) });
+  Object.assign(f.history.dispatch, { dispatch_id: dispatchId, session_id: runtime.sessionId,
+    principal_id: launch.principalId, idempotency_key: runtime.promptIdempotencyKey,
+    admission_id: null, status: "pending", claim_count: 1, claim_token: null, claim_expires_at: null });
+  f.history.workspaceLaunches = [{ launch_id: launch.launchId, principal_id: launch.principalId,
+    idempotency_key: launch.idempotencyKey, request_digest: launch.requestDigest,
+    request_json: stored.request, state: "ready", launch_json: readyWorkspaceLaunch(launch, {
+      sessionId: runtime.sessionId, initialPromptCommandId: runtime.promptIdempotencyKey,
+      now: () => new Date("2026-09-08T00:01:00.000Z"),
+    }) }];
+  // Match the stored JSON projection, including omission of optional undefined
+  // controller fields such as nextAttemptAt.
+  f.history = JSON.parse(JSON.stringify(f.history));
+  Object.assign(f.evidence.historical, { sessionId: runtime.sessionId, dispatchId,
+    workspaceLaunchId: launch.launchId, digest: sha256CanonicalJsonDigest(f.history) });
+  Object.assign(f.evidence.authority, { sessionId: runtime.sessionId, leaseId: runtime.leaseId });
+  return f;
+}
+
+test("verified signed root recovery publishes with NULL admission and preserves exact failed histories", async () => {
+  const f = service(await rootFixture()), before = structuredClone(f.history);
+  assert.equal((await f.call("finalize")).body.state, "source-finalized");
+  assert.equal((await f.call("branch")).body.state, "succeeded");
+  assert.equal((await f.call("pull-request")).body.result.draft, false);
+  for (const effect of f.effects.values()) {
+    assert.equal(effect.request_json.provenance.admissionId, null);
+    assert.equal(effect.request_json.provenance.workspaceLaunchId, f.history.workspaceLaunches[0].launch_id);
+    assert.equal(effect.request_json.provenance.sourceRecoveryId, f.evidence.recoveryId);
+  }
+  assert.deepEqual(f.history, before);
+  assert.equal(f.history.dispatch.status, "pending");
+  assert.equal(f.history.dispatch.claim_count, 1);
+  assert.equal(f.history.session.snapshot_json.state, "failed");
+});
+
+test("even signed root assertions must independently match every persisted origin binding", async () => {
+  const cases = [
+    ["owner", (f, w) => { f.history.session.owner_principal_id = "operator:mallory"; }],
+    ["principal", (f, w) => { w.principal_id = "operator:mallory"; }],
+    ["launch principal", (f, w) => { w.launch_json.principalId = "operator:mallory"; }],
+    ["dispatch principal", (f) => { f.history.dispatch.principal_id = "operator:mallory"; }],
+    ["embedded principal", (f) => { f.history.dispatch.dispatch_json.principalId = "operator:mallory"; }],
+    ["session", (f, w) => { w.launch_json.sessionId = "ses_" + "f".repeat(24); }],
+    ["session snapshot", (f) => { f.history.session.snapshot_json.sessionId = "foreign"; }],
+    ["dispatch", (f) => { f.history.dispatch.dispatch_json.dispatchId = uuid("8"); }],
+    ["repository", (f, w) => { w.launch_json.workspace.sources[0].repository = "foreign/project"; }],
+    ["base", (f, w) => { w.launch_json.workspace.sources[0].resolvedSha = "e".repeat(40); }],
+    ["workspace path", (f, w) => { w.launch_json.workspace.sources[0].checkoutPath = "sources/other"; }],
+    ["current workspace", (f) => { f.snapshot.identity.workspace.scratchPath = "other-scratch"; }],
+    ["request identity", (f, w) => { w.idempotency_key = uuid("8"); }],
+    ["request digest", (f, w) => { w.request_digest = `sha256:${"0".repeat(64)}`; }],
+    ["launch request digest", (f, w) => { w.launch_json.requestDigest = `sha256:${"0".repeat(64)}`; }],
+    ["request prompt", (f, w) => { w.request_json.prompt = "Another request"; }],
+    ["rehashed request", (f, w) => { w.request_json.prompt = "Another request";
+      w.request_digest = sha256CanonicalJsonDigest(w.request_json);
+      w.launch_json.requestDigest = w.request_digest;
+      w.launch_json.promptDigest = sha256CanonicalJsonDigest(w.request_json.prompt); }],
+    ["request selection", (f, w) => { w.request_json.sources[0].catalogKey = "other";
+      w.request_digest = sha256CanonicalJsonDigest(w.request_json); w.launch_json.requestDigest = w.request_digest; }],
+    ["request attachment", (f, w) => { w.request_json.contextAttachments = [];
+      w.request_digest = sha256CanonicalJsonDigest(w.request_json); w.launch_json.requestDigest = w.request_digest; }],
+    ["launch identity", (f, w) => { w.launch_json.launchId = "launch-" + "f".repeat(24); }],
+    ["forged persisted identity", (f, w) => { w.launch_id = "launch-" + "f".repeat(24);
+      w.launch_json.launchId = w.launch_id; f.evidence.historical.workspaceLaunchId = w.launch_id; }],
+    ["launch prompt", (f, w) => { w.launch_json.initialPromptCommandId = uuid("8"); }],
+    ["dispatch prompt", (f) => { f.history.dispatch.idempotency_key = uuid("8"); }],
+    ["lease", (f) => { f.history.dispatch.dispatch_json.command.leaseId = uuid("8"); }],
+    ["retry origin", (f, w) => { w.launch_json.retryRuntime = {
+      ...workspaceLaunchRuntimeIdentity(w.launch_json), dispositionId: uuid("8"),
+      runtimeWorkerImage: `registry/worker@sha256:${"a".repeat(64)}`,
+    }; }],
+    ["run", (f) => { f.history.dispatch.dispatch_json.snapshot.identity.runId = "foreign"; }],
+    ["fork", (f) => { f.history.dispatch.dispatch_json.snapshot.identity.parentSessionId = "foreign"; }],
+    ["admission mixed with launch", (f) => { f.history.dispatch.admission_id = uuid("5"); }],
+    ["no persisted launch", (f) => { f.history.workspaceLaunches = []; }],
+    ["null launch", (f) => { f.history.workspaceLaunches = [null]; }],
+    ["ambiguous launch", (f, w) => { f.history.workspaceLaunches.push({ ...structuredClone(w),
+      launch_id: "launch-" + "f".repeat(24) }); }],
+    ["null without explicit root origin", (f) => { delete f.evidence.historical.workspaceLaunchId;
+      delete f.history.workspaceLaunches; }],
+  ];
+  for (const [name, mutate] of cases) {
+    const f = service(await rootFixture());
+    // SQL rows are independent values, as in PostgreSQL readback.
+    f.snapshot.identity = structuredClone(f.snapshot.identity);
+    f.history.workspaceLaunches = structuredClone(f.history.workspaceLaunches);
+    mutate(f, f.history.workspaceLaunches[0]);
+    f.evidence.historical.digest = sha256CanonicalJsonDigest(f.history);
+    const before = structuredClone(f.history);
+    await assert.rejects(f.call("finalize"), undefined, name);
+    assert.equal(f.writes.length, 0, name);
+    assert.equal(f.providerCalls(), 0, name);
+    assert.deepEqual(f.history, before, name);
+  }
+});
+
+test("root projection and identity are signature-bound, including otherwise unused persisted fields", async () => {
+  const f = service(await rootFixture());
+  const signed = envelope(structuredClone(f.evidence));
+  signed.evidence.historical.workspaceLaunchId = "launch-" + "f".repeat(24);
+  assert.throws(() => verifyRetainedSourceEvidence(signed, key), /signature/);
+  f.history.workspaceLaunches[0].launch_json.attemptCount++;
+  await assert.rejects(f.call("finalize"), /historical evidence changed/);
+  assert.equal(f.writes.length, 0);
+});
+
+test("ordinary provider and runtime boundaries reject root and admitted recovery provenance", async () => {
+  for (const fixtureValue of [fixture(), await rootFixture()]) {
+    const f = service(fixtureValue);
+    await f.call("branch");
+    const recovery = f.effects.get("branch").request_json;
+    if (f.evidence.historical.workspaceLaunchId === undefined) {
+      assert.equal(recovery.provenance.admissionId, f.history.dispatch.admission_id);
+      assert.equal(Object.hasOwn(recovery.provenance, "workspaceLaunchId"), false);
+    }
+    assert.equal(githubMutationProviderRequestSchema.safeParse(recovery).success, true);
+    assert.throws(() => requireOrdinaryGitHubMutationProvenance(recovery), /admission/);
+    const reconciliation = githubMutationReconciliationProviderRequestSchema.parse({
+      version: "codeops.github-mutation-reconciliation-provider-request/v1",
+      request: recovery, attemptedAt: "2026-09-08T00:00:00.000Z",
+    });
+    assert.throws(() => requireOrdinaryGitHubMutationProvenance(reconciliation.request), /admission/);
+    const runtime = { version: "codeops.session-runtime-github-mutation-request/v1",
+      claimToken: uuid("6"), operationId: recovery.operationId,
+      operation: recovery.operation, input: recovery.input };
+    assert.equal(sessionRuntimeGitHubMutationRequestSchema.safeParse(runtime).success, true);
+    for (const metadata of [{ provenance: recovery.provenance },
+      { workspaceLaunchId: "launch-" + "f".repeat(24) }, { sourceRecoveryId: uuid("1") }]) {
+      assert.equal(sessionRuntimeGitHubMutationRequestSchema.safeParse({ ...runtime, ...metadata }).success, false);
+    }
+    for (const mutate of [
+      (r) => { delete r.provenance.sourceRecoveryId; },
+      (r) => { delete r.provenance.workspaceLaunchId; },
+      (r) => { r.provenance.admissionId = uuid("5"); },
+      (r) => { r.provenance.admissionId = r.provenance.workspaceLaunchId; },
+      (r) => { delete r.provenance.admissionId; },
+    ]) {
+      if (recovery.provenance.workspaceLaunchId === undefined) continue;
+      const invalid = structuredClone(recovery); mutate(invalid);
+      assert.equal(githubMutationProviderRequestSchema.safeParse(invalid).success, false);
+    }
+    const ordinary = structuredClone(recovery);
+    delete ordinary.provenance.sourceRecoveryId;
+    delete ordinary.provenance.workspaceLaunchId;
+    ordinary.provenance.admissionId = uuid("5");
+    assert.deepEqual(githubMutationProviderRequestSchema.parse(ordinary), ordinary);
+    assert.doesNotThrow(() => requireOrdinaryGitHubMutationProvenance(ordinary));
+  }
+});
+
+test("root unknown outcomes retain the original reconciliation fence", async () => {
+  const f = service(await rootFixture()), before = structuredClone(f.history);
+  f.loseResponse();
+  assert.equal((await f.call("branch")).body.state, "unknown");
+  await assert.rejects(f.call("branch"), /cannot be retried/);
+  f.advance();
+  assert.equal((await f.call("reconcile-branch")).body.state, "reconciled_satisfied");
+  assert.equal(f.providerCalls(), 1);
+  assert.deepEqual(f.history, before);
 });
