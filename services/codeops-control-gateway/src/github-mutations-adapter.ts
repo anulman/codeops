@@ -219,6 +219,10 @@ async function exactCreatePublicationTree(input: {
     input.requestFetch,
   ));
   if (baseCommit.sha !== input.request.input.expectedHeadSha) return false;
+  const binding = input.candidate.binding;
+  if (binding !== undefined && (binding.repository !== input.request.input.repository ||
+      binding.baseSha !== baseCommit.sha || binding.baseTreeSha !== baseCommit.tree.sha ||
+      binding.treeSha !== input.observedTreeSha)) return false;
   const baseTree = await readTree(baseCommit.tree.sha);
   if (baseTree.sha !== baseCommit.tree.sha) return false;
   const entries = new Map(baseTree.tree.map((entry) => [entry.path, entry]));
@@ -228,6 +232,12 @@ async function exactCreatePublicationTree(input: {
       const entry = entries.get(change.path);
       let mode = "100644";
       let content = change.newText;
+      if (change.exact !== undefined) {
+        if ((entry?.sha ?? null) !== change.exact.baseBlobSha ||
+            (entry?.mode ?? null) !== change.exact.baseMode ||
+            (entry !== undefined && entry.type !== "blob")) return null;
+        return { path: change.path, mode: change.exact.mode, content: change.newText };
+      }
       if (change.oldText.length === 0) {
         if (entry !== undefined) return null;
         const parts = change.path.split("/");
@@ -955,6 +965,7 @@ export function createGitHubMutationAdapter(input: {
           preflight,
           effectText: providerEffectText,
           changes: branchCandidate!.changes,
+          binding: branchCandidate!.binding,
           provider: {
             readBranch: async (branchName, allowMissing = false) => {
               const response = await publicationJsonResponse(

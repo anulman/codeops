@@ -46,6 +46,8 @@ const repositoryPath = z
       !value.startsWith("/") &&
       !value.endsWith("/") &&
       !value.includes("\\") &&
+      !/[\x00-\x1f\x7f]/.test(value) &&
+      !value.split("/").some((part) => part.toLowerCase() === ".git") &&
       !value.split("/").some((part) => part === "" || part === "." || part === ".."),
     "GitHub repository path is invalid",
   );
@@ -112,8 +114,13 @@ const githubBranchPublishChangeSchema = z.object({
   path: repositoryPath,
   oldText: z.string().max(100_000),
   newText: z.string().max(100_000),
+  exact: z.object({
+    baseBlobSha: gitSha.nullable(),
+    baseMode: z.enum(["100644", "100755"]).nullable(),
+    mode: z.enum(["100644", "100755"]),
+  }).strict().optional(),
 }).strict().superRefine((change, context) => {
-  if (change.oldText.length === 0 && change.newText.length === 0) {
+  if (change.exact === undefined && change.oldText.length === 0 && change.newText.length === 0) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
       message: "A new published file must not be empty",
@@ -125,7 +132,22 @@ const githubBranchPublishChangeSchema = z.object({
 export const githubBranchPublishCandidateSchema = z.object({
   version: z.literal("codeops.github-branch-publish-candidate/v1"),
   changes: z.array(githubBranchPublishChangeSchema).min(1).max(100),
+  binding: z.object({ repository, baseSha: gitSha, baseTreeSha: gitSha, treeSha: gitSha }).strict().optional(),
 }).strict().superRefine((candidate, context) => {
+  const paths = new Set(candidate.changes.map(({ path }) => path));
+  if (candidate.changes.some((change) => {
+    const parts = change.path.split("/");
+    return parts.some((_, index) => index > 0 && paths.has(parts.slice(0, index).join("/"))) ||
+      (candidate.binding !== undefined) !== (change.exact !== undefined) ||
+      (change.exact !== undefined && (change.oldText !== "" ||
+        change.newText.includes("\0") ||
+        new TextDecoder().decode(new TextEncoder().encode(change.newText)) !== change.newText ||
+        (change.exact.baseBlobSha === null) !== (change.exact.baseMode === null)));
+  })) context.addIssue({ code: z.ZodIssueCode.custom,
+    message: "Exact candidates require complete regular-file bindings and disjoint paths" });
+  if (candidate.binding !== undefined && candidate.binding.baseTreeSha === candidate.binding.treeSha) {
+    context.addIssue({ code: z.ZodIssueCode.custom, message: "Exact candidates must change the tree" });
+  }
   if (new Set(candidate.changes.map(({ path }) => path)).size !== candidate.changes.length) {
     context.addIssue({
       code: z.ZodIssueCode.custom,
@@ -387,6 +409,8 @@ const providerMutationBase = z.object({
   permissionDigest: sha256Digest,
   provenance: z
     .object({
+      // These remain historical references when sourceRecoveryId is present.
+      sourceRecoveryId: uuid.optional(),
       sessionId: z.string().min(1).max(128),
       dispatchId: uuid,
       admissionId: uuid,
