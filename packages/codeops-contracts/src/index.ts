@@ -187,6 +187,7 @@ export {
   type AdmittedChildMaterializationInput,
   type AdmittedChildMaterializationState,
 } from "./work-item-admission.js";
+export * from "./work-item-admission-plan.js";
 export {
   retryTransientFailureCodeSchema,
   workItemRetryDispositionKindSchema,

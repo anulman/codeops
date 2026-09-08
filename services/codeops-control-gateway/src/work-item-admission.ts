@@ -547,7 +547,7 @@ export async function admitSessionRuntimeWorkItem(client: TransactionClient, inp
     }
     assertParentLineage(parent, decisionResult.snapshot);
     const parentLease = parent.lease;
-    if (parentLease?.status !== "active") throw new WorkItemAdmissionConflictError("work-item admission requires the active parent lease");
+    if (parentLease?.status !== "active" || Date.parse(parentLease.expiresAt) <= nowDate.getTime()) throw new WorkItemAdmissionConflictError("work-item admission requires the active parent lease");
     const parentBudget = claimed.snapshot.budget;
     if (parentBudget?.version !== "codeops.session-budget/v2") throw new WorkItemAdmissionConflictError("work-item admission requires the durable model-budget contract");
     const activeChildren = Number(parentRows.rows[0].active_children);

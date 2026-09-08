@@ -21,6 +21,16 @@ const promptResult = {
   },
 };
 
+const admissionRequest = {
+  admissionId: "11111111-1111-4111-8111-111111111111",
+  plan: { planId: "fixture-plan", planDigest: `sha256:${"a".repeat(64)}`, permissionRequestId: "fixture-permission" },
+  workItem: { repository: "example-org/example-repository", provider: { kind: "plane",
+    workspaceId: leaseId, projectId: leaseId }, workItemId: leaseId, workflowId: "child-workflow",
+    runId: "child-run", sourceSha: "a".repeat(40), title: "Publish", prompt: "Publish exact candidate." },
+  child: { sessionId: "child", leaseId, holderId: "child-holder", dispatchId: idempotencyKey, idempotencyKey },
+};
+
+
 const canonical = (value) => JSON.stringify(Object.fromEntries(
   Object.entries(value).sort(([left], [right]) => left.localeCompare(right))
     .map(([key, nested]) => [key,
@@ -737,3 +747,71 @@ test("fails closed on ambiguous origins, credentials, response types, and body b
     await assert.rejects(transport.claim(1_000), SessionRuntimeTransportError);
   }
 });
+
+for (const scenario of ["success", "unknown", "missing-approval", "wrong-approval", "source-drift", "duplicate", "stale", "wrong-result", "forged-token"]) {
+  test(`work-item admission transport: ${scenario}`, async () => {
+    const requests = [];
+    const finished = new Error("fixture executor stopped");
+    let clock = new Date("2026-08-04T20:01:00.000Z");
+    const result = { version: "codeops.work-item-admission-result/v1", admissionId: admissionRequest.admissionId,
+      disposition: scenario === "unknown" ? "replayed" : "created", parentSessionId: "ses_91a4",
+      childSessionId: "child", dispatchId: idempotencyKey,
+      lifecycleEventId: `event:${"b".repeat(64)}`, supervisionEventId: `sha256:${"c".repeat(64)}` };
+    const transport = new SessionRuntimeTransport({ gatewayOrigin: "http://codeops-control-gateway:8080", token, authority,
+      fetch: async (url, init) => {
+        if (url.endsWith("/claims")) return json({ version: "codeops.session-runtime-claim-response/v2", claim: claim() });
+        assert.equal(url, `http://codeops-control-gateway:8080/v1/session-runtime/dispatches/${dispatchId}/work-item-admissions`);
+        assert.equal(init.headers.authorization, `Bearer ${token}`);
+        requests.push(JSON.parse(init.body));
+        if (["missing-approval", "wrong-approval", "source-drift", "duplicate"].includes(scenario)) return new Response("{}", { status: 409 });
+        if (scenario === "unknown" && requests.length === 1) throw new Error("response lost after commit");
+        return json(scenario === "wrong-result" ? { ...result, childSessionId: "wrong-child" } : result);
+      },
+    });
+    await assert.rejects(transport.runOne({ leaseMs: 300_000, now: () => clock,
+      execute: async (_dispatch, context) => {
+        if (scenario === "stale") clock = new Date("2026-08-04T20:06:00.000Z");
+        const request = scenario === "forged-token" ? { ...admissionRequest, claimToken } : admissionRequest;
+        if (["success", "unknown"].includes(scenario)) assert.deepEqual(await context.admitWorkItem(request), result);
+        else await assert.rejects(context.admitWorkItem(request));
+        throw finished;
+      },
+    }), (error) => error === finished);
+    assert.equal(requests.length, ["stale", "forged-token"].includes(scenario) ? 0 : scenario === "unknown" ? 2 : 1);
+    if (requests.length > 0) assert.deepEqual(requests[0], {
+      ...admissionRequest, version: "codeops.work-item-admission/v1", claimToken,
+    });
+    if (scenario === "unknown") assert.deepEqual(requests[0], requests[1]);
+  });
+}
+
+for (const scenario of ["lost-append", "replacement", "stale", "forged-project"]) {
+  test(`admission plan transport ${scenario}`, async () => {
+    const requests = []; const stopped = new Error("fixture stopped");
+    const proposed = { repository: admissionRequest.workItem.repository, workItemId: leaseId, title: "Publish", prompt: "Publish exact candidate." };
+    const receipt = { version: "codeops.work-item-admission-plan-result/v1", request: admissionRequest,
+      event: { version: "codeops.session-event/v1", eventId: `sha256:${"e".repeat(64)}`, sessionId: "ses_91a4",
+        generation: 3, cursor: 185, type: "acp_update", update: { kind: "plan_update", planId: "fixture-plan", content: { type: "markdown", markdown: "Exact plan" } },
+        occurredAt: "2026-08-04T20:01:00.000Z" } };
+    let clock = new Date("2026-08-04T20:01:00.000Z");
+    const transport = new SessionRuntimeTransport({ gatewayOrigin: "http://codeops-control-gateway:8080", token, authority,
+      fetch: async (url, init) => {
+        if (url.endsWith("/claims")) return json({ version: "codeops.session-runtime-claim-response/v2", claim: { ...claim(), claimCount: scenario === "replacement" ? 2 : 1 } });
+        assert.equal(url, `http://codeops-control-gateway:8080/v1/session-runtime/dispatches/${dispatchId}/work-item-admission-plans`);
+        requests.push(JSON.parse(init.body));
+        if (requests.length === 1) throw new Error("append response lost");
+        return json(receipt);
+      },
+    });
+    await assert.rejects(transport.runOne({ leaseMs: 300000, now: () => clock,
+      execute: async (_dispatch, context) => {
+        if (scenario === "stale") clock = new Date("2026-08-04T20:06:00.000Z");
+        if (scenario === "lost-append") assert.deepEqual(await context.prepareWorkItemAdmission(proposed), receipt);
+        else await assert.rejects(context.prepareWorkItemAdmission(scenario === "forged-project" ? { ...proposed, provider: admissionRequest.workItem.provider } : proposed));
+        throw stopped;
+      },
+    }), error => error === stopped);
+    assert.equal(requests.length, scenario === "lost-append" ? 2 : 0);
+    if (requests.length) { assert.deepEqual(requests[0], requests[1]); assert.equal(requests[0].claimToken, claimToken); }
+  });
+}

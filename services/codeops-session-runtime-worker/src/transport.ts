@@ -1,5 +1,14 @@
 import {
   canonicalJsonText,
+  workItemAdmissionRequestSchema,
+  workItemAdmissionInputSchema,
+  workItemAdmissionPlanRequestSchema,
+  workItemAdmissionPlanResultSchema,
+  type WorkItemAdmissionInput,
+  type WorkItemAdmissionPlanResult,
+  workItemAdmissionResultSchema,
+  type WorkItemAdmissionRequest,
+  type WorkItemAdmissionResult,
   checkpointDescriptorSchema,
   githubMutationResultSchema,
   githubBranchPublishCandidateManifestRequestSchema,
@@ -157,7 +166,11 @@ export type RuntimeGitHubMutationRequest =
       : never
     : never;
 
+export type RuntimeWorkItemAdmissionRequest = Omit<WorkItemAdmissionRequest, "version" | "claimToken">;
+
 export interface RuntimeExecutionContext {
+  prepareWorkItemAdmission(input: WorkItemAdmissionInput): Promise<WorkItemAdmissionPlanResult>;
+  admitWorkItem(input: RuntimeWorkItemAdmissionRequest): Promise<WorkItemAdmissionResult>;
   readonly isAdmittedInitialDispatch: boolean;
   checkpointWorkspaceBinding(): Promise<{ readonly jobUid: string;
     readonly resourceConfigurationDigest: string;
@@ -566,6 +579,56 @@ export class SessionRuntimeTransport {
     );
   }
 
+  async #prepareWorkItemAdmission(claim: SessionRuntimeDispatchClaimV2, input: WorkItemAdmissionInput, now: () => Date): Promise<WorkItemAdmissionPlanResult> {
+    const request = workItemAdmissionPlanRequestSchema.parse({ version: "codeops.work-item-admission-plan-request/v1",
+      claimToken: claim.claimToken, input: workItemAdmissionInputSchema.parse(input) });
+    for (let attempt = 0; ; attempt++) {
+      if (claim.dispatch.command.type !== "prompt" || claim.claimCount !== 1 || now().getTime() >= Date.parse(claim.claimExpiresAt)) {
+        throw new SessionRuntimeTransportError("admission plan requires the first live prompt claim");
+      }
+      try { return workItemAdmissionPlanResultSchema.parse(await this.#post(
+        `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/work-item-admission-plans`, request));
+      } catch (error) {
+        if (attempt >= 2 || !(error instanceof SessionRuntimeRequestFailureError ||
+            error instanceof SessionRuntimeHttpStatusError && [502, 503, 504].includes(error.status))) throw error;
+        await delay([100, 250][attempt]);
+      }
+    }
+  }
+
+  async #admitWorkItem(
+    claim: SessionRuntimeDispatchClaimV2,
+    input: RuntimeWorkItemAdmissionRequest,
+    now: () => Date,
+  ): Promise<WorkItemAdmissionResult> {
+    const bounded = workItemAdmissionRequestSchema.omit({ version: true, claimToken: true }).parse(input);
+    const request = workItemAdmissionRequestSchema.parse({ ...bounded,
+      version: "codeops.work-item-admission/v1", claimToken: claim.claimToken });
+    // Identical reposts reconcile lost responses using immutable gateway replay.
+    // Never allocate another child or replace an uncertain admission.
+    for (let attempt = 0; ; attempt++) {
+      if (claim.dispatch.command.type !== "prompt" ||
+          now().getTime() >= Date.parse(claim.claimExpiresAt)) {
+        throw new SessionRuntimeTransportError("work-item admission requires a live claimed prompt");
+      }
+      try {
+        const result = workItemAdmissionResultSchema.parse(await this.#post(
+          `/v1/session-runtime/dispatches/${claim.dispatch.dispatchId}/work-item-admissions`, request));
+        if (result.admissionId !== request.admissionId ||
+            result.parentSessionId !== claim.dispatch.command.sessionId ||
+            result.childSessionId !== request.child.sessionId ||
+            result.dispatchId !== request.child.dispatchId) {
+          throw new SessionRuntimeTransportError("work-item admission result identity drifted");
+        }
+        return result;
+      } catch (error) {
+        if (attempt >= 2 || !(error instanceof SessionRuntimeRequestFailureError ||
+            error instanceof SessionRuntimeHttpStatusError && [502, 503, 504].includes(error.status))) throw error;
+        await delay([100, 250][attempt]);
+      }
+    }
+  }
+
   async #requestPermission(
     claim: SessionRuntimeDispatchClaimV2,
     input: RuntimePermissionSubmission,
@@ -945,6 +1008,8 @@ export class SessionRuntimeTransport {
     let execution: RuntimeExecutionResult;
     try {
       execution = await input.execute(claim.dispatch, {
+      prepareWorkItemAdmission: (request) => this.#prepareWorkItemAdmission(claim, request, now),
+      admitWorkItem: (request) => this.#admitWorkItem(claim, request, now),
       isAdmittedInitialDispatch: claim.isAdmittedInitialDispatch,
       checkpointWorkspaceBinding: () =>
         this.#checkpointWorkspaceBinding(claim, now),

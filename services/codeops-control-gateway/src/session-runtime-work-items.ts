@@ -12,6 +12,8 @@ import {
   workItemCommentResultSchema,
   workItemCreateResultSchema,
   workItemProjectionSchema,
+  workItemMembershipSchema,
+  type WorkItemMembership,
   workItemProviderCommentRequestSchema,
   workItemProviderCreateRequestSchema,
   workItemProviderGetRequestSchema,
@@ -416,6 +418,7 @@ export function createWorkItemProviderClients(input: {
 }): {
   readonly create: (request: WorkItemProviderCreateRequest) => Promise<WorkItemCreateResult>;
   readonly get: (request: WorkItemProviderGetRequest) => Promise<WorkItemProjection>;
+  readonly membership: (request: WorkItemProviderGetRequest) => Promise<WorkItemMembership>;
   readonly search: (request: WorkItemProviderSearchRequest) => Promise<WorkItemSearchResult>;
   readonly comment: (request: WorkItemProviderCommentRequest) => Promise<WorkItemCommentResult>;
   readonly update: (request: WorkItemProviderUpdateRequest) => Promise<WorkItemUpdateResult>;
@@ -441,6 +444,9 @@ export function createWorkItemProviderClients(input: {
   }
   return {
     create,
+    membership: async (request) => workItemMembershipSchema.parse(
+      await post("/v1/work-items/membership", workItemProviderGetRequestSchema.parse(request)),
+    ),
     get: async (request) => workItemProjectionSchema.parse(
       await post("/v1/work-items/get", workItemProviderGetRequestSchema.parse(request)),
     ),

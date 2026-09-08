@@ -21,6 +21,20 @@ const repository = {
 const workItemId = { type: "string", format: "uuid" };
 const tools = [
   {
+    name: "work_items.admit",
+    path: "/v1/work-items/admit",
+    description: "Admit one existing project work item as a child of this active coordinator. Persists the exact child plan, then waits for human allow-once permission. The child inherits authenticated context attachments and the selected source. Provider mutations require separate permission. Retry identical arguments after an unknown result.",
+    inputSchema: {
+      type: "object", additionalProperties: false,
+      required: ["repository", "workItemId", "title", "prompt"],
+      properties: {
+        repository: { ...repository, pattern: "^[A-Za-z0-9_.-]{1,100}/[A-Za-z0-9_.-]{1,100}$" }, workItemId,
+        title: { type: "string", minLength: 1, maxLength: 200 },
+        prompt: { type: "string", minLength: 1, maxLength: 20000 },
+      },
+    },
+  },
+  {
     name: "work_items.create",
     path: "/v1/work-items",
     description:

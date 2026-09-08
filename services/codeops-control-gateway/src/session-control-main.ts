@@ -1,3 +1,4 @@
+import { prepareSessionRuntimeWorkItemAdmission, admitPreparedSessionRuntimeWorkItem } from "./work-item-admission-plan.js";
 import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type ServerResponse } from "node:http";
 import { Pool } from "pg";
@@ -84,7 +85,7 @@ import {
   SessionRuntimePermissionNotFoundError,
   submitSessionRuntimePermission,
 } from "./session-runtime-permissions.js";
-import { admitSessionRuntimeWorkItem, WorkItemAdmissionNotFoundError } from "./work-item-admission.js";
+import { WorkItemAdmissionConflictError, WorkItemAdmissionNotFoundError } from "./work-item-admission.js";
 import {
   ImmutableSessionCommandConflictError,
   SessionCompareAndSwapError,
@@ -580,14 +581,23 @@ const server = createServer((request, response) => {
         },
         admitWorkItem: async (input) => {
           const client = await database.connect();
-          try { return await admitSessionRuntimeWorkItem(client, {
+          try { return await admitPreparedSessionRuntimeWorkItem(client, {
             ...input, materialization: admittedChildMaterialization,
+            membership: async (request) => {
+              if (!configuredWorkItemProvider) throw new Error("work-item provider is unavailable");
+              return configuredWorkItemProvider.membership(request);
+            },
           }); }
           finally { client.release(); }
         },
         ...(configuredWorkItemProvider === undefined
           ? {}
           : {
+              prepareWorkItemAdmission: async (input) => {
+                const client = await database.connect();
+                try { return await prepareSessionRuntimeWorkItemAdmission(client, { ...input, membership: configuredWorkItemProvider.membership }); }
+                finally { client.release(); }
+              },
               createWorkItem: async (input) => {
                 const client = await database.connect();
                 try {
@@ -709,6 +719,7 @@ const server = createServer((request, response) => {
                 error instanceof ImmutableSessionRuntimeDispatchConflictError ||
                 error instanceof SessionRuntimeClaimConflictError ||
                 error instanceof SessionRuntimePermissionConflictError
+                || error instanceof WorkItemAdmissionConflictError
                 || error instanceof SessionRuntimeWorkItemConflictError
                 || error instanceof SessionRuntimeGitHubReadConflictError
                 || error instanceof SessionRuntimeGitHubMutationConflictError

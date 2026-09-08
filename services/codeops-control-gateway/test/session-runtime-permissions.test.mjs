@@ -617,6 +617,7 @@ class CompletionClient {
     if (text.includes("FROM codeops.session_runtime_permission_requests AS request")) {
       return { rowCount: this.rows.length, rows: this.rows };
     }
+    if (text.includes("FROM codeops.session_events event")) return { rows: [], rowCount: 0 };
     throw new Error(`unexpected query: ${text}`);
   }
 }

@@ -230,6 +230,10 @@ spec:
   policyTypes: [Ingress, Egress]
   ingress:
     - from:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-control-gateway }
+      ports: [{ protocol: TCP, port: 8080 }]
+    - from:
         - namespaceSelector:
             matchLabels: { kubernetes.io/metadata.name: {{ .Values.networkPolicy.ingressNamespace }} }
       ports: [{ protocol: TCP, port: 8080 }]
@@ -290,6 +294,12 @@ spec:
                 values: [agents-ui, github-controller, orchestrator, runtime, session-gateway, control-gateway]
       ports: [{ protocol: TCP, port: 8080 }]
   egress:
+    {{- if .Values.plane.adapter.enabled }}
+    - to:
+        - podSelector:
+            matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-github-controller }
+      ports: [{ protocol: TCP, port: 8080 }]
+    {{- end }}
     - to:
         - podSelector:
             matchLabels: { app.kubernetes.io/name: {{ include "codeops.fullname" . }}-control-gateway-dispatcher }

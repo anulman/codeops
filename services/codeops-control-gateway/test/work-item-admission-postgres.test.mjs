@@ -1,4 +1,8 @@
 import { requireDisposablePostgres } from "../../../infra/scripts/disposable-postgres.mjs";
+import { prepareSessionRuntimeWorkItemAdmission, admitPreparedSessionRuntimeWorkItem } from "../dist/work-item-admission-plan.js";
+import { buildWorkItemAdmissionPlan, sessionPolicyForMode } from "@codeops/codeops-contracts";
+import { executeSessionCommandTransaction } from "../dist/session-broker-repository.js";
+import { applyLocalSessionCommandMutation } from "../dist/session-broker-command.js";
 import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
@@ -142,7 +146,7 @@ function admissionRequest(index = 0) {
       idempotencyKey: index === 0 ? "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee" : "ffffffff-ffff-4fff-8fff-ffffffffffff" } };
 }
 
-async function resetAndSeed(connection, activeChildren = 4, workspaceOwned = false) {
+async function resetAndSeed(connection, activeChildren = 4, workspaceOwned = false, configure) {
   await connection.query("DROP SCHEMA IF EXISTS codeops CASCADE");
   await migrateSessionBroker(connection);
   const dispatchSnapshot = parentSnapshot(2, activeChildren);
@@ -152,6 +156,7 @@ async function resetAndSeed(connection, activeChildren = 4, workspaceOwned = fal
       generation: 1, leaseId: parentLeaseId, idempotencyKey: "12121212-1212-4121-8121-121212121212",
       type: "prompt", prompt: "Prepare an implementation plan.", contextAttachments: [] }, snapshot: dispatchSnapshot,
     dispatchedAt: "2026-08-30T09:30:00.000Z" };
+  configure?.(dispatch, currentSnapshot);
   const operation = { kind: "project_plan", planId: "approved-plan", planDigest, workItems };
   const permission = { version: "codeops.session-runtime-permission-submission/v1", claimToken,
     request: { requestId: "approve-plan", title: "Approve plan", description: "Admit the exact items.", operation,
@@ -173,13 +178,13 @@ async function resetAndSeed(connection, activeChildren = 4, workspaceOwned = fal
   try {
     if (workspaceOwned) {
       const launchRequest = { version: "codeops.workspace-launch-request/v1",
-        idempotencyKey: "31313131-3131-4313-8313-313131313131", mode: "review",
+        idempotencyKey: "31313131-3131-4313-8313-313131313131", mode: currentSnapshot.identity.policy.mode,
         prompt: "Parent workspace", sources: [{ catalogKey: "repository" }] };
       const launch = { version: "codeops.workspace-launch/v1", launchId: "launch-parent",
         idempotencyKey: launchRequest.idempotencyKey, principalId: owner,
         requestDigest: sha256CanonicalJsonDigest(launchRequest), policy: currentSnapshot.identity.policy,
         runtimeRequirements, runtimeRequirementDigest, runtimeLaunchBinding,
-        contextAttachments: [], promptDigest: sha256CanonicalJsonDigest(launchRequest.prompt),
+        contextAttachments: currentSnapshot.identity.contextAttachments, promptDigest: sha256CanonicalJsonDigest(launchRequest.prompt),
         workspace: currentSnapshot.identity.workspace, state: "ready", sessionId: parentSessionId,
         initialPromptCommandId: launchRequest.idempotencyKey,
         deadlineAt: "2026-08-30T16:00:00.000Z", attemptCount: 0,
@@ -1515,4 +1520,188 @@ test("PostgreSQL fails closed for an authorized effect without replacing its Ses
     assert.equal((await connection.query(`SELECT state FROM codeops.provider_effect_receipts
       WHERE effect_id=$1`, [operationId])).rows[0].state, "authorized");
   } finally { await connection.end(); }
+});
+
+// Unlike the legacy fixtures above, this path starts with no plan or approval:
+// production append, permission submission, and human command create all history.
+async function seedCoordinator(connection) {
+  const bytes = Buffer.from('{"version":"codeops.github-branch-publish-candidate/v1","changes":[]}');
+  const attachment = { attachmentId: "candidate", name: "candidate.json", mimeType: "application/json",
+    sizeBytes: bytes.length, digest: `sha256:${createHash("sha256").update(bytes).digest("hex")}`, content: bytes.toString("base64") };
+  const { content: _content, ...descriptor } = attachment;
+  // Establish immutable context before INSERT; never weaken owner/lineage guards.
+  await resetAndSeed(connection, 4, true, (dispatch, current) => {
+    dispatch.snapshot.identity.policy = sessionPolicyForMode("implement");
+    dispatch.snapshot.identity.contextAttachments = [descriptor];
+    dispatch.command.contextAttachments = [attachment];
+    dispatch.snapshot.updatedAt = dispatch.dispatchedAt;
+    current.identity = structuredClone(dispatch.snapshot.identity);
+  });
+  await connection.query("DELETE FROM codeops.session_events");
+  await connection.query("DELETE FROM codeops.session_runtime_permission_requests");
+  await connection.query("DELETE FROM codeops.session_commands");
+  const dispatch = (await connection.query("SELECT dispatch_json FROM codeops.session_runtime_outbox WHERE dispatch_id=$1", [parentDispatchId])).rows[0].dispatch_json;
+  await connection.query("UPDATE codeops.sessions SET snapshot_json=$2::jsonb,updated_at=$3::timestamptz WHERE session_id=$1", [parentSessionId, canonicalJsonText(dispatch.snapshot), dispatch.snapshot.updatedAt]);
+  await connection.query(`INSERT INTO codeops.session_model_budgets
+    (session_id,budget_id,started_at,provider_requests_limit,output_tokens_limit,
+     committed_provider_requests,settled_output_tokens,reserved_output_tokens,
+     observed_input_tokens,observed_total_tokens,revision,updated_at)
+    VALUES($1,$1,$2::timestamptz,$3,$4,0,0,0,0,0,1,$2::timestamptz)`,
+    [parentSessionId, dispatch.snapshot.budget.startedAt,
+      dispatch.snapshot.budget.limits.providerRequests, dispatch.snapshot.budget.limits.outputTokens]);
+  return { dispatch, attachment };
+}
+
+const coordinatorProposal = { repository: workItems[0].repository, workItemId: workItems[0].workItemId,
+  title: "Publish exact qualified candidate", prompt: "Use the authenticated candidate attachment. Publish through GitHub permissions without edits or tests." };
+function preparation(input = coordinatorProposal, overrides = {}) {
+  return { dispatchId: parentDispatchId, workerId,
+    request: { version: "codeops.work-item-admission-plan-request/v1", claimToken, input },
+    membership: async (request) => ({ repository: request.repository, workItemId: request.workItemId, provider: workItems[0].provider }),
+    now: () => new Date(admittedAt), ...overrides };
+}
+async function approveCoordinator(connection, dispatch, prepared, optionId = "allow-once") {
+  const plan = buildWorkItemAdmissionPlan(dispatch, coordinatorProposal, workItems[0]);
+  const submission = { version: "codeops.session-runtime-permission-submission/v1", claimToken,
+    request: { requestId: prepared.request.plan.permissionRequestId, title: "Admit child", description: "Admit this exact plan once.",
+      operation: plan.operation, operationDigest: sha256CanonicalJsonDigest(plan.operation),
+      options: [{ optionId: "allow-once", label: "Allow once" }, { optionId: "deny", label: "Deny" }], requestedAt: prepared.event.occurredAt },
+    acpSessionId: "codeops-work-item-admissions", toolCallId: prepared.request.admissionId,
+    options: [{ optionId: "allow-once", acpOptionId: "allow-once" }, { optionId: "deny", acpOptionId: "deny" }] };
+  await submitSessionRuntimePermission(connection, { dispatchId: parentDispatchId, workerId, submission, now: () => new Date(admittedAt) });
+  return executeSessionCommandTransaction(connection, {
+    command: { version: "codeops.session-command/v1", type: "respond_permission", sessionId: parentSessionId,
+      generation: 1, leaseId: parentLeaseId, idempotencyKey: "41414141-4141-4141-8141-414141414141",
+      permissionRequestId: submission.request.requestId, decision: { outcome: "selected", optionId } },
+    principalId: owner, ownerPrincipalId: owner, now: () => new Date("2026-08-30T10:01:00.000Z"),
+    mutate: applyLocalSessionCommandMutation,
+  });
+}
+function preparedAdmission(prepared) {
+  return { ...preparation(), request: { version: "codeops.work-item-admission/v1", claimToken, ...prepared.request },
+    materialization, now: () => new Date("2026-08-30T10:02:00.000Z") };
+}
+
+test("ordinary caller persists plan, obtains real permission, admits exact context and completes without duplicate plan", { skip }, async () => {
+  const connection = await client();
+  try {
+    const { dispatch, attachment } = await seedCoordinator(connection);
+    const prepared = await prepareSessionRuntimeWorkItemAdmission(connection, preparation());
+    assert.deepEqual(await prepareSessionRuntimeWorkItemAdmission(connection, preparation()), prepared);
+    await assert.rejects(admitPreparedSessionRuntimeWorkItem(connection, preparedAdmission(prepared)), /permission/);
+    await approveCoordinator(connection, dispatch, prepared);
+    const result = await admitPreparedSessionRuntimeWorkItem(connection, preparedAdmission(prepared));
+    assert.equal(result.disposition, "created");
+    assert.equal(result.childSessionId, prepared.request.child.sessionId);
+    const replay = await admitPreparedSessionRuntimeWorkItem(connection, preparedAdmission(prepared));
+    assert.equal(replay.disposition, "replayed");
+    assert.equal(replay.dispatchId, result.dispatchId);
+    const material = (await connection.query("SELECT input_json FROM codeops.admitted_child_materializations WHERE admission_id=$1", [result.admissionId])).rows[0].input_json;
+    assert.deepEqual(material.contextAttachments, [attachment]);
+    assert.equal(material.source.resolvedSha, sourceSha);
+    assert.equal(material.initialDispatch.dispatchId, prepared.request.child.dispatchId);
+    const completed = await completeSessionRuntimeDispatch(connection, { dispatchId: parentDispatchId, workerId, claimToken,
+      completion: { version: "codeops.session-runtime-completion/v1", dispatchId: parentDispatchId,
+        sessionId: parentSessionId, generation: 1, leaseId: parentLeaseId, idempotencyKey: dispatch.command.idempotencyKey,
+        observedEventCursor: dispatch.snapshot.eventCursor, type: "prompt", completedAt: "2026-08-30T10:03:00.000Z",
+        material: { response: "Child admitted.", stopReason: "end_turn", updates: [prepared.event.update] } },
+      now: () => new Date("2026-08-30T10:03:00.000Z") });
+    assert.equal(completed.disposition, "committed");
+    assert.equal(Number((await connection.query("SELECT count(*) FROM codeops.session_events WHERE event_json#>>'{update,planId}'=$1", [prepared.request.plan.planId])).rows[0].count), 1);
+  } finally { await connection.end(); }
+});
+
+for (const fault of ["deny", "claim", "claim-expiry", "lease", "lease-identity", "source", "project", "work-item", "reclaim", "content"]) {
+  test(`ordinary admission fails closed for ${fault}`, { skip }, async () => {
+    const connection = await client();
+    try {
+      const { dispatch } = await seedCoordinator(connection);
+      const prepared = await prepareSessionRuntimeWorkItemAdmission(connection, preparation());
+      if (fault === "deny") {
+        await approveCoordinator(connection, dispatch, prepared, "deny");
+        await assert.rejects(admitPreparedSessionRuntimeWorkItem(connection, preparedAdmission(prepared)), /permission/);
+      } else {
+        let options = preparation();
+        if (fault === "claim") options.request.claimToken = "99999999-9999-4999-8999-999999999999";
+        if (fault === "claim-expiry") await connection.query("UPDATE codeops.session_runtime_outbox SET claim_expires_at='2026-08-30T09:59:00Z' WHERE dispatch_id=$1", [parentDispatchId]);
+        if (fault === "lease-identity") await connection.query("UPDATE codeops.sessions SET lease_id=$2::uuid,snapshot_json=jsonb_set(snapshot_json,'{lease,leaseId}',to_jsonb($2::text)) WHERE session_id=$1", [parentSessionId, workItems[0].workItemId]);
+        if (fault === "lease") await connection.query("UPDATE codeops.sessions SET snapshot_json=jsonb_set(snapshot_json,'{lease,expiresAt}','\"2026-08-30T09:59:00.000Z\"') WHERE session_id=$1", [parentSessionId]);
+        if (fault === "source") {
+          await assert.rejects(connection.query("UPDATE codeops.sessions SET snapshot_json=jsonb_set(snapshot_json,'{identity,workspace,sources,0,resolvedSha}',to_jsonb($2::text)) WHERE session_id=$1", [parentSessionId,"b".repeat(40)]), /immutable/);
+          options = preparation({ ...coordinatorProposal, repository: "unselected/repository" });
+        }
+        if (fault === "project") options.membership = async () => ({ ...workItems[0], provider: { ...workItems[0].provider, projectId: workItems[0].workItemId } });
+        if (fault === "work-item") options.membership = async () => workItems[1];
+        if (fault === "reclaim") await connection.query("UPDATE codeops.session_runtime_outbox SET claim_count=2,runtime_binding_revision=runtime_binding_revision+1 WHERE dispatch_id=$1", [parentDispatchId]);
+        if (fault === "content") options = preparation({ ...coordinatorProposal, prompt: "Different content" });
+        await assert.rejects(prepareSessionRuntimeWorkItemAdmission(connection, options));
+      }
+      assert.equal(Number((await connection.query("SELECT count(*) FROM codeops.work_item_admissions")).rows[0].count), 0);
+    } finally { await connection.end(); }
+  });
+}
+
+test("concurrent append/replay preserves one event per identity and contiguous session cursors", { skip }, async () => {
+  const first = await client(); const second = await client();
+  try {
+    const { dispatch } = await seedCoordinator(first);
+    const same = await Promise.all([prepareSessionRuntimeWorkItemAdmission(first, preparation()), prepareSessionRuntimeWorkItemAdmission(second, preparation())]);
+    assert.deepEqual(same[0], same[1]);
+    const other = await prepareSessionRuntimeWorkItemAdmission(second, preparation({ ...coordinatorProposal, workItemId: workItems[1].workItemId }));
+    assert.equal(other.event.cursor, same[0].event.cursor + 1);
+    assert.equal(same[0].event.cursor, dispatch.snapshot.eventCursor + 1);
+    const cursor = (await first.query("SELECT snapshot_json->>'eventCursor' AS cursor FROM codeops.sessions WHERE session_id=$1", [parentSessionId])).rows[0].cursor;
+    assert.equal(Number(cursor), other.event.cursor);
+  } finally { await first.end(); await second.end(); }
+});
+
+test("plan append racing permission preserves atomic cursor and pending-permission state", { skip }, async () => {
+  const a = await client(); const b = await client();
+  try {
+    const { dispatch } = await seedCoordinator(a);
+    const prepared = await prepareSessionRuntimeWorkItemAdmission(a, preparation());
+    const plan = buildWorkItemAdmissionPlan(dispatch, coordinatorProposal, workItems[0]);
+    const submission = { version: "codeops.session-runtime-permission-submission/v1", claimToken,
+      request: { requestId: plan.request.plan.permissionRequestId, title: "Admit", description: "Exact child plan",
+        operation: plan.operation, operationDigest: sha256CanonicalJsonDigest(plan.operation), requestedAt: prepared.event.occurredAt,
+        options: [{ optionId: "allow-once", label: "Allow once" }] },
+      acpSessionId: "codeops-work-item-admissions", toolCallId: plan.request.admissionId,
+      options: [{ optionId: "allow-once", acpOptionId: "allow-once" }] };
+    const results = await Promise.allSettled([
+      prepareSessionRuntimeWorkItemAdmission(a, preparation({ ...coordinatorProposal, workItemId: workItems[1].workItemId })),
+      submitSessionRuntimePermission(b, { dispatchId: parentDispatchId, workerId, submission, now: () => new Date(admittedAt) }),
+    ]);
+    assert.ok(results.some(result => result.status === "fulfilled"));
+    const events = (await a.query("SELECT cursor FROM codeops.session_events WHERE session_id=$1 ORDER BY cursor", [parentSessionId])).rows;
+    events.forEach((event, index) => assert.equal(Number(event.cursor), dispatch.snapshot.eventCursor + index + 1));
+    const current = (await a.query("SELECT snapshot_json FROM codeops.sessions WHERE session_id=$1", [parentSessionId])).rows[0].snapshot_json;
+    assert.equal(current.eventCursor, Number(events.at(-1).cursor));
+    assert.equal(current.state === "waiting_permission", current.pendingPermission !== null);
+    if (current.pendingPermission) {
+      assert.deepEqual(await prepareSessionRuntimeWorkItemAdmission(a, preparation()), prepared);
+      await assert.rejects(prepareSessionRuntimeWorkItemAdmission(a, preparation({ ...coordinatorProposal, workItemId: "91919191-9191-4191-8191-919191919191" })));
+    }
+  } finally { await a.end(); await b.end(); }
+});
+
+test("completion racing plan append cannot commit over an unobserved cursor", { skip }, async () => {
+  const a = await client(); const b = await client();
+  try {
+    const { dispatch } = await seedCoordinator(a);
+    const results = await Promise.allSettled([
+      prepareSessionRuntimeWorkItemAdmission(a, preparation()),
+      completeSessionRuntimeDispatch(b, { dispatchId: parentDispatchId, workerId, claimToken,
+        completion: { version: "codeops.session-runtime-completion/v1", dispatchId: parentDispatchId,
+          sessionId: parentSessionId, generation: 1, leaseId: parentLeaseId, idempotencyKey: dispatch.command.idempotencyKey,
+          observedEventCursor: dispatch.snapshot.eventCursor, type: "prompt", completedAt: "2026-08-30T10:01:00.000Z",
+          material: { response: "Finished coordinator turn.", stopReason: "end_turn" } },
+        now: () => new Date("2026-08-30T10:01:00.000Z") }),
+    ]);
+    assert.ok(results.some(result => result.status === "fulfilled"));
+    const events = (await a.query("SELECT cursor FROM codeops.session_events WHERE session_id=$1 ORDER BY cursor", [parentSessionId])).rows;
+    events.forEach((event, index) => assert.equal(Number(event.cursor), dispatch.snapshot.eventCursor + index + 1));
+    const cursor = (await a.query("SELECT snapshot_json->>'eventCursor' AS cursor FROM codeops.sessions WHERE session_id=$1", [parentSessionId])).rows[0].cursor;
+    assert.equal(Number(cursor), Number(events.at(-1).cursor));
+    if (results[1].status === "fulfilled") await assert.rejects(prepareSessionRuntimeWorkItemAdmission(a, preparation()));
+  } finally { await a.end(); await b.end(); }
 });

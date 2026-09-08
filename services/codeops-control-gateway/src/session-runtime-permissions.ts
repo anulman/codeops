@@ -1,5 +1,7 @@
+import { projectAdmissionEvents, verifyAdmissionPlanEvent } from "./admission-plan-events.js";
 import {
   canonicalJsonText,
+  ADMISSION_PLAN_PREFIX,
   sessionCommandResultSchema,
   sessionCommandSchema,
   sessionRuntimePermissionPollSchema,
@@ -171,16 +173,17 @@ function followsRuntimeLineage(
   );
 }
 
-function validatePermissionDecisionLineage(
+async function validatePermissionDecisionLineage(
+  client: TransactionClient,
   rows: readonly PermissionDecisionRow[],
   input: {
     readonly dispatch: SessionRuntimeDispatch;
     readonly claimToken: string;
     readonly current: SessionSnapshot;
   },
-): SessionSnapshot {
+): Promise<SessionSnapshot> {
   if (rows.length === 0) {
-    if (!followsRuntimeLineage(input.dispatch.snapshot, input.current)) {
+    if (!followsRuntimeLineage(await projectAdmissionEvents(client, { ...input, expected: input.dispatch.snapshot }), input.current)) {
       throw new SessionRuntimePermissionConflictError(
         "runtime completion snapshot drifted without a permission transition",
       );
@@ -249,7 +252,7 @@ function validatePermissionDecisionLineage(
   }
   if (
     finalSnapshot === null ||
-    !followsRuntimeLineage(finalSnapshot, input.current)
+    !followsRuntimeLineage(await projectAdmissionEvents(client, { ...input, expected: finalSnapshot }), input.current)
   ) {
     throw new SessionRuntimePermissionConflictError(
       "runtime completion does not end at the current session snapshot",
@@ -391,6 +394,21 @@ export async function submitSessionRuntimePermission(
       );
     }
 
+    const planOperation = submission.request.operation;
+    if (planOperation.kind === "project_plan" && planOperation.planId.startsWith(ADMISSION_PLAN_PREFIX)) {
+      const plans = await client.query(`SELECT event_json FROM codeops.session_events
+        WHERE session_id=$1 AND event_json#>>'{update,planId}'=$2 AND command_id IS NULL`,
+        [dispatch.command.sessionId, planOperation.planId]);
+      if (plans.rows.length !== 1) throw new SessionRuntimePermissionConflictError("durable admission plan is missing");
+      const { plan, event } = verifyAdmissionPlanEvent(dispatch, plans.rows[0]!.event_json);
+      if (canonicalJsonText(plan.operation) !== canonicalJsonText(planOperation) ||
+          submission.request.requestId !== plan.request.plan.permissionRequestId ||
+          submission.toolCallId !== plan.request.admissionId ||
+          Date.parse(submission.request.requestedAt) < Date.parse(event.occurredAt)) {
+        throw new SessionRuntimePermissionConflictError("permission does not bind the exact durable admission plan");
+      }
+    }
+
     const existing = await client.query<StoredPermissionRow>(
       `SELECT request_id, request_json, admission_id, session_generation,
               session_lease_id, operation_provider, operation_id
@@ -438,7 +456,8 @@ export async function submitSessionRuntimePermission(
     const snapshot = sessionSnapshotSchema.parse(
       sessionRows.rows[0].snapshot_json,
     );
-    validatePermissionDecisionLineage(
+    await validatePermissionDecisionLineage(
+      client,
       await loadPermissionDecisionRows(client, input.dispatchId),
       { dispatch, claimToken: submission.claimToken, current: snapshot },
     );
@@ -532,6 +551,7 @@ export async function resolveSessionRuntimeCompletionSnapshot(
     );
   }
   return validatePermissionDecisionLineage(
+    client,
     await loadPermissionDecisionRows(client, input.dispatch.dispatchId),
     { dispatch: input.dispatch, claimToken: input.claimToken, current },
   );

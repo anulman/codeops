@@ -23,6 +23,8 @@ import {
   sessionRuntimeWorkItemSearchRequestSchema,
   sessionRuntimeWorkItemUpdateRequestSchema,
   workItemAdmissionRequestSchema,
+  workItemAdmissionPlanRequestSchema,
+  workItemAdmissionPlanResultSchema,
   type SessionCommandResult,
   type RuntimeProfile,
   type GitHubMutationResult,
@@ -78,6 +80,8 @@ const permissionPollPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/permissions\/([A-Za-z0-9][A-Za-z0-9._:-]{0,127})\/poll$/;
 const workItemPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/work-items(?:\/(get|search|comment|update|relate))?$/i;
+const workItemAdmissionPlanPath =
+  /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/work-item-admission-plans$/i;
 const workItemAdmissionPath =
   /^\/v1\/session-runtime\/dispatches\/([0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12})\/work-item-admissions$/i;
 const githubReadPath =
@@ -232,6 +236,8 @@ export async function serveSessionRuntime(input: {
     readonly workerId: string;
     readonly request: unknown;
   }) => Promise<WorkItemRelateResult>;
+  readonly prepareWorkItemAdmission?: (input: { dispatchId: string; workerId: string; request: unknown }) =>
+    Promise<import("@codeops/codeops-contracts").WorkItemAdmissionPlanResult>;
   readonly admitWorkItem?: (input: {
     readonly dispatchId: string;
     readonly workerId: string;
@@ -265,6 +271,7 @@ export async function serveSessionRuntime(input: {
   const permissionSubmissionMatch = url.pathname.match(permissionSubmissionPath);
   const permissionPollMatch = url.pathname.match(permissionPollPath);
   const workItemMatch = url.pathname.match(workItemPath);
+  const workItemAdmissionPlanMatch = url.pathname.match(workItemAdmissionPlanPath);
   const workItemAdmissionMatch = url.pathname.match(workItemAdmissionPath);
   const githubReadMatch = url.pathname.match(githubReadPath);
   const githubMutationMatch = url.pathname.match(githubMutationPath);
@@ -281,6 +288,7 @@ export async function serveSessionRuntime(input: {
     permissionPollMatch === null
     && workItemMatch === null
     && workItemAdmissionMatch === null
+    && workItemAdmissionPlanMatch === null
     && githubReadMatch === null
     && githubMutationMatch === null
     && githubCandidateManifestMatch === null
@@ -466,6 +474,15 @@ export async function serveSessionRuntime(input: {
       dispatchId: dispatchId.parse(checkpointRecoveryMatch[1]),
       workerId: input.workerId, ...request.data,
     }) };
+  }
+
+  if (workItemAdmissionPlanMatch !== null) {
+    if (input.prepareWorkItemAdmission === undefined) return { status: 404, body: { status: "not-found" } };
+    const request = workItemAdmissionPlanRequestSchema.safeParse(await readRequestBody(input.readBody));
+    if (!request.success) throw new InvalidSessionRuntimeRequestError("invalid admission plan request");
+    return { status: 200, body: workItemAdmissionPlanResultSchema.parse(await input.prepareWorkItemAdmission({
+      dispatchId: dispatchId.parse(workItemAdmissionPlanMatch[1]), workerId: input.workerId, request: request.data,
+    })) };
   }
 
   if (workItemMatch !== null) {
