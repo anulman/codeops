@@ -7,6 +7,8 @@ import { Engine, type Runtime } from './core/engine.ts';
 import { configuredRunner } from './validation.ts';
 import { loadExecutionPolicy, permissionModeForHost, type ExecutionPolicy } from './execution-policy.ts';
 import { hostContract } from './host-contract.ts';
+import { publishCandidate, publisherRequest } from './core/publication-client.ts';
+import { freshness } from './core/github-observations.ts';
 
 const command = z.discriminatedUnion('op',[
   z.object({op:z.literal('list')}).strict(),
@@ -14,8 +16,9 @@ const command = z.discriminatedUnion('op',[
   z.object({op:z.enum(['get','reconcile']),id:z.string().min(1)}).strict(),
   z.object({op:z.enum(['pause','resume','cancel']),id:z.string().min(1),revision:z.number().int().nonnegative()}).strict(),
 ]);
+const operatorCommand=z.union([command,z.object({op:z.literal('abandon-publication'),id:z.string().min(1),revision:z.number().int().nonnegative()}).strict(),z.object({op:z.literal('publish'),id:z.string().min(1),revision:z.number().int().nonnegative(),permitId:z.string().uuid()}).strict(),z.object({op:z.enum(['milestones','reviews']),id:z.string().min(1)}).strict()]);
 // JSON output is bounded by pagination and bounded admission fields.
-export const rpcContract=defineRpcContract({command:{input:command,output:z.object({json:z.string().max(900000)}).strict()}});
+export const rpcContract=defineRpcContract({command:{input:operatorCommand,output:z.object({json:z.string().max(900000)}).strict()}});
 
 export default function plugin(bb:BbPluginApi) { return createPlugin(bb,configuredRunner); }
 // Injection is a local test seam, never an RPC or agent-controlled capability.
@@ -72,18 +75,50 @@ export function createPlugin(bb:BbPluginApi, runner:()=>Promise<ValidationRunner
       if(digest(await runtime.inspect(run))!==digest(run.candidate)) throw new Error('Candidate changed during validation');
       return checks;
     },
+    async recoverPublication(permitId) {
+      const socket=process.env.CODEOPS_PUBLICATION_SOCKET;if(!socket) throw Error('Trusted publisher not configured');
+      return await publisherRequest(socket,'recover',{id:permitId}) as import('./core/publication.ts').PublicationReceipt|null;
+    },
+    async revokePublication(permitId) {
+      const socket=process.env.CODEOPS_PUBLICATION_SOCKET;if(!socket) throw Error('Trusted publisher not configured');
+      const receipt=z.object({id:z.literal(permitId),revoked:z.literal(true)}).strict().parse(await publisherRequest(socket,'revoke',{id:permitId}));
+      if(!receipt.revoked) throw Error('Revocation not confirmed');
+    },
+    async publish(run,permitId) {
+      const socket=process.env.CODEOPS_PUBLICATION_SOCKET;if(!socket) throw Error('Trusted publisher not configured');
+      const {env,input}=await target(run);
+      const bundle=await host.call('bundle',{...input,candidate:run.candidate!},{hostId:env.hostId});
+      return publishCandidate(socket,permitId,run,bundle);
+    },
     async attention(run) {bb.realtime.publish('changed',{id:run.id});await bb.sdk.threads.markUnread({threadId:run.brief.parentThreadId});},
   };
   const engine=new Engine(store,runtime);
   async function execute(raw:unknown):Promise<{json:string}> {
-    const c=command.parse(raw);let result:unknown;
+    const c=operatorCommand.parse(raw);let result:unknown;
     if(c.op==='list') result=store.list().map(r=>({id:r.id,revision:r.revision,outcome:r.brief.outcome,stage:r.stage,condition:r.condition,reason:r.reason,head:r.candidate?.head??null}));
+    else if(c.op==='abandon-publication') result=await engine.abandonPublication(c.id,c.revision);
+    else if(c.op==='publish') result=await engine.publish(c.id,c.revision,c.permitId);
+    else if(c.op==='reviews') {
+      const run=store.get(c.id),socket=process.env.CODEOPS_PUBLICATION_SOCKET;
+      result=socket&&run.publication?await publisherRequest(socket,'reviews',{id:run.publication.permitId}):[];
+    }
+    else if(c.op==='milestones') {
+      const run=store.get(c.id),socket=process.env.CODEOPS_PUBLICATION_SOCKET;
+      if(!socket||!run.publication) result={authority:false,status:'unknown',reason:'No configured publisher or verified publication'};
+      else {
+        try {
+          const response=await publisherRequest(socket,'status',{id:run.publication.permitId}) as Record<string,unknown>;
+          if(response.head!==run.candidate?.head||response.repository!==run.publication.receipt.identity.repository) throw Error('Observation identity drift');
+          result={...response,...Object.fromEntries(['checks','merge','releases','deployments'].map(key=>[key,freshness(response[key] as Parameters<typeof freshness>[0])]))};
+        } catch {result={authority:false,status:'unknown',reason:'Live provider observation unavailable'};}
+      }
+    }
     else if(c.op==='start') result=await engine.start(c.brief);
     else if(c.op==='get') result=store.get(c.id);
     else if(c.op==='reconcile') result=await engine.advance(c.id);
     else if(c.op==='resume') result=await engine.resume(c.id,c.revision);
     else if ('revision' in c) result=await engine.pause(c.id,c.revision,c.op==='cancel');
-    if(c.op!=='list'&&c.op!=='get') bb.realtime.publish('changed',{});
+    if(!['list','get','reviews','milestones'].includes(c.op)) bb.realtime.publish('changed',{});
     return {json:JSON.stringify(result)};
   }
   bb.rpc.register(rpcContract,{command:execute});
@@ -92,9 +127,20 @@ export function createPlugin(bb:BbPluginApi, runner:()=>Promise<ValidationRunner
   });
   // Tools may request authorized implementation. None can impersonate a human or submit evidence.
   bb.agents.registerTool({name:'codeops_command',description:'Inspect or progress a CodeOps run within its frozen implementation-only policy. Cannot grant authority or publish.',parameters:command,
-    async execute(input) {return (await execute(input)).json;},
+    async execute(input) {return (await execute(command.parse(input))).json;},
   });
   async function reconcile() {
+    const socket=process.env.CODEOPS_PUBLICATION_SOCKET;
+    if(socket) {
+      try {
+        const inbox=z.array(z.object({owner:z.string(),revision:z.number().int().positive()})).max(100).parse(await publisherRequest(socket,'inbox',{}));
+        for(const entry of inbox) {
+          // Existing owner only; notification is idempotent and does not execute comment text.
+          await bb.sdk.threads.markUnread({threadId:entry.owner});
+          await publisherRequest(socket,'ack',entry);
+        }
+      } catch { /* Publisher outage does not grant authority or stop implementation reconciliation. */ }
+    }
     let cursor=0;
     for(;;) {const page=store.pending(cursor);if(!page.runs.length) break;cursor=page.cursor;for(const run of page.runs) await engine.advance(run.id);}
   }

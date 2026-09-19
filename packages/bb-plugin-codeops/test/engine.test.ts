@@ -124,3 +124,50 @@ test('G3 requires Kubernetes request, run, generation and lease binding',async()
   }
   f.db.close();
 });
+
+test('publisher receipt binds exact candidate without granting merge or deploy',async()=>{
+ const {identityForPublication}=await import('../core/publication-client.ts');
+ let publications=0;
+ const f=fixture({async publish(run){publications++;return {status:'verified',number:1,url:'https://github.com/example/repository/pull/1',head:run.candidate!.head,observedAt:new Date().toISOString(),identity:identityForPublication(run)};}});
+ let run=await f.engine.start(brief);run=await f.engine.advance(run.id);run=await f.engine.advance(run.id);
+ run=await f.engine.publish(run.id,run.revision,'12345678-1234-4234-8234-123456789abc');
+ assert.equal(run.stage,'AwaitMerge');assert.equal(publications,1);assert.equal(evaluate(run,'G6').outcome,'needs_attention');assert.equal(evaluate(run,'G7').outcome,'needs_attention');f.db.close();
+});
+
+test('publication intent survives response loss and restart with the same permit',async()=>{
+ const {identityForPublication}=await import('../core/publication-client.ts');
+ const permitId='12345678-1234-4234-8234-123456789abc';
+ const f=fixture({async publish(run,id){
+  assert.equal(f.store.get(run.id).publicationAttempt?.permitId,id);throw Error('response lost');
+ }});
+ try {
+  let run=await f.engine.start(brief);run=await f.engine.advance(run.id);run=await f.engine.advance(run.id);
+  run=await f.engine.publish(run.id,run.revision,permitId);assert.equal(run.publicationAttempt?.phase,'unknown');
+  const restarted=new Engine(f.store,f.runtime);
+  await assert.rejects(restarted.publish(run.id,run.revision,'12345678-1234-4234-8234-123456789abd'),/Unresolved/);
+  f.runtime.publish=async current=>({status:'verified',number:1,url:'https://github.com/example/repository/pull/1',head:current.candidate!.head,observedAt:new Date().toISOString(),identity:identityForPublication(current)});
+  run=await restarted.publish(run.id,run.revision,permitId);assert.equal(run.publicationAttempt,undefined);assert.equal(run.stage,'AwaitMerge');
+ } finally {f.db.close();}
+});
+
+test('explicit abandonment requires confirmed revocation and retains old identity',async()=>{
+ const f=fixture({async publish(){throw Error('response lost');},async revokePublication(){throw Error('revocation response lost');}});
+ try {
+  let run=await f.engine.start(brief);run=await f.engine.advance(run.id);run=await f.engine.advance(run.id);
+  const permitId='12345678-1234-4234-8234-123456789abc';run=await f.engine.publish(run.id,run.revision,permitId);
+  await assert.rejects(f.engine.abandonPublication(run.id,run.revision));assert.equal(f.store.get(run.id).publicationAttempt?.permitId,permitId);
+  f.runtime.revokePublication=async id=>{assert.equal(id,permitId);};run=await f.engine.abandonPublication(run.id,run.revision);
+  assert.equal(run.publicationAttempt,undefined);assert.equal(run.abandonedPublications?.[0]?.permitId,permitId);
+ } finally {f.db.close();}
+});
+test('lost publication response recovers without the original workspace',async()=>{
+ const {identityForPublication}=await import('../core/publication-client.ts');
+ const f=fixture({async publish(){throw Error('response lost');}});
+ try {
+  let run=await f.engine.start(brief);run=await f.engine.advance(run.id);run=await f.engine.advance(run.id);
+  const permitId='12345678-1234-4234-8234-123456789abc';run=await f.engine.publish(run.id,run.revision,permitId);
+  const identity=identityForPublication(run);f.runtime.admit=async()=>{throw Error('workspace unavailable');};f.runtime.inspect=async()=>{throw Error('workspace unavailable');};
+  f.runtime.recoverPublication=async()=>({status:'verified',number:1,url:'https://github.com/example/repository/pull/1',head:identity.head,observedAt:new Date().toISOString(),identity});
+  run=await new Engine(f.store,f.runtime).publish(run.id,run.revision,permitId);assert.equal(run.stage,'AwaitMerge');assert.equal(run.publicationAttempt,undefined);
+ } finally {f.db.close();}
+});

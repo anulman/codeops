@@ -2,7 +2,8 @@
 import { experimental_defineHostEntry } from '@get-bb/plugin-sdk';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { mkdtemp, rm, writeFile, mkdir, realpath } from 'node:fs/promises';
+import { mkdtemp, rm, writeFile, mkdir, realpath, readFile } from 'node:fs/promises';
+import { createHash } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -26,6 +27,18 @@ export async function inspect(target:{path:string;repository:string;base:string}
   if (await git(target.path,['status','--porcelain','--untracked-files=all'])) throw new Error('Candidate must be committed and clean');
   return {head:await git(target.path,['rev-parse','HEAD']),tree:await git(target.path,['rev-parse','HEAD^{tree}']),
     files:(await git(target.path,['diff','--name-only',target.base,'HEAD'])).split('\n').filter(Boolean)};
+}
+/** Export Git objects only. No remote access, credential helper, hooks or checkout. */
+export async function candidateBundle(target:{path:string;repository:string;base:string;candidate:Candidate}) {
+  if(digest(await inspect(target))!==digest(target.candidate)) throw Error('Candidate changed before export');
+  const directory=await mkdtemp(join(tmpdir(),'codeops-bundle-'));
+  try {
+    const path=join(directory,'candidate.bundle');
+    await git(target.path,['bundle','create','--version=2',path,'HEAD',`^${target.base}`]);
+    const bytes=await readFile(path);if(bytes.length>16*1024*1024) throw Error('Candidate bundle exceeds 16 MiB');
+    if(await git(target.path,['bundle','list-heads',path])!==`${target.candidate.head} HEAD`||digest(await inspect(target))!==digest(target.candidate)) throw Error('Candidate drift during export');
+    return {data:bytes.toString('base64'),sha256:createHash('sha256').update(bytes).digest('hex')};
+  } finally {await rm(directory,{recursive:true,force:true});}
 }
 /** No inherited credentials, home mount, network, writable source or shell expansion. */
 export async function isolatedCheck(target:{path:string;repository:string;base:string;candidate:Candidate;check:Brief['checks'][number]},signal:AbortSignal) {
@@ -57,5 +70,5 @@ export async function isolatedCheck(target:{path:string;repository:string;base:s
   } finally { await rm(root,{recursive:true,force:true}); }
 }
 export default experimental_defineHostEntry({ contract:hostContract, handlers:{
-  identity: input => identity(input), inspect: input => inspect(input), check:(input,context) => isolatedCheck(input,context.signal),
+  identity: input => identity(input), inspect: input => inspect(input), bundle:input=>candidateBundle(input), check:(input,context) => isolatedCheck(input,context.signal),
 } });
