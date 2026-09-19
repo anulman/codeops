@@ -1,0 +1,41 @@
+{
+  "name": "bb-plugin-cluster-browser",
+  "version": "0.1.0",
+  "license": "Apache-2.0",
+  "type": "module",
+  "engines": {
+    "bb": "0.43.1",
+    "bbPluginSdk": "0.4.87"
+  },
+  "bb": {
+    "name": "Cluster Browser",
+    "description": "Use a private Playwright MCP worker through thread-owned browser sessions.",
+    "branding": {
+      "icon": "Globe"
+    },
+    "server": "./server.ts",
+    "skills": [
+      "skills"
+    ]
+  },
+  "scripts": {
+    "test": "node --test --test-concurrency=1 test/*.test.mjs",
+    "typecheck": "tsc --noEmit",
+    "build": "bb plugin build",
+    "test:browser": "node scripts/qualify-browser.mjs",
+    "check:licenses": "node scripts/check-licenses.mjs"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.30.0",
+    "ajv": "8.20.0"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.87",
+    "@playwright/mcp": "0.0.82",
+    "@types/node": "25.7.0",
+    "better-sqlite3": "13.0.3",
+    "cron-parser": "5.5.0",
+    "typescript": "6.0.3",
+    "zod": "4.3.6"
+  }
+}
