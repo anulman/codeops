@@ -1,0 +1,85 @@
+# SPDX-License-Identifier: Apache-2.0
+# Operator example only. Review names before applying; never apply from a worker.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: codeops-validation
+  labels:
+    pod-security.kubernetes.io/enforce: restricted
+    pod-security.kubernetes.io/audit: restricted
+    pod-security.kubernetes.io/warn: restricted
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codeops-validation
+  namespace: codeops-validation
+automountServiceAccountToken: false
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: default-deny
+  namespace: codeops-validation
+spec:
+  podSelector: {}
+  policyTypes: [Ingress, Egress]
+  ingress: []
+  egress: []
+---
+apiVersion: v1
+kind: ResourceQuota
+metadata:
+  name: validation-budget
+  namespace: codeops-validation
+spec:
+  hard:
+    count/jobs.batch: '24'
+    pods: '24'
+    requests.cpu: '4'
+    requests.memory: 4Gi
+    limits.cpu: '8'
+    limits.memory: 8Gi
+    requests.ephemeral-storage: 4Gi
+    limits.ephemeral-storage: 8Gi
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: codeops-validation-launcher
+  namespace: codeops-validation
+rules:
+  - apiGroups: [batch]
+    resources: [jobs]
+    verbs: [create, get]
+  - apiGroups: ['']
+    resources: [pods]
+    verbs: [list]
+  - apiGroups: ['']
+    resources: [pods/log]
+    verbs: [get]
+  - apiGroups: [networking.k8s.io]
+    resources: [networkpolicies]
+    verbs: [list]
+---
+# This account belongs ONLY to the existing trusted server, never an agent Pod.
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: codeops-validation-launcher
+  namespace: bb-system
+automountServiceAccountToken: false
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: codeops-validation-launcher
+  namespace: codeops-validation
+subjects:
+  - kind: ServiceAccount
+    name: codeops-validation-launcher
+    namespace: bb-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: codeops-validation-launcher

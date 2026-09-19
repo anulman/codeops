@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createFakePluginHost, makeThreadResponse, experimental_scanPublicSdkOnly } from '@get-bb/plugin-sdk/testing';
 import { fileURLToPath } from 'node:url';
-import plugin from '../server.ts';
+import plugin, { createPlugin } from '../server.ts';
 
 test('CLI, RPC and native tool share the command boundary',async()=>{
   const {bb,harness}=createFakePluginHost({pluginId:'codeops'});plugin(bb);
@@ -26,7 +26,7 @@ test('public SDK import boundary',async()=>{
   assert.deepEqual(result.violations,[]);assert.deepEqual(result.privateDependencies,[]);
 });
 
-test('native SDK worker, host checks and reviewer reach manual publication',async()=>{
+test('native SDK worker, server validation and reviewer reach manual publication',async()=>{
   const brief={key:'native',projectId:'project',parentThreadId:'parent',environmentId:'env',repository:'https://github.com/example/repo',base:'a'.repeat(40),outcome:'Fix parser',scope:['Parser'],acceptance:['Tests pass'],checks:[{name:'unit',argv:['node','--test']}],correctionLimit:1,intent:{provider:'local',item:'x',revision:'1'}};
   const head='b'.repeat(40),tree='c'.repeat(40);let output='';let count=0;
   const {digest}=await import('../core/model.ts');
@@ -41,10 +41,11 @@ test('native SDK worker, host checks and reviewer reach manual publication',asyn
     experimental_callHostRpc:async({method,input})=>{
       if(method==='identity')return {valid:true};
       if(method==='inspect')return {head,tree,files:['parser.ts']};
-      const check=(input as {check:{name:string;argv:string[]}}).check;
-      return {name:check.name,candidate:head,tree,argvDigest:digest(check.argv),exitCode:0,outputDigest:digest('ok'),isolation:'bwrap-unshare-all'};
+      throw new Error('Worker host must not launch server validation');
     },
-  });plugin(bb);
+  });createPlugin(bb,async()=>({backend:'kubernetes-job',async check(request){return {name:request.check.name,candidate:head,tree,argvDigest:digest(request.check.argv),exitCode:0,outputDigest:digest('ok'),
+    isolation:{backend:'kubernetes-job',version:1,requestDigest:digest(request),namespace:'validation',jobName:'job',jobUid:'job-uid',podUid:'pod-uid',image:`registry.example/check@sha256:${'d'.repeat(64)}`,
+      runId:request.runId,generation:request.generation,lease:request.lease,repository:request.repository,base:request.base}};}}));
   const call=async(input:unknown)=>JSON.parse((await harness.behavior.callRpc('command',input) as {json:string}).json);
   let run=await call({op:'start',brief});assert.equal(run.stage,'Implement');
   run=await call({op:'reconcile',id:run.id});assert.equal(run.stage,'Critic');

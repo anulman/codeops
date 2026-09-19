@@ -25,6 +25,7 @@
     "*.ts",
     "*.tsx",
     "core",
-    "test"
+    "test",
+    "operator"
   ]
 }

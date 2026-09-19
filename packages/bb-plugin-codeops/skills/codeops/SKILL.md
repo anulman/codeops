@@ -15,3 +15,11 @@ A turn ending is not completion. Do not submit fabricated approval, test or
 review evidence. Do not
 bypass blocked isolation, uncertain effects, review boundaries or human merge,
 release and deployment gates. This version uses manual publication and bb’s shared reviewer trust model.
+
+Validation uses the trusted server's `CODEOPS_VALIDATION_CONFIG` path and an
+operator-attested candidate image catalog. Workers must never receive this
+configuration's kubeconfig or launcher identity. Read `operator/README.md` for
+the namespace Role and exact qualification request. Missing runner capability
+or unknown Job outcome remains blocked; no retry may replace an uncertain Job.
+A boundary probe does not certify candidate tests. Bubblewrap is optional and
+is not called by the default server validation path.

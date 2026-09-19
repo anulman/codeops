@@ -19,7 +19,12 @@ export type Brief = z.infer<typeof briefSchema>;
 export const candidateSchema = z.object({ head: commit, tree: commit, files: z.array(z.string()).max(2000) }).strict();
 export type Candidate = z.infer<typeof candidateSchema>;
 export const checkSchema = z.object({ name: id, candidate: commit, tree: commit, argvDigest: id,
-  exitCode: z.number().int(), outputDigest: z.string().regex(/^[a-f0-9]{64}$/), isolation: z.literal('bwrap-unshare-all'),
+  exitCode: z.number().int(), outputDigest: z.string().regex(/^[a-f0-9]{64}$/), isolation: z.discriminatedUnion('backend', [
+    z.object({backend:z.literal('bubblewrap'),version:z.literal(1)}).strict(),
+    z.object({backend:z.literal('kubernetes-job'),version:z.literal(1),requestDigest:z.string().regex(/^[a-f0-9]{64}$/),
+      namespace:id,jobName:id,jobUid:id,podUid:id,image:z.string().regex(/@sha256:[a-f0-9]{64}$/),
+      runId:id,generation:z.number().int().positive(),lease:id,repository:briefSchema.shape.repository,base:commit}).strict(),
+  ]),
 }).strict();
 export type Check = z.infer<typeof checkSchema>;
 export const reviewSchema = z.object({ candidate: commit, tree: commit, scopeDigest: id,
@@ -54,7 +59,10 @@ export function evaluate(run: Run, gate: Gate): Decision {
   if (gate === 'G3') {
     const valid = run.candidate && run.brief.checks.every(required => run.checks.some(check =>
       check.name === required.name && check.argvDigest === digest(required.argv) && check.exitCode === 0 &&
-      check.candidate === run.candidate!.head && check.tree === run.candidate!.tree && check.isolation === 'bwrap-unshare-all'));
+      check.candidate === run.candidate!.head && check.tree === run.candidate!.tree && checkSchema.safeParse(check).success && (check.isolation.backend === 'bubblewrap' ||
+        (check.isolation.runId === run.id && check.isolation.generation === run.generation && check.isolation.lease === run.lease &&
+         check.isolation.repository === run.brief.repository && check.isolation.base === run.brief.base &&
+         check.isolation.requestDigest === digest(validationRequest(run, required))))));
     return result(valid ? 'allow':'needs_attention', valid ? 'Exact isolated checks passed':'Required isolated evidence missing or failed');
   }
   if (gate === 'G4') {
@@ -73,3 +81,10 @@ export type Judgment = { status:'unavailable'; reason:string } | { status:'uncer
   { status:'shadow'; model:string; questionVersion:string; choice:'within_scope'|'expands_scope'|'insufficient_evidence'; distribution:Record<string,number> };
 export interface JudgmentAdapter { assess(input: { brief: Brief; selectedFacts: string[] }): Promise<Judgment> }
 export const jevUnavailable: JudgmentAdapter = { async assess() { return { status:'unavailable', reason:'No Jev credential or verified transport configured' }; } };
+
+export function validationRequest(run:Run, check:Brief['checks'][number]) {
+  if (!run.candidate) throw new Error('Candidate missing');
+  return {runId:run.id,generation:run.generation,lease:run.lease,repository:run.brief.repository,base:run.brief.base,candidate:run.candidate,check};
+}
+export type ValidationRequest = ReturnType<typeof validationRequest>;
+export interface ValidationRunner { readonly backend:'kubernetes-job'|'bubblewrap'; check(request:ValidationRequest):Promise<Check>; }

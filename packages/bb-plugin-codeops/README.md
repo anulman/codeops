@@ -64,11 +64,13 @@ review report from its caller.
   One unfinished run reserves its implementation environment. Native workers are claimed before spawn. Correlated children are read back
   after an unknown result; zero or multiple matches block retries.
 - A worker must leave a clean commit. Host RPC verifies repository/base/head,
-  changed paths and tree. It executes checks from a `git archive` snapshot in
-  Bubblewrap with no network, inherited credentials or home mount. Checks use
-  committed inputs/system tools only; dependency caches are not mounted.
-  Unsupported isolation blocks. Check records bind argv and output digests,
-  exact head/tree, exit status and launcher identity. Raw output is not stored.
+  changed paths and tree. The trusted server runs checks in disposable Kubernetes
+  Jobs using an operator-attested exact candidate image. Workers receive no
+  launcher or Kubernetes credentials. Default-deny networking, a read-only root,
+  non-root execution and bounded resources are required. Evidence binds the
+  candidate, request, run/lease, image, Job/Pod UIDs and termination status.
+  Missing capabilities or identity drift block validation. See the
+  [operator configuration and qualification request](operator/README.md).
 - Native reviewers use a new managed worktree at the candidate. Their report
   binds scope, candidate, tree and check evidence. Required findings trigger
   bounded corrections. A model turn alone never passes a gate.
@@ -105,8 +107,10 @@ uninstall cleanup or artifact deletion is implemented.
 Run focused tests, `nub run check:licenses`, `nub run verify`,
 `nub run acceptance:agents-ui`, and `bb plugin build packages/bb-plugin-codeops`.
 Tests use SQLite and the published SDK harness without production credentials.
-A live Bubblewrap success path and native worker/reviewer end-to-end proof must
-also pass on a capable host before claiming the vertical slice qualified.
+Actual disposable Job output for this exact candidate, native worker/reviewer
+end-to-end proof and browser acceptance must also pass before claiming the
+vertical slice qualified. The old Bubblewrap primitive is optional and unused
+by the default server runner; it is not a required host dependency.
 
 See [work-management proposal](../../docs/design/bb-plugin-work-management.md)
 and [Kubernetes machine proposal](../../docs/design/bb-plugin-kubernetes-machines.md).

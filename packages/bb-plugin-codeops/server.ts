@@ -1,9 +1,10 @@
 // SPDX-License-Identifier: Apache-2.0
 import { defineRpcContract, type BbPluginApi } from '@get-bb/plugin-sdk';
 import { z } from 'zod';
-import { briefSchema, digest, type Run } from './core/model.ts';
+import { briefSchema, digest, validationRequest, type ValidationRunner, type Run } from './core/model.ts';
 import { Store } from './core/store.ts';
 import { Engine, type Runtime } from './core/engine.ts';
+import { configuredRunner } from './validation.ts';
 import { hostContract } from './host-contract.ts';
 
 const command = z.discriminatedUnion('op',[
@@ -15,7 +16,9 @@ const command = z.discriminatedUnion('op',[
 // JSON output is bounded by pagination and bounded admission fields.
 export const rpcContract=defineRpcContract({command:{input:command,output:z.object({json:z.string().max(900000)}).strict()}});
 
-export default function plugin(bb:BbPluginApi) {
+export default function plugin(bb:BbPluginApi) { return createPlugin(bb,configuredRunner); }
+// Injection is a local test seam, never an RPC or agent-controlled capability.
+export function createPlugin(bb:BbPluginApi, runner:()=>Promise<ValidationRunner>) {
   const store=new Store(bb.storage.database());
   const host=bb.hosts.experimental_client({contract:hostContract});
   async function target(run:Run) {
@@ -62,8 +65,9 @@ export default function plugin(bb:BbPluginApi) {
     async output(threadId) {return (await bb.sdk.threads.output({threadId})).output??'';},
     async stop(threadId) {await bb.sdk.threads.stop({threadId});},
     async checks(run) {
-      const {env,input}=await target(run);const checks=[];
-      for(const check of run.brief.checks) checks.push(await host.call('check',{...input,candidate:run.candidate!,check},{hostId:env.hostId,timeoutMs:180000}));
+      await target(run);const checks=[];const validator=await runner();
+      for(const check of run.brief.checks) checks.push(await validator.check(validationRequest(run,check)));
+      if(digest(await runtime.inspect(run))!==digest(run.candidate)) throw new Error('Candidate changed during validation');
       return checks;
     },
     async attention(run) {bb.realtime.publish('changed',{id:run.id});await bb.sdk.threads.markUnread({threadId:run.brief.parentThreadId});},

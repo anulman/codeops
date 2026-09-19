@@ -53,7 +53,7 @@ export async function isolatedCheck(target:{path:string;repository:string;base:s
       exitCode=e.code;output=(e.stdout??'')+(e.stderr??'');
     }
     if (digest(await inspect(target)) !== digest(before)) throw new Error('Candidate changed during validation');
-    return {name:target.check.name,candidate:before.head,tree:before.tree,argvDigest:digest(target.check.argv),exitCode,outputDigest:digest(output),isolation:'bwrap-unshare-all' as const};
+    return {name:target.check.name,candidate:before.head,tree:before.tree,argvDigest:digest(target.check.argv),exitCode,outputDigest:digest(output),isolation:{backend:'bubblewrap' as const,version:1 as const}};
   } finally { await rm(root,{recursive:true,force:true}); }
 }
 export default experimental_defineHostEntry({ contract:hostContract, handlers:{

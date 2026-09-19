@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import Database from 'better-sqlite3';
 import { Store } from '../core/store.ts';
 import { Engine, type Runtime } from '../core/engine.ts';
-import { digest, evaluate, jevUnavailable, type Brief, type Candidate, type Run } from '../core/model.ts';
+import { digest, evaluate, validationRequest, jevUnavailable, type Brief, type Candidate, type Run } from '../core/model.ts';
 const brief:Brief={key:'one',projectId:'project',parentThreadId:'parent',environmentId:'env',repository:'https://github.com/example/repository',base:'a'.repeat(40),outcome:'Correct a parser',scope:['Parser only'],acceptance:['Reject malformed input'],checks:[{name:'unit',argv:['node','--test']}],correctionLimit:1,intent:{provider:'local',item:'task-1',revision:'1'}};
 const candidate:Candidate={head:'b'.repeat(40),tree:'c'.repeat(40),files:['parser.ts']};
 function fixture(overrides:Partial<Runtime>={}) {
@@ -12,7 +12,7 @@ function fixture(overrides:Partial<Runtime>={}) {
   const runtime:Runtime={
     async admit(){},async inspect(){return candidate;},async spawn(run,action){current=run;spawned.push(action.kind);return `thread-${spawned.length}`;},async find(){return ['thread-1'];},async status(){return 'idle';},
     async output(){return JSON.stringify({candidate:candidate.head,tree:candidate.tree,scopeDigest:current.scopeDigest,evidenceDigest:digest(current.checks),outcome:'accept',findings:[],scopeAssessment:'Necessary and proportionate'});},
-    async stop(){},async attention(){},async checks(run){return brief.checks.map(c=>({name:c.name,candidate:run.candidate!.head,tree:run.candidate!.tree,argvDigest:digest(c.argv),exitCode:0,outputDigest:digest('ok'),isolation:'bwrap-unshare-all'}));},...overrides,
+    async stop(){},async attention(){},async checks(run){return brief.checks.map(c=>({name:c.name,candidate:run.candidate!.head,tree:run.candidate!.tree,argvDigest:digest(c.argv),exitCode:0,outputDigest:digest('ok'),isolation:{backend:'bubblewrap',version:1}}));},...overrides,
   };
   return {db,store,runtime,spawned,engine:new Engine(store,runtime)};
 }
@@ -110,4 +110,17 @@ test('restart before stop confirmation cannot launch overlapping replacement wor
   await assert.rejects(restarted.resume(run.id,run.revision),/Stop must reconcile/);assert.equal(f.spawned.length,1);assert.equal(active,true);
   run=await restarted.advance(run.id);assert.equal(run.condition,'Paused');assert.equal(active,false);
   await restarted.resume(run.id,run.revision);assert.equal(f.spawned.length,2);f.db.close();
+});
+
+test('G3 requires Kubernetes request, run, generation and lease binding',async()=>{
+  const f=fixture();let run=await f.engine.start(brief);run=await f.engine.advance(run.id);
+  run.checks[0]!.isolation={backend:'kubernetes-job',version:1,requestDigest:digest(validationRequest(run,brief.checks[0]!)),
+    namespace:'validation',jobName:'job',jobUid:'job-uid',podUid:'pod-uid',image:`registry.example/check@sha256:${'d'.repeat(64)}`,
+    runId:run.id,generation:run.generation,lease:run.lease,repository:brief.repository,base:brief.base};
+  assert.equal(evaluate(run,'G3').outcome,'allow');
+  for(const field of ['runId','generation','lease','repository','base','requestDigest','jobUid','podUid']) {
+    const altered=structuredClone(run);(altered.checks[0]!.isolation as any)[field]=field==='generation'?99:'';
+    assert.equal(evaluate(altered,'G3').outcome,'needs_attention',field);
+  }
+  f.db.close();
 });
