@@ -58,6 +58,9 @@ try {
       return [...element.querySelectorAll('h2, p, pre')].every(child=>{
         const box=child.getBoundingClientRect();
         if(child.scrollWidth > child.clientWidth+tolerance || box.left < bounds.left-tolerance || box.right > bounds.right+tolerance) return false;
+        // PRE preserves JSON indentation/newlines; hanging whitespace ranges
+        // are not visible overflow. Its element/scroll bounds still apply.
+        if(child.tagName==='PRE') return true;
         const text=document.createRange();text.selectNodeContents(child);
         return [...text.getClientRects()].every(rect=>rect.left >= box.left-tolerance && rect.right <= box.right+tolerance);
       });
