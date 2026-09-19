@@ -28,6 +28,19 @@ requires explicit upgrade qualification. See [dependency review](DEPENDENCIES.md
 
 Interaction schemas come from upstream `tools/list`. The only narrowing removes
 `filename`: artifacts return through native tool results, not runner filesystem paths.
+The pinned runner writes automatic post-action snapshots to runner files. After
+`open` successfully navigates, the plugin calls the supported read-only
+`browser_snapshot` without `filename` on the same session and returns that initial
+inline DOM. A navigation error is returned directly, without a snapshot call.
+Observation transport failure or cancellation retires the session without replaying
+the navigation. A tool-level snapshot error is returned as an error. Later native
+interactions retain upstream semantics: call `cluster_browser_snapshot` to inspect
+the resulting DOM. Explicit snapshot and console/network tools return inline text
+without `filename`; screenshots return native image data with
+`--image-responses allow`. Runner file links may accompany results but are not
+required or readable through this plugin. There is no `--output-mode` flag in this
+pin; `--snapshot-mode full` alone does not inline automatic snapshots.
+
 No evaluator, script runner, browser installer, or arbitrary MCP operation is exposed.
 `navigate` accepts ordinary HTTP(S) application URLs. Project targets are entrypoints,
 not an egress security boundary; links and redirects can leave those origins.
@@ -35,7 +48,7 @@ not an egress security boundary; links and redirects can leave those origins.
 ## Operator setup (separate rollout authorization required)
 
 1. Prepare exactly one private browser worker. Use the exact MCP package above,
-   `--isolated`, `--headless`, and `--no-webmcp`. Leave shared-context, extension,
+   `--isolated`, `--headless`, `--no-webmcp`, and `--image-responses allow`. Leave shared-context, extension,
    CDP, remote endpoint, persistent profile, and imported storage-state options unset.
    `--isolated` creates a new browser context for each client backend. The worker
    may share a browser process. A transport session ID alone does not prove this.
@@ -170,7 +183,10 @@ with `node node_modules/playwright/cli.js install chromium` during image prepara
 Do not install libraries or Chromium in the coding worker. Keep package source and
 dependencies read-only at runtime. Mount disposable writable `/tmp` and a writable
 `.output` directory at the package root for proof receipts; do not make the root
-filesystem writable. The runner commands put MCP output under `/tmp`.
+filesystem writable. Set `XDG_CONFIG_HOME=/tmp/config` and
+`XDG_CACHE_HOME=/tmp/cache` for full Chromium's writable configuration/cache and
+crashpad needs. A temporary home directory alone is insufficient. The runner
+commands put MCP output under `/tmp`.
 
 Run the fixture process on runner loopback:
 
@@ -181,6 +197,7 @@ node scripts/fixture.mjs
 For `chromium-internal`, start the runner and execute the proof separately:
 
 ```sh
+XDG_CONFIG_HOME=/tmp/config XDG_CACHE_HOME=/tmp/cache \
 node node_modules/@playwright/mcp/cli.js --host 127.0.0.1 --port 8931 --isolated --headless --sandbox --no-webmcp --browser chromium --image-responses allow --output-dir /tmp/cluster-browser-mcp --idle-timeout 300000
 ```
 
@@ -195,6 +212,7 @@ For the parent-operated `external-container` profile, inside the verified dispos
 runner only:
 
 ```sh
+XDG_CONFIG_HOME=/tmp/config XDG_CACHE_HOME=/tmp/cache \
 node node_modules/@playwright/mcp/cli.js --host 127.0.0.1 --port 8931 --isolated --headless --no-sandbox --no-webmcp --browser chromium --image-responses allow --output-dir /tmp/cluster-browser-mcp --idle-timeout 300000
 ```
 

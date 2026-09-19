@@ -160,7 +160,11 @@ export class BrowserSessions {
           session.worker = await this.connect(this.config, signal);
           signal.throwIfAborted();
           dispatched = true;
-          const result = await session.worker.call('browser_navigate', { url: targets[args.target] }, signal);
+          const navigation = await session.worker.call('browser_navigate', { url: targets[args.target] }, signal);
+          signal.throwIfAborted();
+          // Automatic snapshots are runner file links in this pin. This explicit
+          // read-only operation returns the initial DOM without filesystem access.
+          const result = navigation.isError ? navigation : await session.worker.call('browser_snapshot', {}, signal);
           signal.throwIfAborted();
           session.used = this.now();
           return this.result(result, session);

@@ -83,3 +83,45 @@ test('unconfirmed DELETE is reported instead of claiming remote closure',async()
  workers[0].close=async()=>false;
  const result=await manager.execute('browser_close',{},ctx());assert.equal(result.isError,true);assert.match(JSON.stringify(result),/Remote cleanup is unconfirmed/);assert.equal(manager.sessions.size,0);
 });
+
+test('open follows successful navigation with inline snapshot on the same worker',async()=>{
+ const {manager,workers}=fixture({async call(name,args){
+  this.calls.push({name,args});
+  return ok(name==='browser_snapshot' ? '- heading "Actual inline DOM"' : '### Snapshot\n- [Snapshot](.playwright-mcp/page.yml)');
+ }});
+ const result=await manager.execute('open',{target:'preview'},ctx());
+ assert.equal(result.isError,false);assert.match(result.content[1].text,/Actual inline DOM/);
+ assert.doesNotMatch(result.content[1].text,/page.yml/);
+ assert.deepEqual(workers[0].calls,[{name:'browser_navigate',args:{url:'https://app.example.test/'}},{name:'browser_snapshot',args:{}}]);
+ assert.match(JSON.stringify(await manager.execute('browser_snapshot',{},ctx())),/Actual inline DOM/);
+ assert.equal(workers[0].calls.length,3);await manager.dispose();
+});
+
+test('failed navigation is returned without a follow-up snapshot',async()=>{
+ const error={...ok('Navigation failed'),isError:true};
+ const {manager,workers}=fixture({async call(name){this.calls.push({name});return error;}});
+ const result=await manager.execute('open',{target:'preview'},ctx());
+ assert.equal(result.isError,true);assert.match(JSON.stringify(result),/Navigation failed/);
+ assert.deepEqual(workers[0].calls,[{name:'browser_navigate'}]);await manager.dispose();
+});
+
+test('initial snapshot failure and cancellation preserve errors without replaying navigation',async()=>{
+ for (const failure of ['error','disconnect','cancel']) {
+  const abort=new AbortController();
+  const {manager,workers}=fixture({async call(name){
+   this.calls.push({name});
+   if(name==='browser_snapshot') {
+    if(failure==='disconnect') throw Error('private-test-token');
+    if(failure==='cancel') abort.abort();
+    return {...ok('Snapshot failed'),isError:true};
+   }
+   return ok('Navigation completed');
+  }});
+  const result=await manager.execute('open',{target:'preview'},ctx('a','p',abort.signal));
+  assert.equal(result.isError,true);assert.doesNotMatch(JSON.stringify(result),/private-test-token/);
+  assert.deepEqual(workers[0].calls.map(c=>c.name),['browser_navigate','browser_snapshot']);
+  if(failure==='error') assert.match(JSON.stringify(result),/Snapshot failed/);
+  else {assert.match(JSON.stringify(result),/No retry was made/);assert.equal(manager.sessions.size,0);}
+  await manager.dispose();
+ }
+});
