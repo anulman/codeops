@@ -42,7 +42,8 @@ try {
     }),'Outcome and candidate text must fit inside the visible card without clipping');
     await card.getByRole('button',{name:'Evidence',exact:true}).click();
     await page.getByRole('heading',{name:`Run ${captured.run.id}`,exact:true}).waitFor({state:'visible'});
-    const detail=JSON.parse(await page.locator('section pre').innerText());
+    const detailSection=page.locator('section').filter({has:page.getByRole('heading',{name:`Run ${captured.run.id}`,exact:true})});
+    const detail=JSON.parse(await detailSection.locator('pre').innerText());
     assert.deepEqual(detail.candidate,captured.candidate);
     assert.deepEqual(detail.checks,captured.run.checks);
     assert.deepEqual(detail.review,captured.run.review);
@@ -50,6 +51,18 @@ try {
     assert.equal(await page.getByRole('button',{name:/^(worker|reviewer) · attempt /}).count(),2);
     assert.ok(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth),'Panel must fit viewport');
     await page.screenshot({path:join(config.outputDirectory,`panel-${viewport.width}.png`),fullPage:true});
+    await detailSection.evaluate(element=>element.scrollIntoView({block:'start'}));
+    assert.ok(await detailSection.evaluate(element=>{
+      const bounds=element.getBoundingClientRect(),tolerance=1;
+      if(bounds.left < -tolerance || bounds.right > window.innerWidth+tolerance) return false;
+      return [...element.querySelectorAll('h2, p, pre')].every(child=>{
+        const box=child.getBoundingClientRect();
+        if(child.scrollWidth > child.clientWidth+tolerance || box.left < bounds.left-tolerance || box.right > bounds.right+tolerance) return false;
+        const text=document.createRange();text.selectNodeContents(child);
+        return [...text.getClientRects()].every(rect=>rect.left >= box.left-tolerance && rect.right <= box.right+tolerance);
+      });
+    }),'Evidence headings, scope and report text must fit without clipping');
+    await page.screenshot({path:join(config.outputDirectory,`panel-detail-${viewport.width}.png`)});
   }
   await writeFile(join(config.outputDirectory,'panel.json'),JSON.stringify({runId:captured.run.id,candidate:captured.candidate,
     viewports:[1440,390],result:'passed'},null,2)+'\n',{flag:'wx',mode:0o600});
