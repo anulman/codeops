@@ -156,7 +156,7 @@ function checkWorkspace() {
     const manifest = readJson(manifestPath);
     if (!manifest.name || !manifest.version) continue;
     const key = `${manifest.name}@${manifest.version}`;
-    const declared = packageLicense(packageRoot, manifest);
+    const declared = packageLicense(packageRoot, manifest) ?? overrides.get(key)?.license;
     if (!declared) fail(`JavaScript dependency has no reviewed license: ${key}`);
     const license = approvedJavascriptLicense(key, declared)
       ? declared

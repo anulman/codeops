@@ -1,6 +1,9 @@
 {
   "schema": "codeops.npm-license-overrides/v1",
   "packages": {
+    "@get-bb/plugin-sdk@0.4.87": {"license": "MIT", "evidence": "Reviewed npm tarball sha512-mTlcPPpef2fA7eWEiP7VutYXP1grn3efKzGDYaSTBXelkrwatUdlPXyZodehJyEJhRYGa8rUXo/WxNIecP9Nvg==; registry gitHead 3b37d2790d084a47c96eb78267da5d159598f203; matching package version and root MIT LICENSE at https://github.com/get-bb/bb/blob/3b37d2790d084a47c96eb78267da5d159598f203/LICENSE. Package omits license metadata and license file. See packages/bb-plugin-codeops/THIRD_PARTY_NOTICES.md."},
+    "expand-template@2.0.3": {"license": "MIT", "evidence": "Exact installed expand-template@2.0.3 LICENSE is MIT, copyright 2018 Lars-Magnus Skog. Select MIT from (MIT OR WTFPL)."},
+    "rc@1.2.8": { "license": "MIT", "evidence": "Exact distributed rc@1.2.8 LICENSE.MIT, copyright 2011 Dominic Tarr; select MIT from (BSD-2-Clause OR MIT OR Apache-2.0)." },
     "@mapbox/node-pre-gyp@2.0.3": { "license": "BSD-3-Clause", "evidence": "npm registry metadata" },
     "@rollup/pluginutils@5.4.0": { "license": "MIT", "evidence": "npm registry metadata" },
     "@vercel/nft@1.10.2": { "license": "MIT", "evidence": "npm registry metadata" },

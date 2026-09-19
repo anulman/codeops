@@ -1,0 +1,43 @@
+{
+  "name": "bb-plugin-codeops",
+  "version": "0.1.0",
+  "type": "module",
+  "engines": {
+    "bb": "0.43.1",
+    "bbPluginSdk": "0.4.87",
+    "node": ">=24"
+  },
+  "bb": {
+    "name": "CodeOps",
+    "description": "Durable candidate checks and native agent review with explicit human handoff.",
+    "branding": {
+      "icon": "ListTodo"
+    },
+    "server": "./server.ts",
+    "app": "./app.tsx",
+    "host": "./host.ts"
+  },
+  "dependencies": {
+    "zod": "4.3.6"
+  },
+  "devDependencies": {
+    "@get-bb/plugin-sdk": "0.4.87",
+    "@types/better-sqlite3": "7.6.13",
+    "@types/node": "25.7.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "better-sqlite3": "12.8.0",
+    "cron-parser": "5.5.0",
+    "hono": "4.12.8",
+    "react": "19.2.4",
+    "react-dom": "19.2.4",
+    "typescript": "6.0.3"
+  },
+  "license": "Apache-2.0",
+  "private": true,
+  "scripts": {
+    "build": "bb plugin build",
+    "typecheck": "tsc --noEmit",
+    "test": "node --experimental-strip-types --test test/*.test.ts"
+  }
+}
