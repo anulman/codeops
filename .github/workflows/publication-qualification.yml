@@ -19,7 +19,7 @@ concurrency:
 # Bootstrap preparation replaces this fail-closed sentinel with the reviewed
 # source commit AFTER independent qualification. Never github.event PR head.
 env:
-  TRUSTED_SOURCE_SHA: '0000000000000000000000000000000000000000'
+  TRUSTED_SOURCE_SHA: 'f0c5aeb87a806e42ed284c13766fb228c04ed524'
 jobs:
   candidate:
     if: github.event_name != 'schedule' && inputs.mode != 'expire' && !contains(github.ref_name, 'bootstrap-publication-recover-')
