@@ -28,6 +28,18 @@ try {
     await card.waitFor({state:'visible'});
     assert.match(await card.innerText(),/Publish.*NeedsAttention/);
     assert.ok((await card.innerText()).includes(captured.candidate.head));
+    // The bb shell can clip overflow without increasing document.scrollWidth.
+    // Check both element bounds and actual text fragments against the card.
+    assert.ok(await card.evaluate(element=>{
+      const bounds=element.getBoundingClientRect(),tolerance=1;
+      if(bounds.left < -tolerance || bounds.right > window.innerWidth+tolerance) return false;
+      return [...element.querySelectorAll('h2, code')].every(child=>{
+        const box=child.getBoundingClientRect();
+        if(child.scrollWidth > child.clientWidth+tolerance || box.left < bounds.left-tolerance || box.right > bounds.right+tolerance) return false;
+        const text=document.createRange();text.selectNodeContents(child);
+        return [...text.getClientRects()].every(rect=>rect.left >= box.left-tolerance && rect.right <= box.right+tolerance);
+      });
+    }),'Outcome and candidate text must fit inside the visible card without clipping');
     await card.getByRole('button',{name:'Evidence',exact:true}).click();
     await page.getByRole('heading',{name:`Run ${captured.run.id}`,exact:true}).waitFor({state:'visible'});
     const detail=JSON.parse(await page.locator('section pre').innerText());

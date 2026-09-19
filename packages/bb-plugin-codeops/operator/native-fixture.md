@@ -122,9 +122,14 @@ preserved. Capture to a second new file; run identity, candidate, evidence and
 child IDs must be unchanged. Starting the same frozen brief again must return
 the same run, not spawn more children. Test unsafe/unlisted host selection in
 the automated harness rather than executing a worker on a shared host. For live
-negative validation, omit the candidate from a disposable server's catalog and
-confirm `Validate / NeedsAttention`, no accepted checks and no reviewer; retain
-that separate run as failure evidence. Restore configuration only on the
+negative validation, create a fresh managed worktree/environment and parent
+thread with a new fixture key. The positive run retains its environment
+reservation at manual handoff; reusing it tests admission rejection, not
+validation failure. Configure the disposable server with a valid, nonempty
+catalog containing only a different candidate. The schema requires at least
+one entry; an empty catalog tests configuration failure instead. Confirm
+`Validate / NeedsAttention`, no accepted checks and no reviewer; retain that
+separate run as failure evidence. Restore configuration only on the
 operator side, with a new fixture key after confirming termination.
 
 ## Reproduce the panel checks

@@ -83,7 +83,8 @@ export function createPlugin(bb:BbPluginApi, runner:()=>Promise<ValidationRunner
     else if(c.op==='reconcile') result=await engine.advance(c.id);
     else if(c.op==='resume') result=await engine.resume(c.id,c.revision);
     else if ('revision' in c) result=await engine.pause(c.id,c.revision,c.op==='cancel');
-    bb.realtime.publish('changed',{});return {json:JSON.stringify(result)};
+    if(c.op!=='list'&&c.op!=='get') bb.realtime.publish('changed',{});
+    return {json:JSON.stringify(result)};
   }
   bb.rpc.register(rpcContract,{command:execute});
   bb.cli.register({name:'codeops',summary:'Run bounded CodeOps work and inspect durable evidence',commands:[{name:'command',summary:'Execute a JSON command',usage:'bb codeops command <json>'}],
