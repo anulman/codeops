@@ -72,3 +72,63 @@ test('a failed Job cannot certify exit zero and a failed check remains failed',a
   const failed=fixture((job,pod)=>{job.status.conditions=[{type:'Failed',status:'True'}];pod.status.phase='Failed';pod.status.containerStatuses[0].state.terminated.exitCode=7;});
   assert.equal((await new KubernetesRunner(config,failed.transport,async()=>{}).check(request)).exitCode,7);
 });
+
+// API omission shape reported by the operator's single live Job attempt.
+function omitHostNamespaces(spec:any) {delete spec.hostNetwork;delete spec.hostPID;delete spec.hostIPC;}
+function omittedReadback(mutate?:(spec:any)=>void,at:'create'|'job'|'pod'='pod'):Transport {
+  const {transport}=fixture();
+  return async(args,manifest)=>{
+    const value=await transport(args,manifest);
+    if(args[0]==='logs'||args[1]==='networkpolicies') return value;
+    const object=JSON.parse(value);
+    const location=args[0]==='create'?'create':args[1]==='job'?'job':'pod';
+    const spec=location==='pod'?object.items[0].spec:object.spec.template.spec;
+    omitHostNamespaces(spec);
+    if(location===at) mutate?.(spec);
+    return JSON.stringify(object);
+  };
+}
+test('accepts only known default-false host namespace omissions in create, Job and Pod readback',async()=>{
+  assert.equal((await new KubernetesRunner(config,omittedReadback(),async()=>{}).check(request)).exitCode,0);
+});
+for(const at of ['create','job','pod'] as const) {
+  test(`rejects explicit host namespaces and other missing security fields at ${at}`,async()=>{
+    for(const field of ['hostNetwork','hostPID','hostIPC']) {
+      for(const value of [true,null]) await assert.rejects(new KubernetesRunner(config,omittedReadback(spec=>{spec[field]=value;},at),async()=>{}).check(request),`${at}.${field}=${value}`);
+    }
+    for(const mutate of [
+      (spec:any)=>{delete spec.automountServiceAccountToken;},
+      (spec:any)=>{delete spec.enableServiceLinks;},
+      (spec:any)=>{delete spec.securityContext.runAsNonRoot;},
+      (spec:any)=>{delete spec.securityContext.seccompProfile;},
+      (spec:any)=>{delete spec.containers[0].securityContext.readOnlyRootFilesystem;},
+      (spec:any)=>{delete spec.containers[0].securityContext.allowPrivilegeEscalation;},
+      (spec:any)=>{delete spec.containers[0].securityContext.capabilities;},
+    ]) await assert.rejects(new KubernetesRunner(config,omittedReadback(mutate,at),async()=>{}).check(request));
+  });
+}
+
+test('accepts immutable image with IfNotPresent or Always independently at template and Pod',async()=>{
+  for(const templatePolicy of ['IfNotPresent','Always']) for(const podPolicy of ['IfNotPresent','Always']) {
+    const {transport}=fixture();
+    const readback:Transport=async(args,manifest)=>{
+      const value=await transport(args,manifest);
+      if(args[0]==='logs'||args[1]==='networkpolicies') return value;
+      const object=JSON.parse(value);
+      const pod=args[1]==='pods';
+      const spec=pod?object.items[0].spec:object.spec.template.spec;
+      omitHostNamespaces(spec);spec.containers[0].imagePullPolicy=pod?podPolicy:templatePolicy;
+      return JSON.stringify(object);
+    };
+    assert.equal((await new KubernetesRunner(config,readback,async()=>{}).check(request)).exitCode,0);
+  }
+});
+for(const at of ['create','job','pod'] as const) test(`pull-policy normalization cannot mask image or policy drift at ${at}`,async()=>{
+  for(const mutate of [
+    (spec:any)=>{spec.containers[0].imagePullPolicy='Never';},
+    (spec:any)=>{delete spec.containers[0].imagePullPolicy;},
+    (spec:any)=>{spec.containers[0].imagePullPolicy='Always';spec.containers[0].image='registry.example/validation:latest';},
+    (spec:any)=>{spec.containers[0].imagePullPolicy='Always';spec.containers[0].image=`registry.example/validation@sha256:${'e'.repeat(64)}`;},
+    (spec:any)=>{spec.containers[0].imagePullPolicy='Always';spec.containers[0].image=`registry.example/another@sha256:${'d'.repeat(64)}`;},
+  ]) await assert.rejects(new KubernetesRunner(config,omittedReadback(mutate,at),async()=>{}).check(request));
+});

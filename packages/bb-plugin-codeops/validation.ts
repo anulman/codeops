@@ -52,8 +52,30 @@ function contains(actual:unknown, expected:unknown):boolean {
   if(expected&&typeof expected==='object') return !!actual&&typeof actual==='object'&&Object.entries(expected).every(([k,v])=>contains((actual as Record<string,unknown>)[k],v));
   return actual===expected;
 }
+// Kubernetes omits these three false PodSpec fields on API serialization.
+// Do not default any other security field, and do not coerce null or true.
+function normalizeHostNamespaces(spec:any) {
+  if(!spec||typeof spec!=='object') return spec;
+  return {hostNetwork:false,hostPID:false,hostIPC:false,...spec};
+}
+// AlwaysPullImages admission can strengthen the template/Pod pull policy.
+// Normalize only a stronger policy on the SAME immutable expected image.
+function normalizePodSpec(actual:any,expected:any) {
+  const spec=normalizeHostNamespaces(actual);
+  if(!Array.isArray(spec?.containers)||!Array.isArray(expected?.containers)) return spec;
+  return {...spec,containers:spec.containers.map((container:any,index:number)=>{
+    const required=expected.containers[index];
+    return required?.imagePullPolicy==='IfNotPresent'&&container.imagePullPolicy==='Always'&&
+      container.image===required.image&&/@sha256:[a-f0-9]{64}$/.test(required.image)
+      ?{...container,imagePullPolicy:'IfNotPresent'}:container;
+  })};
+}
+function containsJobSpec(actual:any,expected:any):boolean {
+  if(!actual?.template?.spec) return false;
+  return contains({...actual,template:{...actual.template,spec:normalizePodSpec(actual.template.spec,expected.template.spec)}},expected);
+}
 function verifyPodSpec(actual:any, expected:any) {
-  if(!contains(actual,expected)||actual.initContainers?.length||actual.ephemeralContainers?.length||actual.imagePullSecrets?.length||actual.hostAliases?.length||actual.shareProcessNamespace) throw new Error('Validation Pod isolation drift');
+  if(!contains(normalizePodSpec(actual,expected),expected)||actual.initContainers?.length||actual.ephemeralContainers?.length||actual.imagePullSecrets?.length||actual.hostAliases?.length||actual.shareProcessNamespace) throw new Error('Validation Pod isolation drift');
   for(const c of actual.containers??[]) if(c.envFrom?.length||c.lifecycle||c.livenessProbe||c.readinessProbe||c.startupProbe||c.securityContext?.privileged||c.securityContext?.capabilities?.add?.length||c.args?.length) throw new Error('Validation container drift');
 }
 export class KubernetesRunner implements ValidationRunner {
@@ -74,12 +96,12 @@ export class KubernetesRunner implements ValidationRunner {
       digest([...(policy.policyTypes??[])].sort())!==digest(['Egress','Ingress'])) throw new Error('Default-deny network capability missing');
     // A name collision or uncertain create never triggers deletion/recreation or a retry.
     const created=JSON.parse(await this.transport(['create','-o','json'],job));
-    if(!created.metadata?.uid||!contains(created.metadata,job.metadata)||!contains(created.spec,job.spec)) throw new Error('Job creation identity mismatch');
+    if(!created.metadata?.uid||!contains(created.metadata,job.metadata)||!containsJobSpec(created.spec,job.spec)) throw new Error('Job creation identity mismatch');
     const uid=created.metadata.uid;
     const deadline=Date.now()+180000;
     for(let i=0;i<150 && Date.now()<deadline;i++) {
       const live=JSON.parse(await this.transport(['get','job',name,'-o','json']));
-      if(live.metadata?.uid!==uid||!contains(live.metadata,job.metadata)||!contains(live.spec,job.spec)) throw new Error('Job identity drift');
+      if(live.metadata?.uid!==uid||!contains(live.metadata,job.metadata)||!containsJobSpec(live.spec,job.spec)) throw new Error('Job identity drift');
       verifyPodSpec(live.spec.template.spec,job.spec.template.spec);
       const pods=JSON.parse(await this.transport(['get','pods','-l',`batch.kubernetes.io/controller-uid=${uid}`,'-o','json'])).items;
       if(!Array.isArray(pods)||pods.length>1) throw new Error('Ambiguous validation Pods');

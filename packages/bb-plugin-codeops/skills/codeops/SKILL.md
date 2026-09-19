@@ -23,3 +23,9 @@ the namespace Role and exact qualification request. Missing runner capability
 or unknown Job outcome remains blocked; no retry may replace an uncertain Job.
 A boundary probe does not certify candidate tests. Bubblewrap is optional and
 is not called by the default server validation path.
+
+Native spawns default to `accept-edits`. Only `CODEOPS_EXECUTION_CONFIG` on the
+trusted server can attest exact host IDs under `kubernetes-isolated-worker-v1`
+for `full` mode. Briefs, tools and metadata cannot select it. See
+`operator/native-fixture.md`; do not modify that protected configuration from
+a coding worker or weaken outer isolation when native execution is blocked.

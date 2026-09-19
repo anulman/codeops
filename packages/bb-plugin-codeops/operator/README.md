@@ -127,11 +127,10 @@ a run or claim the plugin's end-to-end flow passed.
 Then, with separately authorized plugin installation, admit a disposable native
 bb run and prove worker → clean candidate → Job validation → independent critic
 → manual publication handoff, restart, duplicate/unknown effects and failed
-isolation. Check the panel in a browser. Native children currently request
-`accept-edits`; verify actual provider behavior on the externally isolated
-worker profile. Do not switch unrestricted modes on shared hosts to bypass a
-provider sandbox failure. Full mode needs the operator's external isolation
-profile and must never weaken the Pod/network boundary.
+isolation. Use the [native workflow and panel fixture](native-fixture.md).
+Native children default to `accept-edits`; only exact hosts attested in protected
+server configuration use `full`. Verify actual provider behavior in that
+external isolation profile without weakening the Pod/network boundary.
 
 Merge, release and deployment remain human-only. Actual Job output and live bb
 workflow/browser evidence are required before calling this candidate qualified.

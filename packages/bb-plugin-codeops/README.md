@@ -71,6 +71,9 @@ review report from its caller.
   candidate, request, run/lease, image, Job/Pod UIDs and termination status.
   Missing capabilities or identity drift block validation. See the
   [operator configuration and qualification request](operator/README.md).
+- Native workers and reviewers default to `accept-edits`. A protected server-only
+  host attestation can select `full` on exact externally isolated Kubernetes
+  workers. See the [native qualification fixture](operator/native-fixture.md).
 - Native reviewers use a new managed worktree at the candidate. Their report
   binds scope, candidate, tree and check evidence. Required findings trigger
   bounded corrections. A model turn alone never passes a gate.
