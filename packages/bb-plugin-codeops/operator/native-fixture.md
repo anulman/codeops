@@ -87,10 +87,35 @@ node --experimental-strip-types packages/bb-plugin-codeops/operator/native-fixtu
   capture /operator/fixture.json /operator/native-evidence.json <run-id>
 ```
 
-Capture reads live plugin state, thread modes/status and environment host IDs.
-It checks exact brief/candidate and G3/G4 bindings and writes a receipt only after
-both native children are idle with the expected mode. It never reads transcripts,
-provider authentication or kubeconfig and does not change workflow state.
+Capture reads live plugin state, thread status and environment host IDs.
+bb 0.43.1 `ThreadResponse` has no `permissionMode` field. Capture pages through
+`bb thread log <id> --json --limit 100 --after-seq <seq>`, the CLI surface for
+`bb.sdk.threads.events.list`. It reads host-resolved policy from
+`client/turn/requested.data.execution.permissionMode`. The native SDK's
+`threads.defaultExecutionOptions` derives its recorded options from these same
+request events; it is not a field in `thread show`.
+
+For each observed request, capture requires the expected mode, a later
+`turn/input/accepted` with matching `data.clientRequestId`, and a later successful
+`turn/completed` with the same row-level `scope.turnId`. It rejects missing,
+ambiguous, mismatched, failed or truncated evidence, including a later request
+with a different mode. No prose, request parameters in legacy events, project
+defaults or writable plugin metadata can substitute for this provenance.
+
+The receipt records only policy, request/turn identities and event IDs/sequences;
+raw event pages (which can include transcript content) are transient and are not
+printed or saved. CLI failures are sanitized. Pagination is bounded to 10,000
+rows per child; a larger log or an over-limit response blocks capture rather
+than implying complete proof. Capture also checks exact brief/candidate and G3/G4
+bindings and requires both children idle. It reads no authentication file or
+kubeconfig and does not change workflow state.
+
+These events prove bb's resolved dispatch policy and completed native turn,
+not a provider's physical sandbox implementation. Preserve operator-observed
+shell/provider and outer-isolation evidence separately. The pinned public
+[CLI log implementation](https://github.com/get-bb/bb/blob/3b37d2790d084a47c96eb78267da5d159598f203/apps/cli/src/commands/thread/show.ts)
+and [native event writer/readback](https://github.com/get-bb/bb/blob/3b37d2790d084a47c96eb78267da5d159598f203/apps/server/src/services/threads/thread-events.ts)
+provide the inspected contract.
 
 Restart the temporary server with its durable store and protected configuration
 preserved. Capture to a second new file; run identity, candidate, evidence and

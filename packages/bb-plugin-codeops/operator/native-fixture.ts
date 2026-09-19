@@ -5,6 +5,7 @@ import { promisify } from 'node:util';
 import { readFile, writeFile } from 'node:fs/promises';
 import { z } from 'zod';
 import { briefSchema, candidateSchema, digest, evaluate, type Run } from '../core/model.ts';
+import { readExecutionEvidence } from './execution-readback.ts';
 const exec=promisify(execFile);
 const schema=z.object({key:briefSchema.shape.key,projectId:briefSchema.shape.projectId,parentThreadId:briefSchema.shape.parentThreadId,
   environmentId:briefSchema.shape.environmentId,repository:briefSchema.shape.repository,base:briefSchema.shape.base,
@@ -20,7 +21,10 @@ const brief=briefSchema.parse({key:fixture.key,projectId:fixture.projectId,paren
     'The native worker completes harmless shell checks. The trusted validator supplies exact Job evidence. Independent review confirms no source changes and no unsupported completion claims.'],
   checks:[{name:'execution-policy',argv:['node','--experimental-strip-types','--test','packages/bb-plugin-codeops/test/execution-policy.test.ts']}],
   correctionLimit:0,intent:{provider:'local',item:fixture.key,revision:fixture.candidate.head}});
-async function bb(args:string[]) {return JSON.parse((await exec('bb',args,{timeout:30000,maxBuffer:1024*1024})).stdout);}
+async function bb(args:string[]) {
+  try {return JSON.parse((await exec('bb',args,{timeout:30000,maxBuffer:1024*1024})).stdout);}
+  catch {throw new Error('Native bb readback unavailable or over limit; no evidence accepted');}
+}
 if(operation==='prepare') await writeFile(outputPath,JSON.stringify({op:'start',brief},null,2)+'\n',{flag:'wx',mode:0o600});
 else {
   if(!runId) throw new Error('Run ID required');
@@ -32,11 +36,13 @@ else {
   const threads=[];
   for(const child of children) {
     const {thread}=await bb(['thread','show',child.threadId!,'--json']);
-    // CLI readback, not plugin metadata, proves the selected provider mode.
-    if(!thread||thread.id!==child.threadId||thread.permissionMode!==fixture.expectedPermissionMode||thread.status!=='idle') throw new Error('Native child mode/status mismatch');
+    if(!thread||thread.id!==child.threadId||thread.status!=='idle') throw new Error('Native child identity/status mismatch');
+    const execution=await readExecutionEvidence(thread.id,fixture.expectedPermissionMode,afterSeq=>bb([
+      'thread','log',thread.id,'--json','--limit','100',...(afterSeq===undefined?[]:['--after-seq',String(afterSeq)]),
+    ]));
     const environment=await bb(['environment','show',thread.environmentId,'--json']);
     if(environment.hostId!==fixture.hostId) throw new Error('Native child host drift');
-    threads.push({id:thread.id,permissionMode:thread.permissionMode,environmentId:thread.environmentId,hostId:environment.hostId,status:thread.status});
+    threads.push({id:thread.id,execution,environmentId:thread.environmentId,hostId:environment.hostId,status:thread.status});
   }
   if(run.checks.some(c=>c.isolation.backend!=='kubernetes-job')) throw new Error('Actual Kubernetes evidence required');
   await writeFile(outputPath,JSON.stringify({candidate:fixture.candidate,run,threads},null,2)+'\n',{flag:'wx',mode:0o600});

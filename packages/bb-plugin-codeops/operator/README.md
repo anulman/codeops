@@ -46,9 +46,10 @@ coding worker, and have not been executed here.
    by installation policy. Verify network denial with a disposable probe.
 2. Apply the reviewed file from an authorized operator terminal:
    `kubectl apply -f packages/bb-plugin-codeops/operator/validation.yaml`.
-   The Role grants only Job create/get, Pod list/log read, and NetworkPolicy
-   list in that namespace. It grants no secrets, exec, RBAC, namespaces, nodes,
-   PVCs, production objects or cross-namespace reads. The validation account
+   The Role grants only Job create/get, Pod get/list/log read, and NetworkPolicy
+   list in that namespace. `kubectl logs` performs a Pod GET before its
+   pods/log request; both read permissions are required. It grants no secrets,
+   exec, RBAC, namespaces, nodes, PVCs, production objects or cross-namespace reads. The validation account
    has no RoleBinding and disables token automount.
 3. Supply a short-lived, renewable credential for the launcher identity to the
    trusted server through the installation's existing credential mechanism.

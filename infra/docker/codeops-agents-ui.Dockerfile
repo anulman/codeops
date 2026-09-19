@@ -16,6 +16,7 @@ RUN apt-get update \
   && nub --version \
   && rm -rf /tmp/nub.tar.gz /tmp/bin /tmp/runtime
 COPY package.json lock.yaml .npmrc ./
+COPY packages/bb-plugin-codeops/package.json ./packages/bb-plugin-codeops/package.json
 COPY packages/codeops-contracts/package.json ./packages/codeops-contracts/package.json
 COPY services/codeops-acceptance-runner/package.json ./services/codeops-acceptance-runner/package.json
 COPY services/codeops-agent/package.json ./services/codeops-agent/package.json
