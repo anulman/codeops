@@ -5,6 +5,7 @@
 !lock.yaml
 !.npmrc
 !tsconfig.json
+!packages/bb-plugin-codeops/package.json
 !packages/codeops-contracts/package.json
 !packages/codeops-contracts/tsconfig.json
 !packages/codeops-contracts/tsconfig.build.json
