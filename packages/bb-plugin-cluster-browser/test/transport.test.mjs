@@ -39,8 +39,18 @@ test('real HTTP MCP transport initializes separate sessions and terminates them'
  const fixture=await mockWorker(t);const a=await connectWorker(config(fixture.endpoint),new AbortController().signal);const b=await connectWorker(config(fixture.endpoint),new AbortController().signal);
  assert.equal(fixture.sessions.size,2);assert.match(JSON.stringify(await a.call('browser_snapshot',{},new AbortController().signal)),/fixture/);await a.close();await b.close();
 });
-for(const options of [{version:'wrong'},{mismatch:true},{redirect:true}])test(`rejects worker contract ${JSON.stringify(options)}`,async t=>{
+for(const options of [{version:'wrong'},{version:'2.0.0'},{version:'1.65.0'},{mismatch:true},{redirect:true}])test(`rejects worker contract ${JSON.stringify(options)}`,async t=>{
  const fixture=await mockWorker(t,options);await assert.rejects(connectWorker(config(fixture.endpoint),new AbortController().signal));assert.equal(fixture.effects.length,0);
+});
+test('patch version with unchanged selected schemas connects',async t=>{
+ const fixture=await mockWorker(t,{version:'1.64.1'});
+ const worker=await connectWorker(config(fixture.endpoint),new AbortController().signal);
+ assert.equal(worker.serverVersion.version,'1.64.1');await worker.close();
+});
+test('patch version with changed schemas fails before any effect',async t=>{
+ const fixture=await mockWorker(t,{version:'1.64.1',mismatch:true});
+ await assert.rejects(connectWorker(config(fixture.endpoint),new AbortController().signal));
+ assert.deepEqual(fixture.effects,[]);
 });
 test('dropped mutation response does not cause transport replay',async t=>{
  const fixture=await mockWorker(t,{drop:true});const worker=await connectWorker(config(fixture.endpoint),new AbortController().signal);

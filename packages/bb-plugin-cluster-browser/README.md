@@ -6,11 +6,35 @@ CodeOps and other consumers can use its evidence without owning browser infrastr
 
 ## Compatibility and tools
 
-Pin bb **0.43.1**, Plugin SDK **0.4.87**, MCP SDK **1.30.0**, and Playwright MCP
-**0.0.82**. That MCP package pins Playwright/Core **1.64.0-alpha-1789764292000**.
-The client checks the upstream Playwright version and each selected input schema
-before calling a browser tool. It rejects drift. This alpha Playwright dependency
-requires explicit upgrade qualification. See [dependency review](DEPENDENCIES.md).
+The reproducible qualification baseline is bb **0.43.1**, Plugin SDK **0.4.87**,
+MCP SDK **1.30.0**, and Playwright MCP **0.0.82** (Playwright/Core
+**1.64.0-alpha-1789764292000**). Exact dependency versions and integrity hashes
+remain locked. A tested baseline is not an exact-version installation requirement.
+
+- bb and Plugin SDK engines accept patches within **0.43.x** and **0.4.x**,
+  starting at the baseline. The SDK dependency remains exact for repeatable builds.
+- The MCP client negotiates protocol support and requires session support and every
+  selected input schema to match. Additional unexposed tools are harmless.
+- The worker may report another **1.64.x** Playwright build. A different minor or
+  major line, malformed version, missing tool, duplicate tool, or changed selected
+  schema fails before a browser call. A matching version is never authentication.
+
+Patch maintenance uses the standing qualification procedure below; it does not
+need a new architecture decision for each package. Update exact locks, run license
+checks, SDK typecheck/native harness and transport failure tests, then run the real
+browser fixture against the proposed runner. Retain its actual package versions,
+server readback and source/lock hashes. Qualify bb patches with the installed SDK
+and plugin build on that proposed bb version. Publish only the combination tested.
+Schema capture alone cannot establish behavior or context isolation; never refresh
+the schema baseline just to make a failing test pass.
+
+Playwright MCP **0.0.x** and its alpha Playwright dependency do not promise patch
+compatibility. They use the same routine qualification, including browser and
+boundary evidence, before an operator changes the runner. Runtime schema checks
+are an additional guard, not that evidence. Only the baseline is qualified so far;
+synthetic patch tests do not qualify an unreleased package. Changes to API shape,
+release line, isolation, permissions or license need explicit review. See
+[dependency review](DEPENDENCIES.md). Rollout remains separately authorized.
 
 | Native tool | Upstream operation |
 | --- | --- |
@@ -47,7 +71,7 @@ not an egress security boundary; links and redirects can leave those origins.
 
 ## Operator setup (separate rollout authorization required)
 
-1. Prepare exactly one private browser worker. Use the exact MCP package above,
+1. Prepare exactly one private browser worker. Use the exact qualified MCP artifact,
    `--isolated`, `--headless`, `--no-webmcp`, and `--image-responses allow`. Leave shared-context, extension,
    CDP, remote endpoint, persistent profile, and imported storage-state options unset.
    `--isolated` creates a new browser context for each client backend. The worker

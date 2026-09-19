@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: Apache-2.0
-import { writeFile } from 'node:fs/promises';
+import { readFile, writeFile } from 'node:fs/promises';
 import { createConnection } from '@playwright/mcp';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
@@ -15,6 +15,6 @@ const selected = Object.fromEntries(names.map(name => {
  if (!tool) throw new Error(`Missing ${name}`);
  return [name, {description: tool.description, inputSchema: tool.inputSchema}];
 }));
-await writeFile(new URL('../upstream-tools.json', import.meta.url), JSON.stringify({version: '0.0.82', server: client.getServerVersion(), tools: selected}, null, 2)+'\n');
+await writeFile(new URL('../upstream-tools.json', import.meta.url), JSON.stringify({version: JSON.parse(await readFile(new URL('../node_modules/@playwright/mcp/package.json', import.meta.url), 'utf8')).version, server: client.getServerVersion(), tools: selected}, null, 2)+'\n');
 await client.close();
 await server.close();

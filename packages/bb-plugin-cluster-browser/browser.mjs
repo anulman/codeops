@@ -4,6 +4,7 @@ import { isDeepStrictEqual } from 'node:util';
 import Ajv from 'ajv/dist/2020.js';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
+import { sameReleaseLine } from './compatibility.mjs';
 import catalog from './upstream-tools.json' with { type: 'json' };
 
 const ajv = new Ajv({ strict: false });
@@ -64,13 +65,14 @@ export async function connectWorker(config, signal) {
     signal.throwIfAborted();
     await client.connect(transport, { timeout: config.timeoutMs });
     const version = client.getServerVersion();
-    if (version?.version !== catalog.server.version || !transport.sessionId) throw new BrowserError('Worker version or session support mismatch.');
+    if (!sameReleaseLine(version?.version, catalog.server.version) || !transport.sessionId) throw new BrowserError('Worker version or session support mismatch.');
     const result = await client.listTools({}, { signal, timeout: config.timeoutMs });
     for (const [name, tool] of Object.entries(catalog.tools)) {
       const matches = result.tools.filter(candidate => candidate.name === name);
       if (matches.length !== 1 || !isDeepStrictEqual(matches[0].inputSchema, tool.inputSchema)) throw new BrowserError('Worker tool schema mismatch.');
     }
     return {
+      serverVersion: version,
       call: (name, args, callSignal) => client.callTool({ name, arguments: args }, undefined, { signal: callSignal, timeout: config.timeoutMs }),
       close,
     };
