@@ -19,7 +19,7 @@ concurrency:
 # Bootstrap preparation replaces this fail-closed sentinel with the reviewed
 # source commit AFTER independent qualification. Never github.event PR head.
 env:
-  TRUSTED_SOURCE_SHA: '5e526892a836a240e05312c3b5d27e80dc49bf25'
+  TRUSTED_SOURCE_SHA: '0000000000000000000000000000000000000000'
 jobs:
   candidate:
     if: github.event_name != 'schedule' && inputs.mode != 'expire' && !contains(github.ref_name, 'bootstrap-publication-recover-')
@@ -61,8 +61,9 @@ jobs:
           docker pull node:24.14.0-bookworm
           image=$(docker image inspect node:24.14.0-bookworm --format '{{.Id}}')
           docker run -d --name "$name" --network none --read-only --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --tmpfs /work:rw,exec,uid=1000,gid=1000,mode=700 --tmpfs /tmp:rw,uid=1000,gid=1000 --entrypoint /usr/bin/env "$image" -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp sleep 600
-          docker cp infra/ci/publication/. "$name:/work/"
-          docker cp "$RUNNER_TEMP/input.json" "$name:/work/input.json"
+          # Stream into the writable tmpfs as UID1000; daemon docker cp rejects read-only rootfs.
+          tar -C infra/ci/publication -cf - candidate.mjs ownership.mjs | docker exec -i "$name" /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp tar -xf - -C /work --no-same-owner
+          docker exec -i "$name" /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp sh -c 'cat > /work/input.json' < "$RUNNER_TEMP/input.json"
           docker inspect "$name" > "$RUNNER_TEMP/candidate-boundary.json"
           python3 - <<'PY'
           import json,os,pathlib
@@ -71,7 +72,7 @@ jobs:
           assert not d['Mounts'] and not d['HostConfig']['Binds'] and d['HostConfig']['CapDrop']==['ALL']
           PY
           docker exec "$name" /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp node /work/candidate.mjs /work/input.json /work/output
-          docker cp "$name:/work/output/candidate.json" "$RUNNER_TEMP/candidate.json"
+          docker exec "$name" /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp cat /work/output/candidate.json > "$RUNNER_TEMP/candidate.json"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: ${{ steps.identity.outputs.artifact }}
