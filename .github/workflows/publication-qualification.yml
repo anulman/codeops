@@ -1,0 +1,138 @@
+name: Exact publication qualification
+on:
+  # Bootstrap is an explicit operator push of this reviewed workflow revision.
+  # Candidate base/head refs do not match this trigger and contain no workflows.
+  push:
+    branches: ['bb-qualification/bootstrap-publication-*']
+  workflow_dispatch:
+    inputs:
+      mode:
+        type: choice
+        options: [qualify, expire]
+        default: qualify
+  schedule:
+    - cron: '23 */6 * * *'
+permissions: {}
+concurrency:
+  group: codeops-publication-qualification
+  cancel-in-progress: false
+# Bootstrap preparation replaces this fail-closed sentinel with the reviewed
+# source commit AFTER independent qualification. Never github.event PR head.
+env:
+  TRUSTED_SOURCE_SHA: 'f0c5aeb87a806e42ed284c13766fb228c04ed524'
+jobs:
+  candidate:
+    if: github.event_name != 'schedule' && inputs.mode != 'expire' && !contains(github.ref_name, 'bootstrap-publication-recover-')
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: read
+      actions: read
+    outputs:
+      artifact: ${{ steps.identity.outputs.artifact }}
+    steps:
+      - name: Reject unreviewed bootstrap
+        run: test "$TRUSTED_SOURCE_SHA" != 0000000000000000000000000000000000000000
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.TRUSTED_SOURCE_SHA }}
+          persist-credentials: false
+          sparse-checkout: infra/ci/publication
+      - name: Bind candidate inputs to this run
+        id: identity
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" > "$RUNNER_TEMP/run.json"
+          python3 - <<'PY'
+          import json,os,pathlib
+          run=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'run.json').read_text())
+          value={'repository':os.environ['GITHUB_REPOSITORY'],'runId':os.environ['GITHUB_RUN_ID'],'pinnedBase':run['head_sha'],'trustedSource':os.environ['TRUSTED_SOURCE_SHA'],'createdAt':run['created_at']}
+          (pathlib.Path(os.environ['RUNNER_TEMP'])/'input.json').write_text(json.dumps(value))
+          with open(os.environ['GITHUB_OUTPUT'],'a') as out:out.write('artifact=publication-candidate-'+os.environ['GITHUB_RUN_ID']+'-'+os.environ['GITHUB_RUN_ATTEMPT']+'\n')
+          PY
+      - name: Prepare candidate in a credential-free isolated container
+        shell: bash
+        run: |
+          set -euo pipefail
+          name="publication-candidate-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT"
+          trap 'docker stop "$name" >/dev/null 2>&1 || true' EXIT
+          docker pull node:24.14.0-bookworm
+          image=$(docker image inspect node:24.14.0-bookworm --format '{{.Id}}')
+          docker run -d --name "$name" --network none --read-only --user 1000:1000 --cap-drop ALL --security-opt no-new-privileges --tmpfs /work:rw,exec,uid=1000,gid=1000,mode=700 --tmpfs /tmp:rw,uid=1000,gid=1000 --entrypoint /usr/bin/env "$image" -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp sleep 600
+          # Stream into the writable tmpfs as UID1000; daemon docker cp rejects read-only rootfs.
+          tar -C infra/ci/publication -cf - candidate.mjs ownership.mjs | docker exec -i "$name" /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp tar -xf - -C /work --no-same-owner
+          docker exec -i "$name" /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp sh -c 'cat > /work/input.json' < "$RUNNER_TEMP/input.json"
+          docker inspect "$name" > "$RUNNER_TEMP/candidate-boundary.json"
+          python3 - <<'PY'
+          import json,os,pathlib
+          d=json.loads((pathlib.Path(os.environ['RUNNER_TEMP'])/'candidate-boundary.json').read_text())[0]
+          assert d['HostConfig']['NetworkMode']=='none' and d['HostConfig']['ReadonlyRootfs'] and d['Config']['User']=='1000:1000'
+          assert not d['Mounts'] and not d['HostConfig']['Binds'] and d['HostConfig']['CapDrop']==['ALL']
+          PY
+          docker exec "$name" /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp node /work/candidate.mjs /work/input.json /work/output
+          docker exec "$name" /usr/bin/env -i PATH=/usr/local/bin:/usr/bin:/bin HOME=/tmp cat /work/output/candidate.json > "$RUNNER_TEMP/candidate.json"
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: ${{ steps.identity.outputs.artifact }}
+          path: |
+            ${{ runner.temp }}/candidate.json
+            ${{ runner.temp }}/candidate-boundary.json
+          retention-days: 14
+  publisher:
+    needs: candidate
+    if: always() && (needs.candidate.result == 'success' || github.event_name == 'schedule' || inputs.mode == 'expire' || contains(github.ref_name, 'bootstrap-publication-recover-'))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+      pull-requests: write
+      actions: read
+    steps:
+      - name: Reject unreviewed bootstrap
+        run: test "$TRUSTED_SOURCE_SHA" != 0000000000000000000000000000000000000000
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262
+        with:
+          ref: ${{ env.TRUSTED_SOURCE_SHA }}
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020
+        with:
+          node-version: '24.14.0'
+      - name: Install pinned trusted dependencies before exposing publisher token
+        shell: bash
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location https://github.com/nubjs/nub/releases/download/v0.1.11/nub-linux-x64.tar.gz -o "$RUNNER_TEMP/nub.tar.gz"
+          echo "d227290e3a45c05ff20508a961f01950c50a138b08caf76d59f403e8a721330d  $RUNNER_TEMP/nub.tar.gz" | sha256sum -c -
+          mkdir "$RUNNER_TEMP/nub"
+          tar -xzf "$RUNNER_TEMP/nub.tar.gz" -C "$RUNNER_TEMP/nub"
+          "$RUNNER_TEMP/nub/bin/nub" install --frozen-lockfile --ignore-scripts
+          sqlite=$(readlink -f packages/bb-plugin-codeops/node_modules/better-sqlite3)
+          (cd "$sqlite" && npm run install)
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        if: needs.candidate.result == 'success'
+        with:
+          name: ${{ needs.candidate.outputs.artifact }}
+          path: ${{ runner.temp }}/candidate-artifact
+      - name: Fixed trusted publisher entrypoint
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FIXTURE_STATE: ${{ runner.temp }}/publication-state
+          MODE: ${{ needs.candidate.result == 'success' && 'qualify' || 'expire' }}
+        run: node --experimental-transform-types infra/ci/publication/trusted.mjs "$MODE" "$RUNNER_TEMP/candidate-artifact/candidate.json"
+      - name: Reconcile cleanup even if publication failed
+        if: always() && needs.candidate.result == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          FIXTURE_STATE: ${{ runner.temp }}/publication-cleanup
+        run: node --experimental-transform-types infra/ci/publication/trusted.mjs cleanup
+      - name: Retain bounded sanitized receipts
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: publication-receipts-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/publication-state/*.json
+            ${{ runner.temp }}/publication-cleanup/*.json
+          if-no-files-found: warn
+          retention-days: 30

@@ -2,6 +2,7 @@ name: CI
 
 on:
   pull_request:
+    branches-ignore: ['bb-qualification/publication/**']
   push:
     branches: [main]
 

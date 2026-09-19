@@ -2,6 +2,8 @@
 import { randomUUID } from 'node:crypto';
 import { briefSchema, digest, evaluate, reviewSchema, type Action, type Brief, type Candidate, type Check, type Run } from './model.ts';
 import { Store } from './store.ts';
+import { identityForPublication } from './publication-client.ts';
+import type { PublicationReceipt } from './publication.ts';
 export interface Runtime {
   admit(brief:Brief):Promise<void>;
   inspect(run:Run):Promise<Candidate>;
@@ -12,6 +14,9 @@ export interface Runtime {
   stop(threadId:string):Promise<void>;
   checks(run:Run):Promise<Check[]>;
   attention(run:Run):Promise<void>;
+  publish?(run:Run,permitId:string):Promise<PublicationReceipt>;
+  recoverPublication?(permitId:string):Promise<PublicationReceipt|null>;
+  revokePublication?(permitId:string):Promise<void>;
 }
 export class Engine {
   private busy = new Set<string>();
@@ -131,6 +136,47 @@ export class Engine {
       catch {return this.block(run,'Stop failed or unknown; cancellation not complete');}
     }
     run.condition=run.desired==='cancel'?'Cancelled':'Paused';run.reason=run.desired==='cancel'?'All known children stopped':'Paused';return this.save(run);
+  }
+  async publish(id:string,revision:number,permitId:string):Promise<Run> {
+    if(this.busy.has(id)) throw Error('Run is executing');this.busy.add(id);
+    try {
+      const run=this.store.get(id);if(run.revision!==revision) throw Error('Stale run revision');
+      if(!this.runtime.publish) throw Error('Trusted publication boundary unavailable');
+      const identity=identityForPublication(run);
+      if(run.publicationAttempt&&(run.publicationAttempt.permitId!==permitId||digest(run.publicationAttempt.identity)!==digest(identity))) throw Error('Unresolved publication identity; reconcile the recorded permit');
+      if(run.publicationAttempt&&this.runtime.recoverPublication) {
+        const recovered=await this.runtime.recoverPublication(permitId);
+        if(recovered) {
+          if(digest(recovered.identity)!==digest(identity)||recovered.head!==identity.head) throw Error('Publication receipt identity drift');
+          run.publication={permitId,receipt:recovered};delete run.publicationAttempt;run.stage='AwaitMerge';run.condition='NeedsAttention';
+          run.reason='Publication recovered by live readback; merge, release and deployment remain manual';this.save(run);return run;
+        }
+      }
+      await this.runtime.admit(run.brief);
+      if(digest(await this.runtime.inspect(run))!==digest(run.candidate)) throw Error('Candidate drift');
+      run.publicationAttempt={permitId,identity,phase:'attempting'};
+      run.condition='NeedsAttention';run.reason='Publication response pending; reconcile the recorded permit after restart';this.save(run);
+      let receipt:PublicationReceipt;
+      try {receipt=await this.runtime.publish(run,permitId);} catch {
+        run.publicationAttempt.phase='unknown';run.reason='Publication outcome unknown; retry the recorded permit for fresh readback';
+        this.save(run);await this.runtime.attention(run).catch(()=>{});return run;
+      }
+      if(digest(receipt.identity)!==digest(identity)) throw Error('Publication receipt identity drift');
+      run.publication={permitId,receipt};delete run.publicationAttempt;run.stage='AwaitMerge';run.condition='NeedsAttention';
+      run.reason='Exact candidate published; merge, release and deployment remain manual';
+      this.save(run);await this.runtime.attention(run).catch(()=>{});return run;
+    } finally {this.busy.delete(id);}
+  }
+  async abandonPublication(id:string,revision:number):Promise<Run> {
+    if(this.busy.has(id)) throw Error('Run is executing');this.busy.add(id);
+    try {
+      const run=this.store.get(id);if(run.revision!==revision) throw Error('Stale run revision');
+      const attempt=run.publicationAttempt;if(!attempt) throw Error('No unresolved publication');
+      if(!this.runtime.revokePublication) throw Error('Trusted revocation unavailable');
+      await this.runtime.revokePublication(attempt.permitId);
+      (run.abandonedPublications??=[]).push({permitId:attempt.permitId,identity:attempt.identity,revokedAt:new Date().toISOString()});
+      delete run.publicationAttempt;run.reason='Permit revoked; possible prior effects retained for operator investigation';return this.save(run);
+    } finally {this.busy.delete(id);}
   }
   async pause(id:string,revision:number,cancel=false):Promise<Run> {
     if (this.busy.has(id)) throw new Error('Run is executing; retry pause after current bounded action');

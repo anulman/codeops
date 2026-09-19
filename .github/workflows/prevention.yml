@@ -1,6 +1,7 @@
 name: Disposable prevention
 on:
   pull_request:
+    branches-ignore: ['bb-qualification/publication/**']
     paths:
       - '.github/workflows/prevention.yml'
       - 'infra/ci/prevention/**'

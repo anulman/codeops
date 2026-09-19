@@ -96,3 +96,12 @@ for(const scenario of [
   const restored=JSON.parse((await replacement.harness.behavior.callRpc('command',{op:'get',id:run.id}) as {json:string}).json);
   assert.deepEqual(restored,run);await replacement.harness.lifecycle.dispose();
 });
+
+test('agent command cannot grant or invoke operator publication',async()=>{
+ const {bb,harness}=createFakePluginHost({pluginId:'codeops'});plugin(bb);
+ try {
+  await assert.rejects(harness.behavior.callAgentTool('codeops_command',{op:'publish',id:'run',revision:1,permitId:'12345678-1234-4234-8234-123456789abc'}));
+  await assert.rejects(harness.behavior.callAgentTool('codeops_command',{op:'abandon-publication',id:'run',revision:1}));
+ }
+ finally {await harness.lifecycle.dispose();}
+});

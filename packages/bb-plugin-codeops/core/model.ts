@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: Apache-2.0
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import type { PublicationReceipt } from './publication.ts';
 
 export const digest = (value: unknown): string => createHash('sha256').update(JSON.stringify(value)).digest('hex');
 export const commit = z.string().regex(/^[a-f0-9]{40}$/);
@@ -43,6 +44,9 @@ export interface Run { id: string; revision: number; brief: Brief; scopeDigest: 
   authority: { source: 'admitted-brief'; projectId: string; effects: ['implement','validate','review']; digest: string };
   stage: Stage; condition: Condition; desired: 'run'|'pause'|'cancel'; reason: string; generation: number; lease: string;
   corrections: number; interrupted?: 'worker'|'reviewer'; candidate: Candidate|null; checks: Check[]; review: Review|null;
+  abandonedPublications?: {permitId:string;identity:import('./publication.ts').PublicationIdentity;revokedAt:string}[];
+  publicationAttempt?: {permitId:string;identity:import('./publication.ts').PublicationIdentity;phase:'attempting'|'unknown'};
+  publication?: {permitId:string;receipt:PublicationReceipt};
   actions: Action[]; decisions: Decision[]; createdAt: string; updatedAt: string; }
 export function decision(run: Run, gate: Gate, outcome: Decision['outcome'], reason: string): Decision {
   return { gate, version: 1, revision: run.revision, scopeDigest: run.scopeDigest, candidate: run.candidate?.head ?? null,

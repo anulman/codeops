@@ -160,3 +160,36 @@ test("derives an unresolved package subpath only from one declared parent", asyn
     { package: "rxjs/ajax@UNKNOWN", license: "Apache-2.0", evidence: "rxjs@7.8.2" },
   ]);
 });
+
+
+test("matches Apache identifier case without broadening license policy", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-license-case-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const sbomPath = path.join(directory, "sbom.json");
+  const reportPath = path.join(directory, "report.json");
+  for (const license of ["apache-2.0", "APACHE-2.0", "Apache-2.0"]) {
+    await writeFile(sbomPath, JSON.stringify(sbom(license)));
+    await execute(process.execPath, [policy.pathname, "--sbom", sbomPath, "--report", reportPath, "--subject", "example"]);
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.policy.result, "pass");
+    assert.ok(report.declaredLicenses[license] >= 1, "retain original declaration as evidence");
+    assert.deepEqual(report.appliedOverrides, []);
+  }
+  for (const license of [
+    "apache-2.0-custom", "apache-2.0+", "licenseref-apache-2.0",
+    "apache-2.0 OR GPL-3.0-only", "apache-2.0 and mit", "mpl-2.0",
+  ]) {
+    await writeFile(sbomPath, JSON.stringify(sbom(license)));
+    await assert.rejects(
+      execute(process.execPath, [policy.pathname, "--sbom", sbomPath, "--report", reportPath, "--subject", "example"]),
+      /image license policy rejected/,
+    );
+  }
+  await writeFile(sbomPath, JSON.stringify(sbom("apache-2.0", {
+    name: "@codeops/another", versionInfo: "0.1.0",
+  })));
+  await assert.rejects(
+    execute(process.execPath, [policy.pathname, "--sbom", sbomPath, "--report", reportPath, "--subject", "example"]),
+    /must declare Apache-2.0/,
+  );
+});
