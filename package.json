@@ -35,5 +35,8 @@
     "@types/node": "25.7.0",
     "typescript": "6.0.3",
     "yaml": "2.9.0"
+  },
+  "overrides": {
+    "@pierre/diffs": "1.2.9"
   }
 }

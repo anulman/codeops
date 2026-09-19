@@ -117,7 +117,12 @@ function packageLicense(packageRoot, manifest) {
 }
 
 function approvedJavascriptLicense(key, license) {
-  return ALLOWED_JAVASCRIPT_LICENSES.has(license)
+  // SPDX identifiers are case-insensitive. Match only the complete Apache ID;
+  // do not normalize expressions, custom references, or reviewed exceptions.
+  const approved = typeof license === "string" && license.toLowerCase() === "apache-2.0"
+    ? "Apache-2.0"
+    : license;
+  return ALLOWED_JAVASCRIPT_LICENSES.has(approved)
     || APPROVED_COPYLEFT_JAVASCRIPT_EXCEPTIONS.get(key) === license;
 }
 
