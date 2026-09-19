@@ -36,7 +36,13 @@ export class GithubPublication implements PublicationAdapter {
   const args=['api','--hostname','github.com',`repos/${repository}${path}`,'--method',method];
   for(const [key,value] of Object.entries(fields)) args.push(typeof value==='boolean'?'-F':'-f',`${key}=${value}`);
   try {const result=await execute('gh',args,{timeout:30_000,maxBuffer:2_000_000,env:this.environment(repository,true)});return JSON.parse(result.stdout);}
-  catch {throw Error('GitHub effect failed or unknown; inspect live readback');}
+  catch(error) {
+   // Return only a status and a fixed known policy denial, never provider output.
+   const stderr=typeof error==='object'&&error!==null&&'stderr' in error&&typeof error.stderr==='string'?error.stderr:'';
+   const status=/HTTP (\d{3})/.exec(stderr)?.[1];
+   const denied=stderr.includes('GitHub Actions is not permitted to create or approve pull requests');
+   throw Error(`GitHub effect failed or unknown${status?` (HTTP ${status})`:''}${denied?'; repository Actions PR creation is disabled':''}; inspect live readback`);
+  }
  }
  async prepareObjects(p:PublicationPermit,bundle:{data:string;sha256:string}):Promise<void> {
   const bytes=Buffer.from(bundle.data,'base64');
