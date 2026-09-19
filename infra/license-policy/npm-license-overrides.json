@@ -1,6 +1,7 @@
 {
   "schema": "codeops.npm-license-overrides/v1",
   "packages": {
+    "@get-bb/plugin-sdk@0.4.87": { "license": "MIT", "evidence": "Exact npm gitHead 3b37d2790d084a47c96eb78267da5d159598f203 LICENSE; artifact integrity and notice in packages/bb-plugin-cluster-browser/DEPENDENCIES.md" },
     "@mapbox/node-pre-gyp@2.0.3": { "license": "BSD-3-Clause", "evidence": "npm registry metadata" },
     "@rollup/pluginutils@5.4.0": { "license": "MIT", "evidence": "npm registry metadata" },
     "@vercel/nft@1.10.2": { "license": "MIT", "evidence": "npm registry metadata" },

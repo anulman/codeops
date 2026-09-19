@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -159,4 +159,35 @@ test("derives an unresolved package subpath only from one declared parent", asyn
   assert.deepEqual(report.derivedSubpaths, [
     { package: "rxjs/ajax@UNKNOWN", license: "Apache-2.0", evidence: "rxjs@7.8.2" },
   ]);
+});
+
+
+test("workspace missing licenses require an exact reviewed override", async (t) => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "codeops-workspace-license-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  for (const name of ["packages", "services", "sites"]) {
+    await mkdir(path.join(directory, name), { recursive: true });
+  }
+  for (const file of [
+    "package.json", "LICENSE", "CONTRIBUTING.md", "LICENSE_POLICY.md",
+    "THIRD_PARTY_NOTICES.md", "infra/charts/codeops/LICENSE",
+    "infra/charts/codeops/THIRD_PARTY_NOTICES.md",
+    "infra/charts/codeops/licenses/NATS-CHART-APACHE-2.0.txt",
+    "infra/charts/codeops/licenses/TEMPORAL-CHART-MIT.txt",
+    "infra/charts/codeops/licenses/PLANE-CHART-AGPL-3.0.txt",
+    "sites/agents-ui/src/components/AppShell.tsx", "config/project-context/AGENTS.md",
+    "infra/charts/codeops/files/project-context/AGENTS.md",
+    "infra/charts/codeops/Chart.yaml", "infra/license-policy/npm-license-overrides.json",
+  ]) {
+    const target = path.join(directory, file);
+    await mkdir(path.dirname(target), { recursive: true });
+    await writeFile(target, await readFile(file));
+  }
+  const manifest = path.join(directory, "node_modules/.nub/sdk/node_modules/@get-bb/plugin-sdk/package.json");
+  await mkdir(path.dirname(manifest), { recursive: true });
+  await writeFile(manifest, JSON.stringify({ name: "@get-bb/plugin-sdk", version: "0.4.87" }));
+  await execute(process.execPath, [policy.pathname, "--workspace"], { cwd: directory });
+  await writeFile(manifest, JSON.stringify({ name: "@get-bb/plugin-sdk", version: "0.4.88" }));
+  await assert.rejects(execute(process.execPath, [policy.pathname, "--workspace"], { cwd: directory }),
+    /JavaScript dependency has no reviewed license: @get-bb\/plugin-sdk@0\.4\.88/);
 });
