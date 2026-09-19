@@ -3,6 +3,7 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { parse } from "yaml";
 
 import { rewriteWorkspaceDependencyForNpm } from "./rewrite-workspace-dependency-for-npm.mjs";
 
@@ -113,7 +114,14 @@ test("packages the Agents UI from the frozen standalone workspace", async () => 
     "utf8",
   );
   assert.match(source, /nub install --frozen-lockfile/);
-  assert.match(source, /services\/codeops-acceptance-runner\/package\.json/);
+  const lock = parse(await readFile(new URL("../../lock.yaml", import.meta.url), "utf8"));
+  for (const workspace of Object.keys(lock.importers).filter((name) => name !== ".")) {
+    const manifest = `${workspace}/package.json`;
+    const copy = `COPY ${manifest} ./${manifest}`;
+    assert.ok(source.includes(copy), `frozen install needs ${manifest}`);
+    assert.ok(source.indexOf(copy) < source.indexOf("nub install --frozen-lockfile"));
+    assert.ok(dockerignore.split("\n").includes(`!${manifest}`), `build context needs ${manifest}`);
+  }
   assert.match(source, /nub run --filter @codeops\/agents-ui build/);
   assert.match(source, /d227290e3a45c05ff20508a961f01950c50a138b08caf76d59f403e8a721330d/);
   assert.doesNotMatch(source, /nubjs\.com\/install\.sh/);

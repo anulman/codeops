@@ -136,44 +136,91 @@ Tests use the installed SDK harness, synthetic HTTP MCP failure fixtures, and th
 real pinned upstream HTTP server for handshake/schema verification. They do **not**
 launch Chromium. Synthetic image tests establish result plumbing, not a real screenshot.
 Run repository `nub run verify` and `nub run check:chart` before handoff. No UI or
-container image is changed. The standalone npm lock supports qualification without
+browser runner image is changed. The Agents UI image build includes this package
+manifest so the frozen workspace remains complete. The standalone npm lock supports qualification without
 installing or changing a running bb plugin.
 
 ### Exact parent-operated browser fixture
 
 Use a separate disposable, non-root runner with the pinned Playwright browser binary
 and its OS libraries. The installed `playwright-core/browsers.json` records Chromium
-**154.0.8037.0, revision 1246** (verify against the lock before provisioning).
-Use the upstream [Docker guidance](https://playwright.dev/docs/docker) to supply
-libraries and preserve existing container, sandbox, and network boundaries. Do not
-use `--no-sandbox`, privileged mode, host networking, or the coding worker as the
-browser runner. If this runtime cannot launch Chromium under those boundaries,
-report that capability to the parent instead of relaxing them.
+**154.0.8037.0, revision 1246**. The parent selects and independently verifies one
+isolation profile. The MCP proof cannot inspect Pod policy or browser process flags.
 
-In that runner, use `npm ci --workspaces=false --include=dev` for this package.
-The parent can install the pinned browser with
-`node node_modules/playwright/cli.js install chromium` during runner image preparation.
-Supply the supported OS libraries in that image; do not install them or Chromium in
-the coding worker. Then run these processes separately:
+- `chromium-internal`: use `--sandbox` where Chromium's internal sandbox works.
+  This remains the normal path on a supported runtime.
+- `external-container`: use `--no-sandbox` **only inside a separate disposable runner**
+  protected by the approved outer Kubernetes/container boundary. Require UID 1000,
+  read-only root, no capabilities, `no-new-privileges`/no privilege escalation,
+  restricted Pod admission, no service-account token or reusable credentials, and
+  default-deny ingress/egress (network-none for the local container probe). Use only
+  the loopback fixture. Writable temporary/browser output storage must be disposable.
+  Attach independent Pod/container and network-denial evidence. This profile does
+  not test Chromium's internal sandbox; nested Chrome namespaces are not required.
+
+Never apply `--no-sandbox` to coding workers, shared/user browsers, or a runner without
+that verified external boundary. Neither profile authorizes more privileges, node
+changes, control-plane changes, or production deployment. Actual rollout must select
+and verify an isolation profile separately. Keep MCP/browser/CDP endpoints private.
+
+Use the upstream [Docker guidance](https://playwright.dev/docs/docker) to prepare
+libraries. In the separate runner, install this exact package with
+`npm ci --workspaces=false --include=dev`. The parent can install the pinned browser
+with `node node_modules/playwright/cli.js install chromium` during image preparation.
+Do not install libraries or Chromium in the coding worker. Keep package source and
+dependencies read-only at runtime. Mount disposable writable `/tmp` and a writable
+`.output` directory at the package root for proof receipts; do not make the root
+filesystem writable. The runner commands put MCP output under `/tmp`.
+
+Run the fixture process on runner loopback:
 
 ```sh
 node scripts/fixture.mjs
-node node_modules/@playwright/mcp/cli.js --host 127.0.0.1 --port 8931 --isolated --headless --sandbox --no-webmcp --browser chromium --image-responses allow --idle-timeout 300000
 ```
 
-Then run the proof from the same disposable fixture environment:
+For `chromium-internal`, start the runner and execute the proof separately:
+
+```sh
+node node_modules/@playwright/mcp/cli.js --host 127.0.0.1 --port 8931 --isolated --headless --sandbox --no-webmcp --browser chromium --image-responses allow --output-dir /tmp/cluster-browser-mcp --idle-timeout 300000
+```
 
 ```sh
 CLUSTER_BROWSER_FIXTURE_ENDPOINT=http://localhost:8931/mcp \
 CLUSTER_BROWSER_FIXTURE_TARGET=http://127.0.0.1:4173/ \
+CLUSTER_BROWSER_FIXTURE_ISOLATION_PROFILE=chromium-internal \
 node scripts/qualify-browser.mjs
 ```
 
-For a separate qualification client, the parent must supply authenticated private
-TLS routing to the same single worker and keep the fixture target reachable from
-that worker. Supply any token through `CLUSTER_BROWSER_FIXTURE_TOKEN` using a secure
-operator mechanism. The coding worker has no authority to create this route or Job.
-The proof performs fixture-only mutations, checks cookie/localStorage isolation and
-session retention, and writes a real PNG plus a receipt under `.output/browser-qualification/`.
-It fails closed when either fixture variable is missing. Do not promote the draft
-based on protocol tests or unrelated Kubernetes boundary probes.
+For the parent-operated `external-container` profile, inside the verified disposable
+runner only:
+
+```sh
+node node_modules/@playwright/mcp/cli.js --host 127.0.0.1 --port 8931 --isolated --headless --no-sandbox --no-webmcp --browser chromium --image-responses allow --output-dir /tmp/cluster-browser-mcp --idle-timeout 300000
+```
+
+Run the proof in the same isolated environment. Set
+`CLUSTER_BROWSER_FIXTURE_BOUNDARY_EVIDENCE_SHA256` to the SHA-256 of the parent's
+independent boundary evidence artifact, and retain that artifact beside the receipt:
+
+```sh
+CLUSTER_BROWSER_FIXTURE_ENDPOINT=http://localhost:8931/mcp \
+CLUSTER_BROWSER_FIXTURE_TARGET=http://127.0.0.1:4173/ \
+CLUSTER_BROWSER_FIXTURE_ISOLATION_PROFILE=external-container \
+CLUSTER_BROWSER_FIXTURE_BOUNDARY_EVIDENCE_SHA256="$BOUNDARY_EVIDENCE_SHA256" \
+node scripts/qualify-browser.mjs
+```
+
+Both profiles require `--isolated` for per-client browser contexts. That setting is
+independent of the process/container sandbox profile. Both profiles execute the
+**same** functional, cookie/localStorage isolation,
+retention, diagnostic, and real PNG assertions. No test is disabled. The proof writes
+`screenshot.png` and `result.json` under `.output/browser-qualification/`. The receipt
+records candidate-file hashes, selected profile, and the independent evidence hash.
+Those profile fields are operator assertions, not authority or MCP attestation.
+
+This loopback proof requires no private route from the coding worker. A later
+multi-host qualification or rollout needs separately authorized authenticated private
+TLS routing; this task does not create it. Any token must use the protected setting
+or `CLUSTER_BROWSER_FIXTURE_TOKEN` through a secure operator mechanism. The coding
+worker has no authority to create routes or Jobs. Do not promote the draft based on
+protocol tests or boundary probes alone; retain both actual browser and boundary evidence.
